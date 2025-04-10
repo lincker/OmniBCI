@@ -1,0 +1,2 @@
+OmniBCI is designed to be a BCI system that is easy to use and deploy. It provides a simple interface for collecting and processing EEG data. The system is designed to be modular, allowing users to easily add or remove components as needed.
+It uses Python 3.12 and OpenGL for rendering. The system is designed to be cross-platform, allowing it to run on Windows, macOS, and Linux.
