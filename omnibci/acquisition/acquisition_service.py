@@ -125,3 +125,34 @@ class Acquisition:
         # may detach eeg data and event
         print(f'preprocess data= {data}')
         return data
+
+
+import multiprocessing as mp
+class AcquisitionProcess(mp.Process):
+    def __init__(self, config, command_queue, data_manager=None):
+        super().__init__(group=None, target=None, name=None, args=(), kwargs={})
+        self.reader = self.get_reader_from_config(config)
+        if self.reader is None:
+            print(" Error! can not get device")
+        self.command_queue = command_queue
+        self.data_manager = data_manager
+        # self.loop: typing.Optional[asyncio.AbstractEventLoop] = None
+        # self.stopped: typing.Optional[asyncio.Event] = None
+
+    def get_reader_from_config(self, config):
+        reader = None
+        if config['reader'] == 'filereader':
+            from .file_reader import FileReader
+            reader = FileReader(config)
+        elif config['reader'] == 'neuroscan45':
+            from .device_adapters.neuroscan.scan45.adapter import Scan45DataReader
+            reader = Scan45DataReader(config)
+        return reader
+
+    def run(self):
+        self._run()
+
+    def _run(self):
+        self.acquisitor = Acquisition(reader=self.reader, command_queue=self.command_queue, data_manager=self.data_manager)
+        self.acquisitor.run()
+
