@@ -32,10 +32,7 @@ class Acquisition:
         self.command_queue = command_queue
         self.status = AcquisitionState.stop
         self.fetch_task = None
-        if data_manager is None:
-            self.data_manager = DataManager()
-        else:
-            self.data_manager = data_manager
+        self.data_manager = data_manager
         self.should_exit = False
 
     def run(self):
@@ -51,11 +48,8 @@ class Acquisition:
 
     async def shutdown(self):
         print('========================---acquisitor shut down---==============================')
-        # TODO: if self.is_connected, need to teardown
         await self.reader.disconnect()
-        if not self.should_exit:
-            self.should_exit = True
-            return
+
 
     async def startup(self):
         print('=========================---acquisitor start---=================================')
@@ -117,20 +111,20 @@ class Acquisition:
         async for packet in self.reader.start_stream():
             packet = self.preprocess(packet)
             self.data_manager.add_packet(packet)
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.01)
 
         print('fetching')
 
     def preprocess(self, data):
         # may detach eeg data and event
-        print(f'preprocess data= {data}')
+        # print(f'preprocess data= {data}')
         return data
 
 
 import multiprocessing as mp
 class AcquisitionProcess(mp.Process):
     def __init__(self, config, command_queue, data_manager=None):
-        super().__init__(group=None, target=None, name=None, args=(), kwargs={})
+        super().__init__()
         self.reader = self.get_reader_from_config(config)
         if self.reader is None:
             print(" Error! can not get device")
@@ -155,4 +149,3 @@ class AcquisitionProcess(mp.Process):
     def _run(self):
         self.acquisitor = Acquisition(reader=self.reader, command_queue=self.command_queue, data_manager=self.data_manager)
         self.acquisitor.run()
-
