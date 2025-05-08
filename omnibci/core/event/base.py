@@ -6,12 +6,12 @@ from enum import IntEnum
 
 
 class EventType(IntEnum):
-    # ConnectDataProvider = 101
-    # DisconnectDataProvider = 102
-    # GetAcquisitionDeviceStatus = 103
+    ConnectDataProvider = 101
+    DisconnectDataProvider = 102
+    # GetDataProviderMetaData = 103
     # StopAcquisitionDevice = 104
-    StartReceive = 21 # StartReadData
-    StopReceive = 22    #
+    StartReceive = 111 # StartReadData
+    StopReceive = 112    #
     StartProcessSystem = 31
     StopProcessSystem = 32
     CloseAllProcessSystem = 33
