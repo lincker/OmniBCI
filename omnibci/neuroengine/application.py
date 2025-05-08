@@ -28,7 +28,7 @@ class MainApplication:
         self.acquisitor = AcquisitionProcess(config, self.acquisition_command_queue, self.data_manager)
         self.acquisitor.start()
         self.analysis_command_queue = mp.Queue(20)
-        self.analysis_controller = AnalysisPipelineProcess(config=config, data_manager=self.data_manager, event_manager=self.event_manager)
+        self.analysis_controller = AnalysisPipelineProcess(config=config,command_queue=self.analysis_command_queue, data_manager=self.data_manager, event_manager=self.event_manager)
         self.analysis_controller.start()
         self.should_stop = False
 

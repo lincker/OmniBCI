@@ -18,13 +18,13 @@ class CommandServer:
         print(command)
         command_type = command.get('type')
         command_data = command.get('data')
-        if command_type == 'ConnectAcquisitor':
+        if command_type == 'ConnectDataProvider':
             event = Event(type=EventType.ConnectDataProvider, data=command_data)
-        elif command_type == 'DisconnectAcquisitor':
+        elif command_type == 'DisconnectDataProvider':
             event = Event(type=EventType.DisconnectDataProvider, data=command_data)
-        elif command_type == 'StartReadData':
+        elif command_type == 'StartReceive':
             event = Event(type=EventType.StartReceive, data=command_data)
-        elif command_type == 'StopReadData':
+        elif command_type == 'StopReceive':
             event = Event(type=EventType.StopReceive, data=command_data)
         elif command_type == 'StartStimTrail':
             event = Event(type=EventType.StartStimTrail, data=command_data)

@@ -3,7 +3,7 @@
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-04-24 09:31
 import multiprocessing as mp
-from neuroflow.analysis.analysis_controller import AnalysisController
+from neuroengine.analysis.analysis_controller import AnalysisController
 
 
 class AnalysisPipelineProcess(mp.Process):
