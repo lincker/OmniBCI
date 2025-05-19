@@ -34,12 +34,8 @@ class Event:
         self.data = data
 
 
-def event_obj_to_json(obj: Event):
-        return {
-            'type': obj.type,
-            'data': obj.data
-        }
-
-
-def event_from_json(json_str):
-    return Event(type=json_str['type'], data=json_str['data'])
+    def to_json(self):
+            return {
+                'type': self.type,
+                'data': self.data
+            }

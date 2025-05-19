@@ -6,8 +6,8 @@ import json
 import logging
 import multiprocessing as mp
 import asyncio
-from core.event.base import Event
-from core.event.event_manager import EventManager
+from omnibci.core.event.base import Event
+from omnibci.core.event.event_manager import EventManager
 from .frame import Frame
 
 
@@ -52,8 +52,9 @@ class NetworkServer:
             self.server.close()
         self.status = 'STOP'
 
-    async def send_event(self, event):
-        json_msg = json.dumps(event, default=event_obj_to_json)
+    async def send_event(self, event: Event):
+        event_json = event.to_json()
+        json_msg = json.dumps(event_json)
         await self.send(json_msg)
 
     async def send(self, message):
