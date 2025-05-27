@@ -1,14 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# @File     : adapter.py
-# @Author   : lincker
-# @Date     : 2025-04-13 00:58
-# for device software scan 4.5
-# the event channel represent high voltage.  Only the first byte used as uint8.
+# @Author   : lincker <haolin.d.wu@gmail.com>
+# @Date     : 2025-05-27 15:53
 import time
 import sys
 import asyncio
-from datetime import datetime
 from enum import IntEnum
 import logging
 from typing import Iterator
