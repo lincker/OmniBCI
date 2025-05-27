@@ -1,0 +1,8 @@
+command_server_ip = "localhost"
+command_server_port = 5000
+
+[ACQUISITION]
+
+[NEUROENGINE]
+
+[STIMULATION]

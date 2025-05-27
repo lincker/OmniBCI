@@ -8,6 +8,7 @@ import asyncio
 from typing import Iterator
 from .base import BaseReader
 from core.data_model import DataPacket
+from omnibci.conf import settings
 
 # file reader only read the file, the output not include data packet
 class FileReader(BaseReader):
@@ -17,10 +18,10 @@ class FileReader(BaseReader):
         self.config = config
         self.reader_adapter = None
         self._data_length = 0
-        self._chunk_size = self.config.get('chunk_size', 100)
+        self._chunk_size = settings.FILE_READER_CHUNK_SIZE
+        self.speed = settings.FILE_READER_PLAY_SPEED
         self.file_path = self.config.get('file_path', '')
-        self.speed = self.config.get('speed', 1.0)
-        self.sample_interval = self.config.get('sample_interval', 0.001)  # 默认采样间隔为1ms
+        # self.sample_interval = self.config.get('sample_interval', 0.001)  # 默认采样间隔为1ms
         self.data = None
         self._is_streaming = False
 
