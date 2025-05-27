@@ -6,12 +6,12 @@ from enum import IntEnum
 
 
 class EventType(IntEnum):
-    # ConnectDataProvider = 101
-    # DisconnectDataProvider = 102
-    # GetAcquisitionDeviceStatus = 103
+    ConnectDataProvider = 101
+    DisconnectDataProvider = 102
+    # GetDataProviderMetaData = 103
     # StopAcquisitionDevice = 104
-    StartReceive = 21 # StartReadData
-    StopReceive = 22    #
+    StartReceive = 111 # StartReadData
+    StopReceive = 112    #
     StartProcessSystem = 31
     StopProcessSystem = 32
     CloseAllProcessSystem = 33
@@ -34,12 +34,8 @@ class Event:
         self.data = data
 
 
-def event_obj_to_json(obj: Event):
-        return {
-            'type': obj.type,
-            'data': obj.data
-        }
-
-
-def event_from_json(json_str):
-    return Event(type=json_str['type'], data=json_str['data'])
+    def to_json(self):
+            return {
+                'type': self.type,
+                'data': self.data
+            }

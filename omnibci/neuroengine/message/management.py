@@ -6,18 +6,16 @@ import asyncio
 
 from core.communication.network import NetworkServer
 from core.event.base import EventType
+from conf import settings
 from .command_server import CommandServer
 
 
 
 class ServerMessageManagement:
-    def __init__(self, event_manager, config):
-        if not config:
-            config = {'message_server_ip': 'localhost',
-                      'message_server_port': 8000}
+    def __init__(self, event_manager):
         self.event_manager = event_manager
-        self.server_ip = config.get('message_server_ip', 'localhost') # 'localhost'
-        self.server_port = config.get('message_server_port', 8000) # 8000
+        self.server_ip = settings.MESSAGE_SERVER_IP
+        self.server_port = settings.MESSAGE_SERVER_PORT
         self.server = NetworkServer(event_manager=event_manager, host=self.server_ip, port=self.server_port)
         self.command_server = CommandServer(event_manager=event_manager)
         self.register_events()

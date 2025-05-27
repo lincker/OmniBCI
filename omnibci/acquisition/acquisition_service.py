@@ -11,8 +11,8 @@ from core.data_manager import DataManager
 
 class AcquisitionCommand(Enum):
     start_acquisition = 'start_acquisition'
-    should_exit = 'acquisition_exit'
-    get_metadata = 'device_metadata'
+    stop_acquisition = 'stop_acquisition'
+    get_metadata = 'reader_metadata'
     connect = 'connect'
     start_stream = 'start_stream'
     stop_stream = 'stop_stream'
@@ -92,12 +92,13 @@ class Acquisition:
 
         if command == AcquisitionCommand.stop_stream:
             # stop data stream, cancel fetch task
+            await self.reader.stop_stream()
             self.fetch_task.cancel()
             print('fetch task stopped')
-            await self.reader.stop_stream()
+
             return
 
-        if command == AcquisitionCommand.should_exit:
+        if command == AcquisitionCommand.stop_acquisition:
             self.should_exit = True
             return
         elif command == AcquisitionCommand.get_metadata:
