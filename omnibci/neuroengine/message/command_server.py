@@ -4,6 +4,7 @@
 # @Date     : 2025-03-17 09:23
 from aiohttp import web
 from core.event.base import Event, EventType
+from conf import settings
 
 
 class CommandServer:
@@ -36,8 +37,10 @@ class CommandServer:
         self.event_manager.put_event(event)
         return web.json_response({'command':command_type, 'status': 'ok'})
 
-    async def start(self, server_ip='localhost', server_port=8080):
+    async def start(self):
         await self.runner.setup()
+        server_ip = settings.COMMAND_SERVER_IP
+        server_port = settings.COMMAND_SERVER_PORT
         site = web.TCPSite(self.runner, server_ip, server_port)
         await site.start()
 

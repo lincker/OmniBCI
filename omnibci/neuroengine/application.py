@@ -21,7 +21,7 @@ class MainApplication:
         self.event_manager = EventManager()
         self.event_manager.set_event_queue(queue=mp.Queue())
         # TODO: refactor , not process, use thread
-        self.sever_message_management = ServerMessageManagement(self.event_manager, config=config)
+        self.sever_message_management = ServerMessageManagement(self.event_manager)
         self.data_manager = DataManager(data_buffer=mp.Queue())
         # TODO: refactor this
         self.acquisition_command_queue = mp.Queue(20)

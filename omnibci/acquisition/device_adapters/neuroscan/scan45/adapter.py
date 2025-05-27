@@ -6,15 +6,18 @@
 # for device software scan 4.5
 # the event channel represent high voltage.  Only the first byte used as uint8.
 import time
+import sys
 import asyncio
 from datetime import datetime
 from enum import IntEnum
+import logging
 from typing import Iterator
 
 import numpy as np
 
 from acquisition.base import BaseReader, BaseTrigger
 from core.data_model import DataPacket
+from conf import settings
 
 
 class Scan45Message:
@@ -142,8 +145,8 @@ class Scan45DataReader(BaseReader):
 
     def __init__(self, config) -> None:
         super().__init__()
-        self.data_provider_ip = config.get('data_provider_ip', 'localhost')  # TODO: refactor later
-        self.data_provider_port = config.get('data_provider_port', 4000)
+        self.data_provider_ip = settings.DATA_PROVIDER_IP
+        self.data_provider_port = settings.DATA_PROVIDER_PORT
         # self.n_channels = config.get('n_channels', 9) # refactor later
         # self.record_srate = config.get('record_srate', 1000)
         # self.srate # TODO: refactor later
@@ -171,7 +174,7 @@ class Scan45DataReader(BaseReader):
         if self._is_connected:
             stop_message = scan45_message_manager.closingUpConnectionCommand
             self.writer.write(stop_message)
-            self.writer.drain()
+            await self.writer.drain()
             await self._disconnect()
             self._is_connected = False
         return True
@@ -192,7 +195,7 @@ class Scan45DataReader(BaseReader):
 
     async def start_stream(self) -> Iterator[DataPacket]:
         self.writer.write(scan45_message_manager.startSendingDataCommand)
-        self.writer.drain()
+        await self.writer.drain()
         self._is_streaming = True
         self._packets_counter = 0
         while self._is_streaming:
@@ -215,8 +218,8 @@ class Scan45DataReader(BaseReader):
     #     return DataQualityFlag.OK.value
 
     async def stop_stream(self) -> bool:
-        await self.writer.write(scan45_message_manager.stopSendingDataCommand)
-        self.writer.drain()
+        self.writer.write(scan45_message_manager.stopSendingDataCommand)
+        await self.writer.drain()
         self._is_streaming = False
         return True
 
@@ -292,8 +295,7 @@ class Scan45Trigger(BaseTrigger):
         super().__init__()
         self.COM = COM
         self.address = int(COM, 16)
-        # TODO: install parallel port
-        # self.port = parallel.ParallelPort(address=self.address)
+        self.port = self._set_parallel_port(self.address)
         self.port = None
         self.clear_trigger()
 
@@ -301,11 +303,40 @@ class Scan45Trigger(BaseTrigger):
         self._send(event_id)
 
     def _send(self, data):
-        import sys
-        if sys.platform.startswith('linux') or sys.platform == 'win32':
+        if sys.platform == 'win32':
             self.port.setData(data)
         else:
             print(f'macOS do not support parallel port. Send trigger data = {data}')
 
     def clear_trigger(self):
         self._send(0)
+
+    def _set_parallel_port(self, address):
+        if sys.platform == 'win32':
+            drivers = dict(inpout32=('_inpout', 'PParallelInpOut'),
+                           inpoutx64=('_inpout', 'PParallelInpOut'),
+                           dlportio=('_dlportio', 'PParallelDLPortIO'))
+            from ctypes import windll
+            from importlib import import_module
+            ParallelPort = None
+            for key, val in drivers.items():
+                driver_name, class_name = val
+                try:
+                    hasattr(windll, key)
+                    ParallelPort = getattr(import_module('.' + driver_name, __name__),
+                                           class_name)
+                    break
+                except (OSError, KeyError, NameError):
+                    ParallelPort = None
+                    continue
+            if ParallelPort is not None:
+                try:
+                    port = ParallelPort(address)
+                    return port
+                except Exception as e:
+                    logging.error(f"Failed to initialize parallel port at {address}: {e}")
+                    return None
+            if ParallelPort is None:
+                logging.warning(
+                                "No parallel port driver found. Install either "
+                                "inpout32, inpoutx64 or dlportio")
