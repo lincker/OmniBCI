@@ -30,8 +30,8 @@ class IdleProcess:
 
         data_packet: DataPacket = self.data_manager.get_packet()
         # detect whether the epoch begin
-        is_head = self.epoch_manager.head_recognition(data_packet)
-        if is_head:
+        is_begin = self.epoch_manager.begin_recognition(data_packet)
+        if is_begin:
             self.epoch_manager.set_epoch_head_data(data_packet)
             self.controller.current_status = self.controller.recognize
 

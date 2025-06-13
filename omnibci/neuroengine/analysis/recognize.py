@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2023-11-09 22:51
+import logging
 import time
 import asyncio
 import math
@@ -26,20 +27,25 @@ class RecognizeProcess:
             return
 
         data_packet: DataPacket = self.data_manager.get_packet()
-        new_head = self.epoch_manager.head_recognition(data_packet)
-        if new_head:
+        is_new_trial = self.epoch_manager.begin_recognition(data_packet)
+
+        if is_new_trial:
             self.epoch_manager.append_epoch_tail_data(data_packet)
-            recognized, result = self.epoch_manager.analysis(force_calc=True)
+            _, result = self.epoch_manager.analysis(force_calc=True)
+            logging.info(f"Recognized, result={result}")
             self.controller.current_status = self.controller.recognize
             self.epoch_manager.set_epoch_head_data(data_packet)
-        else:
-            self.epoch_manager.append_data(data_packet)
-            recognized, result = self.epoch_manager.analysis()
-
-        if recognized:
-            print(f"----------------- recognized: {result} -------------------")
             event = Event(EventType.FeedbackResult, result)
             self.event_manager.put_event(event)
+            return
+        else:
+            self.epoch_manager.append_data(data_packet)
+            is_epoch_end, result = self.epoch_manager.analysis()
+            if is_epoch_end:
+                print(f"----------------- recognized: {result} -------------------")
+                event = Event(EventType.FeedbackResult, result)
+                self.event_manager.put_event(event)
+                self.controller.current_status = self.controller.idle
 
 
 
