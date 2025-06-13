@@ -26,45 +26,37 @@ class EpochManager:
         self._eegdata = np.empty((0, 0))
         self._head_event = None
         self._event_index = None
+        self._begin = False
         self.analysis_method = analysis_method
 
-    def head_recognition(self, data_packet) -> bool:
-        started, index, event = self.analysis_method.is_epoch_head(data_packet)
-        if started:
-            self._head_event = event
-            self._event_index = index
-
+    def begin_recognition(self, data_packet) -> bool:
+        index, event = self.analysis_method.check_event(data_packet)
+        if index >= 0:
+            print(f"EpochManager: begin_recognition, index={index}, event={event}")
             return True
         else:
             return False
 
-    def set_epoch_head_data(self, data_packet):
-        if self._event_index is not None:
-            new_data = data_packet.data[0:-1, self._event_index:]  # Slice rows
-            if new_data.ndim == 1:
-                new_data = new_data.reshape(-1, 1)  # Reshape to (n_samples, 1)
 
-            # self._eegdata = data_packet.data[0:data_packet.data.shape[0] - 1, self._event_index:]
+    def set_epoch_head_data(self, data_packet):
+        index, event = self.analysis_method.check_event(data_packet)
+        if index >= 0:
+            new_data = data_packet.data[0:-1, index:]  # Slice rows
             self._eegdata = new_data
         else:
             raise ValueError("Epoch head index is not set.")
 
     def append_epoch_tail_data(self, data_packet):
-        if self._event_index is not None:
-            new_data = data_packet.data[0:-1, 0:self._event_index]  # Slice rows
-            if new_data.ndim == 1:
-                new_data = new_data.reshape(-1, 1)  # Reshape to (n_samples, 1)
+        index, event = self.analysis_method.check_event(data_packet)
+        if index >= 0:
+            new_data = data_packet.data[0:-1, 0:index]  # Slice rows
             self._eegdata = np.append(self._eegdata, new_data, axis=1)
-            # self._eegdata = np.append(self._eegdata, data_packet.data[0:data_packet.data.shape[0] - 1, 0:self._event_index], axis=1)
         else:
             raise ValueError("Epoch head index is not set.")
 
     def append_data(self, data_packet):
         new_data = data_packet.data[0:-1, :]  # Slice rows
-        if new_data.ndim == 1:
-            new_data = new_data.reshape(-1, 1)  # Reshape to (n_samples, 1)
         self._eegdata = np.append(self._eegdata, new_data, axis=1)
-        # self._eegdata = np.append(self._eegdata, data_packet.data[0:data_packet.data.shape[0] - 1, :], axis=1)
 
 
     def analysis(self, force_calc=False) -> (bool, npt.NDArray):

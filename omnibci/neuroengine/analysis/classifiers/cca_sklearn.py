@@ -65,17 +65,16 @@ class CCA(AnalysisMethod):
         self.SAMPLE_COUNT = duration * srate  # cal time * sample rate
         self.OFFSET_LENGTH = math.floor(0.14 * srate)  # offset time * sample rate
 
-    def is_epoch_head(self, data_package):
+    def check_event(self, data_package):
         data = data_package.data
-        event_data = data[data.shape[0] - 1, :]
+        event_channel_data = data[-1, :]
         # TODO: use the current classifier method judge whether jump to another state
-        for index, event in enumerate(event_data):
+        for index, event in enumerate(event_channel_data):
             # found event trigger
             if event in EpochStartEventSet:
-                started = True
-                return started, index, event
+                return index, event
         # not found event trigger
-        return False, 0, 0
+        return -1, 0
 
     def recognize(self,data, force_calc=False) -> (bool, int):
         # force calculate the data
@@ -96,12 +95,20 @@ class CCA(AnalysisMethod):
 
     def predict(self, data):
         p = []
+        data_t = data.T
         for frequencyIndex in range(0, len(self.template_set)):
             template = self.template_set[frequencyIndex]
-            # template = template[:, 0:data.shape[0]]
-            # template = template.T
-            self.cca.fit(data.T, template.T)
-            S_d, S_t = self.cca.transform(data.T, template.T)
+            # 确保模板与数据时间点对齐
+            template_t = template[:data.shape[1], :].T  # 截断并转置
+
+            self.cca.fit(data_t, template_t)
+            S_d, S_t = self.cca.transform(data_t, template_t)
+
+            # # 计算第一对典型变量的相关系数
+            # cov = np.cov(S_d[:, 0], S_t[:, 0])
+            # r = cov[0, 1] / (np.std(S_d[:, 0]) * np.std(S_t[:, 0]))
+            # p.append(r)
+
             r = np.corrcoef(S_d[:, 0], S_t[:, 0])[0, 1]
             p.append(r)
         result = p.index(max(p))
