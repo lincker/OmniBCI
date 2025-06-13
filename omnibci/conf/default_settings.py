@@ -5,7 +5,7 @@
 from neuroengine.message.command_server import CommandServer
 
 # ACQUISITION SETTINGS
-FILE_READER_CHUNK_SIZE = 1024
+FILE_READER_CHUNK_SIZE = 100
 FILE_READER_PLAY_SPEED = 1.0
 
 DATA_PROVIDER_IP = '192.168.0.3'

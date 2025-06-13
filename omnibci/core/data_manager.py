@@ -9,11 +9,11 @@ class DataManager:
     def __init__(self, data_buffer=None):
         self.data_buffer = data_buffer if data_buffer is not None else asyncio.Queue()
 
-    def add_packet(self, packet):
+    def put_packet(self, packet):
         self.data_buffer.put_nowait(packet)
 
     def get_packet(self):
-        return self.data_buffer.get_nowait()
+        return self.data_buffer.get()
 
     def empty(self):
         return self.data_buffer.empty()
