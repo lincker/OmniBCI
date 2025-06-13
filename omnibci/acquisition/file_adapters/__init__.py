@@ -29,16 +29,17 @@ class CNTReaderAdapter(ReaderAdapter):
 
     def __init__(self, file_path):
         super().__init__(file_path)
-        self.file = mne.io.read_raw_cnt(self.file_path, preload=True)
+        self.file = mne.io.read_raw_cnt(input_fname=self.file_path, data_format='auto', preload=True, date_format='mm/dd/yy')
         self._set_event()
 
     def _set_event(self):
         self.data = self.file['data'][0]
         events, event_dict = mne.events_from_annotations(self.file)
-        self.data_length = self.data.shape[1]
-        event_channel = np.zeros(self.data_length)
+        event_channel_length = self.data.shape[1]
+        event_channel = np.zeros(event_channel_length)
         for position, _, value in events:
             event_channel[position] = value
+            print(f'CNTReaderAdapter: set event: position = {position}, event = {value}')
         arr = np.vstack((self.data, event_channel))
         self.data = arr
 

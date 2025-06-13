@@ -5,8 +5,10 @@
 # @Date     : 2025-04-12 01:45
 import asyncio
 from enum import Enum
+import logging
+import time
 from acquisition.base import BaseReader
-from core.data_manager import DataManager
+from core.data_model import DataPacket
 
 
 class AcquisitionCommand(Enum):
@@ -47,19 +49,17 @@ class Acquisition:
         await self.shutdown()
 
     async def shutdown(self):
-        print('========================---acquisitor shut down---==============================')
+        logging.info('========================---acquisitor shut down---==============================')
         await self.reader.disconnect()
 
-
     async def startup(self):
-        print('=========================---acquisitor start---=================================')
+        logging.info('=========================---acquisitor start---=================================')
         # await self.device.setup()
         # self.status = AcquisitorState.running
 
     async def main_loop(self):
         counter = 0
         print('---main loop---')
-        print(f'counter = {counter}')
         while not self.should_exit:
             # await command_queue.get()
             if not self.command_queue.empty():
@@ -68,7 +68,6 @@ class Acquisition:
             #     await self.fetch()
             await asyncio.sleep(0.1)
             counter += 1
-            print(f'counter = {counter}')
 
     async def execute(self, command):
         # TODO: refactor to use command pattern
@@ -86,6 +85,7 @@ class Acquisition:
 
         if self.status == AcquisitionState.running and command == AcquisitionCommand.start_stream:
             # start data stream, add fetch into event loop task
+            await self.reader.start_stream()
             self.fetch_task = asyncio.create_task(self.fetch())
             print('fetch task started')
             return
@@ -108,17 +108,27 @@ class Acquisition:
             print(f'unknown command = {command}')
 
     async def fetch(self):
-
-        async for packet in self.reader.start_stream():
-            packet = self.preprocess(packet)
-            self.data_manager.add_packet(packet)
-            await asyncio.sleep(0.01)
-
-        print('fetching')
+        logging.info('fetching')
+        packets_counter = 0
+        try:
+            while True:
+                raw_data = await self.reader.read_data()
+                raw_data = self.preprocess(raw_data)
+                packet = DataPacket(
+                            timestamp=time.time_ns(),
+                            data=raw_data,
+                            sequence_id=packets_counter,
+                        )
+                self.data_manager.put_packet(packet)
+                packets_counter += 1
+        except asyncio.CancelledError:
+            logging.info('Fetch task cancelled')
+        except Exception as e:
+            logging.error(f'Error in data streaming task: {e}')
 
     def preprocess(self, data):
         # may detach eeg data and event
-        # print(f'preprocess data= {data}')
+        # print(f'preprocess data=')
         return data
 
 
@@ -140,7 +150,7 @@ class AcquisitionProcess(mp.Process):
             from .file_reader import FileReader
             reader = FileReader(config)
         elif config['reader'] == 'neuroscan45':
-            from .device_adapters.neuroscan.scan45.adapter import Scan45DataReader
+            from .devices.neuroscan.scan45 import Scan45DataReader
             reader = Scan45DataReader(config)
         return reader
 

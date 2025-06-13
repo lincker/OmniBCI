@@ -1,17 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# @File     : adapter.py
-# @Author   : lincker
-# @Date     : 2025-04-13 00:58
-# for device software scan 4.5
-# the event channel represent high voltage.  Only the first byte used as uint8.
+# @Author   : lincker <haolin.d.wu@gmail.com>
+# @Date     : 2025-05-27 15:53
 import time
 import sys
 import asyncio
-from datetime import datetime
 from enum import IntEnum
 import logging
-from typing import Iterator
+from typing import AsyncIterator
 
 import numpy as np
 
@@ -193,29 +189,11 @@ class Scan45DataReader(BaseReader):
         # TODO:
         self.info = str(header)
 
-    async def start_stream(self) -> Iterator[DataPacket]:
+    async def start_stream(self) -> bool:
         self.writer.write(scan45_message_manager.startSendingDataCommand)
         await self.writer.drain()
         self._is_streaming = True
-        self._packets_counter = 0
-        while self._is_streaming:
-            raw_data = await self._read_data()
-
-            # 构造数据包实例
-            # import time
-            ns = time.time_ns()
-            yield DataPacket(
-                timestamp=time.time_ns()/1e9,  # 纳秒级时间戳
-                data=np.frombuffer(raw_data, dtype=np.float32),
-                sequence_id=self._packets_counter,
-            )
-            self._packets_counter += 1
-
-    # async def _check_quality(self, raw: npt.array) -> int:
-    #     rawdata = raw
-    #     """异步质量检查（可扩展为CPU密集型操作时用run_in_executor）"""
-    #
-    #     return DataQualityFlag.OK.value
+        return True
 
     async def stop_stream(self) -> bool:
         self.writer.write(scan45_message_manager.stopSendingDataCommand)
@@ -230,7 +208,7 @@ class Scan45DataReader(BaseReader):
     # async def _stop_data_stream(self):
     #     self.writer.write(scan45_message_manager.stopSendingDataCommand)
 
-    async def _read_data(self):
+    async def read_data(self):
         # load 1 package data and unpack it
         header, body = await self._load_package()
         if header.ID == 'DATA' and header.code == 2:
@@ -242,12 +220,12 @@ class Scan45DataReader(BaseReader):
             raise Exception('header indicates body does not contain data, not implemented')
 
     async def _load_package(self):
-        header_bytes = await self.reader.read(scan45_message_manager.Header.HEADER_SIZE)
+        header_bytes = await self.reader.readexactly(scan45_message_manager.Header.HEADER_SIZE)
         # header = np.frombuffer(header, dtype=np.uint8)
         header = scan45_message_manager.Header.create_from_bytes(header_bytes=header_bytes)
         if header.size_body == 0:
             print("body size is 0")
-        body = await self.reader.read(header.size_body)
+        body = await self.reader.readexactly(header.size_body)
         # TODO； check body data type
         return header, body
 
