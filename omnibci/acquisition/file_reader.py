@@ -3,9 +3,8 @@
 # @File     : file_reader.py
 # @Author   : lincker
 # @Date     : 2025-04-17 07:05
-import time
 import asyncio
-from typing import Iterator
+
 from .base import BaseReader
 from core.data_model import DataPacket
 from omnibci.conf import settings
@@ -17,6 +16,7 @@ class FileReader(BaseReader):
         super().__init__()
         self.config = config
         self.reader_adapter = None
+        self.file_pointer = 0  # 文件指针，初始位置为0
         self._data_length = 0
         self._chunk_size = settings.FILE_READER_CHUNK_SIZE
         self.speed = settings.FILE_READER_PLAY_SPEED
@@ -48,38 +48,67 @@ class FileReader(BaseReader):
             raise ValueError(f"{self.file_path}, Unsupported file format")
         return True
 
-    async def start_stream(self) -> Iterator[DataPacket]:
-        """开始数据流"""
+    async def start_stream(self) -> bool:
+        """启动数据流"""
         if self.reader_adapter is None:
             raise ValueError("Reader not initialized. Call connect() first.")
+        self.file_pointer = 0  # 重置文件指针
         self._is_streaming = True
-        packets_counter = 0
-        file_pointer = 0
-        #TODO: replay speed and timestamp
-        # time_scaler = 1.0 / self.speed
-        # base_ts = time.time_ns()
-        # file_ts = 0
+        return True
 
-        while self._is_streaming:
-            # expected_ts = (time.time_ns() - base_ts) * time_scaler / 1e9
-            # if file_ts > expected_ts + 0.1:  # 超过100ms则等待
-            #     await asyncio.sleep(0.01)
-            #     continue
+    async def read_data(self):
+        """读取一个数据包"""
+        raw_data = await self.reader_adapter.read_data(start=self.file_pointer, end=self.file_pointer + self._chunk_size)
+        self.file_pointer += self._chunk_size  # 更新文件指针
+        if raw_data is None:
+            self._is_streaming = False
+            raise ValueError("No data read from the file.")
+        await asyncio.sleep(0.01)
+        return raw_data
 
-            raw_data = await self.reader_adapter.read_data(file_pointer, file_pointer + self._chunk_size)
-            file_pointer += self._chunk_size
-            if raw_data is None:
-                self._is_streaming = False
-                raise ValueError("No data read from the file.")
-            packet = DataPacket(
-                timestamp=time.time_ns(),
-                data=raw_data,
-                sequence_id=packets_counter,
-            )
-            # file_ts += self.sample_interval
-            packets_counter += 1
+        # TODO: delete
+        # packet = DataPacket(
+        #     timestamp=time.time_ns(),
+        #     data=raw_data,
+        #     sequence_id=self.file_pointer // self._chunk_size,
+        # )
+        # self.file_pointer += self._chunk_size
+        # return packet
 
-            yield packet
+
+
+    # async def start_stream(self) -> AsyncIterator[DataPacket]:
+    #     """开始数据流"""
+    #     if self.reader_adapter is None:
+    #         raise ValueError("Reader not initialized. Call connect() first.")
+    #     self._is_streaming = True
+    #     packets_counter = 0
+    #     file_pointer = 0
+    #     #TODO: replay speed and timestamp
+    #     # time_scaler = 1.0 / self.speed
+    #     # base_ts = time.time_ns()
+    #     # file_ts = 0
+    #
+    #     while self._is_streaming:
+    #         # expected_ts = (time.time_ns() - base_ts) * time_scaler / 1e9
+    #         # if file_ts > expected_ts + 0.1:  # 超过100ms则等待
+    #         #     await asyncio.sleep(0.01)
+    #         #     continue
+    #
+    #         raw_data = await self.reader_adapter.read_data(file_pointer, file_pointer + self._chunk_size)
+    #         file_pointer += self._chunk_size
+    #         if raw_data is None:
+    #             self._is_streaming = False
+    #             raise ValueError("No data read from the file.")
+    #         packet = DataPacket(
+    #             timestamp=time.time_ns(),
+    #             data=raw_data,
+    #             sequence_id=packets_counter,
+    #         )
+    #         # file_ts += self.sample_interval
+    #         packets_counter += 1
+    #
+    #         yield packet
 
 
 

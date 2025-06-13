@@ -5,8 +5,7 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 from numpy import typing as npt
-from typing import Iterator, TypedDict, NotRequired
-from omnibci.core.data_model import DataPacket
+from typing import Any, TypedDict, NotRequired
 
 
 # --------------------------
@@ -59,8 +58,12 @@ class BaseReader(ABC):
         """建立设备/文件连接"""
 
     @abstractmethod
-    async def start_stream(self) -> Iterator[DataPacket]:
-        """返回数据流迭代器"""
+    async def start_stream(self) -> bool:
+        """启动数据流"""
+
+    @abstractmethod
+    async def read_data(self)-> npt.NDArray[Any]:
+        """读取单个数据包"""
 
     @abstractmethod
     async def stop_stream(self) -> bool:
