@@ -1,8 +1,32 @@
-command_server_ip = "localhost"
-command_server_port = 5000
+project_name = "OmniBCI"
+version = "0.1.0"
+debug = false
+
+[READER]
+type = "neuroscan45"
+
+[logging]
+level = "INFO"
+file_path = "logs/omnibci.log"
 
 [ACQUISITION]
+FILE_READER_CHUNK_SIZE = 100
+FILE_READER_PLAY_SPEED = 1.0
+DATA_FILE_PATH = ''
+
+DATA_PROVIDER_IP = '192.168.0.3'
+DATA_PROVIDER_PORT = 4000
 
 [NEUROENGINE]
+MESSAGE_SERVER_IP = 'localhost'
+MESSAGE_SERVER_PORT = 8000
+
+COMMAND_SERVER_IP = 'localhost'
+COMMAND_SERVER_PORT = 8080
 
 [STIMULATION]
+
+[ssvep]
+sample_rate = 1000
+duration = 3
+offset_time = 0.14
