@@ -16,7 +16,7 @@ class EventType(IntEnum):
     StopProcessSystem = 32
     CloseAllProcessSystem = 33
     StopAnalysis = 34
-    StartStimTrail = 41
+    StartStimTrial = 41
     FeedbackResult = 8
     MessageFromStimulation = 9
     StartStimulation = 301
