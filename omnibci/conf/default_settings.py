@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-05-19 16:02
-from neuroengine.message.command_server import CommandServer
+from neuroengine.server.command_server import CommandServer
 
 # ACQUISITION SETTINGS
 FILE_READER_CHUNK_SIZE = 100

@@ -3,20 +3,24 @@
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2023-12-11 10:34
 
-import time
 import asyncio
-from typing import List, Any
+import time
+from typing import Any, List
+
 import numpy as np
-from omnibci.core.data_model import DataPacket
-from omnibci.core.analysis_method import AnalysisMethod
+
+from omnibci.core.algorithm import BaseRecognizer
 from omnibci.core.data_manager import DataManager
+from omnibci.core.data_model import StreamFrame
+
 from .epoch import EpochManager
+
 # check EEG data and detect the event
 
 
-class IdleProcess:
+class IdleState:
     def __init__(self, analysis_controller, data_manager: DataManager, epoch_manager: EpochManager):
-    # def __init__(self, data_queue, analysis_method: AnalysisMethod):
+    # def __init__(self, data_queue, analysis_method: BaseRecognizer):
         self.data_manager = data_manager
         self.epoch_manager = epoch_manager
         self.controller = analysis_controller
@@ -28,7 +32,7 @@ class IdleProcess:
             await asyncio.sleep(0.02)
             return
 
-        data_packet: DataPacket = self.data_manager.get_packet()
+        data_packet: StreamFrame = self.data_manager.get()
         # detect whether the epoch begin
         is_begin = self.epoch_manager.begin_recognition(data_packet)
         if is_begin:

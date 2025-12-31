@@ -6,9 +6,13 @@ from enum import Enum
 
 import asyncio
 
+from omnibci.core.algorithm import BaseRecognizer
+
 from .classifiers.cca_sklearn import CCA
-from .idle import IdleProcess
-from .recognize import RecognizeProcess
+from omnibci.plugin.algorithm.ssvep.classic40CCA import Classic40CCA
+from omnibci.plugin.algorithm.ssvep.dynamic_window_spatio_temporal_equalizer import DynamicWindowSpatioTemporalEqualizer
+from .idle import IdleState
+from .recognize import RecognizeState
 from .epoch import EpochManager
 
 
@@ -24,11 +28,11 @@ class AnalysisCommand(Enum):
 class AnalysisController:
     def __init__(self, command_queue, data_manager, event_manager):
         self.data_manager = data_manager
-        self.analysis_method = CCA()
+        self.analysis_method: BaseRecognizer = Classic40CCA()
         self.event_manager = event_manager
-        self.epoch_manager = EpochManager(analysis_method=self.analysis_method)
-        self.idle = IdleProcess(self, self.data_manager, self.epoch_manager)
-        self.recognize = RecognizeProcess(self, self.data_manager, self.epoch_manager, self.event_manager)
+        self.epoch_manager = EpochManager(recognizer=self.analysis_method)
+        self.idle = IdleState(self, self.data_manager, self.epoch_manager)
+        self.recognize = RecognizeState(self, self.data_manager, self.epoch_manager, self.event_manager)
         self.current_status = self.idle
         self.command_queue = command_queue
         self.should_stopped = False
@@ -47,6 +51,15 @@ class AnalysisController:
         if command == AnalysisCommand.should_stop:
             self.should_stopped = True
             return
+
+
+# class Pipeline:
+#
+#     def __init__(self):
+#         pass
+#
+#     def run(self):
+#         pass
 
 
 

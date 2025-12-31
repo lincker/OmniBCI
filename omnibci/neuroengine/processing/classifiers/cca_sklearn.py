@@ -5,7 +5,7 @@
 import math
 import numpy as np
 from sklearn.cross_decomposition import CCA as skCCA
-from omnibci.core.analysis_method import AnalysisMethod
+from omnibci.core.algorithm import BaseRecognizer
 
 EpochStartEventSet = set(range(1, 8))
 
@@ -44,7 +44,7 @@ class CCATemplate:
         return template
 
 
-class CCA(AnalysisMethod):
+class CCA(BaseRecognizer):
 
     def __init__(self):
         super().__init__()
@@ -65,7 +65,7 @@ class CCA(AnalysisMethod):
         self.SAMPLE_COUNT = duration * srate  # cal time * sample rate
         self.OFFSET_LENGTH = math.floor(0.14 * srate)  # offset time * sample rate
 
-    def check_event(self, data_package):
+    def trial_start_position(self, data_package, event_set=EpochStartEventSet) -> (int, int):
         data = data_package.data
         event_channel_data = data[-1, :]
         # TODO: use the current classifier method judge whether jump to another state
@@ -76,9 +76,9 @@ class CCA(AnalysisMethod):
         # not found event trigger
         return -1, 0
 
-    def recognize(self,data, force_calc=False) -> (bool, int):
+    def recognize(self, data, force_predict=False) -> (bool, int):
         # force calculate the data
-        if force_calc:
+        if force_predict:
             if data.shape[1] > self.SAMPLE_COUNT + self.OFFSET_LENGTH:
                 calc_data = data[:, self.OFFSET_LENGTH:int(self.SAMPLE_COUNT + self.OFFSET_LENGTH)]
             else:

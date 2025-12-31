@@ -2,22 +2,24 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-04-27 10:10
-import multiprocessing as mp
 import asyncio
+import multiprocessing as mp
 
-from core.data_manager import DataManager
-from core.event.base import EventType
-from core.event.event_manager import EventManager
-from acquisition.acquisition_service import AcquisitionProcess, AcquisitionCommand
-from .analysis.pipeline import AnalysisPipelineProcess
-from .analysis.analysis_controller import AnalysisCommand
-from .message.management import ServerMessageManagement
+from omnibci.acquisition.acquisition_service import (AcquisitionCommand,
+                                                     AcquisitionProcess)
+from omnibci.core.data_manager import DataManager
+from omnibci.core.event.base import EventType
+from omnibci.core.event.event_manager import EventManager
+
+from .processing.pipeline import AnalysisCommand
+from .processing.main import NeuroEngineProcess
+from .server.management import ServerMessageManagement
 
 
-class MainApplication:
+class NeuroEngine:
     def __init__(self, config=None):
         self.config = config
-        # TODO: put acquisitor command queue and analysis command queue into event manager
+        # TODO: put acquisitor command queue and processing command queue into event manager
         self.event_manager = EventManager()
         self.event_manager.set_event_queue(queue=mp.Queue())
         # TODO: refactor , not process, use thread
@@ -28,7 +30,7 @@ class MainApplication:
         self.acquisitor = AcquisitionProcess(config, self.acquisition_command_queue, self.data_manager)
         self.acquisitor.start()
         self.analysis_command_queue = mp.Queue(20)
-        self.analysis_controller = AnalysisPipelineProcess(config=config,command_queue=self.analysis_command_queue, data_manager=self.data_manager, event_manager=self.event_manager)
+        self.analysis_controller = NeuroEngineProcess(config=config, command_queue=self.analysis_command_queue, data_manager=self.data_manager, event_manager=self.event_manager)
         self.analysis_controller.start()
         self.should_stop = False
 
@@ -39,7 +41,7 @@ class MainApplication:
     async def serve(self):
         await self.start()
         await self.main_loop()
-        self.stop()
+        await self.stop()
 
     async def start(self):
         await self.event_manager.start()
@@ -47,10 +49,10 @@ class MainApplication:
         self.register_event_listener()
 
     def register_event_listener(self):
-        self.event_manager.register_event_listener(event_type=EventType.ConnectDataProvider, handler=self._connect_data_provider)
+        self.event_manager.register_event_listener(event_type=EventType.OpenDataProvider, handler=self._connect_data_provider)
         self.event_manager.register_event_listener(event_type=EventType.DisconnectDataProvider, handler=self._disconnect_data_provider)
-        self.event_manager.register_event_listener(event_type=EventType.StartReceive, handler=self._reader_start_stream)
-        self.event_manager.register_event_listener(event_type=EventType.StopReceive, handler=self._reader_stop_stream)
+        self.event_manager.register_event_listener(event_type=EventType.StartRead, handler=self._reader_start_stream)
+        self.event_manager.register_event_listener(event_type=EventType.StopRead, handler=self._reader_stop_stream)
         # self.event_manager.register_event_listener(event_type=EventType.StopAquisitionDevice, handler=self._stop_acquisitor)
         self.event_manager.register_event_listener(event_type=EventType.StopAnalysis, handler=self._stop_analysis)
         self.event_manager.register_event_listener(event_type=EventType.StopProcessSystem, handler=self._stop_process_system)
@@ -63,7 +65,7 @@ class MainApplication:
         # self.acquisitor_command_queue.put(AcquisitorCommand.start_data_stream)
         # # TODO: time sleep must before analysis_controller run
         # # time.sleep(20)
-        # self.event_manager.put_event(event=Event(EventType.StartStimTrail))
+        # self.event_manager.put_event(event=Event(EventType.StartStimTrial))
         # time.sleep(20)
         # self.acquisitor_command_queue.put(AcquisitorCommand.stop_data_stream)
         # time.sleep(5)
@@ -99,7 +101,7 @@ class MainApplication:
     def _stop_process_system(self, event):
         self.should_stop = True
 
-    def stop(self):
+    async def stop(self):
         self.acquisitor.terminate()
         self.analysis_controller.terminate()
         self.analysis_command_queue.close()
@@ -107,6 +109,6 @@ class MainApplication:
         self.acquisition_command_queue.close()
         self.acquisition_command_queue.join_thread()
         self.event_manager.stop()
-        self.sever_message_management.stop()
+        await self.sever_message_management.stop()
 
 
