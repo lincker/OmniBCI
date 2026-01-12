@@ -2,18 +2,16 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-05-27 15:53
-import time
-import sys
 import asyncio
-from enum import IntEnum
 import logging
-from typing import AsyncIterator
+import sys
+import time
+from enum import IntEnum
 
 import numpy as np
 
-from acquisition.base import BaseReader, BaseTrigger
-from core.data_model import DataPacket
-from conf import settings
+from omnibci.core.base.acquisition import ReaderBase, TriggerBase
+from omnibci.conf import settings
 
 
 class Scan45Message:
@@ -137,12 +135,12 @@ class Scan45Message:
 scan45_message_manager = Scan45Message()
 
 
-class Scan45DataReader(BaseReader):
-
-    def __init__(self, config) -> None:
+class Scan45DataReader(ReaderBase):
+    plugin_type = 'neuroscan_scan45_reader'
+    def __init__(self) -> None:
         super().__init__()
-        self.data_provider_ip = settings.DATA_PROVIDER_IP
-        self.data_provider_port = settings.DATA_PROVIDER_PORT
+        self.data_provider_ip = settings.ACQUISITION.DATA_PROVIDER_IP
+        self.data_provider_port = settings.ACQUISITION.DATA_PROVIDER_PORT
         # self.n_channels = config.get('n_channels', 9) # refactor later
         # self.record_srate = config.get('record_srate', 1000)
         # self.srate # TODO: refactor later
@@ -160,7 +158,7 @@ class Scan45DataReader(BaseReader):
         return self._is_connected
 
     # TODO: refactor the return values
-    async def _connect(self) -> (asyncio.StreamReader, asyncio.StreamWriter):
+    async def _connect(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         print("connect to ", self.data_provider_ip, self.data_provider_port)
         self.reader, self.writer = await asyncio.open_connection(self.data_provider_ip, self.data_provider_port)
         print("connected")
@@ -176,7 +174,7 @@ class Scan45DataReader(BaseReader):
         return True
 
     async def _disconnect(self):
-        self.writer.close()
+        self.writer.disconnect()
         await self.writer.wait_closed()
 
     async def get_metadata(self):
@@ -189,13 +187,13 @@ class Scan45DataReader(BaseReader):
         # TODO:
         self.info = str(header)
 
-    async def start_stream(self) -> bool:
+    async def start_read(self) -> bool:
         self.writer.write(scan45_message_manager.startSendingDataCommand)
         await self.writer.drain()
         self._is_streaming = True
         return True
 
-    async def stop_stream(self) -> bool:
+    async def stop_read(self) -> bool:
         self.writer.write(scan45_message_manager.stopSendingDataCommand)
         await self.writer.drain()
         self._is_streaming = False
@@ -208,7 +206,7 @@ class Scan45DataReader(BaseReader):
     # async def _stop_data_stream(self):
     #     self.writer.write(scan45_message_manager.stopSendingDataCommand)
 
-    async def read_data(self):
+    async def read_unit(self):
         # load 1 package data and unpack it
         header, body = await self._load_package()
         if header.ID == 'DATA' and header.code == 2:
@@ -259,7 +257,7 @@ class Scan45DataReader(BaseReader):
                 # print(f'index = {index}-----------event = {event}')
             if self._previous_event == 0 and event != 0:
                 self._previous_event = event
-                print(f'index = {index}-----------event = {event}')
+                print(f'neuroscan scan4.5 index = {index}-----------event = {event}')
             elif self._previous_event != 0:
                 if event == self._previous_event:
                     packet_event[index] = 0
@@ -268,26 +266,29 @@ class Scan45DataReader(BaseReader):
         return packet
 
 
-class Scan45Trigger(BaseTrigger):
+class Scan45Trigger(TriggerBase):
+    plugin_type = 'neuroscan_scan45_trigger'
     def __init__(self, COM='3100'):
         super().__init__()
         self.COM = COM
         self.address = int(COM, 16)
         self.port = self._set_parallel_port(self.address)
-        self.port = None
-        self.clear_trigger()
+        self.clear()
 
     def send(self, event_id):
+        # self._send(0)
+        # time.sleep(0.02)
         self._send(event_id)
 
     def _send(self, data):
         if sys.platform == 'win32':
             self.port.setData(data)
         else:
-            print(f'macOS do not support parallel port. Send trigger data = {data}')
+            print(f'macOS do not support parallel port. Send data = {data}')
 
-    def clear_trigger(self):
+    def clear(self):
         self._send(0)
+        time.sleep(0.02)
 
     def _set_parallel_port(self, address):
         if sys.platform == 'win32':
@@ -296,25 +297,25 @@ class Scan45Trigger(BaseTrigger):
                            dlportio=('_dlportio', 'PParallelDLPortIO'))
             from ctypes import windll
             from importlib import import_module
-            ParallelPort = None
+            parallel_port = None
             for key, val in drivers.items():
                 driver_name, class_name = val
                 try:
                     hasattr(windll, key)
-                    ParallelPort = getattr(import_module('.' + driver_name, __name__),
+                    parallel_port = getattr(import_module('..' + driver_name, __name__),
                                            class_name)
                     break
                 except (OSError, KeyError, NameError):
-                    ParallelPort = None
+                    parallel_port = None
                     continue
-            if ParallelPort is not None:
+            if parallel_port is not None:
                 try:
-                    port = ParallelPort(address)
+                    port = parallel_port(address)
                     return port
                 except Exception as e:
                     logging.error(f"Failed to initialize parallel port at {address}: {e}")
                     return None
-            if ParallelPort is None:
+            if parallel_port is None:
                 logging.warning(
                                 "No parallel port driver found. Install either "
                                 "inpout32, inpoutx64 or dlportio")

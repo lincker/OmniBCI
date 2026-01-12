@@ -41,7 +41,7 @@ class CommandServer:
         elif command_type == 'StartStimTrial':
             event = Event(type=EventType.StartStimTrial, data=command_data)
         elif command_type == 'StopAll':
-            event = Event(type=EventType.StopProcessSystem, data=command_data)
+            event = Event(type=EventType.StopNeuroEnginePipeline, data=command_data)
         else:
             return web.json_response({'status': 'error', 'server': 'Invalid command type'})
         # check command

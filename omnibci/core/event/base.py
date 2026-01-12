@@ -6,21 +6,23 @@ from enum import IntEnum
 
 
 class EventType(IntEnum):
+    # acquisition
     ConnectDataProvider = 101
     DisconnectDataProvider = 102
     # GetDataProviderMetaData = 103
     # StopAcquisitionDevice = 104
-    StartReceive = 111 # StartReadData
-    StopReceive = 112    #
-    StartProcessSystem = 31
-    StopProcessSystem = 32
-    CloseAllProcessSystem = 33
-    StopAnalysis = 34
-    StartStimTrial = 41
-    FeedbackResult = 8
+    StartRead = 111 # StartReadData
+    StopRead = 112    #
+    # neuro engine
+    StartNeuroEnginePipeline = 31
+    StopNeuroEnginePipeline = 32
+    CloseAllNeuroEngineProcessSystem = 33
+    # stimulation
+    StartStimTrial = 311
     MessageFromStimulation = 9
     StartStimulation = 301
     StopStimulation = 302
+    FeedbackResult = 408
 
 
 class Event:

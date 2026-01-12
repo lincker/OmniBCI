@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# @File     : __init__.py.py
 # @Author   : lincker
 # @Date     : 2025-04-13 02:04
 from abc import ABC, abstractmethod
+
 import mne
 import numpy as np
 
@@ -16,7 +16,7 @@ class ReaderAdapter(ABC):
         self.file_path = file_path
 
     @abstractmethod
-    async def read_data(self, start: int = 0, end: int = None):
+    async def read_chunk(self, start: int, end: int):
         raise NotImplementedError("read_data() must be implemented in subclasses")
 
     @abstractmethod
@@ -43,7 +43,7 @@ class CNTReaderAdapter(ReaderAdapter):
         arr = np.vstack((self.data, event_channel))
         self.data = arr
 
-    async def read_data(self, start: int = 0, end: int = None):
+    async def read_chunk(self, start: int, end: int):
         return self.data[:, start:end]
 
     async def close(self):

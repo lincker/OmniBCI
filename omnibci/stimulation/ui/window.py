@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # from UIview import UIView
-from OpenGL.GL import glGetString, GL_RENDERER, GL_VERSION,glViewport
+from OpenGL.GL import glGetString, GL_RENDERER, GL_VERSION,glClearColor, glClear, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT
 import glfw
 from sys import platform
 
@@ -27,6 +27,10 @@ class UIWindow:
             print('glfw create window failed')
             return
         glfw.make_context_current(self.window)
+        glfw.set_window_pos(self.window, 0, 0)
+        # 设置 OpenGL 清除颜色为黑色 (R=0, G=0, B=0, A=1)
+        glClearColor(0.0, 0.0, 0.0, 0.0)
+        glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)  # 清除颜色缓冲区
         # glViewport(0, 0, width, height)
         # OpenGL version info
         renderer = glGetString(GL_RENDERER)

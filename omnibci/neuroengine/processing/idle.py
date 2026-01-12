@@ -4,14 +4,9 @@
 # @Date     : 2023-12-11 10:34
 
 import asyncio
-import time
-from typing import Any, List
 
-import numpy as np
-
-from omnibci.core.algorithm import BaseRecognizer
 from omnibci.core.data_manager import DataManager
-from omnibci.core.data_model import StreamFrame
+from omnibci.core.data_model import BCIStreamFrame
 
 from .epoch import EpochManager
 
@@ -32,7 +27,7 @@ class IdleState:
             await asyncio.sleep(0.02)
             return
 
-        data_packet: StreamFrame = self.data_manager.get()
+        data_packet: BCIStreamFrame = self.data_manager.get()
         # detect whether the epoch begin
         is_begin = self.epoch_manager.begin_recognition(data_packet)
         if is_begin:

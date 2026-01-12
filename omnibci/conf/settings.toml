@@ -2,20 +2,23 @@ project_name = "OmniBCI"
 version = "0.1.0"
 debug = false
 
-[READER]
-type = "neuroscan45"
-
-[logging]
+[LOGGING]
 level = "INFO"
 file_path = "logs/omnibci.log"
 
 [ACQUISITION]
-FILE_READER_CHUNK_SIZE = 100
-FILE_READER_PLAY_SPEED = 1.0
-DATA_FILE_PATH = ''
+reader_type = "file_reader"
+trigger_type = 'neuroscan_scan45'
+
+file_reader_chunk_size = 100
+file_reader_play_speed = 1.0
+data_file_path = "/Users/lincker/workspace/OmniBCI/tests/aquisition/../fixture/train.cnt"
 
 DATA_PROVIDER_IP = '192.168.0.3'
 DATA_PROVIDER_PORT = 4000
+
+[ALGORITHM]
+recognizer = 'THUBCI_SSVEP_classic40CCA'
 
 [NEUROENGINE]
 MESSAGE_SERVER_IP = 'localhost'
@@ -25,6 +28,7 @@ COMMAND_SERVER_IP = 'localhost'
 COMMAND_SERVER_PORT = 8080
 
 [STIMULATION]
+stimulus = 'THUBCI_SSVEP_classic40_stimulus'
 
 [ssvep]
 sample_rate = 1000

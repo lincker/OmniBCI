@@ -4,6 +4,7 @@
 # @Date     : 2025-04-27 10:10
 import asyncio
 import multiprocessing as mp
+import os
 
 from omnibci.acquisition.acquisition_service import (AcquisitionCommand,
                                                      AcquisitionProcess)
@@ -11,8 +12,8 @@ from omnibci.core.data_manager import DataManager
 from omnibci.core.event.base import EventType
 from omnibci.core.event.event_manager import EventManager
 
-from .processing.pipeline import AnalysisCommand
-from .processing.main import NeuroEngineProcess
+from .processing.pipeline import PipelineCommand
+from .processing.main import PipelineProcess
 from .server.management import ServerMessageManagement
 
 
@@ -27,11 +28,11 @@ class NeuroEngine:
         self.data_manager = DataManager(data_buffer=mp.Queue())
         # TODO: refactor this
         self.acquisition_command_queue = mp.Queue(20)
-        self.acquisitor = AcquisitionProcess(config, self.acquisition_command_queue, self.data_manager)
+        self.acquisitor = AcquisitionProcess(self.acquisition_command_queue, self.data_manager)
         self.acquisitor.start()
-        self.analysis_command_queue = mp.Queue(20)
-        self.analysis_controller = NeuroEngineProcess(config=config, command_queue=self.analysis_command_queue, data_manager=self.data_manager, event_manager=self.event_manager)
-        self.analysis_controller.start()
+        self.pipeline_command_queue = mp.Queue(20)
+        self.pipeline = PipelineProcess(command_queue=self.pipeline_command_queue, data_manager=self.data_manager, event_manager=self.event_manager)
+        self.pipeline.start()
         self.should_stop = False
 
     def run(self):
@@ -51,11 +52,11 @@ class NeuroEngine:
     def register_event_listener(self):
         self.event_manager.register_event_listener(event_type=EventType.OpenDataProvider, handler=self._connect_data_provider)
         self.event_manager.register_event_listener(event_type=EventType.DisconnectDataProvider, handler=self._disconnect_data_provider)
-        self.event_manager.register_event_listener(event_type=EventType.StartRead, handler=self._reader_start_stream)
-        self.event_manager.register_event_listener(event_type=EventType.StopRead, handler=self._reader_stop_stream)
+        self.event_manager.register_event_listener(event_type=EventType.StartRead, handler=self._reader_start_read)
+        self.event_manager.register_event_listener(event_type=EventType.StopRead, handler=self._reader_stop_read)
         # self.event_manager.register_event_listener(event_type=EventType.StopAquisitionDevice, handler=self._stop_acquisitor)
-        self.event_manager.register_event_listener(event_type=EventType.StopAnalysis, handler=self._stop_analysis)
-        self.event_manager.register_event_listener(event_type=EventType.StopProcessSystem, handler=self._stop_process_system)
+        self.event_manager.register_event_listener(event_type=EventType.StopNeuroEnginePipeline, handler=self._stop_pipeline)
+        self.event_manager.register_event_listener(event_type=EventType.CloseAllNeuroEngineProcessSystem, handler=self._stop_neuro_engine_system)
 
 
 
@@ -87,25 +88,25 @@ class NeuroEngine:
     def _disconnect_data_provider(self, event):
         self.acquisition_command_queue.put(AcquisitionCommand.disconnect)
 
-    def _reader_start_stream(self, event):
-        self.acquisition_command_queue.put(AcquisitionCommand.start_stream)
+    def _reader_start_read(self, event):
+        self.acquisition_command_queue.put(AcquisitionCommand.start_read)
 
-    def _reader_stop_stream(self, event):
-        self.acquisition_command_queue.put(AcquisitionCommand.stop_stream)
+    def _reader_stop_read(self, event):
+        self.acquisition_command_queue.put(AcquisitionCommand.stop_read)
     def _stop_acquisition(self, event):
         self.acquisition_command_queue.put(AcquisitionCommand.stop_acquisition)
 
-    def _stop_analysis(self, event):
-        self.analysis_command_queue.put(AnalysisCommand.should_stop)
+    def _stop_pipeline(self, event):
+        self.pipeline_command_queue.put(PipelineCommand.should_stop)
 
-    def _stop_process_system(self, event):
+    def _stop_neuro_engine_system(self, event):
         self.should_stop = True
 
     async def stop(self):
         self.acquisitor.terminate()
-        self.analysis_controller.terminate()
-        self.analysis_command_queue.close()
-        self.analysis_command_queue.join_thread()
+        self.pipeline.terminate()
+        self.pipeline_command_queue.close()
+        self.pipeline_command_queue.join_thread()
         self.acquisition_command_queue.close()
         self.acquisition_command_queue.join_thread()
         self.event_manager.stop()

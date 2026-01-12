@@ -6,11 +6,8 @@ from enum import Enum
 
 import asyncio
 
-from omnibci.core.algorithm import BaseRecognizer
+from core.base.algorithm import RecognizerBase
 
-from .classifiers.cca_sklearn import CCA
-from omnibci.plugin.algorithm.ssvep.classic40CCA import Classic40CCA
-from omnibci.plugin.algorithm.ssvep.dynamic_window_spatio_temporal_equalizer import DynamicWindowSpatioTemporalEqualizer
 from .idle import IdleState
 from .recognize import RecognizeState
 from .epoch import EpochManager
@@ -21,16 +18,16 @@ from .epoch import EpochManager
 # if the detect process detect the event, then run the event process, else run the wait process
 
 
-class AnalysisCommand(Enum):
-    should_stop = 'analysis_controller_stop'
+class PipelineCommand(Enum):
+    should_stop = 'pipeline_stop'
 
 
-class AnalysisController:
-    def __init__(self, command_queue, data_manager, event_manager):
+class Pipeline:
+    def __init__(self, recognizer:RecognizerBase, command_queue, data_manager, event_manager):
         self.data_manager = data_manager
-        self.analysis_method: BaseRecognizer = Classic40CCA()
+        self.recognizer: RecognizerBase = recognizer
         self.event_manager = event_manager
-        self.epoch_manager = EpochManager(recognizer=self.analysis_method)
+        self.epoch_manager = EpochManager(recognizer=self.recognizer)
         self.idle = IdleState(self, self.data_manager, self.epoch_manager)
         self.recognize = RecognizeState(self, self.data_manager, self.epoch_manager, self.event_manager)
         self.current_status = self.idle
@@ -48,18 +45,6 @@ class AnalysisController:
             # await asyncio.sleep(0.01)
 
     def execute(self, command):
-        if command == AnalysisCommand.should_stop:
+        if command == PipelineCommand.should_stop:
             self.should_stopped = True
             return
-
-
-# class Pipeline:
-#
-#     def __init__(self):
-#         pass
-#
-#     def run(self):
-#         pass
-
-
-

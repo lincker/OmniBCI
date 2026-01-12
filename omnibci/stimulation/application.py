@@ -5,21 +5,22 @@
 
 import multiprocessing as mp
 import asyncio
+from queue import Queue
 
 from omnibci.core.event.event_manager import EventManager, Event, EventType
-from .message import ClientMessageManagement
-from omnibci.stimulation.stimulator import Stimulator
+from .client import ClientMessageManagement
+from omnibci.stimulation.stimulator import StimulatorProcess
 
 
-class StimulationMain:
-    def __init__(self, config=None):
-        self.config = config
+class Stimulation:
+    def __init__(self):
         self.event_manager = EventManager()
         self.event_manager.set_event_queue(queue=mp.Queue())
-        self.client_message_management = ClientMessageManagement(self.event_manager, config=config)
+        self.client_message_management = ClientMessageManagement(self.event_manager)
         self.should_stop = False
-        self.command_queue = mp.Queue(20)
-        self.stimulator = Stimulator()
+        self.stim_command_queue = Queue(20)
+        self.sys_command_queue = Queue(20)
+        self.stimulator = StimulatorProcess()
         self.stimulator.start()
 
 
@@ -34,38 +35,51 @@ class StimulationMain:
 
     async def startup(self):
         print('---StimulationMain startup---')
-        # TODO: refactor, client message management will case deadlock
+        # TODO: refactor, client server management will case deadlock
         await self.client_message_management.start()
         await self.event_manager.start()
-        self.event_manager.register_event_listener(event_type=EventType.StartStimTrail, handler=self.stimulator.run_command)
-        self.event_manager.register_event_listener(event_type=EventType.FeedbackResult, handler=self.stimulator.run_command)
-        self.event_manager.register_event_listener(event_type=EventType.StopStimulation, handler=self.change_stop_status)
+        self._register_event()
         await asyncio.sleep(2)
-
-
-        #
-        # self.stimulator.start()
 
     async def main_loop(self):
         print('---StimulationMain main_loop---')
         # counter = 1
         while not self.should_stop:
-            # if not self.command_queue.empty():
-            #     self.execute(self.command_queue.get())
-            await asyncio.sleep(1)
-            # counter += 1
-            # if counter > 50:
-            #     self.should_stop = True
-
-    async def change_stop_status(self, command: Event):
-        self.should_stop = True
-
-        # if command.type == EventType.StopStimulation:
-        #     self.stimulator.stop()
-        # else:
-        #     self.stimulator.run_command(command)
+            self.execute_command_once()
+            await asyncio.sleep(0.1)
 
 
+    def execute_command_once(self):
+        if not self.stim_command_queue.empty():
+            stim_command = self.stim_command_queue.get()
+            if stim_command.type == EventType.StartStimTrial:
+                self.stimulator.play()
+            # execute stim command
+        if not self.sys_command_queue.empty():
+            sys_command = self.sys_command_queue.get()
+            if sys_command.type == EventType.FeedbackResult:
+                result = sys_command.data
+                self.stimulator.display_feedback(result)
+            elif sys_command.type == EventType.StopStimulation:
+                self.should_stop = True
+
+    def _register_event(self):
+        self.event_manager.register_event_listener(event_type=EventType.StartStimTrial, handler=self._put_stim_command_queue)
+        self.event_manager.register_event_listener(event_type=EventType.FeedbackResult, handler=self._put_sys_command_queue)
+        self.event_manager.register_event_listener(event_type=EventType.StopStimulation, handler=self._put_sys_command_queue)
+
+    def _put_stim_command_queue(self, command: Event):
+        if command.type == EventType.StartStimTrial:
+            if command.data > 0:
+                n_trials = command.data
+                for i in range(n_trials):
+                    self.stim_command_queue.put(command)
+
+    def _put_sys_command_queue(self, command: Event):
+        if command.type == EventType.FeedbackResult:
+            self.sys_command_queue.put(command)
+        elif command.type == EventType.StopStimulation:
+            self.sys_command_queue.put(command)
 
     async def shutdown(self):
         print('---StimulationMain shutdown---')

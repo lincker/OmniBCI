@@ -148,6 +148,6 @@ class NetworkClient:
 
     async def stop(self):
         if self.writer:
-            self.writer.close()
+            self.writer.disconnect()
             await self.writer.wait_closed()
         self.status = 'STOP'

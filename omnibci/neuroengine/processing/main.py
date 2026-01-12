@@ -12,21 +12,35 @@ Copyright (c) 2025 by lincker, All Rights Reserved.
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-04-24 09:31
+import os
 import multiprocessing as mp
+import logging
 
-from omnibci.neuroengine.processing.pipeline import AnalysisController
+from omnibci.core.base.algorithm import RecognizerBase
+from omnibci.core.base.factory import RecognizerFactory
+from omnibci.neuroengine.processing.pipeline import Pipeline
 
 
-class NeuroEngineProcess(mp.Process):
+class PipelineProcess(mp.Process):
     def __init__(self, command_queue, data_manager=None, event_manager=None):
         super().__init__()
         self.data_manager = data_manager
         self.event_manager = event_manager
         self.command_queue = command_queue
+        self.recognizer: RecognizerBase = None
+        self.pipeline = None
 
     def run(self):
+        self._load_recognizer()
         self._run()
 
     def _run(self):
-        self.analysis_controller = AnalysisController(command_queue=self.command_queue, data_manager=self.data_manager, event_manager=self.event_manager)
-        self.analysis_controller.run()
+        self.pipeline = Pipeline(recognizer=self.recognizer, command_queue=self.command_queue, data_manager=self.data_manager, event_manager=self.event_manager)
+        self.pipeline.run()
+
+    def _load_recognizer(self):
+        from omnibci.core.base.factory import load_plugins
+        algorithm_plugin_path = os.path.join(os.path.dirname(__file__), '..', '..', 'plugin', 'algorithm')
+        load_plugins(algorithm_plugin_path)
+        logging.info("Initializing algorithm in Child Process...")
+        self.recognizer = RecognizerFactory.get_recognizer()

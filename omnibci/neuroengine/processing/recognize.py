@@ -4,14 +4,9 @@
 # @Date     : 2023-11-09 22:51
 import asyncio
 import logging
-import math
-import time
-
-import numpy as np
-from scipy import signal
 
 from omnibci.core.data_manager import DataManager
-from omnibci.core.data_model import StreamFrame
+from omnibci.core.data_model import BCIStreamFrame
 from omnibci.core.event.base import Event, EventType
 
 from .epoch import EpochManager
@@ -29,7 +24,7 @@ class RecognizeState:
             await asyncio.sleep(0.05)
             return
 
-        data_packet: StreamFrame = self.data_manager.get()
+        data_packet: BCIStreamFrame = self.data_manager.get()
 
         # epoch end
         is_epoch_end = self.epoch_manager.end_recognition(data_packet)

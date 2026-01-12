@@ -40,7 +40,7 @@ class DataQualityFlag(Enum):
 
 
 @dataclass
-class StreamFrame:
+class BCIStreamFrame:
     """统一数据包格式"""
     # data include: n-1 channels data and the n channel is event
     timestamp: float

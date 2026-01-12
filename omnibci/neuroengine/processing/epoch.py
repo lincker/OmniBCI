@@ -12,13 +12,12 @@ Copyright (c) 2025 by lincker, All Rights Reserved.
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-04-25 09:45
-from dataclasses import dataclass
 
 import numpy as np
 from numpy import typing as npt
 
-from omnibci.core.algorithm import BaseRecognizer
-from omnibci.core.data_model import StreamFrame
+from core.base.algorithm import RecognizerBase
+
 
 # @dataclass
 # class Epoch:
@@ -31,7 +30,7 @@ from omnibci.core.data_model import StreamFrame
 
 
 class EpochManager:
-    def __init__(self, recognizer: BaseRecognizer):
+    def __init__(self, recognizer: RecognizerBase):
 
 
         self.epoch_data = np.empty((0, 0))
