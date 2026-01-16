@@ -20,10 +20,10 @@ from numpy import typing as npt
 from sklearn.cross_decomposition import CCA as skCCA
 
 from omnibci.conf import settings
-from omnibci.core.base.algorithm import RecognizerBase
+from omnibci.core.base.algorithm import AlgorithmBase
 
 
-class Classic40CCA(RecognizerBase):
+class Classic40CCA(AlgorithmBase):
     plugin_type = 'THUBCI_SSVEP_classic40CCA'
     class Template:
         # 倍频数
@@ -64,7 +64,7 @@ class Classic40CCA(RecognizerBase):
                                           sample_count=self.SAMPLE_COUNT).generate_template()
         self.cca = skCCA(n_components=1)
 
-    def recognize(self, epoch_data, current_packet_data, force_predict=False) -> tuple[bool, int]:
+    def analyse(self, epoch_data, current_packet_data, force_predict=False) -> tuple[bool, int]:
         # force calculate the data
         if force_predict:
             if epoch_data.shape[1] > self.SAMPLE_COUNT + self.OFFSET_LENGTH:

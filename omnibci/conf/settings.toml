@@ -6,6 +6,9 @@ debug = false
 level = "INFO"
 file_path = "logs/omnibci.log"
 
+[CONSTANT]
+ASYNC_SLEEP_TIME=0.01
+
 [ACQUISITION]
 reader_type = "file_reader"
 trigger_type = 'neuroscan_scan45'
@@ -18,7 +21,8 @@ DATA_PROVIDER_IP = '192.168.0.3'
 DATA_PROVIDER_PORT = 4000
 
 [ALGORITHM]
-recognizer = 'THUBCI_SSVEP_classic40CCA'
+algorithm = 'THUBCI_SSVEP_classic40CCA'
+strategy = 'EPOCH_STRATEGY'
 
 [NEUROENGINE]
 MESSAGE_SERVER_IP = 'localhost'

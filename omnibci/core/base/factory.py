@@ -2,12 +2,12 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2026-01-04 09:25
-import os
 
 from core.base.stimulation import StimulusBase
 from omnibci.conf import settings
 from omnibci.core.base.acquisition import READER_REGISTRY, TRIGGER_REGISTRY, ReaderBase
-from omnibci.core.base.algorithm import RECOGNIZER_REGISTRY, RecognizerBase
+from omnibci.core.base.algorithm import ALGORITHM_REGISTRY, EPOCH_STRATEGY_REGISTRY, AlgorithmBase
+from omnibci.core.base.stimulation import STIMULUS_REGISTRY
 
 from pathlib import Path
 import importlib, sys
@@ -98,18 +98,18 @@ class TriggerFactory:
         return trigger
 
 
-class RecognizerFactory:
+class AlgorithmFactory:
     def __init__(self):
         pass
     @staticmethod
-    def get_recognizer() -> RecognizerBase | None:
-        recognizer = None
-        recognizer_type = settings.get('ALGORITHM.recognizer')
-        if recognizer_type in RECOGNIZER_REGISTRY:
-            recognizer = RECOGNIZER_REGISTRY[recognizer_type]()
+    def get_algorithm() -> AlgorithmBase | None:
+        algorithm = None
+        algorithm_type = settings.get('ALGORITHM.algorithm')
+        if algorithm_type in ALGORITHM_REGISTRY:
+            algorithm = ALGORITHM_REGISTRY[algorithm_type]()
         else:
-            logging.error(f'Unknown recognizer type: {recognizer_type}')
-        return recognizer
+            logging.error(f'Unknown algorithm type: {algorithm_type}')
+        return algorithm
 
 
 class StimulusFactory:
@@ -119,8 +119,22 @@ class StimulusFactory:
     def get_stimulus() -> StimulusBase:
         stimulus = None
         stimulus_type = settings.get('STIMULATION.stimulus')
-        if stimulus_type in RECOGNIZER_REGISTRY:
-            stimulus = RECOGNIZER_REGISTRY[stimulus_type]()
+        if stimulus_type in ALGORITHM_REGISTRY:
+            stimulus = STIMULUS_REGISTRY[stimulus_type]()
         else:
-            logging.error(f'Unknown recognizer type: {stimulus_type}')
+            logging.error(f'Unknown stimulus type: {stimulus_type}')
         return stimulus
+
+
+class EpochStrategyFactory:
+    def __init__(self):
+        pass
+    @staticmethod
+    def get_strategy():
+        strategy = None
+        strategy_type = settings.get('ALGORITHM.strategy')
+        if strategy_type in EPOCH_STRATEGY_REGISTRY:
+            strategy = EPOCH_STRATEGY_REGISTRY[strategy_type]()
+        else:
+            logging.error(f'Unknown strategy type: {strategy_type}')
+        return strategy

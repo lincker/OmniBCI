@@ -22,7 +22,7 @@ class EventType(IntEnum):
     MessageFromStimulation = 9
     StartStimulation = 301
     StopStimulation = 302
-    FeedbackResult = 408
+    RecogniezedResult = 408
 
 
 class Event:

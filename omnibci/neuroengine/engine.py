@@ -4,11 +4,10 @@
 # @Date     : 2025-04-27 10:10
 import asyncio
 import multiprocessing as mp
-import os
 
 from omnibci.acquisition.acquisition_service import (AcquisitionCommand,
                                                      AcquisitionProcess)
-from omnibci.core.data_manager import DataManager
+from core.data_manager import DataManager
 from omnibci.core.event.base import EventType
 from omnibci.core.event.event_manager import EventManager
 
@@ -25,7 +24,7 @@ class NeuroEngine:
         self.event_manager.set_event_queue(queue=mp.Queue())
         # TODO: refactor , not process, use thread
         self.sever_message_management = ServerMessageManagement(self.event_manager)
-        self.data_manager = DataManager(data_buffer=mp.Queue())
+        self.data_manager = DataManager(buffer=mp.Queue())
         # TODO: refactor this
         self.acquisition_command_queue = mp.Queue(20)
         self.acquisitor = AcquisitionProcess(self.acquisition_command_queue, self.data_manager)

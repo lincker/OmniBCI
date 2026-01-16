@@ -68,8 +68,8 @@ class Stimulator:
         if command.type == EventType.StartStimTrial:
             # self.stimuli_running = True
             self.stimulus.play(command.data)
-        # if self.stimuli_running and command.type == EventType.FeedbackResult:
-        if command.type == EventType.FeedbackResult:
+        # if self.stimuli_running and command.type == EventType.RecogniezedResult:
+        if command.type == EventType.RecogniezedResult:
             self.stimulus.display_feedback(command.data)
             print("Stimulator received feedback:", command.data)
 

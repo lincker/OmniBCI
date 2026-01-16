@@ -14,7 +14,7 @@ from omnibci.core.base.registry import Registerable
 DEVICE_REGISTRY: Dict[str, Type['DeviceBase']] = {}
 
 
-class StimulusBase(Registerable, ABC):
+class DeviceBase(Registerable, ABC):
     _target_registry = DEVICE_REGISTRY
 
     @abstractmethod

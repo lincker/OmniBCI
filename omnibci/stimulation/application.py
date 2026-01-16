@@ -57,7 +57,7 @@ class Stimulation:
             # execute stim command
         if not self.sys_command_queue.empty():
             sys_command = self.sys_command_queue.get()
-            if sys_command.type == EventType.FeedbackResult:
+            if sys_command.type == EventType.RecogniezedResult:
                 result = sys_command.data
                 self.stimulator.display_feedback(result)
             elif sys_command.type == EventType.StopStimulation:
@@ -65,7 +65,7 @@ class Stimulation:
 
     def _register_event(self):
         self.event_manager.register_event_listener(event_type=EventType.StartStimTrial, handler=self._put_stim_command_queue)
-        self.event_manager.register_event_listener(event_type=EventType.FeedbackResult, handler=self._put_sys_command_queue)
+        self.event_manager.register_event_listener(event_type=EventType.RecogniezedResult, handler=self._put_sys_command_queue)
         self.event_manager.register_event_listener(event_type=EventType.StopStimulation, handler=self._put_sys_command_queue)
 
     def _put_stim_command_queue(self, command: Event):
@@ -76,7 +76,7 @@ class Stimulation:
                     self.stim_command_queue.put(command)
 
     def _put_sys_command_queue(self, command: Event):
-        if command.type == EventType.FeedbackResult:
+        if command.type == EventType.RecogniezedResult:
             self.sys_command_queue.put(command)
         elif command.type == EventType.StopStimulation:
             self.sys_command_queue.put(command)

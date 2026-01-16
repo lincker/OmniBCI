@@ -11,7 +11,7 @@ from enum import Enum
 from typing import Optional
 
 from omnibci.core.base.acquisition import ReaderBase
-from omnibci.core.data_model import BCIStreamFrame
+from core.model import SignalChunk
 from omnibci.core.base.factory import ReaderFactory
 
 
@@ -117,13 +117,13 @@ class Acquisition:
         try:
             while True:
                 raw_data = await self.reader.read_unit()
-                raw_data = self.preprocess(raw_data)
-                data = BCIStreamFrame(
+                data = SignalChunk(
                             timestamp=time.time_ns(),
-                            data=raw_data,
+                            raw_data=raw_data,
                             sequence_id=packets_counter,
                         )
-                self.data_manager.put(data)
+                data = self.preprocess(data)
+                self.data_manager.put_data(data)
                 packets_counter += 1
         except asyncio.CancelledError:
             logging.info('Fetch task cancelled')
@@ -134,6 +134,7 @@ class Acquisition:
         # may detach eeg data and event
         # print(f'preprocess data=')
         # TODO: mapping channels according to selected algorithm.
+        # 如果采集的是没有trigger的数据，可以在此增加全0的trigger 通道
         return data
 
 
@@ -141,7 +142,7 @@ import multiprocessing as mp
 
 
 class AcquisitionProcess(mp.Process):
-    def __init__(self,command_queue, data_manager=None):
+    def __init__(self, command_queue, data_manager=None):
         super().__init__()
         self.reader: ReaderBase = None
         self.acquisitor = None

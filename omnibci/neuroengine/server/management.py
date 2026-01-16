@@ -62,7 +62,7 @@ class ServerMessageManagement:
     #     # print('send '+ server +'!')
 
     def register_events(self):
-        self.event_manager.register_event_listener(EventType.FeedbackResult, self.server.send_event)
+        self.event_manager.register_event_listener(EventType.RecogniezedResult, self.server.send_event)
         self.event_manager.register_event_listener(EventType.StartStimTrial, self.server.send_event)
         self.event_manager.register_event_listener(EventType.StopStimulation, self.server.send_event)
 

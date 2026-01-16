@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2026-01-04 09:59
-from typing import Dict, Type, Any
+from typing import Dict
 import logging
 
 class Registerable:
