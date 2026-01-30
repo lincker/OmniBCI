@@ -3,16 +3,13 @@
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-04-25 10:53
 from abc import ABC, abstractmethod
-from typing import Dict, Type, Tuple
+from typing import Dict, Type, Tuple, ClassVar
 
 
-from core.model import SignalChunk
-from omnibci.core.base.registry import Registerable
+from core.data.types import SignalChunk
+from omnibci.core.utils.registry import Registerable
 
-ALGORITHM_REGISTRY: Dict[str, Type['AlgorithmBase']] = {}
-EPOCH_STRATEGY_REGISTRY: Dict[str, Type['EpochStrategyBase']] = {}
-
-# class ProcessingUnitBase(Registerable, ABC):
+# class FilterBase(Registerable, ABC):
 #     @abstractmethod
 #     def process(self, data: npt.NDArray[Any]) -> npt.NDArray[Any]:
 #         """
@@ -22,21 +19,22 @@ EPOCH_STRATEGY_REGISTRY: Dict[str, Type['EpochStrategyBase']] = {}
 #         pass
 
 
-class AlgorithmBase(Registerable, ABC):
-    _target_registry = ALGORITHM_REGISTRY
+class DecoderBase(Registerable, ABC):
+    _target_registry: ClassVar[Dict[str, Type['DecoderBase']]] = {}
+
 
     def __init__(self):
         super().__init__()
 
     @abstractmethod
-    # return value: is recognized, event ID
+    # return value: is recognized, events ID
     def analyse(self, all_data, current_packet_data, force_predict) -> Tuple[bool, int]:
         pass
 
 
-class EpochStrategyBase(Registerable, ABC):
-    """detect epoch start and end"""
-    _target_registry = EPOCH_STRATEGY_REGISTRY
+class SegmenterBase(Registerable, ABC):
+    """detect epoch start and end. Segmenter"""
+    _target_registry: ClassVar[Dict[str, Type['SegmenterBase']]] = {}
 
     """return（index, event_id). If not found, return（-1，0）"""
     @abstractmethod
@@ -49,5 +47,5 @@ class EpochStrategyBase(Registerable, ABC):
         pass
 
     @abstractmethod
-    def allowed_algorithm_analyse(self) -> bool:
+    def allowed_decoder_analyse(self) -> bool:
         pass

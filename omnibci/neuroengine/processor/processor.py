@@ -9,10 +9,12 @@ import multiprocessing as mp
 import os
 
 
-from omnibci.core.base.algorithm import AlgorithmBase, EpochStrategyBase
+from interfaces.algorithm import DecoderBase, SegmenterBase
 
 from .state import WaitingForEpochState, CollectingEpochState
 from .epoch import EpochManager
+
+logger = logging.getLogger(__name__)
 
 
 class SignalProcessorCommand(Enum):
@@ -20,11 +22,11 @@ class SignalProcessorCommand(Enum):
 
 
 class SignalProcessor:
-    def __init__(self, strategy:EpochStrategyBase, algorithm:AlgorithmBase, command_queue, data_manager, event_manager):
+    def __init__(self, segmenter:SegmenterBase, decoder:DecoderBase, command_queue, data_manager, event_bus):
         self.data_manager = data_manager
-        self.event_manager = event_manager
+        self.event_bus = event_bus
         self.command_queue = command_queue
-        self.epoch_manager = EpochManager(algorithm=algorithm, strategy=strategy)
+        self.epoch_manager = EpochManager(decoder=decoder, strategy=segmenter)
         # Initialize states
         self._waiting_state = WaitingForEpochState(self)
         self._collecting_state = CollectingEpochState(self)
@@ -38,11 +40,11 @@ class SignalProcessor:
     def transition_to_waiting(self):
         self.epoch_manager.clear()
         self._current_state = self._waiting_state
-        logging.debug("Transitioned to waiting for epoch state")
+        logger.debug("Transitioned to waiting for epoch state")
 
     def transition_to_collecting(self):
         self._current_state = self._collecting_state
-        logging.debug("Transitioned to collecting epoch state")
+        logger.debug("Transitioned to collecting epoch state")
 
     async def serve(self):
         while not self._should_stop:
@@ -57,40 +59,38 @@ class SignalProcessor:
 
 
 class SignalProcessorProcess(mp.Process):
-    def __init__(self, command_queue, data_manager=None, event_manager=None):
+    def __init__(self, command_queue, data_manager=None, event_bus=None):
         super().__init__()
         self.data_manager = data_manager
-        self.event_manager = event_manager
+        self.event_bus = event_bus
         self.command_queue = command_queue
-        self.stream_processor = None
+        self.signal_processor = None
 
     def run(self):
-        algorithm, strategy = self._load_plugins()
+        algorithm, strategy = self._load_algorithm()
         self._run_processor(algorithm, strategy)
 
-    def _load_plugins(self):
-        """Load algorithm plugins."""
-        from omnibci.core.base.factory import load_plugins, AlgorithmFactory, EpochStrategyFactory
-
+    def _load_algorithm(self):
+        """Load algorithms plugins."""
         algorithm_plugin_path = os.path.join(
-            os.path.dirname(__file__), '..', '..', 'plugin', 'algorithm'
+            os.path.dirname(__file__), '..', '..', 'plugins', 'algorithms'
         )
-        load_plugins(algorithm_plugin_path)
+        from omnibci.core.utils.loader import PluginLoader
+        from omnibci.core.factory import ObjectFactory
+        PluginLoader.load_from_dir(algorithm_plugin_path, base_package='omnibci.plugins.algorithms')
+        decoder = ObjectFactory.create(DecoderBase, config_key='ALGORITHM.decoder')
+        segmenter = ObjectFactory.create(SegmenterBase, config_key='ALGORITHM.segmenter')
 
-        logging.info("Loading algorithm plugins in subprocess")
-        algorithm = AlgorithmFactory.get_algorithm()
-        strategy = EpochStrategyFactory.get_strategy()
+        return decoder, segmenter
 
-        return algorithm, strategy
-
-    def _run_processor(self, algorithm, strategy):
+    def _run_processor(self, decoder, segmenter):
         """Initialize and run the stream processor."""
-        self.stream_processor = SignalProcessor(
-            strategy=strategy,
-            algorithm=algorithm,
+        self.signal_processor = SignalProcessor(
+            decoder=decoder,
+            segmenter=segmenter,
             command_queue=self.command_queue,
             data_manager=self.data_manager,
-            event_manager=self.event_manager
+            event_bus=self.event_bus
         )
-        self.stream_processor.run()
+        self.signal_processor.run()
 

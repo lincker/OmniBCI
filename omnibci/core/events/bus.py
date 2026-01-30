@@ -4,13 +4,14 @@
 # @Date     : 2025-04-21 10:16
 import asyncio
 import logging
-from .base import EventType, Event
+from .types import EventType, Event
 
 logging.basicConfig(level=logging.DEBUG)
 
-class EventManager:
+
+class EventBus:
     def __init__(self, event_queue=asyncio.Queue()):
-        # event monitor status
+        # events monitor status
         self._active = False
         self._event_handlers = {}
         self._event_queue = event_queue
@@ -19,7 +20,7 @@ class EventManager:
         self._event_queue = queue
 
     async def _process_event(self):
-        logging.info('event processing')
+        logging.info('events processing')
         while self._active:
             if not self._event_queue.empty():
                 event: Event = self._event_queue.get()
@@ -35,17 +36,9 @@ class EventManager:
                             else:
                                 handler(event)
                     except Exception as e:
-                        logging.error(f'Error processing event {event_type}: {e}')
-
-
-
-                    # the event handlers should be a list of async functions
-                    # handlers = self._event_handlers[event_type]
-                    # tasks = [handler(event) for handler in handlers]
-                    # await asyncio.gather(*tasks)
+                        logging.error(f'Error processing events {event_type}: {e}')
             else:
                 await asyncio.sleep(0.01)
-            # self.event_queue.task_done()
 
     def register_event_listener(self, event_type: EventType, handler):
         if event_type not in self._event_handlers:
@@ -60,16 +53,9 @@ class EventManager:
     async def start(self):
         self._active = True
         asyncio.create_task(self._process_event())
-    # async def start(self):
-    #     self.active = True
-    #     await self.process_events()
-    #     # loop = asyncio.get_event_loop()
-
 
     def stop(self):
         self._active = False
-        # self.event_queue.join()
-        # self.event_queue = asyncio.Queue()
 
     def put_event(self, event: Event):
         self._event_queue.put_nowait(event)

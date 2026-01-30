@@ -3,7 +3,7 @@ Author: lincker
 Date: 2025-09-22 10:46:51
 LastEditors: lincker haolin.d.wu@gmail.com
 LastEditTime: 2025-12-25 11:08:25
-FilePath: /OmniBCI/omnibci/plugin/algorithm/ssvep/classic40CCA.py
+FilePath: /OmniBCI/omnibci/plugins/algorithms/ssvep/classic40CCA.py
 Description:
 
 Copyright (c) 2025 by lincker, All Rights Reserved.
@@ -13,17 +13,16 @@ import math
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-09-22 10:46
-from typing import Any
 
 import numpy as np
 from numpy import typing as npt
 from sklearn.cross_decomposition import CCA as skCCA
 
 from omnibci.conf import settings
-from omnibci.core.base.algorithm import AlgorithmBase
+from interfaces.algorithm import DecoderBase
 
 
-class Classic40CCA(AlgorithmBase):
+class Classic40CCA(DecoderBase):
     plugin_type = 'THUBCI_SSVEP_classic40CCA'
     class Template:
         # 倍频数

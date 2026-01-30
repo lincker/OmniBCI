@@ -6,10 +6,10 @@ import asyncio
 from omnibci.core.communication.network import NetworkClient
 
 class ClientMessageManagement:
-    def __init__(self, event_manager, server_ip='local_host', server_port=8000):
-        self.event_manager = event_manager
+    def __init__(self, event_bus, server_ip='local_host', server_port=8000):
+        self.event_bus = event_bus
 
-        self.client = NetworkClient(event_manager= self.event_manager, server_ip=server_ip, server_port=server_port)
+        self.client = NetworkClient(event_bus= self.event_bus, server_ip=server_ip, server_port=server_port)
 
     async def start(self) -> None:
         asyncio.create_task(self._start())
@@ -17,10 +17,10 @@ class ClientMessageManagement:
     async def _start(self):
         # TODO: retry connection
         await asyncio.gather(self.client.start())
-        # await asyncio.gather(self.client.start(), self.event_manager.start() )
+        # await asyncio.gather(self.client.start(), self.event_bus.start() )
 
 
     async def stop(self):
         if self.client:
             await self.client.stop()
-        # self.event_manager.stop()
+        # self.event_bus.stop()

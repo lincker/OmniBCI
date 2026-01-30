@@ -62,7 +62,7 @@ class PParallelInpOut:
             p.setData(2)  # sets just pin 3 high (remember that pin2=bit0)
             p.setData(3)  # sets just pins 2 and 3 high
 
-        You can easily convert base 2 to int in python::
+        You can easily convert utils 2 to int in python::
 
             p.setData(int("00000011", 2))  # pins 2 and 3 high
             p.setData(int("00000101", 2))  # pins 2 and 4 high

@@ -2,17 +2,16 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2026-01-04 09:59
-from typing import Dict
+from typing import Dict, ClassVar
 import logging
 
 class Registerable:
     """
-    通用自注册 Mixin。
-    它不直接包含注册表，而是依赖继承链中的 `_target_registry` 属性。
+    self registered Mixin。
     """
-    # 子类必须定义这两个字段
-    plugin_type: str = None        # 插件在配置文件中的唯一 ID (例如 "cisco", "bfs")
-    _target_registry: Dict = None  # 指向要存入的特定字典 (由 ReaderBase 等基类定义)
+    # subclass must define
+    plugin_type: str = None        # plugin unique ID
+    _target_registry: ClassVar[Dict] = {}  # to the specific dict
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)

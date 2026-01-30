@@ -7,8 +7,8 @@ import asyncio
 import logging
 from typing import Optional
 
-from omnibci.core.model import SignalChunk
-from omnibci.core.event.base import Event, EventType
+from core.data.types import SignalChunk
+from omnibci.core.events.types import Event, EventType
 
 class ProcessingState:
     """Base class for processing states."""
@@ -34,7 +34,7 @@ class WaitingForEpochState(ProcessingState):
         start_idx, event_id = self.context.epoch_manager.detect_start(chunk)
 
         if start_idx >= 0:
-            logging.info(f"Start event detected: index={start_idx}, event_id={event_id}")
+            logging.info(f"Start events detected: index={start_idx}, event_id={event_id}")
             self.context.epoch_manager.initialize_epoch(chunk, event_id)
             self.context.transition_to_collecting()
 
@@ -64,12 +64,12 @@ class CollectingEpochState(ProcessingState):
             self._process_normal_data(chunk)
             return
 
-        # Case 2: End event detected
+        # Case 2: End events detected
         if has_end_event:
             self._process_end_event(chunk, end_idx, has_start_event, start_idx, new_event_id)
             return
 
-        # Case 3: Start event only (shouldn't happen in normal flow, but handle it)
+        # Case 3: Start events only (shouldn't happen in normal flow, but handle it)
         if has_start_event:
             self._process_unexpected_start(chunk, start_idx, new_event_id)
 
@@ -84,11 +84,11 @@ class CollectingEpochState(ProcessingState):
 
     def _process_end_event(self, chunk, end_idx: int, has_start_event: bool,
                            start_idx: int, new_event_id: Optional[int]):
-        """Process chunk containing end event."""
-        # Append data up to end event and force recognition
+        """Process chunk containing end events."""
+        # Append data up to end events and force recognition
         self.context.epoch_manager.append_until_index(chunk, end_idx)
         _, result = self.context.epoch_manager.analyse(force_recognize=True)
-        logging.info(f"End event detected: forced recognition, result={result}")
+        logging.info(f"End events detected: forced recognition, result={result}")
         self._emit_result(result)
 
         # Check if new epoch starts in same chunk
@@ -100,10 +100,10 @@ class CollectingEpochState(ProcessingState):
             self.context.transition_to_waiting()
 
     def _process_unexpected_start(self, chunk, start_idx: int, event_id: int):
-        """Handle unexpected start event during processing."""
-        logging.warning("Unexpected start event detected during processing")
+        """Handle unexpected start events during processing."""
+        logging.warning("Unexpected start events detected during processing")
 
-        # Append data before the new start event and force recognition
+        # Append data before the new start events and force recognition
         self.context.epoch_manager.append_until_index(chunk, start_idx)
         _, result = self.context.epoch_manager.analyse(force_recognize=True)
 
@@ -114,7 +114,7 @@ class CollectingEpochState(ProcessingState):
         self.context.epoch_manager.initialize_epoch(chunk, event_id)
 
     def _emit_result(self, result):
-        """Emit recognition result as an event."""
+        """Emit recognition result as an events."""
         logging.info(f"Recognition result: {result}")
-        event = Event(EventType.RecogniezedResult, result)
-        self.context.event_manager.put_event(event)
+        event = Event(EventType.RecognizedResult, result)
+        self.context.event_bus.put_event(event)

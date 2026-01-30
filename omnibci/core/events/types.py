@@ -11,8 +11,8 @@ class EventType(IntEnum):
     DisconnectDataProvider = 102
     # GetDataProviderMetaData = 103
     # StopAcquisitionDevice = 104
-    StartRead = 111 # StartReadData
-    StopRead = 112    #
+    StartStream = 111 # StartStreamData
+    StopStream = 112    #
     # neuro engine
     StartNeuroEnginePipeline = 31
     StopNeuroEnginePipeline = 32
@@ -22,22 +22,22 @@ class EventType(IntEnum):
     MessageFromStimulation = 9
     StartStimulation = 301
     StopStimulation = 302
-    RecogniezedResult = 408
+    RecognizedResult = 408
 
 
 class Event:
     '''
-    event type is command, stimulator
+    events type is command, stimulator
     '''
 
-    def __init__(self, type: EventType = None, data=None) -> None:
+    def __init__(self, event_type: EventType = None, data=None) -> None:
         #self.receiver = None
-        self.type = type
+        self.type = event_type
         self.data = data
 
 
     def to_json(self):
             return {
-                'type': self.type,
+                'event_type': self.type,
                 'data': self.data
             }

@@ -10,7 +10,7 @@ from enum import IntEnum
 
 import numpy as np
 
-from omnibci.core.base.acquisition import ReaderBase, TriggerBase
+from interfaces.acquisition import DataSourceBase, TriggerBase
 from omnibci.conf import settings
 
 
@@ -135,7 +135,7 @@ class Scan45Message:
 scan45_message_manager = Scan45Message()
 
 
-class Scan45DataReader(ReaderBase):
+class Scan45DataReader(DataSourceBase):
     plugin_type = 'neuroscan_scan45_reader'
     def __init__(self) -> None:
         super().__init__()
@@ -147,7 +147,7 @@ class Scan45DataReader(ReaderBase):
         # self.info = None
         self.reader = None
         self.writer = None
-        self._previous_event = 0 # the integer event position
+        self._previous_event = 0 # the integer events position
         self._packets_counter = 0
 
     async def connect(self) -> bool:
@@ -187,13 +187,13 @@ class Scan45DataReader(ReaderBase):
         # TODO:
         self.info = str(header)
 
-    async def start_read(self) -> bool:
+    async def start_stream(self) -> bool:
         self.writer.write(scan45_message_manager.startSendingDataCommand)
         await self.writer.drain()
         self._is_streaming = True
         return True
 
-    async def stop_read(self) -> bool:
+    async def stop_stream(self) -> bool:
         self.writer.write(scan45_message_manager.stopSendingDataCommand)
         await self.writer.drain()
         self._is_streaming = False
@@ -206,7 +206,7 @@ class Scan45DataReader(ReaderBase):
     # async def _stop_data_stream(self):
     #     self.writer.write(scan45_message_manager.stopSendingDataCommand)
 
-    async def read_unit(self):
+    async def read_chunk(self):
         # load 1 package data and unpack it
         header, body = await self._load_package()
         if header.ID == 'DATA' and header.code == 2:
@@ -247,14 +247,14 @@ class Scan45DataReader(ReaderBase):
                     int.from_bytes(data[4 * x: 4 * x + 1], byteorder='little', signed=False)
                     for x in range(0, int32_count))
         int_data = np.fromiter(iterable, int)
-        n_channels = n_eeg_channels + 1  # n_channels = eeg number of channels + 1 event channel
+        n_channels = n_eeg_channels + 1  # n_channels = eeg number of channels + 1 events channel
         n_samples = int(len(int_data) / n_channels)
         packet = np.reshape(int_data, (n_channels, n_samples), order='F')
         packet_event = packet[-1, :]
-        # remove duplicated event data
+        # remove duplicated events data
         for index, event in enumerate(packet_event):
-            # if event != 0:
-                # print(f'index = {index}-----------event = {event}')
+            # if events != 0:
+                # print(f'index = {index}-----------events = {events}')
             if self._previous_event == 0 and event != 0:
                 self._previous_event = event
                 print(f'neuroscan scan4.5 index = {index}-----------event = {event}')

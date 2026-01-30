@@ -15,15 +15,15 @@ Copyright (c) 2025 by lincker, All Rights Reserved.
 from aiohttp import web
 from omnibci.conf import settings
 
-from omnibci.core.event.base import Event, EventType
+from omnibci.core.events.types import Event, EventType
 
 
 class CommandServer:
-    def __init__(self, event_manager):
+    def __init__(self, event_bus):
         self.app = web.Application()
         self.app.add_routes([web.post('/command', self.command)])
         self.runner = web.AppRunner(self.app)
-        self.event_manager = event_manager
+        self.event_bus = event_bus
 
     async def command(self, request):
         command = await request.json()
@@ -31,21 +31,21 @@ class CommandServer:
         command_type = command.get('type')
         command_data = command.get('data')
         if command_type == 'ConnectDataProvider':
-            event = Event(type=EventType.OpenDataProvider, data=command_data)
+            event = Event(event_type=EventType.OpenDataProvider, data=command_data)
         elif command_type == 'DisconnectDataProvider':
-            event = Event(type=EventType.DisconnectDataProvider, data=command_data)
+            event = Event(event_type=EventType.DisconnectDataProvider, data=command_data)
         elif command_type == 'StartReceive':
-            event = Event(type=EventType.StartRead, data=command_data)
+            event = Event(event_type=EventType.StartStream, data=command_data)
         elif command_type == 'StopReceive':
-            event = Event(type=EventType.StopRead, data=command_data)
+            event = Event(event_type=EventType.StopStream, data=command_data)
         elif command_type == 'StartStimTrial':
-            event = Event(type=EventType.StartStimTrial, data=command_data)
+            event = Event(event_type=EventType.StartStimTrial, data=command_data)
         elif command_type == 'StopAll':
-            event = Event(type=EventType.StopNeuroEnginePipeline, data=command_data)
+            event = Event(event_type=EventType.StopNeuroEnginePipeline, data=command_data)
         else:
             return web.json_response({'status': 'error', 'server': 'Invalid command type'})
         # check command
-        self.event_manager.put_event(event)
+        self.event_bus.put_event(event)
         return web.json_response({'command':command_type, 'status': 'ok'})
 
     async def start(self):

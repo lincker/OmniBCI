@@ -6,16 +6,16 @@ import json
 import logging
 import multiprocessing as mp
 import asyncio
-from omnibci.core.event.base import Event
-from omnibci.core.event.event_manager import EventManager
-from .frame import Frame
+from omnibci.core.events.types import Event
+from omnibci.core.events.bus import EventBus
+from .protocol import Frame
 
 
 class NetworkServer:
-    def __init__(self, event_manager, host, port):
+    def __init__(self, event_bus, host, port):
         self.reader = None
         self.writer = None
-        self.event_manager = event_manager
+        self.event_bus = event_bus
         self.network_server = None
         self.host = host
         self.port = port
@@ -42,10 +42,10 @@ class NetworkServer:
             body = await self.reader.readexactly(header.body_size)
             json_data = body.decode().strip()
             print(f"Received json message from {addr}: {json_data}")
-            jtype = json_data.get('type')
+            jtype = json_data.get('event_type')
             jdata = json_data.get('data')
-            e = Event(type=jtype, data=jdata)
-            self.event_manager.put_event(e)
+            e = Event(event_type=jtype, data=jdata)
+            self.event_bus.put_event(e)
 
     async def stop(self):
         if self.server:
@@ -68,8 +68,8 @@ class NetworkServer:
 
 
 class NetworkClient:
-    def __init__(self,event_manager: EventManager, server_ip='127.0.0.1', server_port=8888):
-        self.event_manager = event_manager
+    def __init__(self, event_bus: EventBus, server_ip='127.0.0.1', server_port=8888):
+        self.event_bus = event_bus
         self.server_ip = server_ip
         self.server_port = server_port
         self.reader = None
@@ -92,7 +92,7 @@ class NetworkClient:
 
 
 
-        # self.reader, self.writer = await asyncio.open_connection(self.server_ip, self.server_port)
+        # self.data_source, self.writer = await asyncio.open_connection(self.server_ip, self.server_port)
         # print(f"Connected to server {self.server_ip}:{self.server_port}")
         # self.status = 'CONNECTED'
         while True:
@@ -138,8 +138,8 @@ class NetworkClient:
             json_data = json.loads(body)
             jtype = json_data.get('type')
             jdata = json_data.get('data')
-            e = Event(type=jtype, data=jdata)
-            self.event_manager.put_event(e)
+            e = Event(event_type=jtype, data=jdata)
+            self.event_bus.put_event(e)
         except asyncio.IncompleteReadError:
             logging.info("Incomplete read error")
             self.status = 'STOP'

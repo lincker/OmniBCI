@@ -3,27 +3,24 @@
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-12-31 10:34
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Type
+from typing import Any, Dict, Type, ClassVar
 
 from numpy import typing as npt
 
-from .registry import Registerable
+from core.utils.registry import Registerable
 
 
-READER_REGISTRY: Dict[str, Type['ReaderBase']] = {}
-TRIGGER_REGISTRY: Dict[str, Type['TriggerBase']] = {}
-
-class ReaderBase(Registerable,ABC):
+class DataSourceBase(Registerable, ABC):
     """
-    Abstract base class for data readers.
+    Abstract utils class for data source.
 
-    This class defines the interface for data readers, which are responsible for
+    This class defines the interface for data source, which are responsible for
     reading data from a source and providing it in a standardized format.
     """
-    _target_registry = READER_REGISTRY
+    _target_registry: ClassVar[Dict[str, Type['DataSourceBase']]] = {}
     def __init__(self):
         super().__init__()
-        self._is_open = False
+        self._is_connected = False
         self._is_streaming = False
 
 
@@ -36,15 +33,15 @@ class ReaderBase(Registerable,ABC):
         """建立设备/文件连接"""
 
     @abstractmethod
-    async def start_read(self) -> bool:
+    async def start_stream(self) -> bool:
         """启动读取数据流"""
 
     @abstractmethod
-    async def read_unit(self)-> npt.NDArray[Any]:
+    async def read_chunk(self)-> npt.NDArray[Any]:
         """从文件读取一个固定尺寸的数据，或从网络读取一个数据包"""
 
     @abstractmethod
-    async def stop_read(self) -> bool:
+    async def stop_stream(self) -> bool:
         """停止读取数据流"""
 
     @abstractmethod
@@ -53,9 +50,9 @@ class ReaderBase(Registerable,ABC):
 
 
 class TriggerBase(Registerable, ABC):
-    _target_registry = TRIGGER_REGISTRY
+    _target_registry: ClassVar[Dict[str, Type['TriggerBase']]] = {}
     @abstractmethod
-    def send(self, event_id) -> bool:
+    def send(self, event_id: int) -> bool:
         """发送trigger/event"""
 
     @abstractmethod

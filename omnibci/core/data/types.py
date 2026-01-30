@@ -11,8 +11,8 @@ from numpy import typing as npt
 
 @dataclass
 class SignalChunk:
-    """统一数据包格式"""
-    # data include: n-1 channels data and the n channel is event trigger
+    """unified data structure for signal chunks"""
+    # raw data include: n-1 channels data and the n channel is events trigger
     timestamp: float
     sequence_id: int
     raw_data: npt.NDArray
@@ -20,7 +20,7 @@ class SignalChunk:
 
     @property
     def data(self) -> npt.NDArray:
-        # 注意：为了性能，Trigger 总是固定在最后一个通道
+        # fix trigger at the last channel
         return self.raw_data[0:-1, :]
 
     @property
@@ -29,6 +29,5 @@ class SignalChunk:
 
     @property
     def has_trigger_signal(self) -> bool:
-        """快速检查当前块里是否有非零的 Trigger 信号"""
-        # 假设 Trigger 通道平时是 0，有事发生时变高
+        """fast check non zero trigger"""
         return np.any(self.triggers != 0)

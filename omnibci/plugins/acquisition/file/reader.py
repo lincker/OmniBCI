@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# @File     : file_reader.py
+# @File     : data_source.py
 # @Author   : lincker
 # @Date     : 2025-04-17 07:05
 import asyncio
@@ -8,11 +8,11 @@ from pathlib import Path
 
 from omnibci.conf import settings
 
-from omnibci.core.base.acquisition import ReaderBase
+from interfaces.acquisition import DataSourceBase
 
 
-# file reader only read the file, the output not include data packet
-class FileReader(ReaderBase):
+# file data_source only read the file, the output not include data packet
+class FileReader(DataSourceBase):
     plugin_type = 'file_reader'
 
     def __init__(self):
@@ -47,14 +47,14 @@ class FileReader(ReaderBase):
         if not path.exists():
             raise FileNotFoundError(f"File {self.file_path} does not exist.")
         if self.file_path.endswith('.cnt'):
-            from .file_adapter import CNTReaderAdapter
+            from .adapter import CNTReaderAdapter
             self.reader_adapter = CNTReaderAdapter(self.file_path)
         else:
             raise ValueError(f"{self.file_path}, Unsupported file format")
         self._is_open = True
         return True
 
-    async def start_read(self) -> bool:
+    async def start_stream(self) -> bool:
         """启动数据流"""
         if self.reader_adapter is None:
             raise ValueError("Reader not initialized. Call connect() first.")
@@ -62,7 +62,7 @@ class FileReader(ReaderBase):
         self._is_streaming = True
         return True
 
-    async def read_unit(self):
+    async def read_chunk(self):
         """读取一个数据包"""
         raw_data = await self.reader_adapter.read_chunk(start=self.file_pointer, end=self.file_pointer + self._chunk_size)
         self.file_pointer += self._chunk_size  # 更新文件指针
@@ -72,7 +72,7 @@ class FileReader(ReaderBase):
         await asyncio.sleep(0.01)
         return raw_data
 
-    async def stop_read(self) -> bool:
+    async def stop_stream(self) -> bool:
 
         """停止数据流"""
         if self.reader_adapter is None:

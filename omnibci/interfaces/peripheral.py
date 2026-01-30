@@ -4,18 +4,18 @@
 # @Date     : 2026-01-04 11:22
 
 
-# the device controlled by BCI.
+# the devices controlled by BCI.
 
 from abc import ABC, abstractmethod
-from typing import Dict, Type
+from typing import Dict, Type, ClassVar
 
-from omnibci.core.base.registry import Registerable
+from omnibci.core.utils.registry import Registerable
 
 DEVICE_REGISTRY: Dict[str, Type['DeviceBase']] = {}
 
 
-class DeviceBase(Registerable, ABC):
-    _target_registry = DEVICE_REGISTRY
+class PeripheralBase(Registerable, ABC):
+    _target_registry: ClassVar[Dict[str, Type['PeripheralBase']]] = {}
 
     @abstractmethod
     def setup(self):
