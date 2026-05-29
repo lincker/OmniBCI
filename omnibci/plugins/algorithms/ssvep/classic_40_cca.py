@@ -19,7 +19,7 @@ from numpy import typing as npt
 from sklearn.cross_decomposition import CCA as skCCA
 
 from omnibci.conf import settings
-from interfaces.algorithm import DecoderBase
+from omnibci.interfaces.algorithm import DecoderBase
 
 
 class Classic40CCA(DecoderBase):

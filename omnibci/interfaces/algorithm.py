@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Type, Tuple, ClassVar
 
 
-from core.data.types import SignalChunk
+from omnibci.core.data.types import SignalChunk
 from omnibci.core.utils.registry import Registerable
 
 # class FilterBase(Registerable, ABC):
@@ -32,9 +32,9 @@ class DecoderBase(Registerable, ABC):
         pass
 
 
-class SegmenterBase(Registerable, ABC):
-    """detect epoch start and end. Segmenter"""
-    _target_registry: ClassVar[Dict[str, Type['SegmenterBase']]] = {}
+class EpochDetectorBase(Registerable, ABC):
+    """detect epoch start and end."""
+    _target_registry: ClassVar[Dict[str, Type['EpochDetectorBase']]] = {}
 
     """return（index, event_id). If not found, return（-1，0）"""
     @abstractmethod
@@ -44,8 +44,4 @@ class SegmenterBase(Registerable, ABC):
     """return（index, event_id). If not found, return（-1，0）"""
     @abstractmethod
     def detect_end(self, chunk: SignalChunk, end_event_set=None) -> Tuple[int, int]:
-        pass
-
-    @abstractmethod
-    def allowed_decoder_analyse(self) -> bool:
         pass

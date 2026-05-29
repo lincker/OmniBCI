@@ -10,7 +10,7 @@ from enum import IntEnum
 
 import numpy as np
 
-from interfaces.acquisition import DataSourceBase, TriggerBase
+from omnibci.interfaces.acquisition import DataSourceBase, TriggerBase
 from omnibci.conf import settings
 
 
@@ -269,6 +269,7 @@ class Scan45DataReader(DataSourceBase):
 class Scan45Trigger(TriggerBase):
     plugin_type = 'neuroscan_scan45_trigger'
     def __init__(self, COM='3100'):
+        #TODO: refactor, get com number from settings file.
         super().__init__()
         self.COM = COM
         self.address = int(COM, 16)

@@ -1,0 +1,3 @@
+-r base.txt
+# for test
+pytest==9.0.3

@@ -4,8 +4,8 @@
 # @Date     : 2025-05-10 22:56
 import os
 
-from interfaces.acquisition import TriggerBase
-from interfaces.paradigm import ParadigmBase
+from omnibci.interfaces.acquisition import TriggerBase
+from omnibci.interfaces.paradigm import ParadigmBase
 
 class Stimulator:
     def __init__(self, ):
@@ -15,16 +15,16 @@ class Stimulator:
 
     def _load_trigger(self):
         acquisition_plugin_path = os.path.join(os.path.dirname(__file__), '..', 'plugins', 'acquisition')
-        from core.utils.loader import PluginLoader
-        from core.factory import ObjectFactory
+        from omnibci.core.utils.loader import PluginLoader
+        from omnibci.core.factory import ObjectFactory
         PluginLoader.load_from_dir(acquisition_plugin_path, base_package='omnibci.plugins.acquisition')
         trigger = ObjectFactory.create(TriggerBase, config_key='ACQUISITION.trigger')
         return trigger
 
     def _load_paradigm(self, trigger: TriggerBase):
         paradigm_plugin_path = os.path.join(os.path.dirname(__file__), '..', 'plugins', 'paradigms')
-        from core.utils.loader import PluginLoader
-        from core.factory import ObjectFactory
+        from omnibci.core.utils.loader import PluginLoader
+        from omnibci.core.factory import ObjectFactory
         PluginLoader.load_from_dir(paradigm_plugin_path, base_package='omnibci.plugins.paradigms')
         paradigm = ObjectFactory.create(ParadigmBase, config_key='STIMULATION.paradigm', trigger=trigger)
         return paradigm

@@ -10,8 +10,8 @@ import os
 from enum import Enum
 from typing import Optional
 
-from interfaces.acquisition import DataSourceBase
-from core.data.types import SignalChunk
+from omnibci.interfaces.acquisition import DataSourceBase
+from omnibci.core.data.types import SignalChunk
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +155,7 @@ class AcquisitionProcess(mp.Process):
 
     def _load_data_source(self):
         acquisition_plugin_path = os.path.join(os.path.dirname(__file__), '..', 'plugins', 'acquisition')
-        from core.utils.loader import PluginLoader
-        from core.factory import ObjectFactory
+        from omnibci.core.utils.loader import PluginLoader
+        from omnibci.core.factory import ObjectFactory
         PluginLoader.load_from_dir(acquisition_plugin_path, base_package='omnibci.plugins.acquisition')
         self.data_source = ObjectFactory.create(DataSourceBase, config_key='ACQUISITION.data_source')

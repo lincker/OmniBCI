@@ -14,8 +14,8 @@ class EventType(IntEnum):
     StartStream = 111 # StartStreamData
     StopStream = 112    #
     # neuro engine
-    StartNeuroEnginePipeline = 31
-    StopNeuroEnginePipeline = 32
+    StartNeuroEngineSignalProcessor = 31
+    StopNeuroEngineSignalProcessor = 32
     CloseAllNeuroEngineProcessSystem = 33
     # stimulation
     StartStimTrial = 311
@@ -32,12 +32,17 @@ class Event:
 
     def __init__(self, event_type: EventType = None, data=None) -> None:
         #self.receiver = None
-        self.type = event_type
-        self.data = data
+        self.type:EventType = event_type
+        self.data:int = data
 
 
     def to_json(self):
             return {
-                'event_type': self.type,
+                'type': self.type,
                 'data': self.data
             }
+
+    @classmethod
+    def create_from_json(cls, event_json):
+        return cls(**event_json)
+

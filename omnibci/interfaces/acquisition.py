@@ -1,13 +1,23 @@
+'''
+Author: lincker
+Date: 2026-01-08 14:52:39
+LastEditors: lincker haolin.d.wu@gmail.com
+LastEditTime: 2026-04-23 11:36:41
+FilePath: /OmniBCI/omnibci/interfaces/acquisition.py
+Description:
+
+Copyright (c) 2026 by lincker, All Rights Reserved.
+'''
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-12-31 10:34
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Type, ClassVar
+from typing import Any, ClassVar, Dict, Type
 
 from numpy import typing as npt
 
-from core.utils.registry import Registerable
+from omnibci.core.utils.registry import Registerable
 
 
 class DataSourceBase(Registerable, ABC):

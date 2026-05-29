@@ -12,7 +12,8 @@ ASYNC_SLEEP_TIME=0.01
 [ACQUISITION]
 data_source = "file_reader"
 trigger = 'neuroscan_scan45_trigger'
-data_channel_number = 9
+channel_number = 10
+sample_rate = 1000
 
 file_reader_chunk_size = 100
 file_reader_play_speed = 1.0
@@ -22,14 +23,17 @@ DATA_PROVIDER_IP = '192.168.0.3'
 DATA_PROVIDER_PORT = 4000
 
 [ALGORITHM]
-decoder = 'THUBCI_SSVEP_classic40CCA'
-segmenter = 'EPOCH_SEGMENTER'
+#decoder = 'THUBCI_SSVEP_classic40CCA'
+decoder = 'THUBCI_SSVEP_classic40FBCCA'
+epoch_detector = 'DEFAULT_EPOCH_DETECTOR'
+window_duration = 3
+offset_time = 0.14
 
 [NEUROENGINE]
-MESSAGE_SERVER_IP = 'localhost'
-MESSAGE_SERVER_PORT = 8000
+message_server_ip = '127.0.0.1'
+message_server_port = 8000
 
-COMMAND_SERVER_IP = 'localhost'
+COMMAND_SERVER_IP = '127.0.0.1'
 COMMAND_SERVER_PORT = 8080
 
 [STIMULATION]

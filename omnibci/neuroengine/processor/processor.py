@@ -9,7 +9,7 @@ import multiprocessing as mp
 import os
 
 
-from interfaces.algorithm import DecoderBase, SegmenterBase
+from omnibci.interfaces.algorithm import DecoderBase, EpochDetectorBase
 
 from .state import WaitingForEpochState, CollectingEpochState
 from .epoch import EpochManager
@@ -22,11 +22,11 @@ class SignalProcessorCommand(Enum):
 
 
 class SignalProcessor:
-    def __init__(self, segmenter:SegmenterBase, decoder:DecoderBase, command_queue, data_manager, event_bus):
+    def __init__(self, detector:EpochDetectorBase, decoder:DecoderBase, command_queue, data_manager, event_bus):
         self.data_manager = data_manager
         self.event_bus = event_bus
         self.command_queue = command_queue
-        self.epoch_manager = EpochManager(decoder=decoder, strategy=segmenter)
+        self.epoch_manager = EpochManager(decoder=decoder, detector=detector)
         # Initialize states
         self._waiting_state = WaitingForEpochState(self)
         self._collecting_state = CollectingEpochState(self)
@@ -79,15 +79,15 @@ class SignalProcessorProcess(mp.Process):
         from omnibci.core.factory import ObjectFactory
         PluginLoader.load_from_dir(algorithm_plugin_path, base_package='omnibci.plugins.algorithms')
         decoder = ObjectFactory.create(DecoderBase, config_key='ALGORITHM.decoder')
-        segmenter = ObjectFactory.create(SegmenterBase, config_key='ALGORITHM.segmenter')
+        detector = ObjectFactory.create(EpochDetectorBase, config_key='ALGORITHM.epoch_detector')
 
-        return decoder, segmenter
+        return decoder, detector
 
-    def _run_processor(self, decoder, segmenter):
+    def _run_processor(self, decoder, detector):
         """Initialize and run the stream processor."""
         self.signal_processor = SignalProcessor(
             decoder=decoder,
-            segmenter=segmenter,
+            detector=detector,
             command_queue=self.command_queue,
             data_manager=self.data_manager,
             event_bus=self.event_bus

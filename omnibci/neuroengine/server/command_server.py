@@ -31,7 +31,7 @@ class CommandServer:
         command_type = command.get('type')
         command_data = command.get('data')
         if command_type == 'ConnectDataProvider':
-            event = Event(event_type=EventType.OpenDataProvider, data=command_data)
+            event = Event(event_type=EventType.ConnectDataProvider, data=command_data)
         elif command_type == 'DisconnectDataProvider':
             event = Event(event_type=EventType.DisconnectDataProvider, data=command_data)
         elif command_type == 'StartReceive':
@@ -41,7 +41,7 @@ class CommandServer:
         elif command_type == 'StartStimTrial':
             event = Event(event_type=EventType.StartStimTrial, data=command_data)
         elif command_type == 'StopAll':
-            event = Event(event_type=EventType.StopNeuroEnginePipeline, data=command_data)
+            event = Event(event_type=EventType.StopNeuroEngineSignalProcessor, data=command_data)
         else:
             return web.json_response({'status': 'error', 'server': 'Invalid command type'})
         # check command
@@ -50,8 +50,8 @@ class CommandServer:
 
     async def start(self):
         await self.runner.setup()
-        server_ip = settings.NEUROENGINE.COMMAND_SERVER_IP
-        server_port = settings.NEUROENGINE.COMMAND_SERVER_PORT
+        server_ip = settings.get("NEUROENGINE.COMMAND_SERVER_IP")
+        server_port = settings.get("NEUROENGINE.COMMAND_SERVER_PORT")
         site = web.TCPSite(self.runner, server_ip, server_port)
         await site.start()
 

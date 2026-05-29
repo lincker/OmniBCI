@@ -7,7 +7,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from core.data.types import SignalChunk
+from omnibci.core.data.types import SignalChunk
 from omnibci.core.events.types import Event, EventType
 
 class ProcessingState:
@@ -76,7 +76,7 @@ class CollectingEpochState(ProcessingState):
     def _process_normal_data(self, chunk):
         """Process chunk with no events."""
         self.context.epoch_manager.append_chunk(chunk)
-        is_complete, result = self.context.epoch_manager.analyse(force_recognize=False)
+        is_complete, result = self.context.epoch_manager.run_pipeline(force_recognize=False)
 
         if is_complete:
             self._emit_result(result)
@@ -87,7 +87,7 @@ class CollectingEpochState(ProcessingState):
         """Process chunk containing end events."""
         # Append data up to end events and force recognition
         self.context.epoch_manager.append_until_index(chunk, end_idx)
-        _, result = self.context.epoch_manager.analyse(force_recognize=True)
+        _, result = self.context.epoch_manager.run_pipeline(force_recognize=True)
         logging.info(f"End events detected: forced recognition, result={result}")
         self._emit_result(result)
 
@@ -105,7 +105,7 @@ class CollectingEpochState(ProcessingState):
 
         # Append data before the new start events and force recognition
         self.context.epoch_manager.append_until_index(chunk, start_idx)
-        _, result = self.context.epoch_manager.analyse(force_recognize=True)
+        _, result = self.context.epoch_manager.run_pipeline(force_recognize=True)
 
         logging.info(f"Forced recognition due to new start: result={result}")
         self._emit_result(result)

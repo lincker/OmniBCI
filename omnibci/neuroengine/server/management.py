@@ -17,7 +17,7 @@ import asyncio
 from omnibci.conf import settings
 from omnibci.core.events.types import EventType
 
-from omnibci.core.communication.network import NetworkServer
+from omnibci.core.network.socket import NetworkServer
 
 from .command_server import CommandServer
 
@@ -25,8 +25,8 @@ from .command_server import CommandServer
 class ServerMessageManagement:
     def __init__(self, event_bus):
         self.event_bus = event_bus
-        self.server_ip = settings.NEUROENGINE.MESSAGE_SERVER_IP
-        self.server_port = settings.NEUROENGINE.MESSAGE_SERVER_PORT
+        self.server_ip = settings.get("NEUROENGINE.message_server_ip")
+        self.server_port = settings.get("NEUROENGINE.message_server_port")
         self.server = NetworkServer(event_bus=event_bus, host=self.server_ip, port=self.server_port)
         self.command_server = CommandServer(event_bus=event_bus)
         self.register_events()

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from omnibci.conf import settings
 
-from interfaces.acquisition import DataSourceBase
+from omnibci.interfaces.acquisition import DataSourceBase
 
 
 # file data_source only read the file, the output not include data packet

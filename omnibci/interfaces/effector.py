@@ -11,11 +11,9 @@ from typing import Dict, Type, ClassVar
 
 from omnibci.core.utils.registry import Registerable
 
-DEVICE_REGISTRY: Dict[str, Type['DeviceBase']] = {}
 
-
-class PeripheralBase(Registerable, ABC):
-    _target_registry: ClassVar[Dict[str, Type['PeripheralBase']]] = {}
+class EffectorBase(Registerable, ABC):
+    _target_registry: ClassVar[Dict[str, Type['EffectorBase']]] = {}
 
     @abstractmethod
     def setup(self):

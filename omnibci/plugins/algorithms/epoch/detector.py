@@ -4,12 +4,12 @@
 # @Date     : 2026-01-15 13:59
 import numpy as np
 
-from core.data.types import SignalChunk
-from interfaces.algorithm import SegmenterBase
+from omnibci.core.data.types import SignalChunk
+from omnibci.interfaces.algorithm import EpochDetectorBase
 
 
-class EpochSegmenter(SegmenterBase):
-    plugin_type = 'EPOCH_SEGMENTER'
+class EpochDetector(EpochDetectorBase):
+    plugin_type = 'DEFAULT_EPOCH_DETECTOR'
     def __init__(self):
         pass
 
