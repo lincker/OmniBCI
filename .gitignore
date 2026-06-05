@@ -105,8 +105,17 @@ pip-selfcheck.json
 # Ignore dynaconf secret files
 .secrets.*
 
+# backup files
+/backup
+
+# plugins
+/omnibci/infrastructure/plugins
+
+# tests
+/tests
+
 # stimulation picture
-/omnibci/stimulation/creator/stim/*
+/omnibci/infrastructure/stimulation/creator/stim/*
 *.png
 *.jpg
 /.idea/
