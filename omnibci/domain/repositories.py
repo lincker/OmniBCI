@@ -24,7 +24,7 @@ from typing import List, Optional
 # that the infrastructure layer persists and the application layer queries.
 # ---------------------------------------------------------------------------
 
-class SessionState(str, Enum):
+class SessionRecordState(str, Enum):
     RUNNING = "running"
     ENDED   = "ended"
 
@@ -52,7 +52,7 @@ class SessionRecord:
     """
     session_id: str
     paradigm: Optional[str]
-    state: SessionState
+    state: SessionRecordState
     started_at: datetime
     ended_at: Optional[datetime] = None
     trials: List[TrialRecord] = field(default_factory=list)
@@ -63,7 +63,7 @@ class SessionRecord:
 
     def append_trial(self, trial: TrialRecord) -> None:
         """Append a trial; raises if session is already ended."""
-        if self.state == SessionState.ENDED:
+        if self.state == SessionRecordState.ENDED:
             raise RuntimeError(
                 f"Cannot append trial to ended session '{self.session_id}'"
             )
@@ -71,8 +71,8 @@ class SessionRecord:
 
     def mark_ended(self) -> None:
         """Transition to ENDED; idempotent."""
-        if self.state != SessionState.ENDED:
-            self.state = SessionState.ENDED
+        if self.state != SessionRecordState.ENDED:
+            self.state = SessionRecordState.ENDED
             self.ended_at = datetime.now(timezone.utc)
 
     # ------------------------------------------------------------------

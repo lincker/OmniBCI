@@ -10,7 +10,7 @@ file_path = "logs/omnibci.log"
 ASYNC_SLEEP_TIME=0.01
 
 [ACQUISITION]
-data_source = "file_reader"
+signal_source = "file_reader"
 trigger = 'neuroscan_scan45_trigger'
 channel_number = 10
 sample_rate = 1000
@@ -28,6 +28,12 @@ decoder = 'THUBCI_SSVEP_classic40FBCCA'
 epoch_detector = 'DEFAULT_EPOCH_DETECTOR'
 window_duration = 3
 offset_time = 0.14
+# Seconds of pre-trigger baseline captured per epoch (0 = none). Per-paradigm.
+baseline_duration = 0.0
+# Ordered preprocessing filters applied to the window before decoding.
+# Plugin_type ids, applied in order. Empty = none.
+# e.g. filters = ['BASELINE_CORRECTION']
+filters = []
 
 [NEUROENGINE]
 message_server_ip = '127.0.0.1'

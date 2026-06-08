@@ -1,4 +1,4 @@
-'''
+"""
 Author: lincker
 Date: 2026-01-08 14:52:39
 LastEditors: lincker haolin.d.wu@gmail.com
@@ -7,7 +7,7 @@ FilePath: /OmniBCI/omnibci/interfaces/acquisition.py
 Description:
 
 Copyright (c) 2026 by lincker, All Rights Reserved.
-'''
+"""
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
@@ -20,14 +20,14 @@ from numpy import typing as npt
 from omnibci.shared.registry import Registerable
 
 
-class DataSourceBase(Registerable, ABC):
+class SignalSource(Registerable, ABC):
     """
-    Abstract utils class for data source.
+    Abstract class for signal source.
 
-    This class defines the interface for data source, which are responsible for
+    This class defines the interface for signal source, which are responsible for
     reading data from a source and providing it in a standardized format.
     """
-    _target_registry: ClassVar[Dict[str, Type['DataSourceBase']]] = {}
+    _target_registry: ClassVar[Dict[str, Type['SignalSource']]] = {}
     def __init__(self):
         super().__init__()
         self._is_connected = False
@@ -35,45 +35,43 @@ class DataSourceBase(Registerable, ABC):
 
     @property
     def is_connected(self) -> bool:
-        """是否已建立连接（公开只读视图，避免外部穿透 _is_connected）。"""
         return self._is_connected
 
     @property
     def is_streaming(self) -> bool:
-        """是否正在读取数据流（公开只读视图，避免外部穿透 _is_streaming）。"""
         return self._is_streaming
 
     @abstractmethod
     async def get_metadata(self):
-        """获取设备元数据"""
+        """get metadata"""
 
     @abstractmethod
     async def connect(self) -> bool:
-        """建立设备/文件连接"""
+        """setup connection"""
 
     @abstractmethod
     async def start_stream(self) -> bool:
-        """启动读取数据流"""
+        """start reading data"""
 
     @abstractmethod
     async def read_chunk(self)-> npt.NDArray[Any]:
-        """从文件读取一个固定尺寸的数据，或从网络读取一个数据包"""
+        """read a fixed sized chunk"""
 
     @abstractmethod
     async def stop_stream(self) -> bool:
-        """停止读取数据流"""
+        """stop reading data"""
 
     @abstractmethod
     async def disconnect(self) -> bool:
-        """断开设备/文件连接"""
+        """teardown connection"""
 
 
-class TriggerBase(Registerable, ABC):
-    _target_registry: ClassVar[Dict[str, Type['TriggerBase']]] = {}
+class TriggerEmitter(Registerable, ABC):
+    _target_registry: ClassVar[Dict[str, Type['TriggerEmitter']]] = {}
     @abstractmethod
     def send(self, event_id: int) -> bool:
-        """发送trigger/event"""
+        """send trigger/event"""
 
     @abstractmethod
     def clear(self) -> None:
-        """清除触发器状态"""
+        """clear trigger/event, get read for sending event next time"""

@@ -1,38 +1,27 @@
-"""
-NeuroEngineBuilder — 组装工厂。
-
-职责：创建所有 multiprocessing 基础设施（Queues、Processes、DataManager、
-EventBus），然后将它们注入 NeuroEngine 并返回完整可用的实例。
-
-NeuroEngine 自身不知道如何构造任何依赖；builder 是唯一持有这些
-"配方"的地方。需要不同配置（不同 queue_size、不同进程实现）时，
-只需修改或替换 builder，NeuroEngine 和 NeuroEngineService 无需改动。
-"""
 from __future__ import annotations
 
 import multiprocessing as mp
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
-from omnibci.infrastructure.engine.engine import NeuroEngine
-from omnibci.infrastructure.engine.processor.processor import SignalProcessingWorker
-from omnibci.infrastructure.engine.server.management import ServerMessageManagement
+from omnibci.infrastructure.neuroengine.engine import NeuroEngine
+from omnibci.infrastructure.neuroengine.processing.worker import SignalProcessingWorker
+from omnibci.infrastructure.neuroengine.server.management import ServerMessageManagement
 
 
 @dataclass
 class NeuroEngineConfig:
     """
-    Configuration knobs for NeuroEngineBuilder — the single place that holds
-    the engine's tunables.  Defaults mirror dataclass values; production reads
-    them from settings via :meth:`from_settings`, so deep modules no longer
-    call ``settings.get`` themselves.
+    Configuration for NeuroEngineBuilder. Defaults mirror dataclass values; reads
+    them from settings.
     """
-    queue_size: int = 20                    # max items in each mp.Queue
+    queue_size: int = 100                    # max items in each mp.Queue
     message_server_ip: str = "127.0.0.1"    # result-push server bind host
     message_server_port: int = 8000         # result-push server bind port
     sample_rate: int = 1000                 # Hz, passed to the SignalProcessor
+    baseline_duration: float = 0.2          # seconds of pre-trigger baseline (0 = none)
     debug: bool = False                     # asyncio debug mode for the engine loop
 
     @classmethod
@@ -52,6 +41,7 @@ class NeuroEngineConfig:
             message_server_ip=str(_get("NEUROENGINE.message_server_ip", cls.message_server_ip)),
             message_server_port=int(_get("NEUROENGINE.message_server_port", cls.message_server_port)),
             sample_rate=int(_get("ACQUISITION.sample_rate", cls.sample_rate)),
+            baseline_duration=float(_get("ALGORITHM.baseline_duration", cls.baseline_duration)),
             debug=bool(_get("debug", cls.debug)),
         )
 
@@ -96,15 +86,16 @@ class NeuroEngineBuilder:
         processor_command_queue = mp.Queue(cfg.queue_size)
 
         # 4. Sub-processes (not started yet — NeuroEngine._start() does that)
-        acquisitor_process = AcquisitionWorker(
+        acquisition_worker = AcquisitionWorker(
             command_queue=acquisition_command_queue,
             data_manager=data_manager,
         )
-        signal_processor_process = SignalProcessingWorker(
+        signal_processing_worker = SignalProcessingWorker(
             command_queue=processor_command_queue,
             data_manager=data_manager,
             event_bus=event_bus,
             sample_rate=cfg.sample_rate,
+            baseline_duration=cfg.baseline_duration,
         )
 
         # 5. Result push server (host/port injected — no settings.get inside)
@@ -118,9 +109,9 @@ class NeuroEngineBuilder:
         return NeuroEngine(
             event_bus=event_bus,
             data_manager=data_manager,
-            acquisitor_process=acquisitor_process,
+            acquisition_worker=acquisition_worker,
             acquisition_command_queue=acquisition_command_queue,
-            signal_processor_process=signal_processor_process,
+            signal_processing_worker=signal_processing_worker,
             processor_command_queue=processor_command_queue,
             server_message_management=server_message_management,
             debug=cfg.debug,

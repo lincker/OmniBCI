@@ -36,7 +36,7 @@ from omnibci.domain.classification import Classification
 from omnibci.domain.repositories import (
     SessionRecord,
     SessionRepository,
-    SessionState,
+    SessionRecordState,
     TrialRecord,
 )
 
@@ -59,7 +59,7 @@ def _trial_record_to_dto(r: TrialRecord) -> TrialDTO:
 
 
 def _session_record_to_dto(r: SessionRecord, include_trials: bool = False) -> SessionDTO:
-    state = (SessionStateDTO.ENDED if r.state == SessionState.ENDED
+    state = (SessionStateDTO.ENDED if r.state == SessionRecordState.ENDED
              else SessionStateDTO.RUNNING)
     return SessionDTO(
         session_id=r.session_id,
@@ -97,7 +97,7 @@ class SessionAppService:
         record = SessionRecord(
             session_id=session_id,
             paradigm=cmd.paradigm,
-            state=SessionState.RUNNING,
+            state=SessionRecordState.RUNNING,
             started_at=datetime.now(timezone.utc),
         )
         self._repo.save(record)

@@ -5,13 +5,13 @@
 import os
 
 import omnibci
-from omnibci.domain.ports.acquisition import TriggerBase
-from omnibci.domain.ports.paradigm import ParadigmBase
+from omnibci.domain.ports.acquisition import TriggerEmitter
+from omnibci.domain.ports.paradigm import Paradigm
 
 class Stimulator:
     def __init__(self, ):
-        self.paradigm: ParadigmBase
-        self.trigger: TriggerBase
+        self.paradigm: Paradigm
+        self.trigger: TriggerEmitter
         self.should_stop = False
 
     def _load_trigger(self):
@@ -19,15 +19,15 @@ class Stimulator:
         from omnibci.shared.loader import PluginLoader
         from omnibci.shared.factory import ObjectFactory
         PluginLoader.load_from_dir(acquisition_plugin_path, base_package='omnibci.infrastructure.plugins.acquisition')
-        trigger = ObjectFactory.create(TriggerBase, config_key='ACQUISITION.trigger')
+        trigger = ObjectFactory.create(TriggerEmitter, config_key='ACQUISITION.trigger')
         return trigger
 
-    def _load_paradigm(self, trigger: TriggerBase):
+    def _load_paradigm(self, trigger: TriggerEmitter):
         paradigm_plugin_path = os.path.join(next(iter(omnibci.__path__)), 'infrastructure', 'plugins', 'paradigms')
         from omnibci.shared.loader import PluginLoader
         from omnibci.shared.factory import ObjectFactory
         PluginLoader.load_from_dir(paradigm_plugin_path, base_package='omnibci.infrastructure.plugins.paradigms')
-        paradigm = ObjectFactory.create(ParadigmBase, config_key='STIMULATION.paradigm', trigger=trigger)
+        paradigm = ObjectFactory.create(Paradigm, config_key='STIMULATION.paradigm', trigger=trigger)
         return paradigm
 
     def start(self):

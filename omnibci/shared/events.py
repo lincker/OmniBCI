@@ -28,9 +28,9 @@ class EventType(IntEnum):
 
 
 class Event:
-    '''
+    """
     events type is command, stimulator
-    '''
+    """
 
     def __init__(self, event_type: EventType = None, data=None) -> None:
         #self.receiver = None

@@ -1,36 +1,17 @@
-"""
-NeuroEngine — 纯编排器（refactored）。
-
-职责：
-  - 启动 / 停止子进程（AcquisitionWorker、SignalProcessingWorker）
-  - 启动 EventBus 和 ServerMessageManagement
-  - 将 EventBus 事件路由到各子系统的命令队列
-  - 优雅关闭：发送停止命令 → join → terminate（超时）→ 关闭队列
-
-不再做的事：
-  - 构造任何依赖（mp.Queue、DataManager、Process…）
-    ← 全部由 NeuroEngineBuilder 负责
-
-通过构造函数注入所有协作者，使 NeuroEngine 可以在不启动真实
-子进程的情况下被单元测试。
-"""
 from __future__ import annotations
 
 import asyncio
 import logging
 import multiprocessing as mp
-from typing import Optional
 
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.shared.events import EventType
-from omnibci.infrastructure.engine.processor.processor import (
-    SignalProcessorCommand,
-    SignalProcessingWorker,
-)
-from omnibci.infrastructure.engine.server.management import ServerMessageManagement
+from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessorCommand
+from omnibci.infrastructure.neuroengine.processing.worker import SignalProcessingWorker
+from omnibci.infrastructure.neuroengine.server.management import ServerMessageManagement
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +26,11 @@ class NeuroEngine:
         Shared EventBus instance (mp.Queue already set on it).
     data_manager:
         Shared buffer between AcquisitionWorker and SignalProcessingWorker.
-    acquisitor_process:
+    acquisition_worker:
         Pre-built AcquisitionWorker (not yet started).
     acquisition_command_queue:
         mp.Queue used to send AcquisitionCommand values to the process.
-    signal_processor_process:
+    signal_processing_worker:
         Pre-built SignalProcessingWorker (not yet started).
     processor_command_queue:
         mp.Queue used to send SignalProcessorCommand values to the process.
@@ -61,18 +42,18 @@ class NeuroEngine:
         self,
         event_bus: EventBus,
         data_manager: DataManager,
-        acquisitor_process: AcquisitionWorker,
+        acquisition_worker: AcquisitionWorker,
         acquisition_command_queue: mp.Queue,
-        signal_processor_process: SignalProcessingWorker,
+        signal_processing_worker: SignalProcessingWorker,
         processor_command_queue: mp.Queue,
         server_message_management: ServerMessageManagement,
         debug: bool = False,
     ) -> None:
         self.event_bus = event_bus
         self.data_manager = data_manager
-        self.acquisitor_process = acquisitor_process
+        self.acquisition_worker = acquisition_worker
         self.acquisition_command_queue = acquisition_command_queue
-        self.signal_processor_process = signal_processor_process
+        self.signal_processing_worker = signal_processing_worker
         self.processor_command_queue = processor_command_queue
         self.server_message_management = server_message_management
         self._debug = debug
@@ -96,8 +77,8 @@ class NeuroEngine:
     # ------------------------------------------------------------------
 
     async def _start(self) -> None:
-        self.acquisitor_process.start()
-        self.signal_processor_process.start()
+        self.acquisition_worker.start()
+        self.signal_processing_worker.start()
         await self.event_bus.start()
         self.server_message_management.start()
         self._register_event_listeners()
@@ -116,8 +97,8 @@ class NeuroEngine:
         self.event_bus.stop()
         await self.server_message_management.stop()
 
-        self._join_process(self.acquisitor_process, "AcquisitionWorker")
-        self._join_process(self.signal_processor_process, "SignalProcessingWorker")
+        self._join_process(self.acquisition_worker, "AcquisitionWorker")
+        self._join_process(self.signal_processing_worker, "SignalProcessingWorker")
 
         self._close_queue(self.processor_command_queue)
         self._close_queue(self.acquisition_command_queue)

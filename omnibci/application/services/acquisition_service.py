@@ -94,7 +94,7 @@ class AcquisitionAppService:
                 except Exception:
                     return None
 
-            source = _get("ACQUISITION.data_source")
+            source = _get("ACQUISITION.signal_source")
             sample_rate = _get("ACQUISITION.sample_rate")
             channel_count = _get("ACQUISITION.channel_number")
             return (
