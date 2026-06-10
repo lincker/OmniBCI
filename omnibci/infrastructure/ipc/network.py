@@ -27,15 +27,42 @@ def _decode_event(raw: bytes) -> "Event | None":
 
 
 class NetworkServer:
-    def __init__(self, event_bus, host, port):
+    def __init__(self, event_bus=None, host=None, port=None):
         self.event_bus = event_bus
         self.host = host
         self.port = port
         self.status = 'INIT'
         self.server = None
-        # Multiple stimulation clients may connect (e.g. several displays);
-        # a single writer slot would let a reconnect clobber the previous one.
+        # Multiple peers may connect to one listen port (e.g. several stimulation
+        # displays); a single writer slot would let a reconnect clobber the
+        # previous one.
         self._clients: set = set()
+        # Inbound dispatch hook. When set (by a PeerChannel), each decoded inbound
+        # Event is handed here instead of straight to the EventBus, so the channel
+        # can apply its route white-list before anything lands on the bus. Falls
+        # back to event_bus.put_event when unset (legacy behaviour).
+        self._inbound_handler = None
+        # Liveness hook — fired on every received frame (incl. keep-alives) so a
+        # PeerChannel watchdog can tell a connected-but-silent peer from a live one.
+        self._liveness_handler = None
+
+    def set_inbound_handler(self, handler) -> None:
+        """Route inbound Events through *handler(event)* instead of the EventBus."""
+        self._inbound_handler = handler
+
+    def set_liveness_handler(self, handler) -> None:
+        """Called once per received frame (incl. keep-alives) to signal liveness."""
+        self._liveness_handler = handler
+
+    def _dispatch_inbound(self, event) -> None:
+        if self._inbound_handler is not None:
+            self._inbound_handler(event)
+        elif self.event_bus is not None:
+            self.event_bus.put_event(event)
+
+    def _notify_liveness(self) -> None:
+        if self._liveness_handler is not None:
+            self._liveness_handler()
 
     async def start(self):
         await self._start_server()
@@ -52,12 +79,13 @@ class NetworkServer:
             while True:
                 header_bytes = await reader.readexactly(Frame.Header.HEADER_SIZE)
                 header = Frame.Header.from_bytes(header_bytes)
+                self._notify_liveness()  # any frame (incl. keep-alive) proves liveness
                 if header.body_size == 0:
                     continue  # empty keep-alive frame; nothing to dispatch
                 body = await reader.readexactly(header.body_size)
                 event = body_to_event(body, header.version)  # version-checked
                 if event is not None:
-                    self.event_bus.put_event(event)
+                    self._dispatch_inbound(event)
         except asyncio.IncompleteReadError:
             logger.info("Stimulation client disconnected: %s", addr)
         finally:
@@ -90,13 +118,33 @@ class NetworkServer:
 
 
 class NetworkClient:
-    def __init__(self, event_bus: EventBus, server_ip='127.0.0.1', server_port=8888):
+    def __init__(self, event_bus: EventBus = None, server_ip='127.0.0.1', server_port=8888):
         self.event_bus = event_bus
         self.server_ip = server_ip
         self.server_port = server_port
         self.reader = None
         self.writer = None
         self.status = 'INIT'
+        self._inbound_handler = None
+        self._liveness_handler = None
+
+    def set_inbound_handler(self, handler) -> None:
+        """Route inbound Events through *handler(event)* instead of the EventBus."""
+        self._inbound_handler = handler
+
+    def set_liveness_handler(self, handler) -> None:
+        """Called once per received frame (incl. keep-alives) to signal liveness."""
+        self._liveness_handler = handler
+
+    def _dispatch_inbound(self, event) -> None:
+        if self._inbound_handler is not None:
+            self._inbound_handler(event)
+        elif self.event_bus is not None:
+            self.event_bus.put_event(event)
+
+    def _notify_liveness(self) -> None:
+        if self._liveness_handler is not None:
+            self._liveness_handler()
 
     async def start(self):
         # while self.status != 'CONNECTED':
@@ -150,12 +198,13 @@ class NetworkClient:
         try:
             header_bytes = await self.reader.readexactly(Frame.Header.HEADER_SIZE)
             header = Frame.Header.from_bytes(header_bytes)
+            self._notify_liveness()  # any frame (incl. keep-alive) proves liveness
             if header.body_size == 0:
                 return  # empty keep-alive frame
             body = await self.reader.readexactly(header.body_size)
             event = body_to_event(body, header.version)  # version-checked
             if event is not None:
-                self.event_bus.put_event(event)
+                self._dispatch_inbound(event)
         except asyncio.IncompleteReadError:
             logger.info("NetworkClient: server closed the connection")
             self.status = 'STOP'

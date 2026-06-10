@@ -11,7 +11,10 @@ from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.shared.events import EventType
 from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessorCommand
 from omnibci.infrastructure.neuroengine.processing.worker import SignalProcessingWorker
-from omnibci.infrastructure.neuroengine.server.management import ServerMessageManagement
+from omnibci.infrastructure.neuroengine.gateway import PeerGateway
+from omnibci.infrastructure.neuroengine.stimulation_feedback import StimulationFeedbackHandler
+from omnibci.infrastructure.neuroengine.effector_translator import EffectorCommandTranslator
+from omnibci.infrastructure.neuroengine.effector_feedback import EffectorFeedbackHandler
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +37,8 @@ class NeuroEngine:
         Pre-built SignalProcessingWorker (not yet started).
     processor_command_queue:
         mp.Queue used to send SignalProcessorCommand values to the process.
-    server_message_management:
-        Manages the NetworkServer that pushes results to external clients.
+    peer_gateway:
+        Routes EventBus events to/from external peers (stimulation, effector).
     """
 
     def __init__(
@@ -46,7 +49,9 @@ class NeuroEngine:
         acquisition_command_queue: mp.Queue,
         signal_processing_worker: SignalProcessingWorker,
         processor_command_queue: mp.Queue,
-        server_message_management: ServerMessageManagement,
+        peer_gateway: PeerGateway,
+        effector_translator: "EffectorCommandTranslator | None" = None,
+        effector_feedback: "EffectorFeedbackHandler | None" = None,
         debug: bool = False,
     ) -> None:
         self.event_bus = event_bus
@@ -55,7 +60,13 @@ class NeuroEngine:
         self.acquisition_command_queue = acquisition_command_queue
         self.signal_processing_worker = signal_processing_worker
         self.processor_command_queue = processor_command_queue
-        self.server_message_management = server_message_management
+        self.peer_gateway = peer_gateway
+        # Engine-side consumer of stimulation → engine feedback (StimulationAck).
+        self.stim_feedback = StimulationFeedbackHandler()
+        # Effector ACL + feedback — present only when the effector peer is
+        # enabled (builder injects them; None disables all effector wiring).
+        self.effector_translator = effector_translator
+        self.effector_feedback = effector_feedback
         self._debug = debug
         self.should_stop = False
 
@@ -80,7 +91,7 @@ class NeuroEngine:
         self.acquisition_worker.start()
         self.signal_processing_worker.start()
         await self.event_bus.start()
-        self.server_message_management.start()
+        self.peer_gateway.start()
         self._register_event_listeners()
         logger.info("NeuroEngine started")
 
@@ -95,7 +106,7 @@ class NeuroEngine:
         self.acquisition_command_queue.put(AcquisitionCommand.stop_acquisition)
         self.processor_command_queue.put(SignalProcessorCommand.should_stop)
         self.event_bus.stop()
-        await self.server_message_management.stop()
+        await self.peer_gateway.stop()
 
         self._join_process(self.acquisition_worker, "AcquisitionWorker")
         self._join_process(self.signal_processing_worker, "SignalProcessingWorker")
@@ -135,6 +146,26 @@ class NeuroEngine:
         self.event_bus.register_event_listener(
             EventType.CloseAllNeuroEngineProcessSystem, self._stop_neuro_engine_system
         )
+        # Stimulation → engine inbound feedback (routed in by the stimulation
+        # PeerChannel). The engine now consumes acks, not just the UI.
+        self.event_bus.register_event_listener(
+            EventType.StimulationAck, self.stim_feedback.on_ack
+        )
+        # Effector wiring (only when enabled): translate each decoded trial into
+        # an EffectorCommand, and consume the device's inbound feedback.
+        if self.effector_translator is not None:
+            self.event_bus.register_event_listener(
+                EventType.TrialCompleted, self.effector_translator.on_trial_completed
+            )
+        if self.effector_feedback is not None:
+            for event_type in (
+                EventType.EffectorAck,
+                EventType.EffectorState,
+                EventType.EffectorFault,
+            ):
+                self.event_bus.register_event_listener(
+                    event_type, self.effector_feedback.on_feedback
+                )
 
     @staticmethod
     def _make_command_router(queue: mp.Queue, command) -> "callable":

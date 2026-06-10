@@ -1,6 +1,11 @@
 """
 ServerMessageManagement — 管理 NetworkServer 生命周期。
 
+DEPRECATED (PeerGateway 重构 Phase 1)：生产装配已改用
+``neuroengine.gateway.PeerGateway`` + 路由化的 stimulation 通道,取代这个
+"单 peer 全广播" 包装器。暂留以兼容其回归测试与潜在外部调用方,待 PeerGateway
+验证稳定后移除。
+
 职责：向连接的刺激端（或其他外部客户端）推送结果事件。
 
 删除内容：

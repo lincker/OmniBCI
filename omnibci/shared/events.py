@@ -21,6 +21,11 @@ class EventType(IntEnum):
     MessageFromStimulation = 9
     StartStimulation = 301
     StopStimulation = 302
+    # effector (external-device control)
+    EffectorCommand = 401  # engine → effector: drive the external device
+    EffectorAck = 402      # effector → engine: command executed receipt
+    EffectorState = 403    # effector → engine: device state / sensor feedback
+    EffectorFault = 404    # effector → engine: device fault (triggers safety)
     # --- domain events (carry rich domain objects as payload) ---------
     TrialCompleted = 501   # payload: Classification VO
     SessionStarted = 502   # payload: session_id str
