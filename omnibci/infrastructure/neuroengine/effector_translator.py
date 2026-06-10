@@ -31,7 +31,12 @@ class EffectorCommandTranslator:
     def on_trial_completed(self, event: Event) -> None:
         """EventBus listener for TrialCompleted. Emits an EffectorCommand."""
         data = event.data
-        target_id = getattr(data, "target_id", None)
+        # The bus payload is a TrialOutcome (session_id + trial_number +
+        # classification) since the ACL enrichment — unwrap it. A bare
+        # Classification (pre-enrichment shape) is still accepted for
+        # backward compatibility, mirroring SessionAppService.on_trial_completed.
+        clf = getattr(data, "classification", data)
+        target_id = getattr(clf, "target_id", None)
         if target_id is None:
             logger.warning(
                 "EffectorCommandTranslator: TrialCompleted payload %s has no "
@@ -40,8 +45,8 @@ class EffectorCommandTranslator:
             return
         command = {
             "target_id": int(target_id),
-            "event_id": getattr(data, "event_id", None),
-            "confidence": getattr(data, "confidence", None),
+            "event_id": getattr(clf, "event_id", None),
+            "confidence": getattr(clf, "confidence", None),
         }
         self._bus.put_event(Event(EventType.EffectorCommand, command))
         logger.info("EffectorCommand emitted: %s", command)

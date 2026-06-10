@@ -126,21 +126,30 @@ class NeuroEngine:
     # ------------------------------------------------------------------
 
     def _command_routes(self) -> dict:
-        """EventType → (command queue, command) for simple put-command events."""
+        """
+        EventType → (command queue, command, carry_data).
+
+        carry_data=False: enqueue the bare command (legacy behaviour).
+        carry_data=True:  enqueue ``(command, event.data)`` so the payload (e.g.
+        a session_id) reaches the subprocess — see docs/session-id-unification.md.
+        """
         acq = self.acquisition_command_queue
         proc = self.processor_command_queue
         return {
-            EventType.ConnectDataProvider:            (acq, AcquisitionCommand.connect),
-            EventType.DisconnectDataProvider:         (acq, AcquisitionCommand.disconnect),
-            EventType.StartStream:                    (acq, AcquisitionCommand.start_stream),
-            EventType.StopStream:                     (acq, AcquisitionCommand.stop_stream),
-            EventType.StopNeuroEngineSignalProcessor: (proc, SignalProcessorCommand.should_stop),
+            EventType.ConnectDataProvider:            (acq, AcquisitionCommand.connect, False),
+            EventType.DisconnectDataProvider:         (acq, AcquisitionCommand.disconnect, False),
+            EventType.StartStream:                    (acq, AcquisitionCommand.start_stream, False),
+            EventType.StopStream:                     (acq, AcquisitionCommand.stop_stream, False),
+            EventType.StopNeuroEngineSignalProcessor: (proc, SignalProcessorCommand.should_stop, False),
+            # Session lifecycle: REST-created session_id pushed into the worker.
+            EventType.StartSession:                   (proc, SignalProcessorCommand.start_session, True),
+            EventType.EndSession:                     (proc, SignalProcessorCommand.end_session, True),
         }
 
     def _register_event_listeners(self) -> None:
-        for event_type, (queue, command) in self._command_routes().items():
+        for event_type, (queue, command, carry_data) in self._command_routes().items():
             self.event_bus.register_event_listener(
-                event_type, self._make_command_router(queue, command)
+                event_type, self._make_command_router(queue, command, carry_data)
             )
         # Non-routing event: flips the shutdown flag, no command enqueued.
         self.event_bus.register_event_listener(
@@ -168,10 +177,19 @@ class NeuroEngine:
                 )
 
     @staticmethod
-    def _make_command_router(queue: mp.Queue, command) -> "callable":
-        """Build a listener that enqueues *command* on *queue* (ignores the event)."""
-        def _route(*_) -> None:
-            queue.put(command)
+    def _make_command_router(queue: mp.Queue, command, carry_data: bool = False) -> "callable":
+        """
+        Build a listener that enqueues *command* on *queue*.
+
+        With carry_data the event's payload travels along as ``(command, data)``;
+        otherwise the bare command is enqueued and the event is ignored.
+        """
+        if carry_data:
+            def _route(event) -> None:
+                queue.put((command, event.data))
+        else:
+            def _route(*_) -> None:
+                queue.put(command)
         return _route
 
     def _stop_neuro_engine_system(self, *_) -> None:

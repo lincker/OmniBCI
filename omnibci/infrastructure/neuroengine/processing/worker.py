@@ -1,8 +1,9 @@
 """
 SignalProcessingWorker — multiprocessing 包装器。
 
-在独立子进程中运行 SignalProcessor：加载算法插件（decoder + epoch detector），
-创建并启动一个 BCISession，把会话生命周期绑定到本进程。
+在独立子进程中运行 SignalProcessor：加载算法插件（decoder + epoch detector）。
+会话身份不再由本进程自建——以待命态启动，等待 API 经 StartSession 事件下推的
+session_id（见 docs/session-id-unification.md）。
 """
 from __future__ import annotations
 
@@ -12,7 +13,6 @@ import os
 from typing import Optional
 
 import omnibci
-from omnibci.domain.session import BCISession
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter
 from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessor
 
@@ -23,8 +23,8 @@ class SignalProcessingWorker(mp.Process):
     """
     Multiprocessing wrapper for SignalProcessor.
 
-    Creates a BCISession with a fresh ID and passes it into SignalProcessor
-    so the session lifecycle is tied to this process.
+    Starts the processor in standby (no running session); session identity is
+    delivered via a start_session command from the API.
     """
 
     def __init__(self, command_queue, data_manager=None, event_bus=None,
@@ -92,19 +92,22 @@ class SignalProcessingWorker(mp.Process):
         return filters
 
     def _run_processor(self, decoder, detector, filters, sample_rate: int) -> None:
-        session = BCISession()
-        session.start()
-        logger.info("BCISession started: %s", session.session_id)
-
+        # No self-created session id: the worker starts in "standby" and waits
+        # for a start_session command carrying the REST-created session_id, so
+        # the aggregate and the read model share one identity
+        # (docs/session-id-unification.md). Trials decoded before the first
+        # start_session are dropped by BCISession's RUNNING invariant.
         self.signal_processor = SignalProcessor(
             decoder=decoder,
             detector=detector,
             command_queue=self.command_queue,
             data_manager=self.data_manager,
             event_bus=self.event_bus,
-            session=session,
+            session=None,
             sample_rate=sample_rate,
             baseline_duration=self.baseline_duration,
             filters=filters,
+            auto_start_session=False,
         )
+        logger.info("SignalProcessor in standby — awaiting start_session command")
         self.signal_processor.run()

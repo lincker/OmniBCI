@@ -27,9 +27,12 @@ class EventType(IntEnum):
     EffectorState = 403    # effector → engine: device state / sensor feedback
     EffectorFault = 404    # effector → engine: device fault (triggers safety)
     # --- domain events (carry rich domain objects as payload) ---------
-    TrialCompleted = 501   # payload: Classification VO
+    TrialCompleted = 501   # payload: TrialOutcome (session_id + trial_number + Classification)
     SessionStarted = 502   # payload: session_id str
-    SessionEnded   = 503   # payload: total_trials int
+    SessionEnded   = 503   # payload: SessionSummary (session_id + total_trials)
+    # --- session lifecycle commands (API → engine → worker) -----------
+    StartSession   = 504   # payload: {"session_id": str, "paradigm": str|None}
+    EndSession     = 505   # payload: session_id str
 
 
 class Event:
@@ -49,7 +52,7 @@ class Event:
                 'data': self.data
             }
 
-    @classmethod
-    def create_from_json(cls, event_json):
-        return cls(**event_json)
+    # NOTE: create_from_json was removed — it called cls(**event_json) with key
+    # 'type' against parameter 'event_type' (TypeError on any use), and wire
+    # decoding is owned by infrastructure/ipc/contracts.body_to_event.
 

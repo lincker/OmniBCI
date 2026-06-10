@@ -20,6 +20,10 @@ class EventBus:
         self._active = False
         self._event_handlers = {}
         self._event_queue: Optional[asyncio.Queue] = event_queue
+        # Strong reference to the consumer task — asyncio only keeps weak
+        # references to tasks, so without this the processing loop could be
+        # garbage-collected mid-run (same fix as ListenTransport._serve_task).
+        self._process_task: Optional[asyncio.Task] = None
 
     def set_event_queue(self, queue) -> None:
         self._event_queue = queue
@@ -81,10 +85,11 @@ class EventBus:
 
     async def start(self) -> None:
         self._active = True
-        asyncio.create_task(self._process_event())
+        self._process_task = asyncio.create_task(self._process_event())
 
     def stop(self) -> None:
         self._active = False
+        self._process_task = None  # loop exits on _active=False; drop the ref
 
     def put_event(self, event: Event) -> None:
         if self._event_queue is None:

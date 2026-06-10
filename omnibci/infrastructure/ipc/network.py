@@ -118,7 +118,21 @@ class NetworkServer:
 
 
 class NetworkClient:
-    def __init__(self, event_bus: EventBus = None, server_ip='127.0.0.1', server_port=8888):
+    """
+    Dial-out peer link with supervised reconnection.
+
+    ``start()`` runs a supervisor loop: connect (with exponential backoff,
+    ``reconnect_initial`` → ×2 → capped at ``reconnect_max``) then receive until
+    the link drops, then loop back and reconnect — until ``stop()`` is called or
+    the owning task is cancelled. Events arriving while disconnected are dropped
+    by the *server* side (engine logs "no client connected"); missed commands are
+    NOT replayed after reconnect — real-time semantics by design.
+    """
+
+    def __init__(self, event_bus: EventBus = None, server_ip='127.0.0.1', server_port=8888,
+                 connect_timeout: float = 0.5,
+                 reconnect_initial: float = 1.0,
+                 reconnect_max: float = 10.0):
         self.event_bus = event_bus
         self.server_ip = server_ip
         self.server_port = server_port
@@ -127,6 +141,10 @@ class NetworkClient:
         self.status = 'INIT'
         self._inbound_handler = None
         self._liveness_handler = None
+        self._connect_timeout = connect_timeout
+        self._reconnect_initial = reconnect_initial
+        self._reconnect_max = reconnect_max
+        self._should_run = False
 
     def set_inbound_handler(self, handler) -> None:
         """Route inbound Events through *handler(event)* instead of the EventBus."""
@@ -147,73 +165,101 @@ class NetworkClient:
             self._liveness_handler()
 
     async def start(self):
-        # while self.status != 'CONNECTED':
-        #     # TODO: asyncio.timeout need python 3.11
-        #     async with asyncio.timeout(0.5):
-        #         print(f"Connecting to server {self.server_ip}:{self.server_port}")
-        #         await self._connect()
-        #     await asyncio.sleep(3)
-        #TODO: refactor reconnection. Now the client must wait for the server to be ready.
-        while self.status != 'CONNECTED':
-            async with asyncio.timeout(0.5):
-                logging.info(f"Connecting to server {self.server_ip}:{self.server_port}")
-                await self._connect()
-            await asyncio.sleep(3)
+        """
+        Supervisor loop: connect (with backoff) → receive until the link drops →
+        reconnect. Exits when stop() clears _should_run or the task is cancelled
+        (CancelledError propagates — it is deliberately not caught here).
+        """
+        self._should_run = True
+        delay = self._reconnect_initial
+        while self._should_run:
+            # ---- Phase 1: connect, with exponential backoff -------------
+            if not await self._connect():
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, self._reconnect_max)
+                continue
+            delay = self._reconnect_initial  # connected: reset backoff
 
+            # ---- Phase 2: receive until the link drops ------------------
+            try:
+                while self._should_run:
+                    await self.receive()
+            except (asyncio.IncompleteReadError, ConnectionError, OSError) as exc:
+                if not self._should_run:
+                    break  # stop() closed the socket under us — clean exit
+                logger.info("NetworkClient: link lost (%s); reconnecting", exc)
+                self.status = 'DISCONNECTED'
+                await self._close_writer()
+        logger.info("NetworkClient: supervisor loop exited")
 
-
-        # self.data_source, self.writer = await asyncio.open_connection(self.server_ip, self.server_port)
-        # print(f"Connected to server {self.server_ip}:{self.server_port}")
-        # self.status = 'CONNECTED'
-        while True:
-            # async with asyncio.timeout(2):
-            # must use real program to test
-            await self.receive()
-            # await asyncio.sleep(0.1)
-
-    async def _connect(self):
+    async def _connect(self) -> bool:
+        """One connection attempt. All failures are absorbed; returns success."""
         try:
-            self.reader, self.writer = await asyncio.open_connection(self.server_ip, self.server_port)
-            logging.info(f"Connected to server {self.server_ip}:{self.server_port}")
+            # wait_for instead of `async with asyncio.timeout(...)`: the timeout
+            # is converted to TimeoutError *inside* this try, so it can never
+            # escape and kill the supervisor task (the old bug). Also drops the
+            # Python ≥3.11 requirement.
+            self.reader, self.writer = await asyncio.wait_for(
+                asyncio.open_connection(self.server_ip, self.server_port),
+                timeout=self._connect_timeout,
+            )
+            logger.info("Connected to server %s:%s", self.server_ip, self.server_port)
             self.status = 'CONNECTED'
-        except ConnectionRefusedError:
-            logging.info(f"Connection to server {self.server_ip}:{self.server_port} refused.")
-            self.status = 'DISCONNECTED'
+            return True
         except asyncio.TimeoutError:
-            logging.info(f"Connection to server {self.server_ip}:{self.server_port} timeout.")
-            self.status = 'DISCONNECTED'
-        except Exception as e:
-            logging.info(f"Connection to server {self.server_ip}:{self.server_port} error: {e}")
-            self.status = 'DISCONNECTED'
+            logger.info("Connection to %s:%s timed out", self.server_ip, self.server_port)
+        except ConnectionRefusedError:
+            logger.info("Connection to %s:%s refused", self.server_ip, self.server_port)
+        except OSError as exc:
+            logger.info("Connection to %s:%s failed: %s", self.server_ip, self.server_port, exc)
+        self.status = 'DISCONNECTED'
+        return False
 
     async def send_event(self, event):
         await self.send(event_to_body(event))
 
     async def send(self, message):
+        # Guard on writer (nulled by _close_writer during disconnect/reconnect)
+        # rather than status, so a directly-injected writer (tests) still works.
+        if self.writer is None:
+            logger.warning("NetworkClient.send: not connected; dropping message: %s", message)
+            return
         logger.debug("NetworkClient send: %s", message)
         self.writer.write(Frame(message, version=PROTOCOL_VERSION).to_bytes())
         await self.writer.drain()
 
     async def receive(self):
-        try:
-            header_bytes = await self.reader.readexactly(Frame.Header.HEADER_SIZE)
-            header = Frame.Header.from_bytes(header_bytes)
-            self._notify_liveness()  # any frame (incl. keep-alive) proves liveness
-            if header.body_size == 0:
-                return  # empty keep-alive frame
-            body = await self.reader.readexactly(header.body_size)
-            event = body_to_event(body, header.version)  # version-checked
-            if event is not None:
-                self._dispatch_inbound(event)
-        except asyncio.IncompleteReadError:
-            logger.info("NetworkClient: server closed the connection")
-            self.status = 'STOP'
+        """
+        Read and dispatch one frame.
+
+        Raises (IncompleteReadError / ConnectionError / OSError) when the link
+        drops — the supervisor in start() owns the state transition and
+        reconnect. No silent status flip here (the old busy-loop bug).
+        """
+        header_bytes = await self.reader.readexactly(Frame.Header.HEADER_SIZE)
+        header = Frame.Header.from_bytes(header_bytes)
+        self._notify_liveness()  # any frame (incl. keep-alive) proves liveness
+        if header.body_size == 0:
+            return  # empty keep-alive frame
+        body = await self.reader.readexactly(header.body_size)
+        event = body_to_event(body, header.version)  # version-checked
+        if event is not None:
+            self._dispatch_inbound(event)
 
     async def stop(self):
-        if self.writer:
-            self.writer.close()
-            try:
-                await self.writer.wait_closed()
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning("NetworkClient.stop: error during close: %s", exc)
+        """Deliberate shutdown: no reconnect after this."""
+        self._should_run = False
         self.status = 'STOP'
+        await self._close_writer()
+
+    async def _close_writer(self):
+        if self.writer is None:
+            return
+        try:
+            self.writer.close()
+            await self.writer.wait_closed()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("NetworkClient: error during close: %s", exc)
+        finally:
+            self.writer = None
+            self.reader = None

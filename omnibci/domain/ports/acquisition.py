@@ -55,7 +55,11 @@ class SignalSource(Registerable, ABC):
 
     @abstractmethod
     async def read_chunk(self)-> npt.NDArray[Any]:
-        """read a fixed sized chunk"""
+        """Read a fixed sized chunk.
+
+        Returns None to signal a clean end of stream (e.g. file playback
+        reached EOF); live device sources simply never return None.
+        """
 
     @abstractmethod
     async def stop_stream(self) -> bool:

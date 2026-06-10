@@ -30,6 +30,9 @@ logger = logging.getLogger(__name__)
 
 class SignalProcessorCommand(Enum):
     should_stop = 'stream_processor_stop'
+    # Session lifecycle (carry a payload — enqueued as (command, payload)):
+    start_session = 'start_session'   # payload: {"session_id": str, "paradigm": str|None}
+    end_session = 'end_session'       # payload: session_id str
 
 
 class SignalProcessor:
@@ -61,6 +64,7 @@ class SignalProcessor:
         sample_rate: int = 1000,
         baseline_duration: float = 0.0,
         filters=None,
+        auto_start_session: bool = True,
     ) -> None:
         self.data_manager = data_manager
         self.event_bus = event_bus
@@ -92,11 +96,17 @@ class SignalProcessor:
         self.current_epoch: Optional[EpochProcessor] = None
 
         # BCISession: created externally and injected so the process owner
-        # controls session lifecycle; fall back to an auto-started session
-        # if none is provided (e.g. in tests).
+        # controls session lifecycle. With session=None the behaviour depends
+        # on auto_start_session:
+        #   True  (default, tests/standalone): auto-create AND start — legacy.
+        #   False (worker): create but DO NOT start — "standby": the session
+        #          identity arrives later via a start_session command pushed
+        #          down from the API (docs/session-id-unification.md). Trials
+        #          decoded before that are dropped by record_trial's invariant.
         if session is None:
             session = BCISession()
-            session.start()
+            if auto_start_session:
+                session.start()
         self.session: BCISession = session
 
         # States hold a reference to this processor (the context)
@@ -146,12 +156,63 @@ class SignalProcessor:
                 self._execute(self.command_queue.get())
             await self._current_state.run()
 
-    def _execute(self, command: SignalProcessorCommand) -> None:
+    def _execute(self, item) -> None:
+        """
+        Execute one queued command.
+
+        Queue protocol: either a bare SignalProcessorCommand (legacy) or a
+        ``(command, payload)`` tuple for commands that carry data — the engine's
+        carry_data routes enqueue the latter (see NeuroEngine._command_routes).
+        """
+        if isinstance(item, tuple):
+            command, payload = item
+        else:
+            command, payload = item, None
+
         if command == SignalProcessorCommand.should_stop:
             self._should_stop = True
             # End the session cleanly so SessionEnded domain event is emitted
-            try:
-                self.session.end()
-            except RuntimeError:
-                pass  # session may already be ended or never started
-            self.event_publisher.publish_all(self.session.pop_events())
+            self._end_current_session()
+        elif command == SignalProcessorCommand.start_session:
+            self._start_session(payload)
+        elif command == SignalProcessorCommand.end_session:
+            self._end_session(payload)
+        else:
+            logger.warning("SignalProcessor: unknown command %r", command)
+
+    # ------------------------------------------------------------------
+    # Session lifecycle (identity pushed down from the API — see
+    # docs/session-id-unification.md)
+    # ------------------------------------------------------------------
+
+    def _start_session(self, payload) -> None:
+        """Open a session with the API-supplied identity (single-active invariant)."""
+        if not isinstance(payload, dict) or not payload.get("session_id"):
+            logger.error("start_session: bad payload %r; ignored", payload)
+            return
+        # Single-active-session invariant: a new start ends the previous one.
+        self._end_current_session()
+        self.session = BCISession(
+            session_id=payload["session_id"],
+            paradigm=payload.get("paradigm"),
+        )
+        self.session.start()
+        self.event_publisher.publish_all(self.session.pop_events())
+        logger.info("Session started in worker: %s", self.session.session_id)
+
+    def _end_session(self, payload) -> None:
+        """End the current session — only if the id matches (stale-command guard)."""
+        session_id = payload if isinstance(payload, str) else None
+        if session_id is not None and session_id != self.session.session_id:
+            logger.warning("end_session for %s ignored (current is %s)",
+                           session_id, self.session.session_id)
+            return
+        self._end_current_session()
+
+    def _end_current_session(self) -> None:
+        """End + publish if RUNNING; silently no-op otherwise."""
+        try:
+            self.session.end()
+        except RuntimeError:
+            return  # already ended or never started
+        self.event_publisher.publish_all(self.session.pop_events())

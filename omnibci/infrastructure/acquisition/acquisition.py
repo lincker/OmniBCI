@@ -145,6 +145,11 @@ class Acquisition:
         try:
             while True:
                 raw_data = await self.data_source.read_chunk()
+                if raw_data is None:
+                    # 数据源正常播完（如文件回放 EOF）：干净退出，不算异常。
+                    logger.info('Data source end of stream after %d chunks; fetch task finished',
+                                packets_counter)
+                    break
                 chunk = SignalChunk(
                     timestamp=time.time_ns(),
                     raw_data=raw_data,

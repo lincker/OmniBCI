@@ -198,6 +198,7 @@ class EpochProcessor:
             forced=forced,
             event_id=self._event_id,
             baseline=self._baseline_data,
+            latest=self._current_chunk_data,  # delta for incremental decoders
         )
         if prediction is None:
             return False, None
