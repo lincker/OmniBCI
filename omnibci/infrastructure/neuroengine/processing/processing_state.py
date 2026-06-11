@@ -11,7 +11,7 @@ Changes from original:
 
 ACL change:
   原来在 _complete_trial 末尾有一个延迟 import:
-      from omnibci.infrastructure.engine.processor.processor import _publish_domain_event
+      from omnibci.infrastructure.neuroengine.processor.processor import _publish_domain_event
   这是为了绕过 processor ↔ state 循环依赖而打的补丁。现在翻译逻辑已移入
   DomainEventPublisher，SignalProcessor 在 __init__ 中构造并赋值给
   self.event_publisher，states 通过 self.context.event_publisher 访问，
@@ -43,10 +43,10 @@ class ProcessingState:
 
 
 # ---------------------------------------------------------------------------
-# WaitingForEpochState
+# AwaitingEpochState
 # ---------------------------------------------------------------------------
 
-class WaitingForEpochState(ProcessingState):
+class AwaitingEpochState(ProcessingState):
     """Idle state: drain the data queue and watch for a start trigger."""
 
     async def run(self) -> None:
@@ -55,19 +55,30 @@ class WaitingForEpochState(ProcessingState):
             return
 
         chunk: SignalChunk = self.context.data_manager.get_data()
-        start_idx, event_id = self.context.epoch_manager.detect_start(chunk)
+        start_idx, event_id = self.context.detector.detect_start(chunk)
 
-        if start_idx >= 0:
-            logger.info("Start event detected: index=%d, event_id=%d", start_idx, event_id)
-            self.context.epoch_manager.initialize_epoch(chunk, event_id)
-            self.context.transition_to_collecting()
+        if start_idx < 0:
+            # No trigger yet: this whole chunk is pre-trigger history. Keep the
+            # trailing baseline_samples so a future start can claim its baseline.
+            self.context.pretrigger.push(chunk.data)
+            return
+
+        logger.info("Start event detected: index=%d, event_id=%d", start_idx, event_id)
+        # Baseline = trailing samples ending exactly at the trigger: whatever the
+        # ring buffer accumulated while idle, plus this chunk's pre-trigger slice.
+        baseline = self.context.pretrigger.take_baseline(extra=chunk.data[:, :start_idx])
+        self.context.pretrigger.clear()
+        # A fresh EpochProcessor per epoch — no reused/cleared buffer.
+        self.context.current_epoch = self.context.new_epoch_processor()
+        self.context.current_epoch.initialize_epoch(chunk, start_idx, event_id, baseline=baseline)
+        self.context.transition_to_assembling()
 
 
 # ---------------------------------------------------------------------------
-# CollectingEpochState
+# AssemblingEpochState
 # ---------------------------------------------------------------------------
 
-class CollectingEpochState(ProcessingState):
+class AssemblingEpochState(ProcessingState):
     """
     Active state: accumulate chunks and run the decoder.
 
@@ -85,8 +96,8 @@ class CollectingEpochState(ProcessingState):
 
         chunk: SignalChunk = self.context.data_manager.get_data()
 
-        end_idx, _ = self.context.epoch_manager.detect_end(chunk)
-        start_idx, new_event_id = self.context.epoch_manager.detect_start(chunk)
+        end_idx, _ = self.context.detector.detect_end(chunk)
+        start_idx, new_event_id = self.context.detector.detect_start(chunk)
 
         has_end_event = end_idx >= 0
         has_start_event = start_idx >= 0
@@ -107,13 +118,12 @@ class CollectingEpochState(ProcessingState):
     # ------------------------------------------------------------------
 
     def _process_normal_data(self, chunk: SignalChunk) -> None:
-        self.context.epoch_manager.append_chunk(chunk)
-        is_complete, classification = self.context.epoch_manager.run_pipeline(
-            force_recognize=False
-        )
+        # EpochProcessor ingests the chunk and decides (via should_decode) whether
+        # to run the pipeline this tick.
+        is_complete, classification = self.context.current_epoch.process_chunk(chunk)
         if is_complete and classification is not None:
             self._complete_trial(classification)
-            self.context.transition_to_waiting()
+            self.context.transition_to_awaiting()
 
     def _process_end_event(
         self,
@@ -123,8 +133,8 @@ class CollectingEpochState(ProcessingState):
         start_idx: int,
         new_event_id: Optional[int],
     ) -> None:
-        self.context.epoch_manager.append_until_index(chunk, end_idx)
-        _, classification = self.context.epoch_manager.run_pipeline(force_recognize=True)
+        self.context.current_epoch.append_until_index(chunk, end_idx)
+        _, classification = self.context.current_epoch.run_pipeline(force_recognize=True)
         logger.info("End event forced recognition: %s", classification)
 
         if classification is not None:
@@ -132,10 +142,15 @@ class CollectingEpochState(ProcessingState):
 
         if has_start_event:
             logger.info("New epoch starts in same chunk: index=%d", start_idx)
-            self.context.epoch_manager.initialize_epoch(chunk, new_event_id)
-            # Stay in CollectingEpochState
+            # Reopen = a new epoch → fresh EpochProcessor (fresh decoder state).
+            baseline = self.context.baseline_from_chunk(chunk, start_idx)
+            self.context.current_epoch = self.context.new_epoch_processor()
+            self.context.current_epoch.initialize_epoch(
+                chunk, start_idx, new_event_id, baseline=baseline
+            )
+            # Stay in AssemblingEpochState
         else:
-            self.context.transition_to_waiting()
+            self.context.transition_to_awaiting()
 
     def _process_unexpected_start(
         self,
@@ -144,14 +159,19 @@ class CollectingEpochState(ProcessingState):
         event_id: int,
     ) -> None:
         logger.warning("Unexpected start event during collection — forcing recognition")
-        self.context.epoch_manager.append_until_index(chunk, start_idx)
-        _, classification = self.context.epoch_manager.run_pipeline(force_recognize=True)
+        self.context.current_epoch.append_until_index(chunk, start_idx)
+        _, classification = self.context.current_epoch.run_pipeline(force_recognize=True)
         logger.info("Forced recognition (unexpected start): %s", classification)
 
         if classification is not None:
             self._complete_trial(classification)
 
-        self.context.epoch_manager.initialize_epoch(chunk, event_id)
+        # Reopen = a new epoch → fresh EpochProcessor (fresh decoder state).
+        baseline = self.context.baseline_from_chunk(chunk, start_idx)
+        self.context.current_epoch = self.context.new_epoch_processor()
+        self.context.current_epoch.initialize_epoch(
+            chunk, start_idx, event_id, baseline=baseline
+        )
 
     def _complete_trial(self, classification: Classification) -> None:
         """
@@ -164,9 +184,9 @@ class CollectingEpochState(ProcessingState):
         """
         session: BCISession = self.context.session
 
-        # Build Epoch VO from current buffer before clearing it
+        # Build Epoch VO from the current epoch's buffer before it is dropped
         try:
-            epoch = self.context.epoch_manager.build_epoch()
+            epoch = self.context.current_epoch.build_epoch()
         except RuntimeError as exc:
             logger.error("Could not build Epoch for trial: %s", exc)
             return

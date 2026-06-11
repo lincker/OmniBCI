@@ -1,36 +1,20 @@
-"""
-NeuroEngine — 纯编排器（refactored）。
-
-职责：
-  - 启动 / 停止子进程（AcquisitionWorker、SignalProcessingWorker）
-  - 启动 EventBus 和 ServerMessageManagement
-  - 将 EventBus 事件路由到各子系统的命令队列
-  - 优雅关闭：发送停止命令 → join → terminate（超时）→ 关闭队列
-
-不再做的事：
-  - 构造任何依赖（mp.Queue、DataManager、Process…）
-    ← 全部由 NeuroEngineBuilder 负责
-
-通过构造函数注入所有协作者，使 NeuroEngine 可以在不启动真实
-子进程的情况下被单元测试。
-"""
 from __future__ import annotations
 
 import asyncio
 import logging
 import multiprocessing as mp
-from typing import Optional
 
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.shared.events import EventType
-from omnibci.infrastructure.engine.processor.processor import (
-    SignalProcessorCommand,
-    SignalProcessingWorker,
-)
-from omnibci.infrastructure.engine.server.management import ServerMessageManagement
+from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessorCommand
+from omnibci.infrastructure.neuroengine.processing.worker import SignalProcessingWorker
+from omnibci.infrastructure.neuroengine.gateway import PeerGateway
+from omnibci.infrastructure.neuroengine.stimulation_feedback import StimulationFeedbackHandler
+from omnibci.infrastructure.neuroengine.effector_translator import EffectorCommandTranslator
+from omnibci.infrastructure.neuroengine.effector_feedback import EffectorFeedbackHandler
 
 logger = logging.getLogger(__name__)
 
@@ -45,36 +29,44 @@ class NeuroEngine:
         Shared EventBus instance (mp.Queue already set on it).
     data_manager:
         Shared buffer between AcquisitionWorker and SignalProcessingWorker.
-    acquisitor_process:
+    acquisition_worker:
         Pre-built AcquisitionWorker (not yet started).
     acquisition_command_queue:
         mp.Queue used to send AcquisitionCommand values to the process.
-    signal_processor_process:
+    signal_processing_worker:
         Pre-built SignalProcessingWorker (not yet started).
     processor_command_queue:
         mp.Queue used to send SignalProcessorCommand values to the process.
-    server_message_management:
-        Manages the NetworkServer that pushes results to external clients.
+    peer_gateway:
+        Routes EventBus events to/from external peers (stimulation, effector).
     """
 
     def __init__(
         self,
         event_bus: EventBus,
         data_manager: DataManager,
-        acquisitor_process: AcquisitionWorker,
+        acquisition_worker: AcquisitionWorker,
         acquisition_command_queue: mp.Queue,
-        signal_processor_process: SignalProcessingWorker,
+        signal_processing_worker: SignalProcessingWorker,
         processor_command_queue: mp.Queue,
-        server_message_management: ServerMessageManagement,
+        peer_gateway: PeerGateway,
+        effector_translator: "EffectorCommandTranslator | None" = None,
+        effector_feedback: "EffectorFeedbackHandler | None" = None,
         debug: bool = False,
     ) -> None:
         self.event_bus = event_bus
         self.data_manager = data_manager
-        self.acquisitor_process = acquisitor_process
+        self.acquisition_worker = acquisition_worker
         self.acquisition_command_queue = acquisition_command_queue
-        self.signal_processor_process = signal_processor_process
+        self.signal_processing_worker = signal_processing_worker
         self.processor_command_queue = processor_command_queue
-        self.server_message_management = server_message_management
+        self.peer_gateway = peer_gateway
+        # Engine-side consumer of stimulation → engine feedback (StimulationAck).
+        self.stim_feedback = StimulationFeedbackHandler()
+        # Effector ACL + feedback — present only when the effector peer is
+        # enabled (builder injects them; None disables all effector wiring).
+        self.effector_translator = effector_translator
+        self.effector_feedback = effector_feedback
         self._debug = debug
         self.should_stop = False
 
@@ -96,10 +88,10 @@ class NeuroEngine:
     # ------------------------------------------------------------------
 
     async def _start(self) -> None:
-        self.acquisitor_process.start()
-        self.signal_processor_process.start()
+        self.acquisition_worker.start()
+        self.signal_processing_worker.start()
         await self.event_bus.start()
-        self.server_message_management.start()
+        self.peer_gateway.start()
         self._register_event_listeners()
         logger.info("NeuroEngine started")
 
@@ -114,10 +106,10 @@ class NeuroEngine:
         self.acquisition_command_queue.put(AcquisitionCommand.stop_acquisition)
         self.processor_command_queue.put(SignalProcessorCommand.should_stop)
         self.event_bus.stop()
-        await self.server_message_management.stop()
+        await self.peer_gateway.stop()
 
-        self._join_process(self.acquisitor_process, "AcquisitionWorker")
-        self._join_process(self.signal_processor_process, "SignalProcessingWorker")
+        self._join_process(self.acquisition_worker, "AcquisitionWorker")
+        self._join_process(self.signal_processing_worker, "SignalProcessingWorker")
 
         self._close_queue(self.processor_command_queue)
         self._close_queue(self.acquisition_command_queue)
@@ -134,32 +126,70 @@ class NeuroEngine:
     # ------------------------------------------------------------------
 
     def _command_routes(self) -> dict:
-        """EventType → (command queue, command) for simple put-command events."""
+        """
+        EventType → (command queue, command, carry_data).
+
+        carry_data=False: enqueue the bare command (legacy behaviour).
+        carry_data=True:  enqueue ``(command, event.data)`` so the payload (e.g.
+        a session_id) reaches the subprocess — see docs/session-id-unification.md.
+        """
         acq = self.acquisition_command_queue
         proc = self.processor_command_queue
         return {
-            EventType.ConnectDataProvider:            (acq, AcquisitionCommand.connect),
-            EventType.DisconnectDataProvider:         (acq, AcquisitionCommand.disconnect),
-            EventType.StartStream:                    (acq, AcquisitionCommand.start_stream),
-            EventType.StopStream:                     (acq, AcquisitionCommand.stop_stream),
-            EventType.StopNeuroEngineSignalProcessor: (proc, SignalProcessorCommand.should_stop),
+            EventType.ConnectDataProvider:            (acq, AcquisitionCommand.connect, False),
+            EventType.DisconnectDataProvider:         (acq, AcquisitionCommand.disconnect, False),
+            EventType.StartStream:                    (acq, AcquisitionCommand.start_stream, False),
+            EventType.StopStream:                     (acq, AcquisitionCommand.stop_stream, False),
+            EventType.StopNeuroEngineSignalProcessor: (proc, SignalProcessorCommand.should_stop, False),
+            # Session lifecycle: REST-created session_id pushed into the worker.
+            EventType.StartSession:                   (proc, SignalProcessorCommand.start_session, True),
+            EventType.EndSession:                     (proc, SignalProcessorCommand.end_session, True),
         }
 
     def _register_event_listeners(self) -> None:
-        for event_type, (queue, command) in self._command_routes().items():
+        for event_type, (queue, command, carry_data) in self._command_routes().items():
             self.event_bus.register_event_listener(
-                event_type, self._make_command_router(queue, command)
+                event_type, self._make_command_router(queue, command, carry_data)
             )
         # Non-routing event: flips the shutdown flag, no command enqueued.
         self.event_bus.register_event_listener(
             EventType.CloseAllNeuroEngineProcessSystem, self._stop_neuro_engine_system
         )
+        # Stimulation → engine inbound feedback (routed in by the stimulation
+        # PeerChannel). The engine now consumes acks, not just the UI.
+        self.event_bus.register_event_listener(
+            EventType.StimulationAck, self.stim_feedback.on_ack
+        )
+        # Effector wiring (only when enabled): translate each decoded trial into
+        # an EffectorCommand, and consume the device's inbound feedback.
+        if self.effector_translator is not None:
+            self.event_bus.register_event_listener(
+                EventType.TrialCompleted, self.effector_translator.on_trial_completed
+            )
+        if self.effector_feedback is not None:
+            for event_type in (
+                EventType.EffectorAck,
+                EventType.EffectorState,
+                EventType.EffectorFault,
+            ):
+                self.event_bus.register_event_listener(
+                    event_type, self.effector_feedback.on_feedback
+                )
 
     @staticmethod
-    def _make_command_router(queue: mp.Queue, command) -> "callable":
-        """Build a listener that enqueues *command* on *queue* (ignores the event)."""
-        def _route(*_) -> None:
-            queue.put(command)
+    def _make_command_router(queue: mp.Queue, command, carry_data: bool = False) -> "callable":
+        """
+        Build a listener that enqueues *command* on *queue*.
+
+        With carry_data the event's payload travels along as ``(command, data)``;
+        otherwise the bare command is enqueued and the event is ignored.
+        """
+        if carry_data:
+            def _route(event) -> None:
+                queue.put((command, event.data))
+        else:
+            def _route(*_) -> None:
+                queue.put(command)
         return _route
 
     def _stop_neuro_engine_system(self, *_) -> None:

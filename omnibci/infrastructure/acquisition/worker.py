@@ -9,7 +9,7 @@ import os
 from typing import Optional
 
 import omnibci
-from omnibci.domain.ports.acquisition import DataSourceBase
+from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.infrastructure.acquisition.acquisition import (
     Acquisition,
     CommandQueue,
@@ -33,7 +33,7 @@ class AcquisitionWorker(mp.Process):
         data_manager: Optional[DataSink] = None,
     ) -> None:
         super().__init__()
-        self.data_source: DataSourceBase
+        self.data_source: SignalSource
         self.acquisitor: Optional[Acquisition] = None
         self.command_queue = command_queue
         self.data_manager = data_manager
@@ -58,5 +58,5 @@ class AcquisitionWorker(mp.Process):
         from omnibci.shared.factory import ObjectFactory
         PluginLoader.load_from_dir(plugin_path, base_package='omnibci.infrastructure.plugins.acquisition')
         self.data_source = ObjectFactory.create(
-            DataSourceBase, config_key='ACQUISITION.data_source'
+            SignalSource, config_key='ACQUISITION.signal_source'
         )

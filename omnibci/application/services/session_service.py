@@ -36,7 +36,7 @@ from omnibci.domain.classification import Classification
 from omnibci.domain.repositories import (
     SessionRecord,
     SessionRepository,
-    SessionState,
+    SessionRecordState,
     TrialRecord,
 )
 
@@ -59,7 +59,7 @@ def _trial_record_to_dto(r: TrialRecord) -> TrialDTO:
 
 
 def _session_record_to_dto(r: SessionRecord, include_trials: bool = False) -> SessionDTO:
-    state = (SessionStateDTO.ENDED if r.state == SessionState.ENDED
+    state = (SessionStateDTO.ENDED if r.state == SessionRecordState.ENDED
              else SessionStateDTO.RUNNING)
     return SessionDTO(
         session_id=r.session_id,
@@ -83,10 +83,16 @@ class SessionAppService:
     Constructor requires a SessionRepository instance (injected by DI).
     The default value is removed intentionally — callers must provide one
     so the dependency is explicit and swappable (e.g. in tests).
+
+    ``engine_port`` (optional) lets create/end commands push the session
+    identity down into the signal-processing subprocess (StartSession /
+    EndSession events), so the aggregate in the worker and the read-model
+    here share ONE session_id.  None = projection-only mode (tests).
     """
 
-    def __init__(self, repository: SessionRepository) -> None:
+    def __init__(self, repository: SessionRepository, engine_port=None) -> None:
         self._repo = repository
+        self._engine = engine_port  # EnginePort | None
 
     # ------------------------------------------------------------------
     # Command handlers
@@ -97,10 +103,25 @@ class SessionAppService:
         record = SessionRecord(
             session_id=session_id,
             paradigm=cmd.paradigm,
-            state=SessionState.RUNNING,
+            state=SessionRecordState.RUNNING,
             started_at=datetime.now(timezone.utc),
         )
         self._repo.save(record)
+
+        # Push the identity down into the signal-processing subprocess so its
+        # BCISession aggregate uses the SAME id (see docs/session-id-unification.md).
+        # On dispatch failure roll the record back — a session the engine never
+        # heard of would just resurrect the old two-id split.
+        if self._engine is not None:
+            try:
+                self._engine.dispatch(Event(
+                    EventType.StartSession,
+                    {"session_id": session_id, "paradigm": cmd.paradigm},
+                ))
+            except RuntimeError:
+                self._repo.delete(session_id)
+                raise
+
         logger.info("Session created: %s (paradigm=%s)", session_id, cmd.paradigm)
         return session_id
 
@@ -108,6 +129,13 @@ class SessionAppService:
         record = self._require(cmd.session_id)
         record.mark_ended()       # idempotent; sets state + ended_at
         self._repo.save(record)
+        # Tell the worker to end its aggregate too. Best-effort: an engine that
+        # is down must not block ending the read-model record.
+        if self._engine is not None:
+            try:
+                self._engine.dispatch(Event(EventType.EndSession, cmd.session_id))
+            except RuntimeError as exc:
+                logger.warning("EndSession dispatch skipped (engine not ready): %s", exc)
         logger.info("Session ended: %s (%d trials)", cmd.session_id, record.trial_count)
 
     # ------------------------------------------------------------------
@@ -138,25 +166,63 @@ class SessionAppService:
     # EventBus callbacks (sync — called from NeuroEngine thread)
     # ------------------------------------------------------------------
 
+    def on_session_started(self, event: Event) -> None:
+        """
+        Receive EventType.SessionStarted (payload: session_id str) and make
+        sure a RUNNING record exists for that id (create-if-missing projection;
+        no-op when REST already created it — the normal flow).
+        """
+        session_id = event.data
+        if not isinstance(session_id, str) or not session_id:
+            logger.error("on_session_started: bad payload %r", session_id)
+            return
+        if self._repo.find_by_id(session_id) is None:
+            self._repo.save(SessionRecord(
+                session_id=session_id,
+                paradigm=None,
+                state=SessionRecordState.RUNNING,
+                started_at=datetime.now(timezone.utc),
+            ))
+            logger.info("Session projected from engine event: %s", session_id)
+
     def on_trial_completed(self, event: Event) -> None:
         """
-        Receive EventType.TrialCompleted and append the trial to the active
-        session in the repository.
+        Receive EventType.TrialCompleted and append the trial to the session
+        identified by the payload's session_id (TrialOutcome).  A record is
+        created on the fly for an unknown id (projection must never lose
+        trials).  A bare Classification payload (no session context, legacy
+        shape) falls back to the active session.
         """
-        # Payload is a TrialOutcome (session_id + trial_number + classification);
-        # tolerate a bare Classification for backward compatibility.
         payload = event.data
         clf: Classification = getattr(payload, "classification", payload)
         if not isinstance(clf, Classification):
             logger.error("on_trial_completed: expected Classification, got %s", type(clf))
             return
 
-        record = self._repo.find_active()
-        if record is None:
-            logger.warning("TrialCompleted received but no active session; ignoring")
-            return
+        session_id: Optional[str] = getattr(payload, "session_id", None)
+        if session_id is not None:
+            record = self._repo.find_by_id(session_id)
+            if record is None:
+                # Engine session unknown to the read model — project it now
+                # rather than dropping or mis-filing the trial.
+                logger.warning("TrialCompleted for unknown session %s; creating record",
+                               session_id)
+                record = SessionRecord(
+                    session_id=session_id,
+                    paradigm=None,
+                    state=SessionRecordState.RUNNING,
+                    started_at=datetime.now(timezone.utc),
+                )
+        else:
+            # Legacy bare-Classification payload: no id to address by.
+            record = self._repo.find_active()
+            if record is None:
+                logger.warning("TrialCompleted received but no active session; ignoring")
+                return
 
-        trial_number = record.trial_count + 1
+        # Prefer the aggregate's own trial_number (TrialOutcome) over a local
+        # count so read model and aggregate can never drift.
+        trial_number = getattr(payload, "trial_number", None) or record.trial_count + 1
         record.append_trial(TrialRecord(
             trial_number=trial_number,
             target_id=clf.target_id,
@@ -170,11 +236,25 @@ class SessionAppService:
                      trial_number, record.session_id, clf.target_id)
 
     def on_session_ended(self, event: Event) -> None:
-        """Receive EventType.SessionEnded and close the active session."""
-        record = self._repo.find_active()
-        if record is None:
-            return
-        self.handle_end_session(EndSessionCommand(session_id=record.session_id))
+        """
+        Receive EventType.SessionEnded and close the session identified by the
+        payload (SessionSummary).  A bare int payload (legacy total_trials
+        shape) falls back to closing the active session.
+        """
+        session_id = getattr(event.data, "session_id", None)
+        if session_id is not None:
+            record = self._repo.find_by_id(session_id)
+            if record is None:
+                logger.warning("SessionEnded for unknown session %s; ignoring", session_id)
+                return
+        else:
+            record = self._repo.find_active()
+            if record is None:
+                return
+        record.mark_ended()  # idempotent
+        self._repo.save(record)
+        logger.info("Session ended (projected): %s (%d trials)",
+                    record.session_id, record.trial_count)
 
     # ------------------------------------------------------------------
     # Internal

@@ -8,8 +8,8 @@ from typing import Dict, Type, ClassVar
 from omnibci.shared.registry import Registerable
 
 
-class ParadigmBase(Registerable, ABC):
-    _target_registry: ClassVar[Dict[str, Type['ParadigmBase']]] = {}
+class Paradigm(Registerable, ABC):
+    _target_registry: ClassVar[Dict[str, Type['Paradigm']]] = {}
 
     @abstractmethod
     def setup(self):

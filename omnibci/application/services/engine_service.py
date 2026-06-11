@@ -11,8 +11,8 @@ import logging
 from threading import Thread
 from typing import Optional
 
-from omnibci.infrastructure.engine.engine import NeuroEngine
-from omnibci.infrastructure.engine.builder import NeuroEngineBuilder, NeuroEngineConfig
+from omnibci.infrastructure.neuroengine.engine import NeuroEngine
+from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder, NeuroEngineConfig
 from omnibci.shared.events import EventType, Event
 from omnibci.application.ports.engine_port import EnginePort
 from omnibci.application.commands.engine_commands import (
@@ -102,12 +102,12 @@ class NeuroEngineService(EnginePort):
         return EngineStatusResult(
             running=self._running,
             acquisition_alive=(
-                self._engine.acquisitor_process.is_alive()
-                if self._engine.acquisitor_process else False
+                self._engine.acquisition_worker.is_alive()
+                if self._engine.acquisition_worker else False
             ),
             processor_alive=(
-                self._engine.signal_processor_process.is_alive()
-                if self._engine.signal_processor_process else False
+                self._engine.signal_processing_worker.is_alive()
+                if self._engine.signal_processing_worker else False
             ),
         )
 

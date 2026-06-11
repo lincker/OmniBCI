@@ -41,7 +41,8 @@ class ClientMessageManagement:
             return False
 
     async def _start(self):
-        # TODO: retry connection
+        # NetworkClient.start() is now a supervisor loop with built-in
+        # reconnection (exponential backoff); no retry needed at this level.
         await asyncio.gather(self.client.start())
         # await asyncio.gather(self.client.start(), self.event_bus.start() )
 

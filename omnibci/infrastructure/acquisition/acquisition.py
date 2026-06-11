@@ -4,7 +4,7 @@ Acquisition — 领域逻辑层。
 包含：
   - AcquisitionCommand  采集命令枚举
   - AcquisitionState    采集状态枚举
-  - Acquisition         领域服务：驱动 DataSourceBase 读取 EEG 数据
+  - Acquisition         领域服务：驱动 SignalSource 读取 EEG 数据
 
 不包含任何 multiprocessing 代码；进程包装在 worker.py。
 """
@@ -14,7 +14,7 @@ import time
 from enum import Enum
 from typing import Optional, Protocol, runtime_checkable
 
-from omnibci.domain.ports.acquisition import DataSourceBase
+from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.shared.signal import SignalChunk
 
 logger = logging.getLogger(__name__)
@@ -54,13 +54,13 @@ class AcquisitionState(Enum):
 
 class Acquisition:
     """
-    Domain service: drives a DataSourceBase to read EEG data and pushes
+    Domain service: drives a SignalSource to read EEG data and pushes
     SignalChunk objects into the shared DataManager buffer.
     """
 
     def __init__(
         self,
-        data_source: DataSourceBase,
+        data_source: SignalSource,
         command_queue: CommandQueue,
         data_manager: DataSink,
     ) -> None:
@@ -145,6 +145,11 @@ class Acquisition:
         try:
             while True:
                 raw_data = await self.data_source.read_chunk()
+                if raw_data is None:
+                    # 数据源正常播完（如文件回放 EOF）：干净退出，不算异常。
+                    logger.info('Data source end of stream after %d chunks; fetch task finished',
+                                packets_counter)
+                    break
                 chunk = SignalChunk(
                     timestamp=time.time_ns(),
                     raw_data=raw_data,

@@ -97,7 +97,10 @@ def assemble(
         acquisition_service=AcquisitionAppService(engine_service),
         stimulation_service=StimulationAppService(engine_service),
         session_repository=repository,
-        session_service=SessionAppService(repository=repository),
+        # engine_port lets create/end push the session id into the worker
+        # (StartSession/EndSession) — see docs/session-id-unification.md.
+        session_service=SessionAppService(repository=repository,
+                                          engine_port=engine_service),
     )
 
 
@@ -141,6 +144,7 @@ def register_engine_listeners(
         return 0
 
     subscriptions: list[Subscription] = [
+        (EventType.SessionStarted, container.session_service.on_session_started),
         (EventType.TrialCompleted, container.session_service.on_trial_completed),
         (EventType.SessionEnded, container.session_service.on_session_ended),
         *extra_subscriptions,
