@@ -1,0 +1,35 @@
+# REST 契约守卫 — docs/openapi.json 必须与代码同步。
+#
+# 任何改动 presentation/schemas 或路由却忘了重新导出 openapi.json 的提交，
+# 在此处失败。本地修复：PYTHONPATH=. python scripts/export_openapi.py 后提交产物。
+#
+# 注意：本 workflow 依赖 docs/openapi.json 已入库（git tracked）。
+name: contract
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  openapi-freeze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install minimal deps (no requirements.txt yet)
+        run: pip install fastapi pydantic tomlkit numpy
+
+      - name: Re-export OpenAPI spec
+        run: PYTHONPATH=. python scripts/export_openapi.py docs/openapi.json
+
+      - name: Spec must match the committed one
+        run: |
+          git diff --exit-code docs/openapi.json || {
+            echo '::error::docs/openapi.json 与代码不同步。本地运行 PYTHONPATH=. python scripts/export_openapi.py 并提交。'
+            exit 1
+          }

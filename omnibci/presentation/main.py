@@ -34,7 +34,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
-from omnibci.presentation.routers import engine, acquisition, stimulation, session
+from omnibci.presentation.routers import engine, acquisition, stimulation, session, recording
 from omnibci.presentation.websockets.results import results_broadcaster, results_ws_endpoint
 from omnibci.bootstrap import build_container, register_engine_listeners
 from omnibci.presentation.errors import register_exception_handlers
@@ -75,6 +75,7 @@ async def lifespan(app: FastAPI):
     app.state.stimulation_service = container.stimulation_service
     app.state.session_repository = container.session_repository
     app.state.session_service = container.session_service
+    app.state.recording_service = container.recording_service
 
     results_broadcaster.set_loop(asyncio.get_running_loop())
 
@@ -123,6 +124,7 @@ def create_app() -> FastAPI:
     app.include_router(acquisition.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(stimulation.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(session.router, prefix=prefix, responses=ERROR_RESPONSES)
+    app.include_router(recording.router, prefix=prefix, responses=ERROR_RESPONSES)
 
     @app.websocket("/api/v1/ws/results")
     async def ws_results(websocket: WebSocket):

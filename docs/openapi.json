@@ -1777,6 +1777,178 @@
         }
       }
     },
+    "/api/v1/recording/start": {
+      "post": {
+        "tags": [
+          "Recording"
+        ],
+        "summary": "Start a recording (session + stream)",
+        "operationId": "start_recording_api_v1_recording_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRecordingRequest",
+                "default": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_RecordingResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/recording/stop": {
+      "post": {
+        "tags": [
+          "Recording"
+        ],
+        "summary": "Stop the active recording (stream + session)",
+        "operationId": "stop_recording_api_v1_recording_stop_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_RecordingResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/healthz": {
       "get": {
         "tags": [
@@ -1983,6 +2155,32 @@
         "type": "object",
         "title": "ApiResponse[ParadigmsResponse]"
       },
+      "ApiResponse_RecordingResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecordingResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[RecordingResponse]"
+      },
       "ApiResponse_SessionListResponse_": {
         "properties": {
           "success": {
@@ -2117,7 +2315,9 @@
           "ENGINE_NOT_READY",
           "SESSION_NOT_FOUND",
           "NO_ACTIVE_SESSION",
-          "NO_TRIALS"
+          "NO_TRIALS",
+          "ALREADY_RECORDING",
+          "NO_ACTIVE_RECORDING"
         ],
         "title": "ErrorCode",
         "description": "Stable, machine-readable error codes for clients to branch on instead of\nguessing from the HTTP status.  The string value is the wire format."
@@ -2193,6 +2393,20 @@
           "paradigms"
         ],
         "title": "ParadigmsResponse"
+      },
+      "RecordingResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "The session created/ended for this recording"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id"
+        ],
+        "title": "RecordingResponse"
       },
       "SessionListResponse": {
         "properties": {
@@ -2283,6 +2497,24 @@
           "ended"
         ],
         "title": "SessionStateDTO"
+      },
+      "StartRecordingRequest": {
+        "properties": {
+          "paradigm": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paradigm",
+            "description": "Paradigm name for the session; defaults to config value"
+          }
+        },
+        "type": "object",
+        "title": "StartRecordingRequest"
       },
       "StartStimulationRequest": {
         "properties": {
