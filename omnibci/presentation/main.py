@@ -75,6 +75,9 @@ async def lifespan(app: FastAPI):
     app.state.recording_service = container.recording_service
 
     results_broadcaster.set_loop(asyncio.get_running_loop())
+    # Heartbeat: reaps dead WS connections during idle periods and lets the
+    # browser detect a silently dead feed (it cannot see protocol-level pings).
+    results_broadcaster.start_heartbeat()
 
     # Wire EventBus listeners now: the engine (and its bus) already exist after
     # build_container(), and register_event_listener only appends handlers — it
@@ -92,6 +95,7 @@ async def lifespan(app: FastAPI):
 
     logger.info("OmniBCI API server started (engine listeners registered: %d)", registered)
     yield
+    results_broadcaster.stop_heartbeat()
     await container.engine_service.shutdown()
     logger.info("OmniBCI API server stopped")
 

@@ -168,6 +168,7 @@ DTO 字段：
 | `SessionStarted` | `session_id` | `SessionStarted` |
 | `SessionEnded` | `session_id, total_trials` | `SessionEnded` |
 | `StimulationAck` | `command, target_index?, status, message?` | 刺激进程经 socket 回推的命令回执 |
+| `Ping` | （无负载） | 服务端心跳（每 ~15s；客户端静默 45s 即重连+快照,见 §五.3） |
 
 类型定义见 `schemas/ws.py`（`WsMessage = Union[...]`），可直接用于前端代码生成。重 EEG 数据（Epoch）刻意不下发——前端只拿结果。
 

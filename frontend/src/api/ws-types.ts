@@ -42,11 +42,17 @@ export interface StimulationAckMessage {
   message: string | null;
 }
 
+/** Server heartbeat (~15 s). No payload — resets the client staleness timer. */
+export interface PingMessage {
+  event: "Ping";
+}
+
 export type WsMessage =
   | TrialCompletedMessage
   | SessionStartedMessage
   | SessionEndedMessage
-  | StimulationAckMessage;
+  | StimulationAckMessage
+  | PingMessage;
 
 /** Type guard for incoming raw JSON. */
 export function isWsMessage(value: unknown): value is WsMessage {
@@ -54,7 +60,7 @@ export function isWsMessage(value: unknown): value is WsMessage {
     typeof value === "object" &&
     value !== null &&
     "event" in value &&
-    ["TrialCompleted", "SessionStarted", "SessionEnded", "StimulationAck"].includes(
+    ["TrialCompleted", "SessionStarted", "SessionEnded", "StimulationAck", "Ping"].includes(
       (value as { event: string }).event,
     )
   );

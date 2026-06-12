@@ -14,6 +14,10 @@
  *
  * Reconnect: exponential backoff 1s → ×2 → capped 10s (mirrors the backend's
  * NetworkClient supervisor loop).
+ *
+ * Liveness: the server sends a Ping every ~15 s. Browsers cannot observe
+ * protocol-level pings, so we treat *any* message as proof of life and force
+ * a reconnect (→ snapshot resync) when the feed is silent for 3 periods.
  */
 import { useEffect, useRef, useState } from "react";
 import { api, type SessionInfo, type Trial } from "../api/client";
@@ -29,6 +33,9 @@ export interface ResultsFeed {
 }
 
 const MAX_ACKS = 50;
+/** Server heartbeat is ~15 s; tolerate 3 missed periods before reconnecting. */
+const STALE_AFTER_MS = 45_000;
+const STALE_CHECK_MS = 5_000;
 
 export function useResultsFeed(): ResultsFeed {
   const [connection, setConnection] = useState<ConnectionState>("connecting");
@@ -46,6 +53,15 @@ export function useResultsFeed(): ResultsFeed {
     let ws: WebSocket | null = null;
     let backoff = 1000;
     let reconnectTimer: ReturnType<typeof setTimeout>;
+    let lastMsgAt = Date.now();
+
+    // Staleness watchdog: a half-open socket fires no close event — if the
+    // feed (incl. server Pings) goes silent, close it to trigger reconnect.
+    const staleTimer = setInterval(() => {
+      if (ws?.readyState === WebSocket.OPEN && Date.now() - lastMsgAt > STALE_AFTER_MS) {
+        ws.close();
+      }
+    }, STALE_CHECK_MS);
 
     const resync = async () => {
       const active = await api.activeSession().catch(() => null);
@@ -71,12 +87,14 @@ export function useResultsFeed(): ResultsFeed {
       ws.onopen = () => {
         if (!alive) return;
         backoff = 1000; // reset on success
+        lastMsgAt = Date.now();
         setConnection("open");
         void resync(); // snapshot AFTER the socket is open → no gap window
       };
 
       ws.onmessage = (ev) => {
         if (!alive) return;
+        lastMsgAt = Date.now(); // any message (incl. Ping) is proof of life
         let msg: unknown;
         try {
           msg = JSON.parse(ev.data as string);
@@ -122,6 +140,8 @@ export function useResultsFeed(): ResultsFeed {
           case "StimulationAck":
             setAcks((prev) => [msg, ...prev].slice(0, MAX_ACKS));
             break;
+          case "Ping":
+            break; // liveness only — timestamp already updated above
         }
       };
 
@@ -138,6 +158,7 @@ export function useResultsFeed(): ResultsFeed {
     return () => {
       alive = false;
       clearTimeout(reconnectTimer);
+      clearInterval(staleTimer);
       ws?.close();
     };
   }, []);

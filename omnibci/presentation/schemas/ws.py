@@ -62,10 +62,24 @@ class StimulationAckMessage(BaseModel):
     message: Optional[str] = Field(None, description="Human-readable detail (e.g. error reason)")
 
 
+class PingMessage(BaseModel):
+    """
+    Server heartbeat (every ~15 s; see websockets/results.py).
+
+    Carries no payload — its only job is liveness: the browser cannot observe
+    protocol-level ping/pong, so clients use *any* message (including this one)
+    to reset their staleness timer and force a reconnect when the feed goes
+    silent.  Sending it also lets the server reap dead connections during idle
+    periods instead of waiting for the next real broadcast.
+    """
+    event: Literal["Ping"] = "Ping"
+
+
 # Union type for documentation / client code generation
 WsMessage = Union[
     TrialCompletedMessage,
     SessionStartedMessage,
     SessionEndedMessage,
     StimulationAckMessage,
+    PingMessage,
 ]

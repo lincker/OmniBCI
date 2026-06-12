@@ -19,6 +19,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from omnibci.shared.events import Event
 from omnibci.infrastructure.outbound import event_to_wire
 from omnibci.presentation.schemas.ws import (
+    PingMessage,
     SessionEndedMessage,
     SessionStartedMessage,
     StimulationAckMessage,
@@ -36,6 +37,11 @@ _WIRE_MODELS = {
 
 logger = logging.getLogger(__name__)
 
+# Application-level heartbeat period.  Chosen slightly below uvicorn's
+# protocol-level ping interval (20 s) so idle dead connections are reaped at
+# least as fast; clients tolerate 3 missed periods before forcing a reconnect.
+HEARTBEAT_INTERVAL_S = 15.0
+
 
 class ResultsBroadcaster:
     """
@@ -46,9 +52,36 @@ class ResultsBroadcaster:
     def __init__(self) -> None:
         self._clients: Set[WebSocket] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._hb_task: asyncio.Task | None = None
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
+
+    # ------------------------------------------------------------------
+    # Heartbeat (frontend-separation §五.3: WS 心跳)
+    # ------------------------------------------------------------------
+
+    def start_heartbeat(self, interval_s: float = HEARTBEAT_INTERVAL_S) -> None:
+        """Start the periodic Ping task (call from the running loop)."""
+        if self._loop is None:
+            raise RuntimeError("set_loop() must be called before start_heartbeat()")
+        if self._hb_task is None or self._hb_task.done():
+            self._hb_task = self._loop.create_task(self._heartbeat_loop(interval_s))
+            logger.info("WS heartbeat started (every %.0fs)", interval_s)
+
+    def stop_heartbeat(self) -> None:
+        if self._hb_task is not None:
+            self._hb_task.cancel()
+            self._hb_task = None
+
+    async def _heartbeat_loop(self, interval_s: float) -> None:
+        ping = PingMessage().model_dump_json()
+        while True:
+            await asyncio.sleep(interval_s)
+            if self._clients:
+                # _broadcast reaps connections whose send fails — so during
+                # idle periods dead sockets live at most one interval.
+                await self._broadcast(ping)
 
     async def connect(self, ws: WebSocket) -> None:
         await ws.accept()

@@ -24,7 +24,7 @@ npm run dev          # http://localhost:5173，/api 经 Vite 代理到 127.0.0.1
 - **REST**：`npm run codegen` 由 `docs/openapi.json` 生成 `src/api/rest-types.ts`；
   CI 的契约守卫保证 json 与后端代码同步。
 - **WebSocket**：`src/api/ws-types.ts` 手写镜像后端 `schemas/ws.py`
-  （4 条消息，受后端契约冻结测试保护；改 ws.py 必须同 commit 改它）。
+  （5 条消息含 Ping 心跳，受后端契约冻结测试保护；改 ws.py 必须同 commit 改它）。
 
 ## 重连快照（已实现，src/hooks/useResultsFeed.ts）
 
