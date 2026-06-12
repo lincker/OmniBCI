@@ -21,7 +21,6 @@ for advanced flows (calibration without recording, several sessions within one
 continuous stream); RecordingService is the convenience path for the common
 "one stream = one recording" case.
 """
-from __future__ import annotations
 
 import logging
 import time

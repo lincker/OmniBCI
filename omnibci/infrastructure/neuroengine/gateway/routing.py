@@ -4,7 +4,6 @@ Routing types for PeerGateway.
 RouteSpec declares what flows over a peer channel in each direction; PeerConfig
 bundles a peer's name, transport, routes and (optionally) safety policy.
 """
-from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable, FrozenSet, Iterable, Optional

@@ -15,7 +15,6 @@ Design note — `occurred_at` uses `field(init=False)`:
   Subclasses that define their own __post_init__ must call
   super().__post_init__() to ensure `occurred_at` is populated.
 """
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone

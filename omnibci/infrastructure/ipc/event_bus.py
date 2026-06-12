@@ -3,6 +3,7 @@
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-04-21 10:16
 import asyncio
+import inspect
 import logging
 from typing import Optional
 from omnibci.shared.events import EventType, Event
@@ -72,7 +73,7 @@ class EventBus:
                     # isolated and logged without affecting the others.
                     for handler in list(self._event_handlers[event_type]):
                         try:
-                            if asyncio.iscoroutinefunction(handler):
+                            if inspect.iscoroutinefunction(handler):
                                 await handler(event)
                             else:
                                 handler(event)

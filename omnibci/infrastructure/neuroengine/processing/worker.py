@@ -5,7 +5,6 @@ SignalProcessingWorker — multiprocessing 包装器。
 会话身份不再由本进程自建——以待命态启动，等待 API 经 StartSession 事件下推的
 session_id（见 docs/session-id-unification.md）。
 """
-from __future__ import annotations
 
 import logging
 import multiprocessing as mp

@@ -13,7 +13,6 @@ Why this exists:
   (``baseline_samples = round(baseline_duration * sample_rate)``).  A capacity
   of 0 disables baseline capture entirely (the legacy behaviour).
 """
-from __future__ import annotations
 
 from typing import Optional
 

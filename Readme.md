@@ -10,7 +10,7 @@
 -->
 OmniBCI is designed to be a BCI system that is easy to use and deploy. 
 
-1.It uses Python 3.12 and OpenGL for rendering some stimulis. The system is designed to be cross-platform, allowing it to run on Windows, macOS, and Linux.
+1.It requires Python 3.14 or later, and uses OpenGL for rendering some stimulis. The system is designed to be cross-platform, allowing it to run on Windows, macOS, and Linux.
 
 2.It provides a user-friendly GUI for configuring and controlling the system. The GUI is designed to be intuitive and easy to use, allowing users to quickly set up and start using the system.
 

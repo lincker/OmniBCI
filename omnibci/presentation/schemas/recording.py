@@ -1,7 +1,6 @@
 """
 Recording API schemas — the "record a run" orchestration (session + stream).
 """
-from __future__ import annotations
 
 from typing import Optional
 

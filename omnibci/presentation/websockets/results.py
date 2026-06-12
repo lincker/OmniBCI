@@ -9,7 +9,6 @@ Data chain:
     → ResultsBroadcaster.on_trial_completed()
     → JSON fan-out to WebSocket clients
 """
-from __future__ import annotations
 
 import asyncio
 import logging

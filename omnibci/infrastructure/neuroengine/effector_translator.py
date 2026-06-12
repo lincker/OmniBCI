@@ -14,7 +14,6 @@ Mapping note: the command payload currently carries the decoded ``target_id``
 which direction, how far) is device-specific business logic and belongs on the
 controller side or in a future configurable map — kept out of here on purpose.
 """
-from __future__ import annotations
 
 import logging
 

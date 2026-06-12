@@ -1,3 +1,4 @@
 -r base.txt
 # for test
 pytest==9.0.3
+pytest-asyncio>=1.0  # required by @pytest.mark.asyncio tests (e.g. tests/application/test_engine_service.py)

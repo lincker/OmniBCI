@@ -16,7 +16,6 @@ a background monitor watches the link and trips the channel's ``failsafe`` when
 halt), NOT sent to the peer: a dead link can't carry a safe-stop command, so
 device-side dead-man behaviour remains the controller's responsibility.
 """
-from __future__ import annotations
 
 import asyncio
 import logging

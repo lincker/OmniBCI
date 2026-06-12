@@ -20,7 +20,6 @@ This is the outermost layer — it is allowed to import application,
 infrastructure and configuration.  Nothing else imports *it* except concrete
 entrypoints (e.g. ``presentation/main.py``).
 """
-from __future__ import annotations
 
 import logging
 from dataclasses import dataclass

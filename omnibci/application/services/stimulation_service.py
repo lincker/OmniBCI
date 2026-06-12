@@ -3,7 +3,6 @@ StimulationAppService — Application Service.
 
 Manages stimulation paradigm lifecycle through domain events.
 """
-from __future__ import annotations
 
 import logging
 

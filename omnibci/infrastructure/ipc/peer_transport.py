@@ -14,7 +14,6 @@ A transport is pure plumbing: framing + connection lifecycle. It does NOT decide
 what goes on the EventBus — inbound Events are handed to the handler installed via
 ``set_inbound_handler`` (the owning PeerChannel applies its route white-list).
 """
-from __future__ import annotations
 
 import abc
 import asyncio

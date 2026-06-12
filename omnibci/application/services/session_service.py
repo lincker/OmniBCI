@@ -11,7 +11,6 @@ Dependency graph (follows DIP):
                     ↑
   infrastructure implements domain.SessionRepository
 """
-from __future__ import annotations
 
 import logging
 import uuid

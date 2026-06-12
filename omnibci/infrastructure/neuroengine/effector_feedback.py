@@ -13,7 +13,6 @@ Side-effect-light by design: it records observability state and logs. It does
 NOT yet command a safe state on fault — that is wired with the connection state
 machine in Phase 4.
 """
-from __future__ import annotations
 
 import logging
 from typing import Optional

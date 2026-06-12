@@ -5,7 +5,6 @@ These Pydantic models define the JSON structure pushed to connected clients.
 Every message has a top-level `event` discriminator so clients can route
 messages without inspecting payload shape.
 """
-from __future__ import annotations
 
 from datetime import datetime
 from typing import Literal, Optional, Union

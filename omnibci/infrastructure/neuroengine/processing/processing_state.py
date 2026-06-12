@@ -17,7 +17,6 @@ ACL change:
   self.event_publisher，states 通过 self.context.event_publisher 访问，
   无需再 import processor 模块。
 """
-from __future__ import annotations
 
 import asyncio
 import logging

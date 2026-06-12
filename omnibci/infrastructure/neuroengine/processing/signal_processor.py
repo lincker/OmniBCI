@@ -11,7 +11,6 @@ ACL（循环依赖修复）：
 
 进程包装 SignalProcessingWorker 已拆到 worker.py。
 """
-from __future__ import annotations
 
 import asyncio
 from enum import Enum

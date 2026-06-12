@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 import multiprocessing as mp
 from dataclasses import dataclass

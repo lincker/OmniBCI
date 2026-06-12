@@ -14,7 +14,6 @@ What changed from the original:
   - The decoder's legacy (bool, int) return is wrapped here; existing decoder
     plugins do NOT need to change their signatures.
 """
-from __future__ import annotations
 
 import logging
 from typing import List, Optional, Tuple

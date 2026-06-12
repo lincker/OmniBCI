@@ -17,7 +17,6 @@ Windowing model (generic, paradigm-neutral):
   - ``trigger_offset == 0`` means "no baseline captured" — fully backward
     compatible with epochs that begin at the trigger.
 """
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone

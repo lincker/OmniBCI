@@ -10,7 +10,6 @@ This yields the paradigm *directory names* (e.g. ``classic40SSVEP``) without
 importing anything.  Mapping a directory name to the registry ``plugin_type``
 used to actually start it is a follow-up (would need an OpenGL-free manifest).
 """
-from __future__ import annotations
 
 import os
 from typing import List

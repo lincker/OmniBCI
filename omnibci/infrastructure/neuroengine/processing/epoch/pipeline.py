@@ -7,7 +7,6 @@ EpochProcessor 经 `decoder.should_decode(...)` 门控；强制路径（marker �
 
 filters 为空时 pipeline.run 等价于直接 `decoder.decode(epoch_data, forced=...)`。
 """
-from __future__ import annotations
 
 from typing import List, Optional, Sequence
 
