@@ -207,10 +207,12 @@ Vite + React/Vue + TS；数据层 = REST 轮询（engine/acquisition status，2s
 控制台接入 start/stop 引擎、connect/stream、创建/结束会话、触发刺激试次。同步落地 §五.4 token 鉴权 + CORS 收敛、§五.5 控制者锁。验收：两个浏览器标签页，一个持锁可操作、一个只读观察，互不干扰。
 
 **阶段 3 —— 状态健壮性（1 周）**
-SQLite 会话仓储（装配根开关切换，应用层零改动）；WS 心跳；`/engine/status` 增补当前会话 id 与处理器待命/运行态（前端需要知道"引擎活着但无会话"这个状态——会话 id 统一后这是常态而非异常）。
+SQLite 会话仓储（装配根开关切换，应用层零改动）；WS 心跳 ✅（服务端 15s `Ping` + 前端 45s 静默看门狗，见 §四）。
+
+> 已划掉「`/engine/status` 增补当前会话 id 与处理器待命/运行态」：动机（前端区分"引擎活着但无会话"）已被 `GET /sessions/active`（`NO_ACTIVE_SESSION` 为正常态）+ WS `SessionStarted/SessionEnded` + 重连快照覆盖；处理器"待命/运行"可由 `processor_alive && 有活动会话` 推导，进程内部真实状态机的回传链路成本不抵收益。剩余价值（单请求原子状态快照）归入阶段 4 调试面板按需做。
 
 **阶段 4 —— 配置面（1~2 周，按需）**
-范式列表接插件注册表（§五.7）；`GET/PATCH /config` 配置端点（§五.8）；acquisition 元数据从设备 `get_metadata` 实测回填。
+范式列表接插件注册表（§五.7）；`GET/PATCH /config` 配置端点（§五.8）；acquisition 元数据从设备 `get_metadata` 实测回填；（按需）调试面板用的原子状态快照端点。
 
 **阶段 5 —— IPC payload schema 化（机会性）**
 版本头与收发校验已具备（`contracts.py`），剩余工作是逐事件 payload 的显式 schema。仅在跨进程契约再次出 bug 或要支持第三方刺激端实现时才值得做——不要为做而做。
