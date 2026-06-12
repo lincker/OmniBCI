@@ -8,6 +8,7 @@ from fastapi import Request
 
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.acquisition_service import AcquisitionAppService
+from omnibci.application.services.config_service import ConfigService
 from omnibci.application.services.stimulation_service import StimulationAppService
 from omnibci.application.services.session_service import SessionAppService
 from omnibci.application.services.recording_service import RecordingService
@@ -36,3 +37,7 @@ def get_recording_service(request: Request) -> RecordingService:
 
 def get_session_repository(request: Request) -> SessionRepository:
     return request.app.state.session_repository
+
+
+def get_config_service(request: Request) -> ConfigService:
+    return request.app.state.config_service

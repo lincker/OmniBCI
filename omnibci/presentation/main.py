@@ -31,7 +31,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
-from omnibci.presentation.routers import engine, acquisition, stimulation, session, recording
+from omnibci.application.services.config_service import ConfigService
+from omnibci.conf import settings
+from omnibci.presentation.routers import engine, acquisition, stimulation, session, recording, config
 from omnibci.presentation.websockets.results import results_broadcaster, results_ws_endpoint
 from omnibci.bootstrap import build_container, register_engine_listeners
 from omnibci.presentation.errors import register_exception_handlers
@@ -120,12 +122,17 @@ def create_app() -> FastAPI:
     # validation / unexpected) — see omnibci.presentation.errors.
     register_exception_handlers(app)
 
+    # Layered configuration (defaults + profiles); reads/writes go through
+    # the ConfigService whitelist, never raw settings.
+    app.state.config_service = ConfigService(settings)
+
     prefix = "/api/v1"
     app.include_router(engine.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(acquisition.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(stimulation.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(session.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(recording.router, prefix=prefix, responses=ERROR_RESPONSES)
+    app.include_router(config.router, prefix=prefix, responses=ERROR_RESPONSES)
 
     @app.websocket("/api/v1/ws/results")
     async def ws_results(websocket: WebSocket):

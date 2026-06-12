@@ -39,6 +39,11 @@ class ErrorCode(str, Enum):
     ALREADY_RECORDING = "ALREADY_RECORDING"      # /recording/start while one is active
     NO_ACTIVE_RECORDING = "NO_ACTIVE_RECORDING"  # /recording/stop with none active
 
+    # Layered configuration (stage 4): defaults + named profiles
+    CONFIG_KEY_NOT_ALLOWED = "CONFIG_KEY_NOT_ALLOWED"      # key outside the whitelist
+    CONFIG_PROFILE_NOT_FOUND = "CONFIG_PROFILE_NOT_FOUND"  # unknown profile name
+    CONFIG_PROFILE_IN_USE = "CONFIG_PROFILE_IN_USE"        # deleting the active profile
+
 
 class ErrorResponse(BaseModel):
     """

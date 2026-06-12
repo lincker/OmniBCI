@@ -61,3 +61,5 @@ paradigm = 'STIMULATION_THUBCI_SSVEP_classic40'
 sample_rate = 1000
 duration = 3
 offset_time = 0.14
+[PROFILES]
+active = "1"
