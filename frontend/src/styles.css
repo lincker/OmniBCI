@@ -62,6 +62,53 @@ th { font-weight: 600; opacity: 0.7; font-size: 0.8rem; }
 .acks { list-style: none; margin: 0; padding: 0; font-size: 0.9rem; }
 .acks li { padding: 0.3rem 0; border-bottom: 1px solid var(--border); }
 
-@media (max-width: 800px) {
+/* ---- control actions (stage 2) ---- */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+  align-items: center;
+}
+.actions button,
+.recording-controls button {
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  cursor: pointer;
+}
+.actions button:hover:not(:disabled),
+.recording-controls button:hover:not(:disabled) {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.actions button.danger:hover:not(:disabled),
+.recording-controls button.danger:hover:not(:disabled) {
+  border-color: var(--err);
+  color: var(--err);
+}
+.actions button:disabled,
+.recording-controls button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.actions input[type="number"] {
+  font: inherit;
+  font-size: 0.82rem;
+  width: 7.5rem;
+  padding: 0.28rem 0.5rem;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: transparent;
+}
+.action-error { margin: 0.4rem 0 0; font-size: 0.8rem; }
+
+@media (max-width: 1000px) {
+  .grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 640px) {
   .grid { grid-template-columns: 1fr; }
 }

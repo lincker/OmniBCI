@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { api } from "./api/client";
 import { usePoll } from "./hooks/usePoll";
+import { useAction } from "./hooks/useAction";
 import { useResultsFeed } from "./hooks/useResultsFeed";
 import "./styles.css";
 
@@ -11,8 +13,17 @@ function Dot({ on, label }: { on: boolean | undefined; label: string }) {
   );
 }
 
+function ActionError({ messages }: { messages: (string | null)[] }) {
+  const msg = messages.find((m) => m != null);
+  return msg ? <p className="error action-error">{msg}</p> : null;
+}
+
 function EngineCard() {
-  const { data, error } = usePoll(api.engineStatus);
+  const { data, error, refresh } = usePoll(api.engineStatus);
+  const start = useAction(api.engineStart, refresh);
+  const stop = useAction(api.engineStop, refresh);
+  const running = data?.running ?? false;
+
   return (
     <section className="card">
       <h2>引擎</h2>
@@ -25,22 +36,46 @@ function EngineCard() {
           <Dot on={data?.processor_alive} label="处理进程" />
         </p>
       )}
+      <div className="actions">
+        <button disabled={running || start.pending} onClick={() => start.run()}>
+          启动引擎
+        </button>
+        <button className="danger" disabled={!running || stop.pending} onClick={() => stop.run()}>
+          停止引擎
+        </button>
+      </div>
+      <ActionError messages={[start.error, stop.error]} />
     </section>
   );
 }
 
-function AcquisitionCard() {
-  const { data, error } = usePoll(api.acquisitionStatus);
+function AcquisitionSessionCard({
+  engineRunning,
+  session,
+  trialCount,
+}: {
+  engineRunning: boolean;
+  session: { session_id: string; paradigm?: string | null; state: string } | null;
+  trialCount: number;
+}) {
+  const { data, error, refresh } = usePoll(api.acquisitionStatus);
+  const connect = useAction(api.acqConnect, refresh);
+  const disconnect = useAction(api.acqDisconnect, refresh);
+  const recStart = useAction(api.recordingStart, refresh); // 开始读取(建会话→开流)
+  const recStop = useAction(api.recordingStop, refresh); // 停止读取(停流→排水→结束会话)
+  const connected = data?.connected ?? false;
+  const streaming = data?.streaming ?? false;
+
   return (
     <section className="card">
-      <h2>采集</h2>
+      <h2>采集与会话</h2>
       {error ? (
         <p className="error">不可达</p>
       ) : (
         <>
           <p>
             <Dot on={data?.connected} label="已连接" />
-            <Dot on={data?.streaming} label="流传输" />
+            <Dot on={data?.streaming} label="读取中" />
           </p>
           <p className="meta">
             数据源 {data?.source ?? "—"} ・ 采样率 {data?.sample_rate ?? "—"} Hz ・ 通道{" "}
@@ -48,12 +83,86 @@ function AcquisitionCard() {
           </p>
         </>
       )}
+      {session ? (
+        <p className="meta">
+          会话 <code>{session.session_id}</code> ・ 范式 {session.paradigm ?? "—"} ・{" "}
+          {session.state === "running" ? "进行中" : "已结束"} ・ 试次 {trialCount}
+        </p>
+      ) : (
+        <p className="meta">无活动会话</p>
+      )}
+      <div className="actions">
+        <button
+          disabled={!engineRunning || connected || connect.pending}
+          onClick={() => connect.run()}
+        >
+          连接
+        </button>
+        <button
+          className="danger"
+          disabled={!connected || disconnect.pending}
+          onClick={() => disconnect.run()}
+        >
+          断开
+        </button>
+        <button
+          disabled={!connected || streaming || recStart.pending}
+          onClick={() => recStart.run()}
+        >
+          开始读取
+        </button>
+        <button className="danger" disabled={!streaming || recStop.pending} onClick={() => recStop.run()}>
+          停止读取
+        </button>
+      </div>
+      <ActionError messages={[connect.error, disconnect.error, recStart.error, recStop.error]} />
+    </section>
+  );
+}
+
+function StimulationCard({ sessionActive }: { sessionActive: boolean }) {
+  const [target, setTarget] = useState<string>("");
+  const stimStart = useAction(api.stimStart);
+  const stimStop = useAction(api.stimStop);
+  const trial = useAction(api.trialStart);
+
+  return (
+    <section className="card">
+      <h2>刺激</h2>
+      <div className="actions">
+        <button disabled={stimStart.pending} onClick={() => stimStart.run()}>
+          启动刺激
+        </button>
+        <button className="danger" disabled={stimStop.pending} onClick={() => stimStop.run()}>
+          停止刺激
+        </button>
+      </div>
+      <div className="actions">
+        <input
+          type="number"
+          min={0}
+          placeholder="目标序号(可空)"
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+        />
+        <button
+          disabled={!sessionActive || trial.pending}
+          title={sessionActive ? "" : "需要活动会话"}
+          onClick={() => trial.run(target === "" ? undefined : Number(target))}
+        >
+          触发试次
+        </button>
+      </div>
+      <ActionError messages={[stimStart.error, stimStop.error, trial.error]} />
     </section>
   );
 }
 
 export default function App() {
   const { connection, session, trials, acks } = useResultsFeed();
+  const { data: engineStatus } = usePoll(api.engineStatus);
+  const engineRunning = engineStatus?.running ?? false;
+  const sessionActive = session != null && session.state === "running";
 
   return (
     <main>
@@ -66,24 +175,12 @@ export default function App() {
 
       <div className="grid">
         <EngineCard />
-        <AcquisitionCard />
-
-        <section className="card">
-          <h2>会话</h2>
-          {session ? (
-            <>
-              <p className="meta">
-                <code>{session.session_id}</code>
-              </p>
-              <p>
-                范式 {session.paradigm ?? "—"} ・ 状态{" "}
-                {session.state === "running" ? "进行中" : "已结束"} ・ 试次 {trials.length}
-              </p>
-            </>
-          ) : (
-            <p className="meta">无活动会话（引擎待命中——经 POST /sessions 开启）</p>
-          )}
-        </section>
+        <AcquisitionSessionCard
+          engineRunning={engineRunning}
+          session={session}
+          trialCount={trials.length}
+        />
+        <StimulationCard sessionActive={sessionActive} />
 
         <section className="card card-wide">
           <h2>试次结果</h2>
