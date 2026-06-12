@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -140,7 +139,6 @@ class NeuroEngine:
             EventType.DisconnectDataProvider:         (acq, AcquisitionCommand.disconnect, False),
             EventType.StartStream:                    (acq, AcquisitionCommand.start_stream, False),
             EventType.StopStream:                     (acq, AcquisitionCommand.stop_stream, False),
-            EventType.StopNeuroEngineSignalProcessor: (proc, SignalProcessorCommand.should_stop, False),
             # Session lifecycle: REST-created session_id pushed into the worker.
             EventType.StartSession:                   (proc, SignalProcessorCommand.start_session, True),
             EventType.EndSession:                     (proc, SignalProcessorCommand.end_session, True),

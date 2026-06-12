@@ -8,8 +8,6 @@ Endpoints:
     GET  /healthz                          Health check
     POST /api/v1/engine/start              Start NeuroEngine
     POST /api/v1/engine/stop               Stop NeuroEngine
-    POST /api/v1/engine/processor/start    Start signal processor
-    POST /api/v1/engine/processor/stop     Stop signal processor
     GET  /api/v1/engine/status             Engine status
 
     POST /api/v1/acquisition/connect       Connect data source
@@ -25,7 +23,6 @@ Endpoints:
 
     WS   /api/v1/ws/results                Real-time classification results
 """
-from __future__ import annotations
 
 import asyncio
 import logging

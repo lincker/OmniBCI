@@ -4,7 +4,6 @@ NeuroEngineService — Application Service.
 Orchestrates NeuroEngine lifecycle and exposes it to the API layer via
 command / query objects.  The API layer never touches NeuroEngine directly.
 """
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -18,8 +17,6 @@ from omnibci.application.ports.engine_port import EnginePort
 from omnibci.application.commands.engine_commands import (
     StartEngineCommand,
     StopEngineCommand,
-    StartSignalProcessorCommand,
-    StopSignalProcessorCommand,
 )
 from omnibci.application.queries.engine_queries import (
     GetEngineStatusQuery,
@@ -45,6 +42,12 @@ class NeuroEngineService(EnginePort):
         self._engine: Optional[NeuroEngine] = None
         self._engine_thread: Optional[Thread] = None
         self._running = False
+        # mp.Process is single-use and NeuroEngine._stop() closes its queues,
+        # so after a stop the whole engine graph must be rebuilt before the
+        # next start.  Bus subscriptions made via subscribe() are recorded so
+        # they can be replayed onto the fresh EventBus after a rebuild.
+        self._needs_rebuild = False
+        self._subscriptions: list = []
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -71,6 +74,18 @@ class NeuroEngineService(EnginePort):
         if self._engine is None:
             raise RuntimeError("NeuroEngineService not initialised; call startup() first")
 
+        if self._needs_rebuild:
+            # Rebuild the engine graph (fresh workers, queues, bus, gateway),
+            # then replay listeners (session read-model + WS broadcaster) onto
+            # the new EventBus — they were registered on the discarded one.
+            self._engine = NeuroEngineBuilder().build()
+            for event_type, handler in self._subscriptions:
+                self._engine.event_bus.register_event_listener(event_type, handler)
+            self._needs_rebuild = False
+            logger.info(
+                "NeuroEngine rebuilt (%d listeners replayed)", len(self._subscriptions)
+            )
+
         # NeuroEngine.run() calls asyncio.run() internally, so we spin it in a thread.
         self._engine_thread = Thread(target=self._engine.run, daemon=True, name="neuro-engine")
         self._engine_thread.start()
@@ -83,14 +98,11 @@ class NeuroEngineService(EnginePort):
         self._engine.should_stop = True
         if self._engine_thread:
             self._engine_thread.join(timeout=5)
+            if self._engine_thread.is_alive():
+                logger.warning("Engine thread did not stop within 5s")
         self._running = False
+        self._needs_rebuild = True
         logger.info("NeuroEngine stopped")
-
-    def handle_start_signal_processor(self, cmd: StartSignalProcessorCommand) -> None:
-        self.dispatch(Event(EventType.StartNeuroEngineSignalProcessor))
-
-    def handle_stop_signal_processor(self, cmd: StopSignalProcessorCommand) -> None:
-        self.dispatch(Event(EventType.StopNeuroEngineSignalProcessor))
 
     # ------------------------------------------------------------------
     # Query handlers
@@ -136,8 +148,11 @@ class NeuroEngineService(EnginePort):
 
         Exposed so the composition root can wire EventBus → broadcaster /
         read-model listeners without reaching into ``_engine.event_bus``.
+        Subscriptions are recorded so they survive an engine rebuild after a
+        stop (see handle_start_engine).
         """
         self._require_engine()
+        self._subscriptions.append((event_type, handler))
         self._engine.event_bus.register_event_listener(event_type, handler)
 
     # ------------------------------------------------------------------

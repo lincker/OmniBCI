@@ -12,8 +12,6 @@ class EventType(IntEnum):
     StartStream = 111
     StopStream = 112
     # neuro engine
-    StartNeuroEngineSignalProcessor = 31
-    StopNeuroEngineSignalProcessor = 32
     CloseAllNeuroEngineProcessSystem = 33
     # stimulation
     StartStimTrial = 311
