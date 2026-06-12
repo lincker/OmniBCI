@@ -3,6 +3,7 @@ import { api } from "./api/client";
 import { usePoll } from "./hooks/usePoll";
 import { useAction } from "./hooks/useAction";
 import { useResultsFeed } from "./hooks/useResultsFeed";
+import { ConfigCard } from "./ConfigCard";
 import "./styles.css";
 
 function Dot({ on, label }: { on: boolean | undefined; label: string }) {
@@ -158,21 +159,101 @@ function StimulationCard({ sessionActive }: { sessionActive: boolean }) {
   );
 }
 
+function PipelineStepper({
+  engineRunning,
+  connected,
+  streaming,
+}: {
+  engineRunning: boolean;
+  connected: boolean;
+  streaming: boolean;
+}) {
+  const steps = [
+    { label: "引擎启动", done: engineRunning },
+    { label: "数据源连接", done: connected },
+    { label: "数据读取", done: streaming },
+  ];
+  // 第一个未完成的步骤是"当前步"
+  const currentIdx = steps.findIndex((s) => !s.done);
+
+  return (
+    <div className="pipeline">
+      {steps.map((s, i) => (
+        <div key={s.label} className="step-wrap">
+          {i > 0 && <span className={`step-line ${steps[i - 1].done ? "done" : ""}`} />}
+          <div className={`step ${s.done ? "done" : i === currentIdx ? "current" : ""}`}>
+            <span className="step-dot">{s.done ? "✓" : i + 1}</span>
+            <span className="step-label">{s.label}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+type Tab = "系统" | "配置";
+
 export default function App() {
+  const [tab, setTab] = useState<Tab>("系统");
   const { connection, session, trials, acks } = useResultsFeed();
   const { data: engineStatus } = usePoll(api.engineStatus);
+  const { data: acqStatus } = usePoll(api.acquisitionStatus);
   const engineRunning = engineStatus?.running ?? false;
   const sessionActive = session != null && session.state === "running";
 
   return (
-    <main>
-      <header>
-        <h1>OmniBCI 控制台</h1>
+    <div className="layout">
+      <aside className="sidebar">
+        <h1>
+          <span className="brand-mark">Ω</span>
+          OmniBCI 控制台
+        </h1>
+        <nav>
+          {(["系统", "配置"] as Tab[]).map((t) => (
+            <button
+              key={t}
+              className={t === tab ? "nav-item active" : "nav-item"}
+              onClick={() => setTab(t)}
+            >
+              {t === "系统" ? (
+                <svg className="nav-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <rect x="1.5" y="1.5" width="13" height="13" rx="2.5" />
+                  <path d="M4.5 9.5 7 6.5l2 2.5 2.5-3.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ) : (
+                <svg className="nav-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <circle cx="8" cy="8" r="2.2" />
+                  <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" strokeLinecap="round" />
+                </svg>
+              )}
+              {t}
+              {t === "系统" && (
+                <span className={`nav-dot ${engineRunning ? "dot-on" : "dot-off"}`}>●</span>
+              )}
+            </button>
+          ))}
+        </nav>
         <span className={`badge badge-${connection}`}>
           {connection === "open" ? "实时" : connection === "connecting" ? "连接中…" : "已断开，重连中…"}
         </span>
-      </header>
+      </aside>
 
+      <main className="content">
+        <header className="content-head">
+          <h1>{tab}</h1>
+        </header>
+
+        {tab === "配置" ? (
+          <div className="grid">
+            <ConfigCard />
+          </div>
+        ) : (
+      <>
+      <PipelineStepper
+        engineRunning={engineRunning}
+        connected={acqStatus?.connected ?? false}
+        streaming={acqStatus?.streaming ?? false}
+      />
       <div className="grid">
         <EngineCard />
         <AcquisitionSessionCard
@@ -231,6 +312,9 @@ export default function App() {
           )}
         </section>
       </div>
-    </main>
+      </>
+        )}
+      </main>
+    </div>
   );
 }

@@ -13,6 +13,10 @@ export type AcquisitionStatus = S["AcquisitionStatusResponse"];
 export type SessionInfo = S["SessionResponse"];
 export type Trial = S["TrialResponse"];
 export type ErrorCode = S["ErrorCode"];
+export type ConfigEntry = S["ConfigEntry"];
+export type ConfigData = S["ConfigResponse"];
+export type PatchConfigResult = S["PatchConfigResponse"];
+export type ProfileList = S["ProfileListResponse"];
 
 export interface ApiEnvelope<T> {
   success: boolean;
@@ -40,7 +44,7 @@ async function get<T>(path: string): Promise<T | null> {
   return (body as ApiEnvelope<T>).data;
 }
 
-async function send<T>(method: "POST" | "DELETE", path: string, body?: unknown): Promise<T | null> {
+async function send<T>(method: "POST" | "DELETE" | "PATCH" | "PUT", path: string, body?: unknown): Promise<T | null> {
   const res = await fetch(path, {
     method,
     headers: { Accept: "application/json", "Content-Type": "application/json" },
@@ -98,4 +102,18 @@ export const api = {
 
   recordingStart: () => post<{ session_id: string }>("/api/v1/recording/start"),
   recordingStop: () => post<{ session_id: string }>("/api/v1/recording/stop"),
+
+  // ---- layered config (stage 4) ------------------------------------------
+  getConfig: () => get<ConfigData>("/api/v1/config"),
+  patchConfig: (updates: Record<string, unknown>, scope = "default", description?: string) =>
+    send<PatchConfigResult>("PATCH", "/api/v1/config", { updates, scope, description }),
+  listProfiles: () => get<ProfileList>("/api/v1/config/profiles"),
+  putProfile: (name: string, updates: Record<string, unknown>, description?: string) =>
+    send<PatchConfigResult>("PUT", `/api/v1/config/profiles/${encodeURIComponent(name)}`,
+      { updates, description }),
+  deleteProfile: (name: string) =>
+    del(`/api/v1/config/profiles/${encodeURIComponent(name)}`),
+  activateProfile: (name: string) =>
+    post(`/api/v1/config/profiles/${encodeURIComponent(name)}/activate`),
+  deactivateProfile: () => post("/api/v1/config/profiles/deactivate"),
 };
