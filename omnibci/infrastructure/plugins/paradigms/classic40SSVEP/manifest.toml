@@ -1,0 +1,36 @@
+# OmniBCI Plugin Manifest — schema version 1
+# ─────────────────────────────────────────────────────────────────────────────
+# This file is the single source of truth for plugin identity and metadata.
+# It is read at discovery time (no code execution, no OpenGL import).
+
+[package]
+# Machine identifier — unique per plugin, used as the dict key everywhere.
+# Must match the directory name for builtin plugins.
+id           = "classic40SSVEP"
+
+version      = "0.1.0"
+
+# Plugin category. One of: paradigm | decoder | acquisition | filter
+kind         = "paradigm"
+
+# OmniBCI plugin API version this manifest targets.
+api_version  = "1"
+
+# Registry key used when actually starting the paradigm (StimulationAppService
+# looks this up in the plugin registry).
+plugin_type  = "STIMULATION_THUBCI_SSVEP_classic40"
+
+# Human-readable label shown in the UI.
+display_name = "Classic 40-target SSVEP"
+
+description  = "40-class steady-state visual evoked potential paradigm (THUBCI)."
+
+author       = "OmniBCI"
+
+# "builtin" = ships with the application and is tracked by git.
+# "user"    = installed by the user (downloaded or self-written).
+source       = "builtin"
+
+# [params]
+# Plugin-specific parameters exposed to the config system (planned for P1).
+# e.g. flash_rate_hz = 10

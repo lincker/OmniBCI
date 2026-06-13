@@ -97,7 +97,7 @@ class Stimulation:
 
     async def stop(self):
         print('---StimulationMain stop---')
-        self.stimulator.terminate()
+        self.stimulator.stop()
         await self.client_message_management.stop()
         self.event_bus.stop()
 
