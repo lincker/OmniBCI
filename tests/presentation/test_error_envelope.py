@@ -1,0 +1,105 @@
+"""
+Tests for the unified error envelope + ErrorCode (frontend-separation step 1).
+
+Pins:
+  - every failure returns ErrorResponse{success:false, code, message, detail?};
+  - HTTP status → ErrorCode mapping;
+  - 404 / 422 paths through the real app produce the unified shape.
+"""
+from __future__ import annotations
+
+import pytest
+
+from omnibci.presentation.schemas.common import ErrorCode, ErrorResponse
+from omnibci.presentation.errors import status_to_code, ApiError
+
+
+# ---------------------------------------------------------------------------
+# Pure unit — no FastAPI needed
+# ---------------------------------------------------------------------------
+
+class TestStatusToCode:
+    @pytest.mark.parametrize(
+        "status,expected",
+        [
+            (400, ErrorCode.BAD_REQUEST),
+            (401, ErrorCode.UNAUTHORIZED),
+            (403, ErrorCode.FORBIDDEN),
+            (404, ErrorCode.NOT_FOUND),
+            (409, ErrorCode.CONFLICT),
+            (422, ErrorCode.VALIDATION_ERROR),
+            (500, ErrorCode.INTERNAL_ERROR),
+            (503, ErrorCode.SERVICE_UNAVAILABLE),
+            (418, ErrorCode.ERROR),  # unmapped → generic
+        ],
+    )
+    def test_mapping(self, status, expected):
+        assert status_to_code(status) == expected
+
+
+class TestErrorResponseModel:
+    def test_defaults_and_shape(self):
+        body = ErrorResponse(code=ErrorCode.NOT_FOUND, message="x")
+        dumped = body.model_dump(mode="json")
+        assert dumped["success"] is False
+        assert dumped["code"] == "NOT_FOUND"
+        assert dumped["message"] == "x"
+        assert dumped["detail"] is None
+
+    def test_error_code_is_string_value(self):
+        assert ErrorCode.CONFLICT.value == "CONFLICT"
+
+
+class TestApiError:
+    def test_carries_fields(self):
+        err = ApiError(409, ErrorCode.CONFLICT, "Engine already running", detail={"x": 1})
+        assert err.status_code == 409
+        assert err.code == ErrorCode.CONFLICT
+        assert err.message == "Engine already running"
+        assert err.detail == {"x": 1}
+
+
+# ---------------------------------------------------------------------------
+# Through the real app (requires FastAPI; uses the api_client fixture)
+# ---------------------------------------------------------------------------
+
+class TestUnifiedErrorThroughApp:
+    def test_404_uses_unified_envelope_with_semantic_code(self, api_client):
+        resp = api_client.get("/api/v1/sessions/does-not-exist")
+        assert resp.status_code == 404
+        body = resp.json()
+        assert body["success"] is False
+        # Semantic code (ApiError), not the generic NOT_FOUND fallback.
+        assert body["code"] == "SESSION_NOT_FOUND"
+        assert isinstance(body["message"], str) and body["message"]
+
+    def test_no_active_session_semantic_code(self, api_client):
+        # Fresh client → no active session → 404 NO_ACTIVE_SESSION.
+        resp = api_client.get("/api/v1/sessions/active")
+        assert resp.status_code == 404
+        body = resp.json()
+        assert body["success"] is False
+        assert body["code"] == "NO_ACTIVE_SESSION"
+
+    def test_no_trials_semantic_code(self, api_client):
+        sid = api_client.post("/api/v1/sessions").json()["data"]["session_id"]
+        resp = api_client.get(f"/api/v1/sessions/{sid}/trials/last")
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "NO_TRIALS"
+
+    def test_422_validation_uses_unified_envelope(self, api_client):
+        # paradigm must be a string; an int triggers request validation
+        resp = api_client.post("/api/v1/sessions", json={"paradigm": 123})
+        assert resp.status_code == 422
+        body = resp.json()
+        assert body["success"] is False
+        assert body["code"] == "VALIDATION_ERROR"
+        assert isinstance(body["detail"], list)  # pydantic error list preserved
+
+    def test_success_envelope_still_intact(self, api_client):
+        # The error work must not disturb the success envelope.
+        resp = api_client.get("/api/v1/stimulation/paradigms")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert "data" in body
