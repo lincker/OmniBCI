@@ -13,7 +13,6 @@ Swap strategy:
   Replace this class with a SQLite / Postgres implementation that satisfies
   the same SessionRepository interface — SessionAppService requires no changes.
 """
-from __future__ import annotations
 
 import copy
 import threading

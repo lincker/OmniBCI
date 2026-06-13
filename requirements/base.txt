@@ -1,5 +1,9 @@
+# Requires Python >= 3.14
+# 注意: requirements 文件无法强制 Python 版本, 此处仅作声明;
+# 如需 pip 安装时自动校验, 需在 pyproject.toml 中声明 requires-python = ">=3.14"
 numpy==2.4.4
 tomlkit==0.14.0
+platformdirs>=4.0
 mne==1.12.1
 scikit-learn==1.8.0
 #stimulation

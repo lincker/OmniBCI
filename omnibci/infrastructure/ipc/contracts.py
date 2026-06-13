@@ -20,7 +20,6 @@ Versioning:
 Kept dependency-free (stdlib + shared kernel only): the IPC layer must not pull
 in pydantic or any heavier framework.
 """
-from __future__ import annotations
 
 import json
 import logging

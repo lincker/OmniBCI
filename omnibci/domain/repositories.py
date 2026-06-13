@@ -7,7 +7,6 @@ stored.  Infrastructure provides the concrete implementations (Adapters).
 Dependency rule: domain/ imports nothing from application/, infrastructure/,
 or api/.  Infrastructure depends on domain, never the other way around.
 """
-from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field

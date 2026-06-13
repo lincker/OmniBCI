@@ -20,7 +20,6 @@ over the ``Event`` envelope (omnibci.shared.events), a shared-kernel contract.
 Keeping the port here keeps the dependency direction clean — domain/ imports
 only the shared kernel, never application/ or infrastructure/.
 """
-from __future__ import annotations
 
 from abc import ABC, abstractmethod
 

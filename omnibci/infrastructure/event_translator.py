@@ -27,7 +27,6 @@ infrastructure.event_translator
 
 processor.py 和 state.py 只依赖本模块，不再互相依赖。
 """
-from __future__ import annotations
 
 import logging
 from typing import Iterable, TYPE_CHECKING

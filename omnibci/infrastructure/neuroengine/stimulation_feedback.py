@@ -19,7 +19,6 @@ The ack payload shape (see ``infrastructure.outbound.make_stimulation_ack``):
     {"command": str, "status": "ok"|"error", "target_index": int|None,
      "message": str|None}
 """
-from __future__ import annotations
 
 import logging
 from typing import Optional

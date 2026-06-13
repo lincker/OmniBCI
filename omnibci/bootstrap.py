@@ -20,7 +20,6 @@ This is the outermost layer — it is allowed to import application,
 infrastructure and configuration.  Nothing else imports *it* except concrete
 entrypoints (e.g. ``presentation/main.py``).
 """
-from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
@@ -31,6 +30,7 @@ from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.acquisition_service import AcquisitionAppService
 from omnibci.application.services.stimulation_service import StimulationAppService
 from omnibci.application.services.session_service import SessionAppService
+from omnibci.application.services.recording_service import RecordingService
 from omnibci.domain.repositories import SessionRepository
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 
@@ -48,6 +48,7 @@ class AppContainer:
     stimulation_service: StimulationAppService
     session_repository: SessionRepository
     session_service: SessionAppService
+    recording_service: RecordingService
 
 
 # ---------------------------------------------------------------------------
@@ -92,15 +93,19 @@ def assemble(
     repository.  Acquisition & Stimulation share the *same* engine instance via
     the EnginePort abstraction.
     """
+    acquisition_service = AcquisitionAppService(engine_service)
+    session_service = SessionAppService(repository=repository,
+                                        engine_port=engine_service)
     return AppContainer(
         engine_service=engine_service,
-        acquisition_service=AcquisitionAppService(engine_service),
+        acquisition_service=acquisition_service,
         stimulation_service=StimulationAppService(engine_service),
         session_repository=repository,
         # engine_port lets create/end push the session id into the worker
         # (StartSession/EndSession) — see docs/session-id-unification.md.
-        session_service=SessionAppService(repository=repository,
-                                          engine_port=engine_service),
+        session_service=session_service,
+        # Orchestrates session + acquisition for the "record a run" use case.
+        recording_service=RecordingService(session_service, acquisition_service),
     )
 
 

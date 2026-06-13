@@ -9,7 +9,6 @@ Lifecycle mirrors the old wrapper so NeuroEngine's call sites are unchanged:
   - start()  : sync — schedules every channel's link as a background task.
   - stop()   : async — tears every channel down (and runs failsafes in Phase 4).
 """
-from __future__ import annotations
 
 import logging
 from typing import Dict

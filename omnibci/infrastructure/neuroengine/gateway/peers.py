@@ -4,7 +4,6 @@ Concrete peer configurations (the routing table, in code).
 Each factory returns a PeerConfig wiring a transport + RouteSpec for one peer.
 This is the single place the per-peer routing table lives.
 """
-from __future__ import annotations
 
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.ipc.peer_transport import ListenTransport

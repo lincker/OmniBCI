@@ -10,7 +10,6 @@ Business rules encoded here:
   - forced=True means recognition was triggered early (end-event or unexpected start),
     which callers may treat differently (e.g. lower priority).
 """
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone

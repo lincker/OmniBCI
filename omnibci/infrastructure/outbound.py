@@ -16,7 +16,6 @@ drift between them.
 Layer note: lives in ``infrastructure/`` (not ``shared/``) because it references
 the domain ``Classification`` VO; ``shared/`` must stay dependency-free.
 """
-from __future__ import annotations
 
 import logging
 from dataclasses import dataclass

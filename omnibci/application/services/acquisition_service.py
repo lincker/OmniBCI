@@ -5,7 +5,6 @@ Translates acquisition commands/queries into EventBus events that the
 NeuroEngine already understands.  Keeps acquisition routing logic out of
 the routers.
 """
-from __future__ import annotations
 
 import logging
 from typing import Optional

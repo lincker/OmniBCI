@@ -3,6 +3,7 @@
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-04-21 10:16
 import asyncio
+import inspect
 import logging
 from typing import Optional
 from omnibci.shared.events import EventType, Event
@@ -27,6 +28,24 @@ class EventBus:
 
     def set_event_queue(self, queue) -> None:
         self._event_queue = queue
+
+    def __getstate__(self):
+        """
+        Strip process-local state when crossing a process boundary (spawn
+        platforms — macOS/Windows — pickle the whole worker object on start).
+
+        Handlers are bound methods reaching into repositories (threading.Lock),
+        asyncio loops and websockets: none of it picklable, none of it
+        meaningful in the child. The child only needs the mp.Queue to
+        put_event(); the parent keeps the one bus instance that dispatches to
+        handlers. Without this, SignalProcessingWorker.start() dies with
+        "TypeError: cannot pickle '_thread.lock' object" on macOS.
+        """
+        state = self.__dict__.copy()
+        state['_event_handlers'] = {}
+        state['_process_task'] = None
+        state['_active'] = False
+        return state
 
     async def _process_event(self) -> None:
         logger.info('EventBus: processing started')
@@ -54,7 +73,7 @@ class EventBus:
                     # isolated and logged without affecting the others.
                     for handler in list(self._event_handlers[event_type]):
                         try:
-                            if asyncio.iscoroutinefunction(handler):
+                            if inspect.iscoroutinefunction(handler):
                                 await handler(event)
                             else:
                                 handler(event)

@@ -8,8 +8,6 @@ Endpoints:
     GET  /healthz                          Health check
     POST /api/v1/engine/start              Start NeuroEngine
     POST /api/v1/engine/stop               Stop NeuroEngine
-    POST /api/v1/engine/processor/start    Start signal processor
-    POST /api/v1/engine/processor/stop     Stop signal processor
     GET  /api/v1/engine/status             Engine status
 
     POST /api/v1/acquisition/connect       Connect data source
@@ -18,14 +16,14 @@ Endpoints:
     POST /api/v1/acquisition/stream/stop   Stop data stream
     GET  /api/v1/acquisition/status        Acquisition status
 
-    GET  /api/v1/stimulation/paradigms     List paradigms
+    GET  /api/v1/stimulation/paradigms     List paradigms (legacy)
+    GET  /api/v1/plugins/{category}        List plugins by category
     POST /api/v1/stimulation/start         Start stimulation
     POST /api/v1/stimulation/stop          Stop stimulation
     POST /api/v1/stimulation/trial/start   Trigger a trial
 
     WS   /api/v1/ws/results                Real-time classification results
 """
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -34,7 +32,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
-from omnibci.presentation.routers import engine, acquisition, stimulation, session
+from omnibci.application.services.config_service import ConfigService
+from omnibci.conf import settings
+from omnibci.presentation.routers import engine, acquisition, stimulation, session, recording, config, plugins
 from omnibci.presentation.websockets.results import results_broadcaster, results_ws_endpoint
 from omnibci.bootstrap import build_container, register_engine_listeners
 from omnibci.presentation.errors import register_exception_handlers
@@ -75,8 +75,12 @@ async def lifespan(app: FastAPI):
     app.state.stimulation_service = container.stimulation_service
     app.state.session_repository = container.session_repository
     app.state.session_service = container.session_service
+    app.state.recording_service = container.recording_service
 
     results_broadcaster.set_loop(asyncio.get_running_loop())
+    # Heartbeat: reaps dead WS connections during idle periods and lets the
+    # browser detect a silently dead feed (it cannot see protocol-level pings).
+    results_broadcaster.start_heartbeat()
 
     # Wire EventBus listeners now: the engine (and its bus) already exist after
     # build_container(), and register_event_listener only appends handlers — it
@@ -94,6 +98,7 @@ async def lifespan(app: FastAPI):
 
     logger.info("OmniBCI API server started (engine listeners registered: %d)", registered)
     yield
+    results_broadcaster.stop_heartbeat()
     await container.engine_service.shutdown()
     logger.info("OmniBCI API server stopped")
 
@@ -118,11 +123,18 @@ def create_app() -> FastAPI:
     # validation / unexpected) — see omnibci.presentation.errors.
     register_exception_handlers(app)
 
+    # Layered configuration (defaults + profiles); reads/writes go through
+    # the ConfigService whitelist, never raw settings.
+    app.state.config_service = ConfigService(settings)
+
     prefix = "/api/v1"
     app.include_router(engine.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(acquisition.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(stimulation.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(session.router, prefix=prefix, responses=ERROR_RESPONSES)
+    app.include_router(recording.router, prefix=prefix, responses=ERROR_RESPONSES)
+    app.include_router(config.router, prefix=prefix, responses=ERROR_RESPONSES)
+    app.include_router(plugins.router, prefix=prefix, responses=ERROR_RESPONSES)
 
     @app.websocket("/api/v1/ws/results")
     async def ws_results(websocket: WebSocket):

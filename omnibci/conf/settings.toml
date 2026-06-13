@@ -24,7 +24,7 @@ DATA_PROVIDER_PORT = 4000
 
 [ALGORITHM]
 #decoder = 'THUBCI_SSVEP_classic40CCA'
-decoder = 'THUBCI_SSVEP_classic40FBCCA'
+decoder = "THUBCI_SSVEP_classic40FBCCA"
 epoch_detector = 'DEFAULT_EPOCH_DETECTOR'
 window_duration = 3
 offset_time = 0.14
@@ -36,6 +36,8 @@ baseline_duration = 0.0
 filters = []
 
 [NEUROENGINE]
+# Max items in each mp.Queue between engine and workers.
+queue_size = 100
 message_server_ip = '127.0.0.1'
 message_server_port = 8000
 # Effector (external-device control) channel. Engine listens; controller dials in.
@@ -47,6 +49,11 @@ effector_watchdog_timeout_s = 1.0
 COMMAND_SERVER_IP = '127.0.0.1'
 COMMAND_SERVER_PORT = 8080
 
+[PERSISTENCE]
+# Session repository implementation (composition-root switch).
+# "in_memory" (default; lost on restart) — SQLite adapter planned for stage 3.
+session_repository = "in_memory"
+
 [STIMULATION]
 paradigm = 'STIMULATION_THUBCI_SSVEP_classic40'
 
@@ -54,3 +61,13 @@ paradigm = 'STIMULATION_THUBCI_SSVEP_classic40'
 sample_rate = 1000
 duration = 3
 offset_time = 0.14
+[PLUGINS]
+# User plugin directory. Leave empty to use the platform default:
+#   macOS   : ~/Library/Application Support/OmniBCI/plugins
+#   Linux   : ~/.local/share/OmniBCI/plugins
+#   Windows : %APPDATA%\OmniBCI\OmniBCI\plugins
+# Override with the OMNIBCI_PLUGIN_DIR env var or set an absolute path here.
+user_dir = ""
+
+[PROFILES]
+active = "1"

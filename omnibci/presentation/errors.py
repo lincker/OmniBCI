@@ -13,7 +13,6 @@ Here we install global exception handlers so *every* error returns the unified
 re-wrapped here.  New code can raise :class:`ApiError` to attach a semantic
 code directly.
 """
-from __future__ import annotations
 
 import logging
 

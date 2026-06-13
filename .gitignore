@@ -108,10 +108,13 @@ pip-selfcheck.json
 # backup files
 /backup
 
-# plugins
-/omnibci/infrastructure/plugins
+# plugins — vendor plugins live here but are not committed until reviewed
+/omnibci/infrastructure/plugins/
 
-# tests
+# user config profiles — machine-specific, never committed
+/omnibci/conf/profiles/
+
+# tests — committed after review
 /tests
 
 # stimulation picture
@@ -200,3 +203,5 @@ fabric.properties
 
 # idea folder, uncomment if you don't need it
 # .idea
+# macOS
+.DS_Store

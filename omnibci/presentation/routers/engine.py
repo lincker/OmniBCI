@@ -10,8 +10,6 @@ from omnibci.presentation.schemas.engine import EngineStatusResponse
 from omnibci.application.commands.engine_commands import (
     StartEngineCommand,
     StopEngineCommand,
-    StartSignalProcessorCommand,
-    StopSignalProcessorCommand,
 )
 from omnibci.application.queries.engine_queries import GetEngineStatusQuery
 from omnibci.application.services.engine_service import NeuroEngineService
@@ -32,32 +30,6 @@ async def start_engine(svc: NeuroEngineService = Depends(get_engine_service)):
 async def stop_engine(svc: NeuroEngineService = Depends(get_engine_service)):
     await svc.handle_stop_engine(StopEngineCommand())
     return ApiResponse(message="NeuroEngine stopped")
-
-
-@router.post(
-    "/processor/start",
-    response_model=ApiResponse,
-    summary="Start signal processor",
-)
-def start_processor(svc: NeuroEngineService = Depends(get_engine_service)):
-    try:
-        svc.handle_start_signal_processor(StartSignalProcessorCommand())
-        return ApiResponse(message="Signal processor started")
-    except RuntimeError as e:
-        raise ApiError(status.HTTP_409_CONFLICT, ErrorCode.ENGINE_NOT_READY, str(e))
-
-
-@router.post(
-    "/processor/stop",
-    response_model=ApiResponse,
-    summary="Stop signal processor",
-)
-def stop_processor(svc: NeuroEngineService = Depends(get_engine_service)):
-    try:
-        svc.handle_stop_signal_processor(StopSignalProcessorCommand())
-        return ApiResponse(message="Signal processor stopped")
-    except RuntimeError as e:
-        raise ApiError(status.HTTP_409_CONFLICT, ErrorCode.ENGINE_NOT_READY, str(e))
 
 
 @router.get(
