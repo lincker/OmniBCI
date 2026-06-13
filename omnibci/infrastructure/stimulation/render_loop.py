@@ -1,9 +1,22 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
-"""RenderLoop — dedicated GL thread that drives paradigm rendering at VSync rate."""
+"""RenderLoop — drives paradigm rendering at VSync rate.
+
+Two execution modes
+-------------------
+``start()``         — spawns a background thread (non-macOS platforms).
+``run_async()``     — coroutine; runs inside the asyncio event loop on the
+                      *calling* thread.  Required on macOS where Cocoa's
+                      AppKit forbids ``nextEventMatchingMask`` from any thread
+                      other than the main thread.  Because ``asyncio.run()``
+                      already occupies the main thread, turning the render loop
+                      into a coroutine satisfies that constraint with zero
+                      extra threads.
+"""
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 
@@ -58,6 +71,27 @@ class RenderLoop:
     @property
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
+
+    # ── asyncio coroutine (macOS / single-thread mode) ─────────────────────
+
+    async def run_async(self) -> None:
+        """Run the render loop as an asyncio coroutine on the calling thread.
+
+        ``await asyncio.sleep(0)`` yields after each frame so other coroutines
+        (IPC, command dispatch) can run.  Frame pacing is still governed by
+        VSync (``swap_interval(1)`` inside the renderer).
+        """
+        t0 = time.perf_counter()
+        try:
+            while not self._stop_event.is_set() and not self._renderer.should_close():
+                t = time.perf_counter() - t0
+                self._renderer.poll_events()
+                self._paradigm.render_frame(t)
+                self._renderer.end_frame()
+                await asyncio.sleep(0)
+        finally:
+            self._paradigm.teardown(self._renderer)
+            self._renderer.shutdown()
 
     # ── GL thread ──────────────────────────────────────────────────────────
 

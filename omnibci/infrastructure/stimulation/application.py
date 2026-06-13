@@ -22,28 +22,32 @@ class Stimulation:
         self.stim_command_queue = Queue()
         self.result_command_queue = Queue()
         self.stimulator = Stimulator()
-        self.stimulator.start()
+        # stimulator.start_async() is called from serve() on the asyncio main thread
 
     def run(self):
         print('---StimulationMain run---')
-        asyncio.run(self.serve(), debug=True)
+        asyncio.run(self.serve())
 
     async def serve(self):
         await self.start()
-        await self.main_loop()
+        # Render loop runs as a concurrent coroutine on the asyncio main thread.
+        # On macOS this satisfies Cocoa's requirement that GLFW event polling
+        # (nextEventMatchingMask) is called only from the main thread.
+        render_task = asyncio.create_task(self.stimulator.start_async())
+        # IPC command loop — exits when should_stop=True or window closes
+        while not self.should_stop and not render_task.done():
+            await self.execute_command()
+            await asyncio.sleep(0.01)
+        # Ensure render loop is stopped (sets _stop_event; idempotent if already done)
+        self.stimulator.stop()
+        await render_task   # wait for teardown + shutdown to finish on GL context
         await self.stop()
 
     async def start(self):
-        print('---StimulationMain star---')
+        print('---StimulationMain start---')
         await self.event_bus.start()
         await self.client_message_management.start()
         self._register_event_listener()
-
-    async def main_loop(self):
-        print('---StimulationMain main_loop---')
-        while not self.should_stop:
-            await self.execute_command()
-            await asyncio.sleep(0.01)
 
     async def execute_command(self):
         if not self.stim_command_queue.empty():
@@ -97,7 +101,7 @@ class Stimulation:
 
     async def stop(self):
         print('---StimulationMain stop---')
-        self.stimulator.stop()
+        # stimulator already stopped in serve() before this is called
         await self.client_message_management.stop()
         self.event_bus.stop()
 

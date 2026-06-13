@@ -28,8 +28,16 @@ import multiprocessing as mp
 logger = logging.getLogger(__name__)
 
 
-def _run_stimulation() -> None:
-    """Stimulation subprocess entry point.  Runs in the spawned child process."""
+def _run_stimulation(paradigm: str | None = None) -> None:
+    """Stimulation subprocess entry point.  Runs in the spawned child process.
+
+    *paradigm* — when provided, overrides ``STIMULATION.paradigm`` in the
+    subprocess's in-memory settings before the Stimulator loads plugins.
+    The override is subprocess-local: the settings file on disk is unchanged.
+    """
+    if paradigm:
+        from omnibci.conf import settings
+        settings.set("STIMULATION.paradigm", paradigm)
     from omnibci.infrastructure.stimulation.application import Stimulation
     Stimulation().run()
 
@@ -47,8 +55,12 @@ class StimulationProcessManager:
 
     # ── Public API ─────────────────────────────────────────────────────────
 
-    def start(self) -> None:
-        """Spawn the Stimulation subprocess (no-op if auto_spawn=False or already running)."""
+    def start(self, paradigm: str | None = None) -> None:
+        """Spawn the Stimulation subprocess (no-op if auto_spawn=False or already running).
+
+        *paradigm* is forwarded to the subprocess and overrides the
+        ``STIMULATION.paradigm`` config value in-process only.
+        """
         if not self._auto_spawn:
             logger.debug("auto_spawn=False — Stimulation process must be started manually")
             return
@@ -57,11 +69,13 @@ class StimulationProcessManager:
             return
         self._process = mp.Process(
             target=_run_stimulation,
+            args=(paradigm,),
             name="StimulationProcess",
             daemon=True,
         )
         self._process.start()
-        logger.info("Stimulation subprocess spawned (pid=%s)", self._process.pid)
+        logger.info("Stimulation subprocess spawned (pid=%s, paradigm=%s)",
+                    self._process.pid, paradigm or "<config>")
 
     def stop(self) -> None:
         """Terminate the Stimulation subprocess if it is running."""

@@ -123,15 +123,31 @@ function AcquisitionSessionCard({
 
 function StimulationCard({ sessionActive }: { sessionActive: boolean }) {
   const [target, setTarget] = useState<string>("");
+  const [paradigm, setParadigm] = useState<string>("");
+  const [paradigms, setParadigms] = useState<ParadigmInfo[]>([]);
   const stimStart = useAction(api.stimStart);
   const stimStop = useAction(api.stimStop);
   const trial = useAction(api.trialStart);
+
+  useEffect(() => {
+    api.listPlugins("paradigm").then((r) => {
+      if (r) setParadigms(r.paradigms);
+    }).catch(() => {});
+  }, []);
 
   return (
     <section className="card">
       <h2>刺激</h2>
       <div className="actions">
-        <button disabled={stimStart.pending} onClick={() => stimStart.run()}>
+        <select value={paradigm} onChange={(e) => setParadigm(e.target.value)}>
+          <option value="">— 用配置值 —</option>
+          {paradigms.map((p) => (
+            <option key={p.plugin_type} value={p.plugin_type}>
+              {p.display_name}
+            </option>
+          ))}
+        </select>
+        <button disabled={stimStart.pending} onClick={() => stimStart.run(paradigm || undefined)}>
           启动刺激
         </button>
         <button className="danger" disabled={stimStop.pending} onClick={() => stimStop.run()}>
@@ -159,12 +175,60 @@ function StimulationCard({ sessionActive }: { sessionActive: boolean }) {
   );
 }
 
+function EffectorCard() {
+  const [effectors, setEffectors] = useState<ParadigmInfo[]>([]);
+  const [selected, setSelected] = useState<string>("");
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.listPlugins("effector").then((r) => {
+      if (r) setEffectors(r.paradigms);
+    }).catch(() => {});
+  }, []);
+
+  const handleLoad = async () => {
+    if (!selected) return;
+    setSaving(true);
+    setNotice(null);
+    setSaveError(null);
+    try {
+      await api.patchConfig({ "NEUROENGINE.effector": selected });
+      setNotice("已保存");
+    } catch (e) {
+      setSaveError(e instanceof ApiError ? `[${e.code}] ${e.message}` : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="card">
+      <h2>控制输出</h2>
+      <div className="actions">
+        <select value={selected} onChange={(e) => setSelected(e.target.value)}>
+          <option value="">— 选择控制输出 —</option>
+          {effectors.map((e) => (
+            <option key={e.plugin_type} value={e.plugin_type}>
+              {e.display_name}
+            </option>
+          ))}
+        </select>
+        <button disabled={!selected || saving} onClick={() => void handleLoad()}>
+          {saving ? "保存中…" : "加载"}
+        </button>
+      </div>
+      {notice && <p className="meta">{notice}</p>}
+      {saveError && <p className="error action-error">{saveError}</p>}
+    </section>
+  );
+}
+
 // ---- 插件选择栏 ----
 const PLUGIN_CATEGORIES = [
-  { category: "paradigm",    label: "范式",   configKey: "STIMULATION.paradigm" as const },
   { category: "acquisition", label: "数据源", configKey: "ACQUISITION.signal_source" as const },
   { category: "decoder",     label: "解码器", configKey: "ALGORITHM.decoder" as const },
-  { category: "effector",    label: "效应器", configKey: null },
 ] as const;
 
 function PluginSelectorBar({ onLoaded, engineRunning }: { onLoaded?: () => void; engineRunning: boolean }) {
@@ -380,6 +444,7 @@ export default function App() {
           trialCount={trials.length}
         />
         <StimulationCard sessionActive={sessionActive} />
+        <EffectorCard />
 
         <section className="card card-wide">
           <h2>试次结果</h2>

@@ -80,10 +80,13 @@ class Stimulator:
             Paradigm, config_key='STIMULATION.paradigm', trigger=trigger
         )
 
-    # ── Public API ─────────────────────────────────────────────────────────
+    # ── Internal setup ─────────────────────────────────────────────────────
 
-    def start(self) -> None:
-        """Load plugins, initialise renderer, inject into paradigm, start loop."""
+    def _setup(self) -> None:
+        """Load plugins, initialise renderer and paradigm, build RenderLoop.
+
+        Called by both ``start()`` and ``start_async()`` before the loop runs.
+        """
         self.trigger  = self._load_trigger()
         self.paradigm = self._load_paradigm(self.trigger)
 
@@ -92,9 +95,25 @@ class Stimulator:
         renderer.initialize(width=1920, height=1080, title="OmniBCI Stimulation")
 
         self.paradigm.setup(renderer=renderer)
-
         self._loop = RenderLoop(renderer, self.paradigm)
+
+    # ── Public API ─────────────────────────────────────────────────────────
+
+    def start(self) -> None:
+        """Setup and start render loop in a background thread (non-macOS)."""
+        self._setup()
         self._loop.start()
+
+    async def start_async(self) -> None:
+        """Setup and run render loop as an asyncio coroutine.
+
+        Preferred on macOS: the coroutine runs on the asyncio main thread,
+        satisfying Cocoa's requirement that GLFW event polling stays on the
+        main thread.  Blocks (awaits) until the window is closed or
+        ``stop()`` is called from another coroutine.
+        """
+        self._setup()
+        await self._loop.run_async()
 
     def stop(self) -> None:
         """Stop the RenderLoop (teardown + shutdown run on the GL thread)."""

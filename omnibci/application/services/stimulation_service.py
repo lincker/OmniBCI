@@ -42,7 +42,7 @@ class StimulationAppService:
 
     def handle_start_stimulation(self, cmd: StartStimulationCommand) -> None:
         if self._process_manager is not None:
-            self._process_manager.start()
+            self._process_manager.start(paradigm=cmd.paradigm)
         self._put_event(EventType.StartStimulation, data=cmd.paradigm)
         self._active = True
         logger.info("StartStimulation event dispatched (paradigm=%s)", cmd.paradigm)
