@@ -721,10 +721,26 @@ export interface components {
         };
         /** ParadigmInfo */
         ParadigmInfo: {
-            /** Name */
-            name: string;
+            /** Id */
+            id: string;
+            /** Plugin Type */
+            plugin_type: string;
+            /** Display Name */
+            display_name: string;
             /** Description */
             description?: string | null;
+            /** Version */
+            version?: string | null;
+            /**
+             * Source
+             * @default "user"
+             */
+            source: string;
+            /**
+             * Name
+             * @deprecated Use display_name instead
+             */
+            name: string;
         };
         /** ParadigmsResponse */
         ParadigmsResponse: {

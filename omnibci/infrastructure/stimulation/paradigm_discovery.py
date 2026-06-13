@@ -69,6 +69,11 @@ def list_paradigms() -> List[ParadigmInfo]:
                 continue
             seen_ids.add(pkg_id)
 
+            # TODO(P1): if manifest is empty (parse failure or absent) and
+            # plugin_type falls back to pkg_id (the dir name), the engine
+            # registry lookup will fail at runtime with no clear error.
+            # Consider: skip the entry and log.error() instead of degrading
+            # silently to an invalid plugin_type.
             results.append(
                 ParadigmInfo(
                     id=pkg_id,

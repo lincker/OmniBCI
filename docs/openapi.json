@@ -3077,9 +3077,17 @@
       },
       "ParadigmInfo": {
         "properties": {
-          "name": {
+          "id": {
             "type": "string",
-            "title": "Name"
+            "title": "Id"
+          },
+          "plugin_type": {
+            "type": "string",
+            "title": "Plugin Type"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
           },
           "description": {
             "anyOf": [
@@ -3091,10 +3099,34 @@
               }
             ],
             "title": "Description"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "user"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Deprecated alias for display_name."
           }
         },
         "type": "object",
         "required": [
+          "id",
+          "plugin_type",
+          "display_name",
           "name"
         ],
         "title": "ParadigmInfo"
