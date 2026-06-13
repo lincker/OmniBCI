@@ -21,6 +21,14 @@ class ConfigPolicy:
     description: str
 
 
+#: Config keys that map to a plugin_type and can be soft-validated against
+#: the discovered plugin catalog (warn-only, never block a write).
+_PLUGIN_SOFT_VALIDATE: Dict[str, str] = {
+    "STIMULATION.paradigm":      "paradigm",
+    "ACQUISITION.signal_source": "acquisition",
+    "ALGORITHM.decoder":         "decoder",
+}
+
 #: The only keys readable/writable through the config API — for defaults AND
 #: profiles alike.  Everything else in settings.toml stays internal.
 CONFIG_WHITELIST: Dict[str, ConfigPolicy] = {
@@ -121,9 +129,10 @@ class ConfigService:
         }
         if bad:
             raise ConfigValidationError(bad)
-        # Soft-validate STIMULATION.paradigm against discovered plugins (warn only).
-        if "STIMULATION.paradigm" in updates:
-            self._soft_validate_paradigm(str(updates["STIMULATION.paradigm"]))
+        # Soft-validate plugin_type keys against discovered plugin lists (warn only).
+        for key, category in _PLUGIN_SOFT_VALIDATE.items():
+            if key in updates:
+                self._soft_validate_plugin(str(updates[key]), category, key)
         # Normalise int→float for float keys so the toml type stays stable.
         return {
             k: (float(v) if CONFIG_WHITELIST[k].type == "float" else v)
@@ -131,17 +140,17 @@ class ConfigService:
         }
 
     @staticmethod
-    def _soft_validate_paradigm(plugin_type: str) -> None:
-        """Warn (never raise) if plugin_type is not in the discovered list."""
+    def _soft_validate_plugin(plugin_type: str, category: str, config_key: str) -> None:
+        """Warn (never raise) if plugin_type is not in the discovered list for category."""
         try:
-            from omnibci.infrastructure.stimulation.paradigm_discovery import list_paradigm_names  # noqa: PLC0415
-            known = list_paradigm_names()
+            from omnibci.infrastructure.plugins.plugin_catalog import list_plugins  # noqa: PLC0415
+            import logging  # noqa: PLC0415
+            known = [p.plugin_type for p in list_plugins(category)]
             if known and plugin_type not in known:
-                import logging  # noqa: PLC0415
                 logging.getLogger(__name__).warning(
-                    "STIMULATION.paradigm %r not in discovered list %s — "
+                    "%s %r not in discovered %s list %s — "
                     "saved anyway (may be a user-area plugin not yet installed).",
-                    plugin_type, known,
+                    config_key, plugin_type, category, known,
                 )
         except Exception:
             pass  # discovery failure must never block a config write

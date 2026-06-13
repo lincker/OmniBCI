@@ -24,7 +24,7 @@ DATA_PROVIDER_PORT = 4000
 
 [ALGORITHM]
 #decoder = 'THUBCI_SSVEP_classic40CCA'
-decoder = 'THUBCI_SSVEP_classic40FBCCA'
+decoder = "THUBCI_SSVEP_classic40FBCCA"
 epoch_detector = 'DEFAULT_EPOCH_DETECTOR'
 window_duration = 3
 offset_time = 0.14

@@ -359,7 +359,8 @@ td input {
   transition: border-color 0.15s ease;
 }
 td input:focus { outline: none; border-color: var(--accent); }
-td input.dirty { border-color: var(--ok); background: var(--ok-soft); }
+td input.dirty,
+select.dirty { border-color: var(--ok); background: var(--ok-soft); }
 
 code {
   font-size: 0.84em;
@@ -371,6 +372,58 @@ code {
 .acks { list-style: none; margin: 0; padding: 0; font-size: 0.88rem; }
 .acks li { padding: 0.4rem 0.2rem; border-bottom: 1px solid var(--border-soft); }
 .acks li:last-child { border-bottom: none; }
+
+/* ================= plugin selector bar ================= */
+
+.plugin-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  align-items: center;
+  padding: 0.65rem 1.25rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  margin-bottom: 1rem;
+}
+
+.plugin-bar-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.plugin-bar-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--off);
+  min-width: 3rem;
+}
+
+.plugin-bar-saving {
+  font-size: 0.75rem;
+  color: var(--off);
+  animation: plugin-fade 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes plugin-fade {
+  from { opacity: 1; }
+  to   { opacity: 0.3; }
+}
+
+.plugin-bar-load {
+  margin-left: auto;
+}
+
+.plugin-bar-notice {
+  font-size: 0.75rem;
+  color: var(--ok);
+}
+
+.plugin-bar-error {
+  font-size: 0.75rem;
+  color: var(--err);
+}
 
 /* ================= responsive ================= */
 

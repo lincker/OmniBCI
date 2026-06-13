@@ -105,7 +105,10 @@ export const api = {
   recordingStart: () => post<{ session_id: string }>("/api/v1/recording/start"),
   recordingStop: () => post<{ session_id: string }>("/api/v1/recording/stop"),
 
-  // ---- paradigm discovery --------------------------------------------------
+  // ---- plugin discovery ----------------------------------------------------
+  /** List plugins by category: "paradigm" | "decoder" | "acquisition" | "effector" */
+  listPlugins: (category: string) => get<ParadigmsResponse>(`/api/v1/plugins/${encodeURIComponent(category)}`),
+  /** @deprecated Use listPlugins("paradigm") */
   listParadigms: () => get<ParadigmsResponse>("/api/v1/stimulation/paradigms"),
 
   // ---- layered config (stage 4) ------------------------------------------

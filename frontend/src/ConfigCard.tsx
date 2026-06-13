@@ -28,23 +28,38 @@ function show(v: unknown): string {
 export function ConfigCard() {
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [profiles, setProfiles] = useState<ProfileList | null>(null);
-  const [paradigms, setParadigms] = useState<ParadigmInfo[]>([]);
+  // plugin_type options keyed by config key
+  const [pluginOptions, setPluginOptions] = useState<Record<string, ParadigmInfo[]>>({});
   const [selected, setSelected] = useState<string>(DEFAULT); // 编辑目标
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // config key → plugin category
+  const PLUGIN_CATEGORIES: Record<string, string> = {
+    "STIMULATION.paradigm":      "paradigm",
+    "ACQUISITION.signal_source": "acquisition",
+    "ALGORITHM.decoder":         "decoder",
+  };
+
   const reload = useCallback(async () => {
-    const [cfg, profs, paradigmsResp] = await Promise.all([
+    const [cfg, profs, ...pluginResps] = await Promise.all([
       api.getConfig().catch(() => null),
       api.listProfiles().catch(() => null),
-      api.listParadigms().catch(() => null),
+      ...Object.entries(PLUGIN_CATEGORIES).map(([, cat]) =>
+        api.listPlugins(cat).catch(() => null)
+      ),
     ]);
     setConfig(cfg);
     setProfiles(profs);
-    if (paradigmsResp) setParadigms(paradigmsResp.paradigms);
-  }, []);
+    const options: Record<string, ParadigmInfo[]> = {};
+    Object.keys(PLUGIN_CATEGORIES).forEach((key, i) => {
+      const resp = pluginResps[i];
+      if (resp) options[key] = resp.paradigms;
+    });
+    setPluginOptions(options);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     void reload();
@@ -160,15 +175,17 @@ export function ConfigCard() {
       {notice && <p className="meta config-notice">{notice}</p>}
       {error && <p className="error action-error">{error}</p>}
 
-      {/* datalist for paradigm plugin_type values */}
-      {paradigms.length > 0 && (
-        <datalist id="paradigm-options">
-          {paradigms.map((p) => (
-            <option key={p.plugin_type} value={p.plugin_type}>
-              {p.display_name}
-            </option>
-          ))}
-        </datalist>
+      {/* datalists for plugin_type config keys */}
+      {Object.entries(pluginOptions).map(([key, plugins]) =>
+        plugins.length > 0 ? (
+          <datalist key={key} id={`plugin-options-${key}`}>
+            {plugins.map((p) => (
+              <option key={p.plugin_type} value={p.plugin_type}>
+                {p.display_name}
+              </option>
+            ))}
+          </datalist>
+        ) : null
       )}
 
       {config && (
@@ -200,8 +217,8 @@ export function ConfigCard() {
                       selected === DEFAULT ? e.default_value : e.profile_value,
                     )}
                     value={draft[e.key] ?? ""}
-                    list={e.key === "STIMULATION.paradigm" && paradigms.length > 0
-                      ? "paradigm-options"
+                    list={pluginOptions[e.key]?.length
+                      ? `plugin-options-${e.key}`
                       : undefined}
                     onChange={(ev) =>
                       setDraft((d) => {
