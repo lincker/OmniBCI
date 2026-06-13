@@ -108,12 +108,14 @@ pip-selfcheck.json
 # backup files
 /backup
 
-# plugins — vendor (builtin) plugins are tracked by git.
-# User-downloaded plugins live in the user-area (~/.local/share/OmniBCI/plugins
-# on Linux, ~/Library/Application Support/OmniBCI/plugins on macOS,
-# %APPDATA%\OmniBCI\OmniBCI\plugins on Windows) and are never in this repo.
+# plugins — vendor plugins live here but are not committed until reviewed
+/omnibci/infrastructure/plugins/
 
-# tests — tracked
+# user config profiles — machine-specific, never committed
+/omnibci/conf/profiles/
+
+# tests — committed after review
+/tests
 
 # stimulation picture
 /omnibci/infrastructure/stimulation/creator/stim/*
