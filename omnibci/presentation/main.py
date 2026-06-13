@@ -73,6 +73,7 @@ async def lifespan(app: FastAPI):
     app.state.engine_service = container.engine_service
     app.state.acquisition_service = container.acquisition_service
     app.state.stimulation_service = container.stimulation_service
+    app.state.stimulation_process_manager = container.stimulation_process_manager
     app.state.session_repository = container.session_repository
     app.state.session_service = container.session_service
     app.state.recording_service = container.recording_service
@@ -99,6 +100,7 @@ async def lifespan(app: FastAPI):
     logger.info("OmniBCI API server started (engine listeners registered: %d)", registered)
     yield
     results_broadcaster.stop_heartbeat()
+    container.stimulation_process_manager.stop()
     await container.engine_service.shutdown()
     logger.info("OmniBCI API server stopped")
 
