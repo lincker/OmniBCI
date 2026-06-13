@@ -121,11 +121,30 @@ class ConfigService:
         }
         if bad:
             raise ConfigValidationError(bad)
+        # Soft-validate STIMULATION.paradigm against discovered plugins (warn only).
+        if "STIMULATION.paradigm" in updates:
+            self._soft_validate_paradigm(str(updates["STIMULATION.paradigm"]))
         # Normalise int→float for float keys so the toml type stays stable.
         return {
             k: (float(v) if CONFIG_WHITELIST[k].type == "float" else v)
             for k, v in updates.items()
         }
+
+    @staticmethod
+    def _soft_validate_paradigm(plugin_type: str) -> None:
+        """Warn (never raise) if plugin_type is not in the discovered list."""
+        try:
+            from omnibci.infrastructure.stimulation.paradigm_discovery import list_paradigm_names  # noqa: PLC0415
+            known = list_paradigm_names()
+            if known and plugin_type not in known:
+                import logging  # noqa: PLC0415
+                logging.getLogger(__name__).warning(
+                    "STIMULATION.paradigm %r not in discovered list %s — "
+                    "saved anyway (may be a user-area plugin not yet installed).",
+                    plugin_type, known,
+                )
+        except Exception:
+            pass  # discovery failure must never block a config write
 
     def apply(self, updates: Dict[str, Any], scope: str = DEFAULT_SCOPE,
               description: Optional[str] = None) -> Tuple[List[str], bool]:

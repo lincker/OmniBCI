@@ -17,6 +17,8 @@ export type ConfigEntry = S["ConfigEntry"];
 export type ConfigData = S["ConfigResponse"];
 export type PatchConfigResult = S["PatchConfigResponse"];
 export type ProfileList = S["ProfileListResponse"];
+export type ParadigmInfo = S["ParadigmInfo"];
+export type ParadigmsResponse = S["ParadigmsResponse"];
 
 export interface ApiEnvelope<T> {
   success: boolean;
@@ -102,6 +104,9 @@ export const api = {
 
   recordingStart: () => post<{ session_id: string }>("/api/v1/recording/start"),
   recordingStop: () => post<{ session_id: string }>("/api/v1/recording/stop"),
+
+  // ---- paradigm discovery --------------------------------------------------
+  listParadigms: () => get<ParadigmsResponse>("/api/v1/stimulation/paradigms"),
 
   // ---- layered config (stage 4) ------------------------------------------
   getConfig: () => get<ConfigData>("/api/v1/config"),

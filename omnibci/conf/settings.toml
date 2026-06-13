@@ -61,5 +61,13 @@ paradigm = 'STIMULATION_THUBCI_SSVEP_classic40'
 sample_rate = 1000
 duration = 3
 offset_time = 0.14
+[PLUGINS]
+# User plugin directory. Leave empty to use the platform default:
+#   macOS   : ~/Library/Application Support/OmniBCI/plugins
+#   Linux   : ~/.local/share/OmniBCI/plugins
+#   Windows : %APPDATA%\OmniBCI\OmniBCI\plugins
+# Override with the OMNIBCI_PLUGIN_DIR env var or set an absolute path here.
+user_dir = ""
+
 [PROFILES]
 active = "1"

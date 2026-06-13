@@ -18,7 +18,6 @@ from omnibci.application.commands.stimulation_commands import (
     StartStimTrialCommand,
 )
 from omnibci.application.services.stimulation_service import StimulationAppService
-from omnibci.infrastructure.stimulation.paradigm_discovery import list_paradigm_names
 
 router = APIRouter(prefix="/stimulation", tags=["Stimulation"])
 
@@ -29,8 +28,9 @@ router = APIRouter(prefix="/stimulation", tags=["Stimulation"])
     summary="List available stimulation paradigms",
 )
 def list_paradigms():
-    # Discovered from the paradigm plugin directory (no OpenGL import).
-    paradigms = [ParadigmInfo(name=name) for name in list_paradigm_names()]
+    # Dual-root manifest-based discovery (no OpenGL import).
+    from omnibci.infrastructure.stimulation.paradigm_discovery import list_paradigms as _discover  # noqa: PLC0415
+    paradigms = _discover()
     return ApiResponse(data=ParadigmsResponse(paradigms=paradigms))
 
 

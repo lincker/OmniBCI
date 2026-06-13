@@ -6,7 +6,7 @@
  * engine-restart 键保存后提示停止→启动引擎生效。
  */
 import { useCallback, useEffect, useState } from "react";
-import { api, ApiError, type ConfigData, type ProfileList } from "./api/client";
+import { api, ApiError, type ConfigData, type ParadigmInfo, type ProfileList } from "./api/client";
 
 const DEFAULT = "__default__";
 
@@ -28,6 +28,7 @@ function show(v: unknown): string {
 export function ConfigCard() {
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [profiles, setProfiles] = useState<ProfileList | null>(null);
+  const [paradigms, setParadigms] = useState<ParadigmInfo[]>([]);
   const [selected, setSelected] = useState<string>(DEFAULT); // 编辑目标
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<string | null>(null);
@@ -35,12 +36,14 @@ export function ConfigCard() {
   const [busy, setBusy] = useState(false);
 
   const reload = useCallback(async () => {
-    const [cfg, profs] = await Promise.all([
+    const [cfg, profs, paradigmsResp] = await Promise.all([
       api.getConfig().catch(() => null),
       api.listProfiles().catch(() => null),
+      api.listParadigms().catch(() => null),
     ]);
     setConfig(cfg);
     setProfiles(profs);
+    if (paradigmsResp) setParadigms(paradigmsResp.paradigms);
   }, []);
 
   useEffect(() => {
@@ -157,6 +160,17 @@ export function ConfigCard() {
       {notice && <p className="meta config-notice">{notice}</p>}
       {error && <p className="error action-error">{error}</p>}
 
+      {/* datalist for paradigm plugin_type values */}
+      {paradigms.length > 0 && (
+        <datalist id="paradigm-options">
+          {paradigms.map((p) => (
+            <option key={p.plugin_type} value={p.plugin_type}>
+              {p.display_name}
+            </option>
+          ))}
+        </datalist>
+      )}
+
       {config && (
         <table>
           <thead>
@@ -186,6 +200,9 @@ export function ConfigCard() {
                       selected === DEFAULT ? e.default_value : e.profile_value,
                     )}
                     value={draft[e.key] ?? ""}
+                    list={e.key === "STIMULATION.paradigm" && paradigms.length > 0
+                      ? "paradigm-options"
+                      : undefined}
                     onChange={(ev) =>
                       setDraft((d) => {
                         const next = { ...d };
