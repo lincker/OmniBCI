@@ -55,12 +55,30 @@ class StimulationAppService:
         logger.info("StopStimulation event dispatched")
 
     def handle_start_trial(self, cmd: StartStimTrialCommand) -> None:
-        self._put_event(EventType.StartStimTrial, data=cmd.target_index)
-        logger.info("StartStimTrial event dispatched (target=%s)", cmd.target_index)
+        # JSON-friendly payload: it crosses the engine→stimulation socket, where
+        # body_to_event reconstructs only plain JSON (no dataclass), so the
+        # stimulation side reads this dict directly.
+        payload = {"n_trials": cmd.n_trials, "trial_params": cmd.trial_params}
+        self._put_event(EventType.StartStimTrial, data=payload)
+        logger.info("StartStimTrial event dispatched (n_trials=%s)", cmd.n_trials)
 
     @property
     def is_active(self) -> bool:
         return self._active
+
+    @property
+    def process_alive(self) -> bool:
+        """True when the Stimulation subprocess is running (auto_spawn mode only)."""
+        if self._process_manager is None:
+            return False
+        return self._process_manager.is_alive
+
+    @property
+    def current_paradigm(self) -> "str | None":
+        """Paradigm the running subprocess was spawned with (auto_spawn mode only)."""
+        if self._process_manager is None:
+            return None
+        return self._process_manager.current_paradigm
 
     def _put_event(self, event_type: EventType, data=None) -> None:
         self._engine.dispatch(Event(event_type, data))

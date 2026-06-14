@@ -1,7 +1,7 @@
 """
 /api/v1/stimulation — Stimulation paradigm control endpoints.
 """
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 
 from omnibci.presentation.dependencies import get_stimulation_service
 from omnibci.presentation.errors import ApiError
@@ -11,6 +11,7 @@ from omnibci.presentation.schemas.stimulation import (
     ParadigmInfo,
     StartStimulationRequest,
     StartTrialRequest,
+    StimulationStatusResponse,
 )
 from omnibci.application.commands.stimulation_commands import (
     StartStimulationCommand,
@@ -18,8 +19,27 @@ from omnibci.application.commands.stimulation_commands import (
     StartStimTrialCommand,
 )
 from omnibci.application.services.stimulation_service import StimulationAppService
+from omnibci.infrastructure.neuroengine.gateway.peers import STIMULATION
 
 router = APIRouter(prefix="/stimulation", tags=["Stimulation"])
+
+
+@router.get(
+    "/status",
+    response_model=ApiResponse[StimulationStatusResponse],
+    summary="Stimulation subsystem status",
+)
+def stimulation_status(
+    request: Request,
+    svc: StimulationAppService = Depends(get_stimulation_service),
+):
+    engine_service = request.app.state.engine_service
+    return ApiResponse(data=StimulationStatusResponse(
+        active=svc.is_active,
+        process_alive=svc.process_alive,
+        engine_connected=engine_service.is_peer_connected(STIMULATION),
+        paradigm=svc.current_paradigm,
+    ))
 
 
 @router.get(
@@ -61,7 +81,10 @@ def start_trial(
     svc: StimulationAppService = Depends(get_stimulation_service),
 ):
     try:
-        svc.handle_start_trial(StartStimTrialCommand(target_index=body.target_index))
+        svc.handle_start_trial(StartStimTrialCommand(
+            n_trials=body.n_trials,
+            trial_params=body.trial_params,
+        ))
         return ApiResponse(message="Trial started")
     except RuntimeError as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))

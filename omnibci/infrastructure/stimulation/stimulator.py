@@ -121,9 +121,11 @@ class Stimulator:
             self._loop.stop()
             self._loop = None
 
-    def present_trial(self, event_id: int) -> None:
+    def present_trial(self, params=None) -> None:
+        # *params* is one trial's paradigm-specific parameter (opaque here);
+        # the concrete Paradigm interprets it.
         if self.paradigm is not None:
-            self.paradigm.trial_stimulus_present(event_id=event_id)
+            self.paradigm.trial_stimulus_present(params)
 
     def present_result(self, result) -> None:
         if self.paradigm is not None:

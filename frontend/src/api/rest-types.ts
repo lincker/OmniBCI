@@ -140,17 +140,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/plugins/{category}": {
+    "/api/v1/stimulation/status": {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                category: string;
-            };
+            path?: never;
             cookie?: never;
         };
-        /** List plugins by category */
-        get: operations["list_plugins_by_category_api_v1_plugins__category__get"];
+        /** Stimulation subsystem status */
+        get: operations["stimulation_status_api_v1_stimulation_status_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -436,6 +434,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/plugins/{category}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List plugins by category
+         * @description Return discovered plugins for *category*.
+         *
+         *     Valid categories: ``paradigm``, ``decoder``, ``acquisition``, ``effector``.
+         */
+        get: operations["list_plugins_by_category_api_v1_plugins__category__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -640,6 +660,20 @@ export interface components {
             message: string;
             data?: components["schemas"]["SessionResponse"] | null;
         };
+        /** ApiResponse[StimulationStatusResponse] */
+        ApiResponse_StimulationStatusResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["StimulationStatusResponse"] | null;
+        };
         /** ApiResponse[TrialResponse] */
         ApiResponse_TrialResponse_: {
             /**
@@ -712,6 +746,8 @@ export interface components {
             acquisition_alive: boolean;
             /** Processor Alive */
             processor_alive: boolean;
+            /** Stimulation Connected */
+            stimulation_connected: boolean;
         };
         /**
          * ErrorCode
@@ -738,7 +774,23 @@ export interface components {
             /** Detail */
             detail?: unknown | null;
         };
-        /** ParadigmInfo */
+        /**
+         * ParadigmInfo
+         * @description Metadata for a discovered stimulation paradigm.
+         *
+         *     Fields
+         *     ------
+         *     id           Machine identifier; unique per plugin (= manifest package.id).
+         *     plugin_type  Registry key used to actually start the paradigm.
+         *     display_name Human-readable label shown in the UI.
+         *     description  Optional long description.
+         *     version      Semver string from the manifest, if present.
+         *     source       "builtin" (ships with app) or "user" (downloaded / self-written).
+         *
+         *     Deprecated
+         *     ----------
+         *     name         Alias for ``display_name``; kept for one release cycle.
+         */
         ParadigmInfo: {
             /** Id */
             id: string;
@@ -752,14 +804,21 @@ export interface components {
             version?: string | null;
             /**
              * Source
-             * @default "user"
+             * @default user
              */
             source: string;
             /**
-             * Name
-             * @deprecated Use display_name instead
+             * Params
+             * @description Read-only plugin parameters from manifest [params]; shown in the Web UI.
              */
-            name: string;
+            params?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Name
+             * @description Deprecated alias for display_name.
+             */
+            readonly name: string;
         };
         /** ParadigmsResponse */
         ParadigmsResponse: {
@@ -889,8 +948,31 @@ export interface components {
         };
         /** StartTrialRequest */
         StartTrialRequest: {
-            /** Target Index */
-            target_index?: number | null;
+            /**
+             * N Trials
+             * @default 1
+             */
+            n_trials?: number;
+            /** Trial Params */
+            trial_params?: number[] | null;
+        };
+        /**
+         * StimulationStatusResponse
+         * @description Live status of the Stimulation subsystem.
+         *
+         *     active          — the application service has issued a StartStimulation command.
+         *     process_alive   — the Stimulation subprocess is currently running (auto_spawn only).
+         *     engine_connected — the Stimulation process has an active IPC connection to the engine.
+         */
+        StimulationStatusResponse: {
+            /** Active */
+            active: boolean;
+            /** Process Alive */
+            process_alive: boolean;
+            /** Engine Connected */
+            engine_connected: boolean;
+            /** Paradigm */
+            paradigm?: string | null;
         };
         /** TrialResponse */
         TrialResponse: {
@@ -1453,6 +1535,80 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_AcquisitionStatusResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    stimulation_status_api_v1_stimulation_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_StimulationStatusResponse_"];
                 };
             };
             /** @description Bad request */
@@ -3127,33 +3283,57 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
-                headers: { [name: string]: unknown; };
-                content: { "application/json": components["schemas"]["ErrorResponse"]; };
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Not found */
             404: {
-                headers: { [name: string]: unknown; };
-                content: { "application/json": components["schemas"]["ErrorResponse"]; };
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Conflict */
             409: {
-                headers: { [name: string]: unknown; };
-                content: { "application/json": components["schemas"]["ErrorResponse"]; };
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Validation error */
             422: {
-                headers: { [name: string]: unknown; };
-                content: { "application/json": components["schemas"]["ErrorResponse"]; };
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Internal error */
             500: {
-                headers: { [name: string]: unknown; };
-                content: { "application/json": components["schemas"]["ErrorResponse"]; };
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Service unavailable */
             503: {
-                headers: { [name: string]: unknown; };
-                content: { "application/json": components["schemas"]["ErrorResponse"]; };
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };

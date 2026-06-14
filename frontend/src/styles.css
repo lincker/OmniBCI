@@ -344,6 +344,11 @@ th {
 }
 tbody tr { transition: background 0.12s ease; }
 tbody tr:hover { background: rgba(127, 127, 127, 0.07); }
+
+/* Read-only paradigm parameters (manifest [params]) */
+.params { margin: 0.2rem 0 0.6rem; }
+.params td { padding: 0.3rem 0.55rem; }
+.params td:first-child { width: 45%; }
 tbody tr:last-child td { border-bottom: none; }
 .target { font-weight: 700; color: var(--accent); }
 

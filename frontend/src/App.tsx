@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { api, ApiError, type ParadigmInfo } from "./api/client";
+import { api, ApiError, type ParadigmInfo, type StimulationStatus } from "./api/client";
 import { usePoll } from "./hooks/usePoll";
 import { useAction } from "./hooks/useAction";
 import { useResultsFeed } from "./hooks/useResultsFeed";
@@ -35,6 +35,7 @@ function EngineCard({ configLoaded }: { configLoaded: boolean }) {
           <Dot on={data?.running} label="运行中" />
           <Dot on={data?.acquisition_alive} label="采集进程" />
           <Dot on={data?.processor_alive} label="处理进程" />
+          <Dot on={data?.stimulation_connected} label="刺激已连接" />
         </p>
       )}
       <div className="actions">
@@ -123,8 +124,10 @@ function AcquisitionSessionCard({
 
 function StimulationCard({ sessionActive }: { sessionActive: boolean }) {
   const [target, setTarget] = useState<string>("");
+  const [count, setCount] = useState<string>("1");
   const [paradigm, setParadigm] = useState<string>("");
   const [paradigms, setParadigms] = useState<ParadigmInfo[]>([]);
+  const { data: status } = usePoll(api.stimulationStatus);
   const stimStart = useAction(api.stimStart);
   const stimStop = useAction(api.stimStop);
   const trial = useAction(api.trialStart);
@@ -135,9 +138,23 @@ function StimulationCard({ sessionActive }: { sessionActive: boolean }) {
     }).catch(() => {});
   }, []);
 
+  const selectedParadigm = paradigms.find((p) => p.plugin_type === paradigm);
+
   return (
     <section className="card">
       <h2>刺激</h2>
+      <p>
+        <Dot on={status?.active}           label="已启动" />
+        <Dot on={status?.process_alive}    label="进程运行" />
+        <Dot on={status?.engine_connected} label="引擎已连接" />
+      </p>
+      {status?.paradigm && (
+        <p className="meta">
+          运行范式{" "}
+          {paradigms.find((p) => p.plugin_type === status.paradigm)?.display_name ??
+            status.paradigm}
+        </p>
+      )}
       <div className="actions">
         <select value={paradigm} onChange={(e) => setParadigm(e.target.value)}>
           <option value="">— 用配置值 —</option>
@@ -154,7 +171,26 @@ function StimulationCard({ sessionActive }: { sessionActive: boolean }) {
           停止刺激
         </button>
       </div>
+      {selectedParadigm && Object.keys(selectedParadigm.params ?? {}).length > 0 && (
+        <table className="params">
+          <tbody>
+            {Object.entries(selectedParadigm.params ?? {}).map(([k, v]) => (
+              <tr key={k}>
+                <td className="meta">{k}</td>
+                <td>{String(v)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
       <div className="actions">
+        <input
+          type="number"
+          min={1}
+          placeholder="试次数"
+          value={count}
+          onChange={(e) => setCount(e.target.value)}
+        />
         <input
           type="number"
           min={0}
@@ -165,7 +201,12 @@ function StimulationCard({ sessionActive }: { sessionActive: boolean }) {
         <button
           disabled={!sessionActive || trial.pending}
           title={sessionActive ? "" : "需要活动会话"}
-          onClick={() => trial.run(target === "" ? undefined : Number(target))}
+          onClick={() =>
+            trial.run(
+              Number(count) || 1,
+              target === "" ? undefined : [Number(target)],
+            )
+          }
         >
           触发试次
         </button>

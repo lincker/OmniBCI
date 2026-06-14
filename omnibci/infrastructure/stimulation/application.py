@@ -3,13 +3,15 @@
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-05-10 23:15
 
+import logging
 import multiprocessing as mp
 import asyncio
 from queue import Queue
 
 from omnibci.infrastructure.ipc.event_bus import EventBus, Event, EventType
 from omnibci.infrastructure.outbound import make_stimulation_ack
-from .client import ClientMessageManagement
+from omnibci.infrastructure.neuroengine.gateway.peer_channel import PeerChannel
+from omnibci.infrastructure.stimulation.engine_channel import engine_peer_config
 from omnibci.infrastructure.stimulation.stimulator import Stimulator
 
 
@@ -17,12 +19,16 @@ class Stimulation:
     def __init__(self):
         self.event_bus = EventBus()
         self.event_bus.set_event_queue(queue=mp.Queue())
-        self.client_message_management = ClientMessageManagement(self.event_bus)
+
+        from omnibci.conf import settings
+        host = settings.get("NEUROENGINE.message_server_ip", "127.0.0.1")
+        port = int(settings.get("NEUROENGINE.message_server_port", 8765))
+        self.peer_channel = PeerChannel(engine_peer_config(host, port), self.event_bus)
+
         self.should_stop = False
         self.stim_command_queue = Queue()
         self.result_command_queue = Queue()
         self.stimulator = Stimulator()
-        # stimulator.start_async() is called from serve() on the asyncio main thread
 
     def run(self):
         print('---StimulationMain run---')
@@ -46,37 +52,52 @@ class Stimulation:
     async def start(self):
         print('---StimulationMain start---')
         await self.event_bus.start()
-        await self.client_message_management.start()
+        # PeerChannel.start() is synchronous — schedules asyncio tasks internally
+        self.peer_channel.start()
         self._register_event_listener()
 
     async def execute_command(self):
         if not self.stim_command_queue.empty():
             stim_command = self.stim_command_queue.get()
             if stim_command.type == EventType.StartStimTrial:
-                # Present the trial, then send an ack back to the engine so the
-                # operator gets a receipt of whether it actually ran.
+                # Present the trial, then send an ack back to the engine.
+                # PeerChannel's outbound subscription picks up StimulationAck from
+                # the bus and forwards it to the engine automatically.
+                # `data` is one trial's opaque paradigm parameter (may be None).
+                params = stim_command.data
+                target = params if isinstance(params, int) else None
                 try:
-                    self.stimulator.present_trial(event_id=stim_command.data)
+                    self.stimulator.present_trial(params)
                     ack = make_stimulation_ack(
-                        "StartStimTrial", status="ok", target_index=stim_command.data
+                        "StartStimTrial", status="ok", target_index=target
                     )
                 except Exception as exc:
                     ack = make_stimulation_ack(
                         "StartStimTrial", status="error",
-                        target_index=stim_command.data, message=str(exc),
+                        target_index=target, message=str(exc),
                     )
-                await self.client_message_management.send_event(
-                    Event(EventType.StimulationAck, ack)
-                )
+                self.event_bus.put_event(Event(EventType.StimulationAck, ack))
+
         if not self.result_command_queue.empty():
             sys_command = self.result_command_queue.get()
             if sys_command.type == EventType.TrialCompleted:
-                # payload is a Classification VO; extract target_id for display
+                # The TrialCompleted payload arrives over the engine→stimulation
+                # socket as a plain dict (body_to_event does not rebuild domain
+                # VOs), so extract target_id from the dict shape.  Wrapped in
+                # try/except: a malformed/out-of-range result must NOT crash the
+                # render process and close the stimulation window.
                 from omnibci.domain.classification import Classification
                 data = sys_command.data
-                result = data.target_id if isinstance(data, Classification) else int(data)
-                self.stimulator.present_result(result)
-
+                try:
+                    if isinstance(data, Classification):
+                        result = data.target_id
+                    elif isinstance(data, dict):
+                        result = int(data.get("target_id"))
+                    else:
+                        result = int(data)
+                    self.stimulator.present_result(result)
+                except Exception as exc:
+                    logging.warning("present_result skipped (bad result %r): %s", data, exc)
 
     def _register_event_listener(self):
         self.event_bus.register_event_listener(event_type=EventType.StartStimTrial, handler=self._put_stim_command_queue)
@@ -84,13 +105,19 @@ class Stimulation:
         self.event_bus.register_event_listener(event_type=EventType.StopStimulation, handler=self._stop_stimulation_system)
 
     def _put_stim_command_queue(self, command: Event):
-        if command.type == EventType.StartStimTrial:
-            if command.data > 0:
-                n_trials = command.data
-                for i in range(n_trials):
-                    self.stim_command_queue.put(command)
-            # The ack is sent from execute_command(), after the renderer actually
-            # presents the trial (success → status="ok", failure → "error").
+        # Generic expander: knows only the base layer (how many trials) and
+        # carries each trial's paradigm-specific parameter as an opaque blob.
+        # No event_id / target knowledge lives here.
+        if command.type != EventType.StartStimTrial:
+            return
+        spec = command.data or {}
+        n_trials = int(spec.get("n_trials", 1))
+        params = spec.get("trial_params")
+        if params is None:
+            params = [None] * n_trials      # default: empty per-trial param → paradigm default
+        for per_trial in params:
+            # One queue item == one trial, carrying that trial's opaque params.
+            self.stim_command_queue.put(Event(EventType.StartStimTrial, per_trial))
 
     def _put_sys_command_queue(self, command: Event):
         if command.type == EventType.TrialCompleted:
@@ -101,7 +128,5 @@ class Stimulation:
 
     async def stop(self):
         print('---StimulationMain stop---')
-        # stimulator already stopped in serve() before this is called
-        await self.client_message_management.stop()
+        await self.peer_channel.stop()
         self.event_bus.stop()
-

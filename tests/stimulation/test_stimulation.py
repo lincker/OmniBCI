@@ -159,7 +159,7 @@ class TestStimulatorPresent:
     def test_present_trial_delegates(self):
         s, mock_paradigm = self._started()
         s.present_trial(5)
-        mock_paradigm.trial_stimulus_present.assert_called_once_with(event_id=5)
+        mock_paradigm.trial_stimulus_present.assert_called_once_with(5)
 
     def test_present_result_delegates(self):
         s, mock_paradigm = self._started()

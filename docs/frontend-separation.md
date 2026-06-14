@@ -122,8 +122,8 @@ npx openapi-typescript docs/openapi.json -o src/api/types.ts
 | POST | `/stimulation/trial/start` | `StartTrialRequest` | （无 data） | 200 | 503 |
 
 - `StartStimulationRequest`：`paradigm?: string`（缺省取配置值）
-- `StartTrialRequest`：`target_index?: int`
-- `ParadigmsResponse`：`paradigms: ParadigmInfo[]`；`ParadigmInfo{name: string, description?: string}`
+- `StartTrialRequest`：`n_trials: int = 1`（跑几个试次，范式无关的基础参数）、`trial_params?: int[]`（每个试次的范式专属参数，如目标/事件 id；提供时 `len == n_trials`，缺省 `null` 表示每个试次用范式默认）
+- `ParadigmsResponse`：`paradigms: ParadigmInfo[]`；`ParadigmInfo{plugin_type, display_name, description?, version?, source, params?}`（`params` 为 manifest `[params]` 的只读键值，选中范式后在 Web 上展示）
 - 现状 `paradigms` 为硬编码 `[classic40SSVEP]`，未来应从插件注册表动态注入。
 
 ### 3.5 Session —『/api/v1/sessions』

@@ -2,7 +2,7 @@
 Stimulation domain commands.
 """
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Sequence, Any
 
 
 @dataclass(frozen=True)
@@ -18,5 +18,12 @@ class StopStimulationCommand:
 
 @dataclass(frozen=True)
 class StartStimTrialCommand:
-    """Trigger a single stimulation trial."""
-    target_index: Optional[int] = None
+    """Trigger one or more stimulation trials.
+
+    n_trials     — how many trials to run (paradigm-agnostic base parameter).
+    trial_params — per-trial paradigm-specific parameters; len must equal
+                   n_trials when provided.  None → each trial uses the
+                   paradigm's default (e.g. SSVEP no-cue free run).
+    """
+    n_trials: int = 1
+    trial_params: Optional[Sequence[Any]] = None

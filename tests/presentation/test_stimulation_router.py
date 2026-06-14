@@ -12,6 +12,7 @@ _FAKE_PARADIGM = ParadigmInfo(
     plugin_type="STIMULATION_THUBCI_SSVEP_classic40",
     display_name="Classic 40-target SSVEP",
     source="builtin",
+    params={"targets": 40, "refresh_rate_hz": 60},
 )
 
 _PATCH_TARGET = "omnibci.infrastructure.stimulation.paradigm_discovery.list_paradigms"
@@ -34,6 +35,11 @@ class TestParadigms:
         resp = api_client.get("/api/v1/stimulation/paradigms")
         paradigm = resp.json()["data"]["paradigms"][0]
         assert "name" in paradigm
+
+    def test_paradigm_exposes_manifest_params(self, api_client):
+        resp = api_client.get("/api/v1/stimulation/paradigms")
+        paradigm = resp.json()["data"]["paradigms"][0]
+        assert paradigm["params"] == {"targets": 40, "refresh_rate_hz": 60}
 
     def test_builtin_paradigm_present(self, api_client):
         resp = api_client.get("/api/v1/stimulation/paradigms")
@@ -80,17 +86,20 @@ class TestStimulationTrial:
         resp = api_client.post("/api/v1/stimulation/trial/start")
         assert resp.status_code == 200
 
-    def test_trial_start_with_target(self, api_client, mock_engine):
+    def test_trial_start_with_params(self, api_client, mock_engine):
         resp = api_client.post(
             "/api/v1/stimulation/trial/start",
-            json={"target_index": 7},
+            json={"n_trials": 1, "trial_params": [7]},
         )
         assert resp.status_code == 200
 
-    def test_trial_dispatches_event_with_target(self, api_client, mock_engine):
-        api_client.post("/api/v1/stimulation/trial/start", json={"target_index": 2})
+    def test_trial_dispatches_event_with_spec(self, api_client, mock_engine):
+        api_client.post(
+            "/api/v1/stimulation/trial/start",
+            json={"n_trials": 1, "trial_params": [2]},
+        )
         from omnibci.shared.events import EventType
         calls = mock_engine.event_bus.put_event.call_args_list
         trial_calls = [c for c in calls if c[0][0].type == EventType.StartStimTrial]
         assert len(trial_calls) == 1
-        assert trial_calls[0][0][0].data == 2
+        assert trial_calls[0][0][0].data == {"n_trials": 1, "trial_params": [2]}

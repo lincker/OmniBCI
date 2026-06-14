@@ -52,6 +52,8 @@ class StimulationProcessManager:
     def __init__(self, auto_spawn: bool = True) -> None:
         self._auto_spawn = auto_spawn
         self._process: mp.Process | None = None
+        # Paradigm the *running* subprocess was spawned with (None = config default).
+        self._paradigm: str | None = None
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -65,8 +67,18 @@ class StimulationProcessManager:
             logger.debug("auto_spawn=False — Stimulation process must be started manually")
             return
         if self.is_alive:
-            logger.debug("Stimulation process already running (pid=%s)", self._process.pid)
-            return
+            if paradigm == self._paradigm:
+                logger.debug(
+                    "Stimulation process already running requested paradigm (pid=%s, paradigm=%s)",
+                    self._process.pid, paradigm or "<config>",
+                )
+                return
+            # Different paradigm requested → restart so the new selection takes effect.
+            logger.info(
+                "Stimulation paradigm change %s → %s; restarting subprocess",
+                self._paradigm or "<config>", paradigm or "<config>",
+            )
+            self.stop()
         self._process = mp.Process(
             target=_run_stimulation,
             args=(paradigm,),
@@ -74,6 +86,7 @@ class StimulationProcessManager:
             daemon=True,
         )
         self._process.start()
+        self._paradigm = paradigm
         logger.info("Stimulation subprocess spawned (pid=%s, paradigm=%s)",
                     self._process.pid, paradigm or "<config>")
 
@@ -86,7 +99,13 @@ class StimulationProcessManager:
             self._process.join(timeout=3.0)
             logger.info("Stimulation subprocess stopped (pid=%s)", self._process.pid)
         self._process = None
+        self._paradigm = None
 
     @property
     def is_alive(self) -> bool:
         return self._process is not None and self._process.is_alive()
+
+    @property
+    def current_paradigm(self) -> str | None:
+        """Paradigm the running subprocess was spawned with (None if stopped or config default)."""
+        return self._paradigm if self.is_alive else None
