@@ -111,6 +111,7 @@ class NeuroEngineService(EnginePort):
     def handle_get_status(self, query: GetEngineStatusQuery) -> EngineStatusResult:
         if self._engine is None:
             return EngineStatusResult(running=False, acquisition_alive=False, processor_alive=False)
+        from omnibci.infrastructure.neuroengine.gateway.peers import STIMULATION
         return EngineStatusResult(
             running=self._running,
             acquisition_alive=(
@@ -121,6 +122,7 @@ class NeuroEngineService(EnginePort):
                 self._engine.signal_processing_worker.is_alive()
                 if self._engine.signal_processing_worker else False
             ),
+            stimulation_connected=self.is_peer_connected(STIMULATION),
         )
 
     # ------------------------------------------------------------------
@@ -141,6 +143,17 @@ class NeuroEngineService(EnginePort):
     def is_engine_ready(self) -> bool:
         """True once the engine (and therefore its event bus) exists."""
         return self._engine is not None
+
+    def is_peer_connected(self, peer_name: str) -> bool:
+        """True when the named peer's transport has an active connection.
+
+        Returns False if the engine is not running or the peer doesn't exist.
+        Safe to call at any time — never raises.
+        """
+        try:
+            return self._engine.peer_gateway.peer(peer_name).is_connected
+        except Exception:
+            return False
 
     def subscribe(self, event_type, handler) -> None:
         """

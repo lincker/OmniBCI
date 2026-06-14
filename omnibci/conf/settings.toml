@@ -24,7 +24,7 @@ DATA_PROVIDER_PORT = 4000
 
 [ALGORITHM]
 #decoder = 'THUBCI_SSVEP_classic40CCA'
-decoder = "THUBCI_SSVEP_classic40FBCCA"
+decoder = "THUBCI_SSVEP_classic40CCA"
 epoch_detector = 'DEFAULT_EPOCH_DETECTOR'
 window_duration = 3
 offset_time = 0.14
@@ -39,7 +39,7 @@ filters = []
 # Max items in each mp.Queue between engine and workers.
 queue_size = 100
 message_server_ip = '127.0.0.1'
-message_server_port = 8000
+message_server_port = 8765   # must differ from uvicorn HTTP port (8000)
 # Effector (external-device control) channel. Engine listens; controller dials in.
 effector_enabled = false
 effector_server_ip = '127.0.0.1'

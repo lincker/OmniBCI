@@ -48,6 +48,11 @@ class PeerChannel:
         return self._config.name
 
     @property
+    def is_connected(self) -> bool:
+        """True when the peer transport currently has an active connection."""
+        return self._transport.is_connected
+
+    @property
     def _monitored(self) -> bool:
         return (self._config.failsafe is not None
                 or self._config.watchdog_timeout_s is not None)

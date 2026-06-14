@@ -22,6 +22,7 @@ from omnibci.application.services.acquisition_service import AcquisitionAppServi
 from omnibci.application.services.stimulation_service import StimulationAppService
 from omnibci.application.services.session_service import SessionAppService
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
+from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
 from omnibci.shared.events import Event, EventType
 
 
@@ -52,6 +53,7 @@ def _make_container() -> tuple[AppContainer, _RecordingEngine]:
         engine_service=engine,
         acquisition_service=AcquisitionAppService(engine),
         stimulation_service=StimulationAppService(engine),
+        stimulation_process_manager=StimulationProcessManager(auto_spawn=False),
         session_repository=repo,
         session_service=SessionAppService(repository=repo),
         recording_service=None,  # not exercised by event-hook wiring tests

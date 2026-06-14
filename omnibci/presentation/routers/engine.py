@@ -44,5 +44,6 @@ def get_status(svc: NeuroEngineService = Depends(get_engine_service)):
             running=result.running,
             acquisition_alive=result.acquisition_alive,
             processor_alive=result.processor_alive,
+            stimulation_connected=result.stimulation_connected,
         )
     )
