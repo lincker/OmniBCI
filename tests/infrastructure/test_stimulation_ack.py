@@ -38,12 +38,21 @@ class _FakeEventBus:
         self.published.append(event)
 
 
-def _make(stimulator) -> Stimulation:
+class _FakeTask:
+    """Stand-in for the asyncio render task; done()=False means window open."""
+    def __init__(self, done: bool = False):
+        self._done = done
+    def done(self) -> bool:
+        return self._done
+
+
+def _make(stimulator, render_done: bool = False) -> Stimulation:
     s = Stimulation.__new__(Stimulation)
     s.stim_command_queue = Queue()
     s.result_command_queue = Queue()
     s.stimulator = stimulator
     s.event_bus = _FakeEventBus()
+    s._render_task = _FakeTask(done=render_done)  # window open by default
     return s
 
 
@@ -79,4 +88,18 @@ def test_no_ack_when_no_command():
         s = _make(_FakeStimulator())
         await s.execute_command()  # empty queues
         assert s.event_bus.published == []
+    asyncio.run(scenario())
+
+
+def test_ack_error_when_window_closed():
+    """Closing the render window keeps the connection but can't display:
+    a trial must be acked as error, not silently dropped/hung."""
+    async def scenario():
+        s = _make(_FakeStimulator(), render_done=True)  # window closed
+        s.stim_command_queue.put(Event(EventType.StartStimTrial, data=2))
+        await s.execute_command()
+        assert s.stimulator.presented == []            # nothing presented
+        ack = s.event_bus.published[0]
+        assert ack.data["status"] == "error"
+        assert "window closed" in ack.data["message"]
     asyncio.run(scenario())

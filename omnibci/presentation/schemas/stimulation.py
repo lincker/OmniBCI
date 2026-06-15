@@ -42,6 +42,10 @@ class ParadigmInfo(BaseModel):
     source: str = "user"
     # Read-only plugin parameters from manifest [params]; shown in the Web UI.
     params: Dict[str, Any] = Field(default_factory=dict)
+    # Editable controls from manifest [controls.<name>]; the Web UI renders an
+    # input per control and sends the values when triggering a trial. Each value
+    # is a descriptor dict: {label, type, default, min?, max?, field}.
+    controls: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
     @computed_field
     @property

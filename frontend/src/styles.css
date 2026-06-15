@@ -349,6 +349,41 @@ tbody tr:hover { background: rgba(127, 127, 127, 0.07); }
 .params { margin: 0.2rem 0 0.6rem; }
 .params td { padding: 0.3rem 0.55rem; }
 .params td:first-child { width: 45%; }
+
+/* Editable paradigm controls (manifest [controls.*]) */
+.actions label.control { display: inline-flex; flex-direction: column; gap: 0.2rem; }
+.actions label.control input { width: 7rem; }
+
+/* Engine panel: dropdowns (left) + status (right), buttons below */
+.engine-body {
+  display: flex;
+  gap: 1.25rem;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-top: 0.3rem;
+}
+.engine-selectors {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  flex: 1 1 11rem;
+  min-width: 0;
+}
+.engine-selectors label { display: flex; flex-direction: column; gap: 0.2rem; }
+.engine-selectors select {
+  width: 100%;
+  font: inherit;
+  font-size: 0.83rem;
+  padding: 0.34rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+}
+.engine-selectors select:focus { outline: none; border-color: var(--accent); }
+.engine-selectors select:disabled { opacity: 0.5; cursor: not-allowed; }
+.engine-status { display: flex; flex-direction: column; gap: 0.4rem; align-items: flex-start; }
 tbody tr:last-child td { border-bottom: none; }
 .target { font-weight: 700; color: var(--accent); }
 
@@ -378,56 +413,13 @@ code {
 .acks li { padding: 0.4rem 0.2rem; border-bottom: 1px solid var(--border-soft); }
 .acks li:last-child { border-bottom: none; }
 
-/* ================= plugin selector bar ================= */
-
-.plugin-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.5rem;
-  align-items: center;
-  padding: 0.65rem 1.25rem;
-  background: var(--card-bg);
-  border: 1px solid var(--border-soft);
-  border-radius: 10px;
-  margin-bottom: 1rem;
-}
-
-.plugin-bar-item {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
+/* ================= plugin selector label ================= */
 
 .plugin-bar-label {
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--off);
   min-width: 3rem;
-}
-
-.plugin-bar-saving {
-  font-size: 0.75rem;
-  color: var(--off);
-  animation: plugin-fade 0.8s ease-in-out infinite alternate;
-}
-
-@keyframes plugin-fade {
-  from { opacity: 1; }
-  to   { opacity: 0.3; }
-}
-
-.plugin-bar-load {
-  margin-left: auto;
-}
-
-.plugin-bar-notice {
-  font-size: 0.75rem;
-  color: var(--ok);
-}
-
-.plugin-bar-error {
-  font-size: 0.75rem;
-  color: var(--err);
 }
 
 /* ================= responsive ================= */

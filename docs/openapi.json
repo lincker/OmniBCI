@@ -3326,6 +3326,11 @@
             "title": "Params",
             "description": "Read-only plugin parameters from manifest [params]; shown in the Web UI."
           },
+          "controls": {
+            "type": "object",
+            "title": "Controls",
+            "description": "Editable controls from manifest [controls.<name>]; rendered as inputs and sent when triggering a trial."
+          },
           "name": {
             "type": "string",
             "title": "Name",

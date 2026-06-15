@@ -29,6 +29,7 @@ class Stimulation:
         self.stim_command_queue = Queue()
         self.result_command_queue = Queue()
         self.stimulator = Stimulator()
+        self._render_task = None   # GLFW 渲染窗口任务;关窗后为 done,但进程/连接保持
 
     def run(self):
         print('---StimulationMain run---')
@@ -39,14 +40,17 @@ class Stimulation:
         # Render loop runs as a concurrent coroutine on the asyncio main thread.
         # On macOS this satisfies Cocoa's requirement that GLFW event polling
         # (nextEventMatchingMask) is called only from the main thread.
-        render_task = asyncio.create_task(self.stimulator.start_async())
-        # IPC command loop — exits when should_stop=True or window closes
-        while not self.should_stop and not render_task.done():
+        self._render_task = asyncio.create_task(self.stimulator.start_async())
+        # IPC command loop — the engine connection lives as long as this loop runs.
+        # It is deliberately decoupled from the render window: closing the GLFW
+        # window finishes _render_task but MUST NOT end the process or drop the
+        # engine connection.  Only an explicit StopStimulation (should_stop) stops.
+        while not self.should_stop:
             await self.execute_command()
             await asyncio.sleep(0.01)
         # Ensure render loop is stopped (sets _stop_event; idempotent if already done)
         self.stimulator.stop()
-        await render_task   # wait for teardown + shutdown to finish on GL context
+        await self._render_task   # wait for teardown + shutdown to finish on GL context
         await self.stop()
 
     async def start(self):
@@ -57,7 +61,14 @@ class Stimulation:
         self._register_event_listener()
 
     async def execute_command(self):
-        if not self.stim_command_queue.empty():
+        # Serialize trials: only pull the next StartStimTrial once the paradigm
+        # has finished presenting the current one.  Without this gate the whole
+        # queue is drained within a few loop iterations (~10 ms each) while a
+        # single trial's cue→stim sequence runs for seconds, so N queued trials
+        # collapse into one.  Paradigms that don't report busy-state fall back to
+        # the old immediate behaviour (getattr default False).
+        presenting = getattr(self.stimulator, "is_presenting", False)
+        if not presenting and not self.stim_command_queue.empty():
             stim_command = self.stim_command_queue.get()
             if stim_command.type == EventType.StartStimTrial:
                 # Present the trial, then send an ack back to the engine.
@@ -66,16 +77,24 @@ class Stimulation:
                 # `data` is one trial's opaque paradigm parameter (may be None).
                 params = stim_command.data
                 target = params if isinstance(params, int) else None
-                try:
-                    self.stimulator.present_trial(params)
+                if self._render_task is None or self._render_task.done():
+                    # 渲染窗口已关闭:连接仍保持,但无法显示刺激 → 明确回执错误,
+                    # 避免在无窗口时静默卡住(范式状态机不会再推进)。
                     ack = make_stimulation_ack(
-                        "StartStimTrial", status="ok", target_index=target
+                        "StartStimTrial", status="error", target_index=target,
+                        message="stimulation window closed",
                     )
-                except Exception as exc:
-                    ack = make_stimulation_ack(
-                        "StartStimTrial", status="error",
-                        target_index=target, message=str(exc),
-                    )
+                else:
+                    try:
+                        self.stimulator.present_trial(params)
+                        ack = make_stimulation_ack(
+                            "StartStimTrial", status="ok", target_index=target
+                        )
+                    except Exception as exc:
+                        ack = make_stimulation_ack(
+                            "StartStimTrial", status="error",
+                            target_index=target, message=str(exc),
+                        )
                 self.event_bus.put_event(Event(EventType.StimulationAck, ack))
 
         if not self.result_command_queue.empty():

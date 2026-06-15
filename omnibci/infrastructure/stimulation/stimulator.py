@@ -127,6 +127,20 @@ class Stimulator:
         if self.paradigm is not None:
             self.paradigm.trial_stimulus_present(params)
 
+    @property
+    def is_presenting(self) -> bool:
+        """True while the paradigm is mid-trial (not ready for the next trial).
+
+        Duck-typed: paradigms may expose ``is_presenting()``; those that don't
+        report ready immediately (preserving the previous drain-all behaviour).
+        """
+        p = self.paradigm
+        fn = getattr(p, "is_presenting", None) if p is not None else None
+        try:
+            return bool(fn()) if callable(fn) else False
+        except Exception:
+            return False
+
     def present_result(self, result) -> None:
         if self.paradigm is not None:
             self.paradigm.trial_result_present(result=result)

@@ -815,6 +815,15 @@ export interface components {
                 [key: string]: unknown;
             };
             /**
+             * Controls
+             * @description Editable controls from manifest [controls.<name>]; rendered as inputs and sent when triggering a trial.
+             */
+            controls?: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+            /**
              * Name
              * @description Deprecated alias for display_name.
              */
