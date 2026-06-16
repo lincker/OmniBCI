@@ -124,8 +124,13 @@ class TestTeardown:
 class TestTrialStimulusPresent:
     def test_valid_event_id_transitions_to_cue(self, paradigm, renderer):
         paradigm.setup(renderer)
-        paradigm.trial_stimulus_present(0)
+        paradigm.trial_stimulus_present(1)          # 1-based: target 1 = 'A'
         assert paradigm._state == _State.CUE
+
+    def test_zero_is_no_cue_goes_straight_to_stim(self, paradigm, renderer):
+        paradigm.setup(renderer)
+        paradigm.trial_stimulus_present(0)          # 0 = baseline / no-cue
+        assert paradigm._state == _State.STIM
 
     def test_cue_countdown_set(self, paradigm, renderer):
         paradigm.setup(renderer)
@@ -159,33 +164,33 @@ class TestRenderFrameTransitions:
 
     def test_cue_transitions_to_stim_after_countdown(self, paradigm, renderer, trigger):
         paradigm.setup(renderer)
-        paradigm.trial_stimulus_present(0)
+        paradigm.trial_stimulus_present(1)
         self._tick(paradigm, _CUE_FRAMES)
         assert paradigm._state == _State.STIM
-        trigger.send.assert_called_once_with(0)
+        trigger.send.assert_called_once_with(1)
 
     def test_stim_plays_all_frames(self, paradigm, renderer):
         paradigm.setup(renderer)
-        paradigm.trial_stimulus_present(0)
+        paradigm.trial_stimulus_present(1)
         self._tick(paradigm, _CUE_FRAMES)          # CUE → STIM
         self._tick(paradigm, _N_STIM_FRAMES)       # play every frame
         assert paradigm._stim_frame_idx == _N_STIM_FRAMES
 
     def test_stim_transitions_to_idle_when_frames_exhausted(self, paradigm, renderer):
         paradigm.setup(renderer)
-        paradigm.trial_stimulus_present(0)
+        paradigm.trial_stimulus_present(1)
         self._tick(paradigm, _CUE_FRAMES + _N_STIM_FRAMES + 1)
         assert paradigm._state == _State.IDLE
 
     def test_stim_clears_trigger_on_finish(self, paradigm, renderer, trigger):
         paradigm.setup(renderer)
-        paradigm.trial_stimulus_present(0)
+        paradigm.trial_stimulus_present(1)
         self._tick(paradigm, _CUE_FRAMES + _N_STIM_FRAMES + 1)
         trigger.clear.assert_called()
 
     def test_result_transitions_to_idle_after_countdown(self, paradigm, renderer):
         paradigm.setup(renderer)
-        paradigm.trial_result_present(0)            # 'A'
+        paradigm.trial_result_present(1)            # 1-based: target 1 = 'A'
         assert paradigm._state == _State.RESULT
         self._tick(paradigm, _RESULT_FRAMES)
         assert paradigm._state == _State.IDLE
@@ -198,24 +203,24 @@ class TestRenderFrameTransitions:
 class TestTrialResultPresent:
     def test_transitions_to_result_state(self, paradigm, renderer):
         paradigm.setup(renderer)
-        paradigm.trial_result_present(0)
+        paradigm.trial_result_present(1)
         assert paradigm._state == _State.RESULT
 
     def test_result_countdown_set(self, paradigm, renderer):
         paradigm.setup(renderer)
-        paradigm.trial_result_present(0)
+        paradigm.trial_result_present(1)
         assert paradigm._result_countdown == _RESULT_FRAMES
 
     def test_add_text_accumulates(self, paradigm, renderer):
         paradigm.setup(renderer)
-        paradigm.trial_result_present(0)   # 'A'
-        paradigm.trial_result_present(1)   # 'B'
+        paradigm.trial_result_present(1)   # 'A'
+        paradigm.trial_result_present(2)   # 'B'
         assert paradigm._text_view._content == "AB"
 
     def test_del_removes_last_char(self, paradigm, renderer):
         paradigm.setup(renderer)
-        paradigm.trial_result_present(0)   # 'A'
-        paradigm.trial_result_present(39)  # 'Del'
+        paradigm.trial_result_present(1)   # 'A'
+        paradigm.trial_result_present(40)  # 'Del'
         assert paradigm._text_view._content == ""
 
 
@@ -225,19 +230,24 @@ class TestTrialResultPresent:
 
 class TestParseFeedback:
     def test_first_char_is_A(self, paradigm):
-        assert paradigm._parse_feedback(0) == "A"
+        assert paradigm._parse_feedback(1) == "A"        # 1-based: target 1 = 'A'
 
     def test_last_letter_is_Z(self, paradigm):
-        assert paradigm._parse_feedback(25) == "Z"
+        assert paradigm._parse_feedback(26) == "Z"
 
     def test_first_digit_is_0(self, paradigm):
-        assert paradigm._parse_feedback(26) == "0"
+        assert paradigm._parse_feedback(27) == "0"
 
     def test_last_digit_is_9(self, paradigm):
-        assert paradigm._parse_feedback(35) == "9"
+        assert paradigm._parse_feedback(36) == "9"
 
     def test_del_is_last(self, paradigm):
-        assert paradigm._parse_feedback(39) == "Del"
+        assert paradigm._parse_feedback(40) == "Del"     # target 40 = 'Del'
+
+    def test_zero_raises(self, paradigm):
+        # 0 is the baseline / no-target sentinel, not a valid feedback id.
+        with pytest.raises(IndexError):
+            paradigm._parse_feedback(0)
 
     def test_negative_raises(self, paradigm):
         with pytest.raises(IndexError):
@@ -245,7 +255,7 @@ class TestParseFeedback:
 
     def test_out_of_range_raises(self, paradigm):
         with pytest.raises(IndexError):
-            paradigm._parse_feedback(40)
+            paradigm._parse_feedback(41)
 
 
 # ---------------------------------------------------------------------------
