@@ -62,12 +62,15 @@ class TestStimulationCommands:
         cmd = StartStimulationCommand(paradigm="classic40SSVEP")
         assert cmd.paradigm == "classic40SSVEP"
 
-    def test_trial_default_target_is_none(self):
-        assert StartStimTrialCommand().target_index is None
+    def test_trial_defaults(self):
+        cmd = StartStimTrialCommand()
+        assert cmd.n_trials == 1
+        assert cmd.trial_params is None
 
-    def test_trial_with_target(self):
-        cmd = StartStimTrialCommand(target_index=3)
-        assert cmd.target_index == 3
+    def test_trial_with_params(self):
+        cmd = StartStimTrialCommand(n_trials=2, trial_params=[3, 7])
+        assert cmd.n_trials == 2
+        assert cmd.trial_params == [3, 7]
 
     def test_stop_instantiates(self):
         assert StopStimulationCommand() is not None

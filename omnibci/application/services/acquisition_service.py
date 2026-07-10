@@ -63,6 +63,17 @@ class AcquisitionAppService:
         self._streaming = False
         logger.info("StopStream event dispatched")
 
+    def reset(self) -> None:
+        """Clear connection/stream state.
+
+        These are intent flags held in the API process; they do not track the
+        engine's acquisition worker.  When the engine stops, that worker dies,
+        so without this the status would stay 'connected/streaming' (stale)
+        while the engine panel correctly shows the acquisition process gone.
+        """
+        self._connected = False
+        self._streaming = False
+
     # ------------------------------------------------------------------
     # Query handlers
     # ------------------------------------------------------------------

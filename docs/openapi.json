@@ -654,42 +654,84 @@
         }
       }
     },
-    "/api/v1/plugins/{category}": {
+    "/api/v1/stimulation/status": {
       "get": {
         "tags": [
-          "Plugins"
+          "Stimulation"
         ],
-        "summary": "List plugins by category",
-        "description": "Return discovered plugins for category. Valid categories: paradigm, decoder, acquisition, effector.",
-        "operationId": "list_plugins_by_category_api_v1_plugins__category__get",
-        "parameters": [
-          {
-            "name": "category",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Category"
-            }
-          }
-        ],
+        "summary": "Stimulation subsystem status",
+        "operationId": "stimulation_status_api_v1_stimulation_status_get",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ParadigmsResponse_"
+                  "$ref": "#/components/schemas/ApiResponse_StimulationStatusResponse_"
                 }
               }
             }
           },
-          "400": { "description": "Bad request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
-          "404": { "description": "Not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
-          "409": { "description": "Conflict", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
-          "422": { "description": "Validation error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
-          "500": { "description": "Internal error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
-          "503": { "description": "Service unavailable", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -2532,6 +2574,99 @@
         }
       }
     },
+    "/api/v1/plugins/{category}": {
+      "get": {
+        "tags": [
+          "Plugins"
+        ],
+        "summary": "List plugins by category",
+        "description": "Return discovered plugins for *category*.\n\nValid categories: ``paradigm``, ``decoder``, ``acquisition``, ``effector``.",
+        "operationId": "list_plugins_by_category_api_v1_plugins__category__get",
+        "parameters": [
+          {
+            "name": "category",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Category"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ParadigmsResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/healthz": {
       "get": {
         "tags": [
@@ -2920,6 +3055,32 @@
         "type": "object",
         "title": "ApiResponse[SessionResponse]"
       },
+      "ApiResponse_StimulationStatusResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StimulationStatusResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[StimulationStatusResponse]"
+      },
       "ApiResponse_TrialResponse_": {
         "properties": {
           "success": {
@@ -3047,13 +3208,18 @@
           "processor_alive": {
             "type": "boolean",
             "title": "Processor Alive"
+          },
+          "stimulation_connected": {
+            "type": "boolean",
+            "title": "Stimulation Connected"
           }
         },
         "type": "object",
         "required": [
           "running",
           "acquisition_alive",
-          "processor_alive"
+          "processor_alive",
+          "stimulation_connected"
         ],
         "title": "EngineStatusResponse"
       },
@@ -3112,7 +3278,7 @@
           "message"
         ],
         "title": "ErrorResponse",
-        "description": "Unified error envelope — mirrors ApiResponse so clients see one consistent\nshape across success and failure (`success` discriminates)."
+        "description": "Unified error envelope \u2014 mirrors ApiResponse so clients see one consistent\nshape across success and failure (`success` discriminates)."
       },
       "ParadigmInfo": {
         "properties": {
@@ -3155,10 +3321,21 @@
             "title": "Source",
             "default": "user"
           },
+          "params": {
+            "type": "object",
+            "title": "Params",
+            "description": "Read-only plugin parameters from manifest [params]; shown in the Web UI."
+          },
+          "controls": {
+            "type": "object",
+            "title": "Controls",
+            "description": "Editable controls from manifest [controls.<name>]; rendered as inputs and sent when triggering a trial."
+          },
           "name": {
             "type": "string",
             "title": "Name",
-            "description": "Deprecated alias for display_name."
+            "description": "Deprecated alias for display_name.",
+            "readOnly": true
           }
         },
         "type": "object",
@@ -3168,7 +3345,8 @@
           "display_name",
           "name"
         ],
-        "title": "ParadigmInfo"
+        "title": "ParadigmInfo",
+        "description": "Metadata for a discovered stimulation paradigm.\n\nFields\n------\nid           Machine identifier; unique per plugin (= manifest package.id).\nplugin_type  Registry key used to actually start the paradigm.\ndisplay_name Human-readable label shown in the UI.\ndescription  Optional long description.\nversion      Semver string from the manifest, if present.\nsource       \"builtin\" (ships with app) or \"user\" (downloaded / self-written).\n\nDeprecated\n----------\nname         Alias for ``display_name``; kept for one release cycle."
       },
       "ParadigmsResponse": {
         "properties": {
@@ -3192,7 +3370,7 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Updates",
-            "description": "Dotted key → new value"
+            "description": "Dotted key \u2192 new value"
           },
           "scope": {
             "type": "string",
@@ -3235,7 +3413,7 @@
           "engine_restart_required": {
             "type": "boolean",
             "title": "Engine Restart Required",
-            "description": "True → stop/start the engine for changes to take effect"
+            "description": "True \u2192 stop/start the engine for changes to take effect"
           }
         },
         "type": "object",
@@ -3506,20 +3684,63 @@
       },
       "StartTrialRequest": {
         "properties": {
-          "target_index": {
+          "n_trials": {
+            "type": "integer",
+            "title": "N Trials",
+            "default": 1
+          },
+          "trial_params": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Target Index"
+            "title": "Trial Params"
           }
         },
         "type": "object",
         "title": "StartTrialRequest"
+      },
+      "StimulationStatusResponse": {
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          },
+          "process_alive": {
+            "type": "boolean",
+            "title": "Process Alive"
+          },
+          "engine_connected": {
+            "type": "boolean",
+            "title": "Engine Connected"
+          },
+          "paradigm": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paradigm"
+          }
+        },
+        "type": "object",
+        "required": [
+          "active",
+          "process_alive",
+          "engine_connected"
+        ],
+        "title": "StimulationStatusResponse",
+        "description": "Live status of the Stimulation subsystem.\n\nactive          \u2014 the application service has issued a StartStimulation command.\nprocess_alive   \u2014 the Stimulation subprocess is currently running (auto_spawn only).\nengine_connected \u2014 the Stimulation process has an active IPC connection to the engine."
       },
       "TrialResponse": {
         "properties": {

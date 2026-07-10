@@ -1,5 +1,5 @@
-from typing import List, Optional
-from pydantic import BaseModel, computed_field
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, Field, computed_field
 
 
 class StartStimulationRequest(BaseModel):
@@ -7,7 +7,14 @@ class StartStimulationRequest(BaseModel):
 
 
 class StartTrialRequest(BaseModel):
-    target_index: Optional[int] = None
+    """Trigger one or more stimulation trials.
+
+    n_trials     — how many trials to run (paradigm-agnostic base parameter).
+    trial_params — per-trial target/event ids; len must equal n_trials when
+                   provided.  None → each trial uses the paradigm default.
+    """
+    n_trials: int = 1
+    trial_params: Optional[List[int]] = None
 
 
 class ParadigmInfo(BaseModel):
@@ -33,6 +40,12 @@ class ParadigmInfo(BaseModel):
     description: Optional[str] = None
     version: Optional[str] = None
     source: str = "user"
+    # Read-only plugin parameters from manifest [params]; shown in the Web UI.
+    params: Dict[str, Any] = Field(default_factory=dict)
+    # Editable controls from manifest [controls.<name>]; the Web UI renders an
+    # input per control and sends the values when triggering a trial. Each value
+    # is a descriptor dict: {label, type, default, min?, max?, field}.
+    controls: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
     @computed_field
     @property
@@ -43,3 +56,17 @@ class ParadigmInfo(BaseModel):
 
 class ParadigmsResponse(BaseModel):
     paradigms: List[ParadigmInfo]
+
+
+class StimulationStatusResponse(BaseModel):
+    """Live status of the Stimulation subsystem.
+
+    active          — the application service has issued a StartStimulation command.
+    process_alive   — the Stimulation subprocess is currently running (auto_spawn only).
+    engine_connected — the Stimulation process has an active IPC connection to the engine.
+    """
+    active: bool
+    process_alive: bool
+    engine_connected: bool
+    # Paradigm the running subprocess was spawned with (auto_spawn mode); None otherwise.
+    paradigm: Optional[str] = None

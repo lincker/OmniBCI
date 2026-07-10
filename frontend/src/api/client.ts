@@ -19,6 +19,12 @@ export type PatchConfigResult = S["PatchConfigResponse"];
 export type ProfileList = S["ProfileListResponse"];
 export type ParadigmInfo = S["ParadigmInfo"];
 export type ParadigmsResponse = S["ParadigmsResponse"];
+export interface StimulationStatus {
+  active: boolean;
+  process_alive: boolean;
+  engine_connected: boolean;
+  paradigm: string | null;
+}
 
 export interface ApiEnvelope<T> {
   success: boolean;
@@ -66,6 +72,7 @@ const del = <T = unknown,>(path: string) => send<T>("DELETE", path);
 export const api = {
   engineStatus: () => get<EngineStatus>("/api/v1/engine/status"),
   acquisitionStatus: () => get<AcquisitionStatus>("/api/v1/acquisition/status"),
+  stimulationStatus: () => get<StimulationStatus>("/api/v1/stimulation/status"),
   listSessions: () =>
     get<S["SessionListResponse"]>("/api/v1/sessions"),
 
@@ -94,8 +101,8 @@ export const api = {
   stimStart: (paradigm?: string) =>
     post("/api/v1/stimulation/start", paradigm ? { paradigm } : {}),
   stimStop: () => post("/api/v1/stimulation/stop"),
-  trialStart: (target_index?: number) =>
-    post("/api/v1/stimulation/trial/start", target_index != null ? { target_index } : {}),
+  trialStart: (n_trials = 1, trial_params?: number[]) =>
+    post("/api/v1/stimulation/trial/start", { n_trials, trial_params }),
 
   createSession: (paradigm?: string) =>
     post<SessionInfo>("/api/v1/sessions", paradigm ? { paradigm } : {}),

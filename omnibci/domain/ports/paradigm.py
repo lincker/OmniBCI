@@ -19,7 +19,14 @@ class Paradigm(Registerable, ABC):
         pass
 
     @abstractmethod
-    def trial_stimulus_present(self, event_id) -> None: pass
+    def trial_stimulus_present(self, params) -> None:
+        """Present one trial.
+
+        *params* is this paradigm's per-trial parameter, opaque to the
+        dispatch/queue layer.  Each paradigm defines its own shape (e.g. SSVEP:
+        an int target/event id; P300: a flash-sequence spec; MI: a cue class).
+        """
+        pass
 
     @abstractmethod
     def trial_result_present(self, result) -> None: pass

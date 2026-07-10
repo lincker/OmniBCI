@@ -37,6 +37,7 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/acquisition/stream/stop", "post"),
     ("/api/v1/acquisition/status", "get"),
     # stimulation
+    ("/api/v1/stimulation/status", "get"),
     # plugins
     ("/api/v1/plugins/{category}", "get"),
     ("/api/v1/stimulation/paradigms", "get"),
@@ -109,7 +110,7 @@ class TestResponseDtos:
 
     def test_engine_status_fields(self, spec):
         props = _schema(spec, "EngineStatusResponse")["properties"]
-        assert set(props) == {"running", "acquisition_alive", "processor_alive"}
+        assert set(props) == {"running", "acquisition_alive", "processor_alive", "stimulation_connected"}
 
     def test_acquisition_status_fields(self, spec):
         props = _schema(spec, "AcquisitionStatusResponse")["properties"]

@@ -33,6 +33,7 @@ from omnibci.application.services.session_service import SessionAppService
 from omnibci.application.services.recording_service import RecordingService
 from omnibci.domain.repositories import SessionRepository
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
+from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class AppContainer:
     engine_service: NeuroEngineService
     acquisition_service: AcquisitionAppService
     stimulation_service: StimulationAppService
+    stimulation_process_manager: StimulationProcessManager
     session_repository: SessionRepository
     session_service: SessionAppService
     recording_service: RecordingService
@@ -96,10 +98,20 @@ def assemble(
     acquisition_service = AcquisitionAppService(engine_service)
     session_service = SessionAppService(repository=repository,
                                         engine_port=engine_service)
+
+    # Read auto_spawn from config; default True for single-machine convenience.
+    try:
+        from omnibci.conf import settings as _settings
+        auto_spawn = bool(_settings.get("STIMULATION.auto_spawn", True))
+    except Exception:
+        auto_spawn = True
+    process_manager = StimulationProcessManager(auto_spawn=auto_spawn)
+
     return AppContainer(
         engine_service=engine_service,
         acquisition_service=acquisition_service,
-        stimulation_service=StimulationAppService(engine_service),
+        stimulation_service=StimulationAppService(engine_service, process_manager),
+        stimulation_process_manager=process_manager,
         session_repository=repository,
         # engine_port lets create/end push the session id into the worker
         # (StartSession/EndSession) — see docs/session-id-unification.md.

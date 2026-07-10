@@ -188,13 +188,20 @@ h2 {
 .step-wrap:first-child { flex: 0 0 auto; }
 .step-line {
   flex: 1;
-  height: 2px;
+  display: flex;
   margin: 0 0.9rem;
+}
+/* Each connector is two halves: the half next to a step lights when that step
+   is done — so a fully lit line means both endpoints are reached, a half-lit
+   line means progress sits between them. */
+.step-line-half {
+  flex: 1;
+  height: 2px;
   background: var(--border);
   border-radius: 1px;
   transition: background 0.3s ease;
 }
-.step-line.done { background: var(--ok); }
+.step-line-half.done { background: var(--ok); }
 .step {
   display: flex;
   align-items: center;
@@ -244,7 +251,7 @@ h2 {
 
 .grid {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 1rem;
 }
 .card {
@@ -257,6 +264,11 @@ h2 {
 }
 .card:hover { background: var(--card-bg-hover); }
 .card-wide { grid-column: 1 / -1; }
+/* Cards whose sub-panel block sticks to the bottom, so the dashed groups
+   bottom-align at a consistent distance from the card's lower edge. */
+.card-stack { display: flex; flex-direction: column; }
+.card-stack .engine-body,
+.card-stack .actions-grouped { margin-top: auto; }
 
 .meta { opacity: 0.62; font-size: 0.84rem; }
 .error { color: var(--err); font-size: 0.88rem; }
@@ -318,6 +330,47 @@ h2 {
 .actions input:focus,
 .actions select:focus { outline: none; border-color: var(--accent); }
 .actions label.meta { display: inline-flex; align-items: center; gap: 0.4rem; }
+/* All four dashed sub-panels (engine selectors/buttons + acquisition groups)
+   share one height.  Single tunable value — raise it if any content clips. */
+.engine-selectors,
+.engine-buttons,
+.btn-group { min-height: 8rem; }
+/* Engine start/stop as one centered, vertically-stacked group (right sub-panel). */
+.engine-buttons {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;    /* center buttons vertically in the equal-height panel */
+  margin-top: 0;
+  flex: 1 1 0;                /* same width as the selectors panel */
+  min-width: 0;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 0.6rem 0.7rem;
+}
+.engine-buttons button { min-width: 0; width: 100%; }
+/* Vertically-stacked button group (e.g. 连接/断开, 开始读取/停止读取) —
+   shows the pair belongs together; groups sit side by side in .actions. */
+.btn-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 0.6rem 0.7rem;
+}
+.btn-group button { width: 100%; }
+.btn-group-title {
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--off);
+  margin-bottom: 0.1rem;
+  text-align: center;
+}
+/* Two equal-width groups filling the row → symmetric, equal distance to
+   the left and right edges. */
+.actions-grouped { gap: 1.6rem; }
+.actions-grouped > .btn-group { flex: 1; }
 
 .action-error { margin: 0.45rem 0 0; font-size: 0.8rem; }
 .config-notice { color: var(--ok); margin: 0.45rem 0 0; }
@@ -344,6 +397,56 @@ th {
 }
 tbody tr { transition: background 0.12s ease; }
 tbody tr:hover { background: rgba(127, 127, 127, 0.07); }
+
+/* Read-only paradigm parameters (manifest [params]) */
+.params { margin: 0.2rem 0 0.6rem; }
+.params td { padding: 0.3rem 0.55rem; }
+.params td:first-child { width: 45%; }
+
+/* Editable paradigm controls (manifest [controls.*]) */
+.actions label.control { display: inline-flex; flex-direction: column; gap: 0.2rem; }
+.actions label.control input { width: 7rem; }
+
+/* Engine panel: status row on top, then two sub-panels —
+   left = data source / decoder dropdowns, right = start/stop buttons. */
+.engine-body {
+  display: flex;
+  gap: 1rem;
+  align-items: stretch;       /* both sub-panels share the tallest height */
+  flex-wrap: nowrap;          /* keep the two sub-panels side by side */
+  margin-top: 0.3rem;
+}
+.engine-selectors {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  flex: 1 1 0;
+  min-width: 0;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 0.6rem 0.7rem;
+}
+.engine-selectors label { display: flex; flex-direction: column; gap: 0.2rem; }
+.engine-selectors select {
+  width: 100%;
+  font: inherit;
+  font-size: 0.83rem;
+  padding: 0.34rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+}
+.engine-selectors select:focus { outline: none; border-color: var(--accent); }
+.engine-selectors select:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Status row pinned to the top of the engine panel. */
+.engine-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  align-items: center;
+  margin: 0.2rem 0 0.7rem;
+}
 tbody tr:last-child td { border-bottom: none; }
 .target { font-weight: 700; color: var(--accent); }
 
@@ -373,56 +476,13 @@ code {
 .acks li { padding: 0.4rem 0.2rem; border-bottom: 1px solid var(--border-soft); }
 .acks li:last-child { border-bottom: none; }
 
-/* ================= plugin selector bar ================= */
-
-.plugin-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.5rem;
-  align-items: center;
-  padding: 0.65rem 1.25rem;
-  background: var(--card-bg);
-  border: 1px solid var(--border-soft);
-  border-radius: 10px;
-  margin-bottom: 1rem;
-}
-
-.plugin-bar-item {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
+/* ================= plugin selector label ================= */
 
 .plugin-bar-label {
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--off);
   min-width: 3rem;
-}
-
-.plugin-bar-saving {
-  font-size: 0.75rem;
-  color: var(--off);
-  animation: plugin-fade 0.8s ease-in-out infinite alternate;
-}
-
-@keyframes plugin-fade {
-  from { opacity: 1; }
-  to   { opacity: 0.3; }
-}
-
-.plugin-bar-load {
-  margin-left: auto;
-}
-
-.plugin-bar-notice {
-  font-size: 0.75rem;
-  color: var(--ok);
-}
-
-.plugin-bar-error {
-  font-size: 0.75rem;
-  color: var(--err);
 }
 
 /* ================= responsive ================= */

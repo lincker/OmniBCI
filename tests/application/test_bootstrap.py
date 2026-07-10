@@ -60,10 +60,12 @@ class _FakeSessionService:
 
 
 def _container(engine, session_service=None) -> AppContainer:
+    from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
     return AppContainer(
         engine_service=engine,
         acquisition_service=AcquisitionAppService(engine),
         stimulation_service=StimulationAppService(engine),
+        stimulation_process_manager=StimulationProcessManager(auto_spawn=False),
         session_repository=InMemorySessionRepository(),
         session_service=session_service or _FakeSessionService(),
         recording_service=None,  # not exercised by these wiring tests

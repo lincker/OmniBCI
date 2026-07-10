@@ -17,6 +17,8 @@ from enum import Enum
 import logging
 from typing import Optional
 
+import numpy as np
+
 from omnibci.domain.session import BCISession
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector
 from omnibci.infrastructure.event_translator import DomainEventPublisher

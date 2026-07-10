@@ -46,7 +46,8 @@ class TestStimulationTrial:
         event = mock_engine.event_bus.put_event.call_args[0][0]
         assert event.type == EventType.StartStimTrial
 
-    def test_trial_with_target_index(self, stimulation_service, mock_engine):
-        stimulation_service.handle_start_trial(StartStimTrialCommand(target_index=5))
+    def test_trial_with_params(self, stimulation_service, mock_engine):
+        stimulation_service.handle_start_trial(
+            StartStimTrialCommand(n_trials=1, trial_params=[5]))
         event = mock_engine.event_bus.put_event.call_args[0][0]
-        assert event.data == 5
+        assert event.data == {"n_trials": 1, "trial_params": [5]}

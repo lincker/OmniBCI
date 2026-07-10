@@ -102,12 +102,12 @@ class TestStimulationUsesPort:
         assert port.dispatched[0].type == EventType.StartStimulation
         assert port.dispatched[0].data == "classic40SSVEP"
 
-    def test_start_trial_dispatches_target_index(self):
+    def test_start_trial_dispatches_spec(self):
         port = FakeEnginePort()
         svc = StimulationAppService(port)
-        svc.handle_start_trial(StartStimTrialCommand(target_index=7))
+        svc.handle_start_trial(StartStimTrialCommand(n_trials=1, trial_params=[7]))
         assert port.dispatched[0].type == EventType.StartStimTrial
-        assert port.dispatched[0].data == 7
+        assert port.dispatched[0].data == {"n_trials": 1, "trial_params": [7]}
 
     def test_no_private_engine_svc_attribute_remains(self):
         svc = StimulationAppService(FakeEnginePort())
