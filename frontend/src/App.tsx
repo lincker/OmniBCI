@@ -95,8 +95,22 @@ function EngineCard({
   };
 
   return (
-    <section className="card">
+    <section className="card card-stack">
       <h2>引擎</h2>
+      {/* 状态置顶 */}
+      <div className="engine-status">
+        {error ? (
+          <p className="error">后端不可达：{error.message}</p>
+        ) : (
+          <>
+            <Dot on={data?.running} label="运行中" />
+            <Dot on={data?.acquisition_alive} label="采集进程" />
+            <Dot on={data?.processor_alive} label="处理进程" />
+            <Dot on={data?.stimulation_connected} label="刺激已连接" />
+          </>
+        )}
+      </div>
+      {/* 下方两个子面板:左 数据源/解码器,右 启动/停止引擎 */}
       <div className="engine-body">
         <div className="engine-selectors">
           {PLUGIN_CATEGORIES.map(({ category, label, configKey }) => (
@@ -117,26 +131,14 @@ function EngineCard({
             </label>
           ))}
         </div>
-        <div className="engine-status">
-          {error ? (
-            <p className="error">后端不可达：{error.message}</p>
-          ) : (
-            <>
-              <Dot on={data?.running} label="运行中" />
-              <Dot on={data?.acquisition_alive} label="采集进程" />
-              <Dot on={data?.processor_alive} label="处理进程" />
-              <Dot on={data?.stimulation_connected} label="刺激已连接" />
-            </>
-          )}
+        <div className="actions engine-buttons">
+          <button disabled={running || starting} onClick={() => void handleStart()}>
+            {starting ? "启动中…" : "启动引擎"}
+          </button>
+          <button className="danger" disabled={!running || stop.pending} onClick={() => stop.run()}>
+            停止引擎
+          </button>
         </div>
-      </div>
-      <div className="actions">
-        <button disabled={running || starting} onClick={() => void handleStart()}>
-          {starting ? "启动中…" : "启动引擎"}
-        </button>
-        <button className="danger" disabled={!running || stop.pending} onClick={() => stop.run()}>
-          停止引擎
-        </button>
       </div>
       <ActionError messages={[startError, stop.error]} />
     </section>
@@ -161,7 +163,7 @@ function AcquisitionSessionCard({
   const streaming = data?.streaming ?? false;
 
   return (
-    <section className="card">
+    <section className="card card-stack">
       <h2>采集</h2>
       {error ? (
         <p className="error">不可达</p>
@@ -185,29 +187,35 @@ function AcquisitionSessionCard({
       ) : (
         <p className="meta">无活动会话</p>
       )}
-      <div className="actions">
-        <button
-          disabled={!engineRunning || connected || connect.pending}
-          onClick={() => connect.run()}
-        >
-          连接
-        </button>
-        <button
-          className="danger"
-          disabled={!connected || disconnect.pending}
-          onClick={() => disconnect.run()}
-        >
-          断开
-        </button>
-        <button
-          disabled={!connected || streaming || recStart.pending}
-          onClick={() => recStart.run()}
-        >
-          开始读取
-        </button>
-        <button className="danger" disabled={!streaming || recStop.pending} onClick={() => recStop.run()}>
-          停止读取
-        </button>
+      <div className="actions actions-grouped">
+        <div className="btn-group">
+          <span className="btn-group-title">数据源连接</span>
+          <button
+            disabled={!engineRunning || connected || connect.pending}
+            onClick={() => connect.run()}
+          >
+            连接
+          </button>
+          <button
+            className="danger"
+            disabled={!connected || disconnect.pending}
+            onClick={() => disconnect.run()}
+          >
+            断开
+          </button>
+        </div>
+        <div className="btn-group">
+          <span className="btn-group-title">数据读取</span>
+          <button
+            disabled={!connected || streaming || recStart.pending}
+            onClick={() => recStart.run()}
+          >
+            开始读取
+          </button>
+          <button className="danger" disabled={!streaming || recStop.pending} onClick={() => recStop.run()}>
+            停止读取
+          </button>
+        </div>
       </div>
       <ActionError messages={[connect.error, disconnect.error, recStart.error, recStop.error]} />
     </section>
@@ -408,7 +416,12 @@ function PipelineStepper({
     <div className="pipeline">
       {steps.map((s, i) => (
         <div key={s.label} className="step-wrap">
-          {i > 0 && <span className={`step-line ${steps[i - 1].done ? "done" : ""}`} />}
+          {i > 0 && (
+            <span className="step-line">
+              <span className={`step-line-half ${steps[i - 1].done ? "done" : ""}`} />
+              <span className={`step-line-half ${steps[i].done ? "done" : ""}`} />
+            </span>
+          )}
           <div className={`step ${s.done ? "done" : i === currentIdx ? "current" : ""}`}>
             <span className="step-dot">{s.done ? "✓" : i + 1}</span>
             <span className="step-label">{s.label}</span>
