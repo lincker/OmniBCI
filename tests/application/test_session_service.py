@@ -257,3 +257,31 @@ class TestEngineDispatchOnLifecycle:
             svc.handle_create_session(CreateSessionCommand())
         from omnibci.application.queries.session_queries import ListSessionsQuery
         assert svc.handle_list_sessions(ListSessionsQuery()) == []
+
+
+# ---------------------------------------------------------------------------
+# P1-4: EventBus 线程 × HTTP 线程并发一致性（服务级回归）
+# ---------------------------------------------------------------------------
+
+class TestConcurrentTrialRecording:
+    def test_no_lost_trials_when_callbacks_race(self, session_service):
+        """并发投递 TrialCompleted：读模型不得丢任何 trial。
+
+        旧实现（find → 改副本 → save）在此测试下丢更新；改用
+        repo.upsert 后计数必须精确等于投递总数。
+        """
+        import threading
+
+        sid = session_service.handle_create_session(CreateSessionCommand())
+        threads_n, per_thread = 6, 40
+
+        def worker():
+            for _ in range(per_thread):
+                session_service.on_trial_completed(_outcome_event(sid))
+
+        threads = [threading.Thread(target=worker) for _ in range(threads_n)]
+        for t in threads: t.start()
+        for t in threads: t.join()
+
+        dto = session_service.handle_get_session(GetSessionQuery(sid))
+        assert dto.trial_count == threads_n * per_thread

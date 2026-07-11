@@ -125,9 +125,11 @@ class SessionAppService:
         return session_id
 
     def handle_end_session(self, cmd: EndSessionCommand) -> None:
-        record = self._require(cmd.session_id)
-        record.mark_ended()       # idempotent; sets state + ended_at
-        self._repo.save(record)
+        # 原子化（P1-4）：不再 find→改→save —— 与 EventBus 线程的 trial
+        # 追加并发时那会互相覆盖。mark_ended 幂等。
+        record = self._repo.update(cmd.session_id, lambda r: r.mark_ended())
+        if record is None:
+            raise KeyError(f"Session '{cmd.session_id}' not found")
         # Tell the worker to end its aggregate too. Best-effort: an engine that
         # is down must not block ending the read-model record.
         if self._engine is not None:
@@ -175,13 +177,23 @@ class SessionAppService:
         if not isinstance(session_id, str) or not session_id:
             logger.error("on_session_started: bad payload %r", session_id)
             return
-        if self._repo.find_by_id(session_id) is None:
-            self._repo.save(SessionRecord(
+        # 原子 create-if-missing（P1-4）：原先 find→save 的窗口内，REST 刚创建
+        # 的记录（带 paradigm）可能被这里的裸投影覆盖。create 闭包只在缺失时
+        # 被调用，正好兼作"确实新建了"的日志信号。
+        created = False
+
+        def _create() -> SessionRecord:
+            nonlocal created
+            created = True
+            return SessionRecord(
                 session_id=session_id,
                 paradigm=None,
                 state=SessionRecordState.RUNNING,
                 started_at=datetime.now(timezone.utc),
-            ))
+            )
+
+        self._repo.upsert(session_id, _create, lambda r: None)
+        if created:
             logger.info("Session projected from engine event: %s", session_id)
 
     def on_trial_completed(self, event: Event) -> None:
@@ -198,41 +210,48 @@ class SessionAppService:
             logger.error("on_trial_completed: expected Classification, got %s", type(clf))
             return
 
+        # 追加逻辑在仓储锁内执行（P1-4）：trial_number 的补算、append、提交
+        # 是一个原子单元，EventBus 线程与 HTTP 线程不再有覆盖窗口。
+        # Prefer the aggregate's own trial_number (TrialOutcome) over a local
+        # count so read model and aggregate can never drift.
+        def _append(record: SessionRecord) -> None:
+            trial_number = (getattr(payload, "trial_number", None)
+                            or record.trial_count + 1)
+            record.append_trial(TrialRecord(
+                trial_number=trial_number,
+                target_id=clf.target_id,
+                event_id=clf.event_id,
+                confidence=clf.confidence,
+                forced=clf.forced,
+                produced_at=clf.produced_at,
+            ))
+            logger.debug("Trial #%d recorded: session=%s target=%d",
+                         trial_number, record.session_id, clf.target_id)
+
         session_id: Optional[str] = getattr(payload, "session_id", None)
         if session_id is not None:
-            record = self._repo.find_by_id(session_id)
-            if record is None:
+            def _create() -> SessionRecord:
                 # Engine session unknown to the read model — project it now
                 # rather than dropping or mis-filing the trial.
                 logger.warning("TrialCompleted for unknown session %s; creating record",
                                session_id)
-                record = SessionRecord(
+                return SessionRecord(
                     session_id=session_id,
                     paradigm=None,
                     state=SessionRecordState.RUNNING,
                     started_at=datetime.now(timezone.utc),
                 )
+
+            self._repo.upsert(session_id, _create, _append)
         else:
             # Legacy bare-Classification payload: no id to address by.
-            record = self._repo.find_active()
-            if record is None:
+            active = self._repo.find_active()
+            if active is None:
                 logger.warning("TrialCompleted received but no active session; ignoring")
                 return
-
-        # Prefer the aggregate's own trial_number (TrialOutcome) over a local
-        # count so read model and aggregate can never drift.
-        trial_number = getattr(payload, "trial_number", None) or record.trial_count + 1
-        record.append_trial(TrialRecord(
-            trial_number=trial_number,
-            target_id=clf.target_id,
-            event_id=clf.event_id,
-            confidence=clf.confidence,
-            forced=clf.forced,
-            produced_at=clf.produced_at,
-        ))
-        self._repo.save(record)
-        logger.debug("Trial #%d recorded: session=%s target=%d",
-                     trial_number, record.session_id, clf.target_id)
+            if self._repo.update(active.session_id, _append) is None:
+                logger.warning("Active session %s vanished before trial commit; ignoring",
+                               active.session_id)
 
     def on_session_ended(self, event: Event) -> None:
         """
@@ -241,17 +260,16 @@ class SessionAppService:
         shape) falls back to closing the active session.
         """
         session_id = getattr(event.data, "session_id", None)
-        if session_id is not None:
-            record = self._repo.find_by_id(session_id)
-            if record is None:
-                logger.warning("SessionEnded for unknown session %s; ignoring", session_id)
+        if session_id is None:
+            active = self._repo.find_active()
+            if active is None:
                 return
-        else:
-            record = self._repo.find_active()
-            if record is None:
-                return
-        record.mark_ended()  # idempotent
-        self._repo.save(record)
+            session_id = active.session_id
+        # 原子化（P1-4）；mark_ended 幂等。
+        record = self._repo.update(session_id, lambda r: r.mark_ended())
+        if record is None:
+            logger.warning("SessionEnded for unknown session %s; ignoring", session_id)
+            return
         logger.info("Session ended (projected): %s (%d trials)",
                     record.session_id, record.trial_count)
 
