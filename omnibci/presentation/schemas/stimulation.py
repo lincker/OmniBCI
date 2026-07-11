@@ -1,6 +1,8 @@
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, computed_field
 
+from omnibci.application.queries.plugin_queries import PluginInfo
+
 
 class StartStimulationRequest(BaseModel):
     paradigm: Optional[str] = None
@@ -52,6 +54,24 @@ class ParadigmInfo(BaseModel):
     def name(self) -> str:
         """Deprecated alias for display_name."""
         return self.display_name
+
+    @classmethod
+    def from_plugin_info(cls, p: PluginInfo) -> "ParadigmInfo":
+        """Map the application-layer discovery DTO to this wire schema.
+
+        唯一允许的方向：presentation 依赖 application。字段一一对应；
+        两侧独立演化时此处会以显式报错（而非静默漂移）暴露差异。
+        """
+        return cls(
+            id=p.id,
+            plugin_type=p.plugin_type,
+            display_name=p.display_name,
+            description=p.description,
+            version=p.version,
+            source=p.source,
+            params=p.params,
+            controls=p.controls,
+        )
 
 
 class ParadigmsResponse(BaseModel):

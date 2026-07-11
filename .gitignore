@@ -114,9 +114,6 @@ pip-selfcheck.json
 # user config profiles — machine-specific, never committed
 /omnibci/conf/profiles/
 
-# tests — committed after review
-/tests
-
 # stimulation picture
 /omnibci/infrastructure/stimulation/creator/stim/*
 *.png

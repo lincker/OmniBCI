@@ -93,13 +93,6 @@ layers = [
     "omnibci.application",
     "omnibci.domain",
 ]
-unmatched_ignore_imports_alerting = "error"
-ignore_imports = [
-    # layers 契约会追间接链条：application → plugin_catalog → presentation
-    # 由两条已豁免的 P0 边首尾相接构成。此处豁免链条的最后一跳（与 P0-2
-    # forbidden 契约中的豁免是同一条边），P0-2 修复时两处一并删除。
-    "omnibci.infrastructure.plugins.plugin_catalog -> omnibci.presentation.schemas.stimulation",
-]
 
 [[tool.importlinter.contracts]]
 name = "application 不得依赖 infrastructure"
@@ -121,12 +114,6 @@ name = "infrastructure 不得依赖 presentation"
 type = "forbidden"
 source_modules = ["omnibci.infrastructure"]
 forbidden_modules = ["omnibci.presentation"]
-unmatched_ignore_imports_alerting = "error"
-ignore_imports = [
-    # P0-2：插件发现返回 wire schema → 修复：PluginInfo DTO 下移至 application
-    "omnibci.infrastructure.plugins.plugin_catalog -> omnibci.presentation.schemas.stimulation",
-    "omnibci.infrastructure.stimulation.paradigm_discovery -> omnibci.presentation.schemas.stimulation",
-]
 
 [[tool.importlinter.contracts]]
 name = "shared 保持零内部依赖（纯共享内核）"
