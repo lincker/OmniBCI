@@ -58,26 +58,26 @@ class Stimulator:
         plugin_path = os.path.join(
             next(iter(omnibci.__path__)), 'infrastructure', 'plugins', 'acquisition'
         )
-        from omnibci.shared.loader import PluginLoader
-        from omnibci.shared.factory import ObjectFactory
+        from omnibci.infrastructure.plugins.loader import PluginLoader
+        from omnibci.infrastructure.plugins.factory import ObjectFactory
         PluginLoader.load_from_dir(
             plugin_path,
             base_package='omnibci.infrastructure.plugins.acquisition',
         )
-        return ObjectFactory.create(TriggerEmitter, config_key='ACQUISITION.trigger')
+        return ObjectFactory.create(TriggerEmitter, settings.get('ACQUISITION.trigger'))
 
     def _load_paradigm(self, trigger: TriggerEmitter) -> Paradigm:
         plugin_path = os.path.join(
             next(iter(omnibci.__path__)), 'infrastructure', 'plugins', 'paradigms'
         )
-        from omnibci.shared.loader import PluginLoader
-        from omnibci.shared.factory import ObjectFactory
+        from omnibci.infrastructure.plugins.loader import PluginLoader
+        from omnibci.infrastructure.plugins.factory import ObjectFactory
         PluginLoader.load_from_dir(
             plugin_path,
             base_package='omnibci.infrastructure.plugins.paradigms',
         )
         return ObjectFactory.create(
-            Paradigm, config_key='STIMULATION.paradigm', trigger=trigger
+            Paradigm, settings.get('STIMULATION.paradigm'), trigger=trigger
         )
 
     # ── Internal setup ─────────────────────────────────────────────────────

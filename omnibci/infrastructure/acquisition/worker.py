@@ -54,9 +54,11 @@ class AcquisitionWorker(mp.Process):
         # Anchor on the omnibci package root so this works regardless of where
         # this module physically lives (decoupled from __file__ depth).
         plugin_path = os.path.join(next(iter(omnibci.__path__)), 'infrastructure', 'plugins', 'acquisition')
-        from omnibci.shared.loader import PluginLoader
-        from omnibci.shared.factory import ObjectFactory
+        from omnibci.conf import settings
+        from omnibci.infrastructure.plugins.loader import PluginLoader
+        from omnibci.infrastructure.plugins.factory import ObjectFactory
         PluginLoader.load_from_dir(plugin_path, base_package='omnibci.infrastructure.plugins.acquisition')
+        # 配置读取上移到调用方；工厂只按 plugin_type 查注册表并实例化。
         self.data_source = ObjectFactory.create(
-            SignalSource, config_key='ACQUISITION.signal_source'
+            SignalSource, settings.get('ACQUISITION.signal_source')
         )

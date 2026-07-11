@@ -7,13 +7,9 @@
 # the devices controlled by BCI.
 
 from abc import ABC, abstractmethod
-from typing import Dict, Type, ClassVar
-
-from omnibci.shared.registry import Registerable
 
 
-class Effector(Registerable, ABC):
-    _target_registry: ClassVar[Dict[str, Type['Effector']]] = {}
+class Effector(ABC):
 
     @abstractmethod
     def setup(self):

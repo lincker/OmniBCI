@@ -126,8 +126,3 @@ forbidden_modules = [
     "omnibci.infrastructure",
     "omnibci.presentation",
 ]
-unmatched_ignore_imports_alerting = "error"
-ignore_imports = [
-    # P0-3：factory 顶层读全局 settings → 修复：factory 迁往 infrastructure，target_id 改参数
-    "omnibci.shared.factory -> omnibci.conf",
-]

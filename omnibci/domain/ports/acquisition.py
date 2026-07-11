@@ -13,21 +13,17 @@ Copyright (c) 2026 by lincker, All Rights Reserved.
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-12-31 10:34
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, Dict, Type
+from typing import Any
 
 from numpy import typing as npt
 
-from omnibci.shared.registry import Registerable
-
-
-class SignalSource(Registerable, ABC):
+class SignalSource(ABC):
     """
     Abstract class for signal source.
 
     This class defines the interface for signal source, which are responsible for
     reading data from a source and providing it in a standardized format.
     """
-    _target_registry: ClassVar[Dict[str, Type['SignalSource']]] = {}
     def __init__(self):
         super().__init__()
         self._is_connected = False
@@ -70,8 +66,7 @@ class SignalSource(Registerable, ABC):
         """teardown connection"""
 
 
-class TriggerEmitter(Registerable, ABC):
-    _target_registry: ClassVar[Dict[str, Type['TriggerEmitter']]] = {}
+class TriggerEmitter(ABC):
     @abstractmethod
     def send(self, event_id: int) -> bool:
         """send trigger/event"""

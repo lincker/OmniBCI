@@ -45,15 +45,17 @@ class SignalProcessingWorker(mp.Process):
         algorithm_plugin_path = os.path.join(
             next(iter(omnibci.__path__)), 'infrastructure', 'plugins', 'algorithms'
         )
-        from omnibci.shared.loader import PluginLoader
-        from omnibci.shared.factory import ObjectFactory
+        from omnibci.conf import settings
+        from omnibci.infrastructure.plugins.loader import PluginLoader
+        from omnibci.infrastructure.plugins.factory import ObjectFactory
 
         PluginLoader.load_from_dir(
             algorithm_plugin_path,
             base_package='omnibci.infrastructure.plugins.algorithms',
         )
-        decoder = ObjectFactory.create(Decoder, config_key='ALGORITHM.decoder')
-        detector = ObjectFactory.create(EpochDetector, config_key='ALGORITHM.epoch_detector')
+        # 配置读取上移到调用方；工厂只按 plugin_type 查注册表并实例化。
+        decoder = ObjectFactory.create(Decoder, settings.get('ALGORITHM.decoder'))
+        detector = ObjectFactory.create(EpochDetector, settings.get('ALGORITHM.epoch_detector'))
         filters = self._load_filters()
 
         # sample_rate is injected at construction (self.sample_rate), no settings read here.
@@ -78,7 +80,8 @@ class SignalProcessingWorker(mp.Process):
         if not names:
             return []
 
-        registry = Filter._target_registry
+        from omnibci.infrastructure.plugins.registry import registry_for
+        registry = registry_for(Filter)
         filters = []
         for name in names:
             cls = registry.get(name)

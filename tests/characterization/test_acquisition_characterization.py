@@ -3,10 +3,12 @@ Characterization tests — Acquisition 限界上下文.
 
 锁定采集上下文当前的两个稳定接缝：
 
-  1. 插件自注册机制（Registerable + ObjectFactory）：FileReader 以
-     plugin_type='file_reader' 注册进 SignalSource 的注册表，工厂按
-     settings 中的 ACQUISITION.signal_source 解析出具体实现。这是采集层
-     "换设备只改配置" 能力的根基，重构时绝不能破坏。
+  1. 插件注册机制（register_plugin 装饰器 + ObjectFactory）：FileReader 以
+     plugin_type='file_reader' 注册进 SignalSource 的注册表，调用方读
+     settings 中的 ACQUISITION.signal_source 后由工厂解析出具体实现。这是
+     采集层 "换设备只改配置" 能力的根基，重构时绝不能破坏。
+     （P0-3：原 Registerable 元类自注册已改为显式装饰器，注册表与工厂
+     迁至 infrastructure/plugins；工厂签名从 config_key 改为 target_id。）
 
   2. SignalSource 端口生命周期：FileReader 的 connect → start_stream →
      read_chunk（文件指针按 chunk_size 步进）→ stop_stream 的可观察行为。
@@ -23,7 +25,8 @@ import numpy as np
 import pytest
 
 from omnibci.domain.ports.acquisition import SignalSource
-from omnibci.shared.factory import ObjectFactory
+from omnibci.infrastructure.plugins.factory import ObjectFactory
+from omnibci.infrastructure.plugins.registry import registry_for
 from omnibci.infrastructure.plugins.acquisition.file.reader import FileReader
 
 
@@ -59,18 +62,21 @@ class _FakeAdapter:
 
 class TestDataSourceRegistry:
     def test_filereader_is_registered_under_its_plugin_type(self):
-        assert "file_reader" in SignalSource._target_registry
-        assert SignalSource._target_registry["file_reader"] is FileReader
+        assert "file_reader" in registry_for(SignalSource)
+        assert registry_for(SignalSource)["file_reader"] is FileReader
 
     def test_factory_resolves_configured_data_source(self):
         # settings.toml ships ACQUISITION.signal_source = "file_reader"
-        instance = ObjectFactory.create(SignalSource, "ACQUISITION.signal_source")
+        from omnibci.conf import settings
+        instance = ObjectFactory.create(SignalSource, settings.get("ACQUISITION.signal_source"))
         assert isinstance(instance, FileReader)
 
-    def test_factory_returns_none_for_unknown_type(self, monkeypatch):
-        import omnibci.shared.factory as factory_mod
-        monkeypatch.setattr(factory_mod.settings, "get", lambda key: "does_not_exist")
-        assert ObjectFactory.create(SignalSource, "ACQUISITION.signal_source") is None
+    def test_factory_returns_none_for_unknown_type(self):
+        assert ObjectFactory.create(SignalSource, "does_not_exist") is None
+
+    def test_factory_returns_none_for_missing_target(self):
+        # 配置读取上移后，"缺配置" 在工厂侧表现为 target_id=None
+        assert ObjectFactory.create(SignalSource, None) is None
 
 
 # ---------------------------------------------------------------------------

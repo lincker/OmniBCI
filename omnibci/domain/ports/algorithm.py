@@ -4,12 +4,11 @@
 # @Date     : 2025-04-25 10:53
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import ClassVar, Dict, Optional, Tuple, Type
+from typing import Optional, Tuple
 
 from numpy import typing as npt
 
 from omnibci.shared.signal import SignalChunk
-from omnibci.shared.registry import Registerable
 
 
 @dataclass(frozen=True)
@@ -24,7 +23,7 @@ class FilterContext:
     baseline: Optional[npt.NDArray] = None
 
 
-class Filter(Registerable, ABC):
+class Filter(ABC):
     """
     A single ordered preprocessing stage in a ProcessingPipeline.
 
@@ -32,7 +31,6 @@ class Filter(Registerable, ABC):
     downsample, channel selection, …) and returns it for the next stage.
     Pure transform: no termination decision.
     """
-    _target_registry: ClassVar[Dict[str, Type['Filter']]] = {}
 
     @abstractmethod
     def apply(self, data: npt.NDArray, ctx: FilterContext) -> npt.NDArray:
@@ -46,7 +44,7 @@ class Prediction:
     confidence: Optional[float] = None
 
 
-class Decoder(Registerable, ABC):
+class Decoder(ABC):
     """
     Turns a (filtered) epoch window into a recognized target.
 
@@ -57,7 +55,6 @@ class Decoder(Registerable, ABC):
       - decode(data) — produce a Prediction, or None if not ready / not
         confident. Pure function of *data*.
     """
-    _target_registry: ClassVar[Dict[str, Type['Decoder']]] = {}
 
 
     def __init__(self):
@@ -106,9 +103,8 @@ class Decoder(Registerable, ABC):
         return self
 
 
-class EpochDetector(Registerable, ABC):
+class EpochDetector(ABC):
     """detect epoch start and end."""
-    _target_registry: ClassVar[Dict[str, Type['EpochDetector']]] = {}
 
     """return（index, event_id). If not found, return（-1，0）"""
     @abstractmethod

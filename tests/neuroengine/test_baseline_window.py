@@ -228,7 +228,8 @@ class TestBaselineCorrectionFilter:
         from omnibci.infrastructure.plugins.algorithms.filters.baseline_correction import (
             BaselineCorrection,
         )
-        assert Filter._target_registry.get("BASELINE_CORRECTION") is BaselineCorrection
+        from omnibci.infrastructure.plugins.registry import registry_for
+        assert registry_for(Filter).get("BASELINE_CORRECTION") is BaselineCorrection
 
 
 class TestBaselineCorrectionInPipeline:
