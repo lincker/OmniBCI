@@ -107,11 +107,15 @@ class TestEngineDebugFlag:
     def test_run_passes_debug_true(self, mock_run):
         _engine(debug=True).run()
         assert mock_run.call_args.kwargs.get("debug") is True
+        # asyncio.run 被 mock，serve() 协程从未被 await——显式关闭，
+        # 否则 GC 时报 "coroutine was never awaited" RuntimeWarning。
+        mock_run.call_args.args[0].close()
 
     @patch("omnibci.infrastructure.neuroengine.engine.asyncio.run")
     def test_run_passes_debug_false(self, mock_run):
         _engine(debug=False).run()
         assert mock_run.call_args.kwargs.get("debug") is False
+        mock_run.call_args.args[0].close()
 
 
 # ---------------------------------------------------------------------------
