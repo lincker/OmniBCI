@@ -6,6 +6,11 @@ the running engine without depending on its concrete implementation
 (NeuroEngine / its EventBus).  Concrete adapters live in the same layer
 (NeuroEngineService) or in infrastructure.
 """
-from omnibci.application.ports.engine_port import EnginePort
+from omnibci.application.ports.engine_port import (
+    EngineFactory,
+    EngineHandle,
+    EnginePort,
+    STIMULATION_PEER,
+)
 
-__all__ = ["EnginePort"]
+__all__ = ["EngineFactory", "EngineHandle", "EnginePort", "STIMULATION_PEER"]

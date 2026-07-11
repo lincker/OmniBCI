@@ -58,7 +58,8 @@ def test_engine_port_cannot_be_instantiated_directly():
 def test_neuro_engine_service_is_engine_port():
     from omnibci.application.services.engine_service import NeuroEngineService
     assert issubclass(NeuroEngineService, EnginePort)
-    assert isinstance(NeuroEngineService(), EnginePort)
+    from unittest.mock import MagicMock
+    assert isinstance(NeuroEngineService(engine_factory=MagicMock()), EnginePort)
 
 
 # ---------------------------------------------------------------------------

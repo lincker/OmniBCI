@@ -7,9 +7,10 @@ the stage-4 design discussion.
 
     effective = active profile overlay ⊕ default (settings.toml)
 """
+import logging
 import threading
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from omnibci.conf import OmniBCISettings, ProfileNameError, ProfileNotFoundError
 
@@ -78,8 +79,17 @@ class ProfileInUseError(RuntimeError):
 class ConfigService:
     """Whitelist-governed reads/writes over the layered settings."""
 
-    def __init__(self, settings: OmniBCISettings) -> None:
+    def __init__(
+        self,
+        settings: OmniBCISettings,
+        plugin_catalog: Optional[Callable[[str], List[Any]]] = None,
+    ) -> None:
+        """*plugin_catalog*: ``category -> [PluginInfo]`` 查询函数，用于对
+        plugin_type 类配置键做警告级软校验。由组合侧注入（presentation/main
+        传 infrastructure 的 list_plugins）；None = 跳过软校验（单测默认）。
+        P0-1：替代原先在方法内延迟 import infrastructure.plugin_catalog。"""
         self._settings = settings
+        self._plugin_catalog = plugin_catalog
         self._write_lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -130,22 +140,20 @@ class ConfigService:
         if bad:
             raise ConfigValidationError(bad)
         # Soft-validate plugin_type keys against discovered plugin lists (warn only).
-        for key, category in _PLUGIN_SOFT_VALIDATE.items():
-            if key in updates:
-                self._soft_validate_plugin(str(updates[key]), category, key)
+        if self._plugin_catalog is not None:
+            for key, category in _PLUGIN_SOFT_VALIDATE.items():
+                if key in updates:
+                    self._soft_validate_plugin(str(updates[key]), category, key)
         # Normalise int→float for float keys so the toml type stays stable.
         return {
             k: (float(v) if CONFIG_WHITELIST[k].type == "float" else v)
             for k, v in updates.items()
         }
 
-    @staticmethod
-    def _soft_validate_plugin(plugin_type: str, category: str, config_key: str) -> None:
+    def _soft_validate_plugin(self, plugin_type: str, category: str, config_key: str) -> None:
         """Warn (never raise) if plugin_type is not in the discovered list for category."""
         try:
-            from omnibci.infrastructure.plugins.plugin_catalog import list_plugins  # noqa: PLC0415
-            import logging  # noqa: PLC0415
-            known = [p.plugin_type for p in list_plugins(category)]
+            known = [p.plugin_type for p in self._plugin_catalog(category)]
             if known and plugin_type not in known:
                 logging.getLogger(__name__).warning(
                     "%s %r not in discovered %s list %s — "

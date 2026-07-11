@@ -74,9 +74,8 @@ markers = [
 # ============================================================================
 # import-linter 分层契约
 #
-# 豁免表（ignore_imports）是棘轮：登记的是既存违规，只删不加。
-# 每修复一处 P0，从表里删对应行——unmatched_ignore_imports_alerting=error
-# 保证修完忘删也会红。新增跨层依赖不会在豁免表里，CI 直接失败。
+# 豁免表已随 P0-1/2/3 修复全部清零（2026-07）。此后任何跨层依赖都会让
+# CI 直接失败；确需豁免的必须在 PR 里专门论证后加 ignore_imports。
 # 本地运行：lint-imports
 # ============================================================================
 [tool.importlinter]
@@ -99,15 +98,6 @@ name = "application 不得依赖 infrastructure"
 type = "forbidden"
 source_modules = ["omnibci.application"]
 forbidden_modules = ["omnibci.infrastructure"]
-unmatched_ignore_imports_alerting = "error"
-ignore_imports = [
-    # P0-1：引擎生命周期依赖具体实现 → 修复：EngineFactory 经 bootstrap 注入
-    "omnibci.application.services.engine_service -> omnibci.infrastructure.neuroengine.engine",
-    "omnibci.application.services.engine_service -> omnibci.infrastructure.neuroengine.builder",
-    "omnibci.application.services.engine_service -> omnibci.infrastructure.neuroengine.gateway.peers",
-    # P0-1：插件软校验直取目录 → 修复：注入 PluginCatalogPort
-    "omnibci.application.services.config_service -> omnibci.infrastructure.plugins.plugin_catalog",
-]
 
 [[tool.importlinter.contracts]]
 name = "infrastructure 不得依赖 presentation"

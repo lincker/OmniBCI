@@ -20,7 +20,7 @@ from omnibci.application.commands.stimulation_commands import (
 )
 from omnibci.application.services.stimulation_service import StimulationAppService
 from omnibci.infrastructure.plugins.plugin_catalog import list_plugins
-from omnibci.infrastructure.neuroengine.gateway.peers import STIMULATION
+from omnibci.application.ports.engine_port import STIMULATION_PEER
 
 router = APIRouter(prefix="/stimulation", tags=["Stimulation"])
 
@@ -38,7 +38,7 @@ def stimulation_status(
     return ApiResponse(data=StimulationStatusResponse(
         active=svc.is_active,
         process_alive=svc.process_alive,
-        engine_connected=engine_service.is_peer_connected(STIMULATION),
+        engine_connected=engine_service.is_peer_connected(STIMULATION_PEER),
         paradigm=svc.current_paradigm,
     ))
 

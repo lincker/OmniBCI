@@ -32,6 +32,7 @@ from omnibci.application.services.stimulation_service import StimulationAppServi
 from omnibci.application.services.session_service import SessionAppService
 from omnibci.application.services.recording_service import RecordingService
 from omnibci.domain.repositories import SessionRepository
+from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
 
@@ -132,7 +133,10 @@ async def build_container() -> AppContainer:
     Constructs the NeuroEngineService and runs its (non-blocking) startup so the
     engine object — and its EventBus — exist before listeners are registered.
     """
-    engine_service = NeuroEngineService()
+    # 每次调用构建全新引擎图（restart 语义）；重启时重读 settings，
+    # 使 engine-restart 级配置变更生效 —— 与迁移前 NeuroEngineBuilder()
+    # 在 service 内部的行为一致。
+    engine_service = NeuroEngineService(engine_factory=lambda: NeuroEngineBuilder().build())
     await engine_service.startup()
     return assemble(engine_service, _build_session_repository())
 
