@@ -58,25 +58,18 @@ class AppContainer:
 # Concrete-implementation selection (config-driven)
 # ---------------------------------------------------------------------------
 
-def _build_session_repository() -> SessionRepository:
+def _build_session_repository(kind: "str | None") -> SessionRepository:
     """
-    Pick the SessionRepository implementation from settings.
+    Pick the SessionRepository implementation for *kind*
+    (settings key: PERSISTENCE.session_repository; None/"in_memory" → 内存实现).
 
-    settings key: PERSISTENCE.session_repository  (default: "in_memory")
+    P2-9：改为接收值而非自行读全局 settings —— 配置读取集中在
+    build_container()。未知实现名 fail-fast（ValueError），不再静默降级。
 
     Adding a SQLite/Postgres adapter later means registering it here — no
     application-layer code changes, since everything depends on the
     SessionRepository port.
     """
-    kind = "in_memory"
-    try:
-        # Lazy import so this module stays importable without a settings file
-        # (e.g. in pure unit tests of the wiring helpers below).
-        from omnibci.conf import settings
-        kind = settings.get("PERSISTENCE.session_repository")
-    except Exception:
-        kind = "in_memory"
-
     if kind in (None, "in_memory"):
         return InMemorySessionRepository()
 
@@ -90,22 +83,22 @@ def _build_session_repository() -> SessionRepository:
 def assemble(
     engine_service: NeuroEngineService,
     repository: SessionRepository,
+    *,
+    settings=None,
+    auto_spawn: bool = True,
 ) -> AppContainer:
     """
     Wire application services around an (already-created) engine service and
     repository.  Acquisition & Stimulation share the *same* engine instance via
     the EnginePort abstraction.
+
+    P2-9：本函数保持纯净（零 I/O、零全局读取）——settings 与 auto_spawn
+    由调用方（build_container）读取一次后传入；单测可传 None/默认值。
     """
-    acquisition_service = AcquisitionAppService(engine_service)
+    acquisition_service = AcquisitionAppService(engine_service, settings=settings)
     session_service = SessionAppService(repository=repository,
                                         engine_port=engine_service)
 
-    # Read auto_spawn from config; default True for single-machine convenience.
-    try:
-        from omnibci.conf import settings as _settings
-        auto_spawn = bool(_settings.get("STIMULATION.auto_spawn", True))
-    except Exception:
-        auto_spawn = True
     process_manager = StimulationProcessManager(auto_spawn=auto_spawn)
 
     return AppContainer(
@@ -132,13 +125,24 @@ async def build_container() -> AppContainer:
 
     Constructs the NeuroEngineService and runs its (non-blocking) startup so the
     engine object — and its EventBus — exist before listeners are registered.
+
+    P2-9：这里是 API 进程组合期**唯一**的 settings 读取点。配置文件缺失/
+    损坏在 conf import 时即刻炸出（fail-fast），可选键经 get(key, 默认值)
+    显式给默认——组合路径上不再有 except Exception 静默降级。
     """
+    from omnibci.conf import settings
+
+    repository = _build_session_repository(
+        settings.get("PERSISTENCE.session_repository", "in_memory"))
+    auto_spawn = bool(settings.get("STIMULATION.auto_spawn", True))
+
     # 每次调用构建全新引擎图（restart 语义）；重启时重读 settings，
     # 使 engine-restart 级配置变更生效 —— 与迁移前 NeuroEngineBuilder()
     # 在 service 内部的行为一致。
     engine_service = NeuroEngineService(engine_factory=lambda: NeuroEngineBuilder().build())
     await engine_service.startup()
-    return assemble(engine_service, _build_session_repository())
+    return assemble(engine_service, repository,
+                    settings=settings, auto_spawn=auto_spawn)
 
 
 # ---------------------------------------------------------------------------

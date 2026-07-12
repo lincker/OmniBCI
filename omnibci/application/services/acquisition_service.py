@@ -33,8 +33,12 @@ class AcquisitionAppService:
     reach into the engine's internals (event_bus) any more.
     """
 
-    def __init__(self, engine: EnginePort) -> None:
+    def __init__(self, engine: EnginePort, settings=None) -> None:
+        """*settings*: OmniBCISettings，仅用于 status 查询里的设备元数据
+        展示。由组合根注入（P2-9，取代方法内延迟 import 全局单例）；
+        None = 元数据不可用（单测默认），status 相应字段为 None。"""
         self._engine = engine
+        self._settings = settings
         self._connected = False
         self._streaming = False
 
@@ -88,32 +92,26 @@ class AcquisitionAppService:
             channel_count=channel_count,
         )
 
-    @staticmethod
-    def _device_metadata():
+    def _device_metadata(self):
         """
-        Best-effort device metadata from settings (data source id, sample rate,
-        channel count).  Returns (None, None, None) if settings are unavailable,
-        preserving the prior null behaviour rather than raising.
+        Best-effort device metadata from the injected settings (data source
+        id, sample rate, channel count).  Returns (None, None, None) when no
+        settings were injected — preserving the prior null behaviour.
+
+        P2-9：settings 改为构造注入；配置键缺失经 get(key, None) 显式给
+        默认，不再用 except Exception 吞掉所有异常（文件损坏等真故障
+        在组合根 import 时即已 fail-fast）。
         """
-        try:
-            from omnibci.conf import settings
-
-            def _get(key):
-                try:
-                    return settings.get(key)
-                except Exception:
-                    return None
-
-            source = _get("ACQUISITION.signal_source")
-            sample_rate = _get("ACQUISITION.sample_rate")
-            channel_count = _get("ACQUISITION.channel_number")
-            return (
-                str(source) if source is not None else None,
-                int(sample_rate) if sample_rate is not None else None,
-                int(channel_count) if channel_count is not None else None,
-            )
-        except Exception:
+        if self._settings is None:
             return None, None, None
+        source = self._settings.get("ACQUISITION.signal_source", None)
+        sample_rate = self._settings.get("ACQUISITION.sample_rate", None)
+        channel_count = self._settings.get("ACQUISITION.channel_number", None)
+        return (
+            str(source) if source is not None else None,
+            int(sample_rate) if sample_rate is not None else None,
+            int(channel_count) if channel_count is not None else None,
+        )
 
     # ------------------------------------------------------------------
     # Internal

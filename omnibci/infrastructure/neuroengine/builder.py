@@ -35,15 +35,16 @@ class NeuroEngineConfig:
 
     @classmethod
     def from_settings(cls) -> "NeuroEngineConfig":
-        """Build config from settings.toml, falling back to dataclass defaults."""
+        """Build config from settings.toml, falling back to dataclass defaults.
+
+        P2-9：改用 settings.get(key, default)（default 参数已修复）——
+        缺键走默认值是显式语义，异常吞噬移除，真故障不再被掩盖。
+        """
         from omnibci.conf import settings
 
         def _get(key, default):
-            try:
-                value = settings.get(key)
-            except Exception:
-                return default
-            return value if value is not None else default
+            value = settings.get(key, default)
+            return default if value is None else value
 
         return cls(
             queue_size=int(_get("NEUROENGINE.queue_size", cls.queue_size)),
