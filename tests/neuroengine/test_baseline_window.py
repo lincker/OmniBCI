@@ -254,3 +254,47 @@ class TestBaselineCorrectionInPipeline:
 
 if __name__ == "__main__":
     pytest.main(["-s", "-v", __file__])
+
+
+# ---------------------------------------------------------------------------
+# P2-10: Epoch 构造不再有副作用（不改调用者数组 + 自身只读）
+# ---------------------------------------------------------------------------
+
+class TestEpochConstructionSideEffects:
+    def test_caller_array_stays_writeable(self):
+        """构造 Epoch 不得就地冻结调用者传入的数组。"""
+        src = np.ones((2, 5))
+        assert src.flags.writeable
+        Epoch(data=src, event_id=1, sample_rate=1000, channel_count=2)
+        assert src.flags.writeable          # 旧实现下此处会变 False
+        src[0, 0] = 42.0                     # 调用者仍可自由写自己的 buffer
+        assert src[0, 0] == 42.0
+
+    def test_epoch_data_is_read_only_copy(self):
+        """Epoch 持有的是自有只读副本（值对象不可变契约保留）。"""
+        src = np.ones((2, 5))
+        ep = Epoch(data=src, event_id=1, sample_rate=1000, channel_count=2)
+        assert not ep.data.flags.writeable
+        with pytest.raises(ValueError):
+            ep.data[0, 0] = 9.0
+        # 副本独立：改源数组不影响已构造的 Epoch
+        src[0, 0] = 7.0
+        assert ep.data[0, 0] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# P2-10: is_high_confidence 阈值提为常量
+# ---------------------------------------------------------------------------
+
+class TestHighConfidenceThreshold:
+    def test_threshold_boundary(self):
+        from omnibci.domain.classification import (
+            Classification, HIGH_CONFIDENCE_THRESHOLD)
+        assert HIGH_CONFIDENCE_THRESHOLD == 0.7
+        at = Classification(target_id=0, event_id=1, confidence=HIGH_CONFIDENCE_THRESHOLD)
+        below = Classification(target_id=0, event_id=1,
+                               confidence=HIGH_CONFIDENCE_THRESHOLD - 0.01)
+        none = Classification(target_id=0, event_id=1, confidence=None)
+        assert at.is_high_confidence is True
+        assert below.is_high_confidence is False
+        assert none.is_high_confidence is False

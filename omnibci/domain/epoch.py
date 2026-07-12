@@ -67,9 +67,15 @@ class Epoch:
                 f"trigger_offset must be in [0, {self.data.shape[1]}) "
                 f"(at least one window sample required), got {self.trigger_offset}"
             )
-        # Make underlying array read-only to enforce value-object immutability
-        object.__setattr__(self, "data", self.data)
-        self.data.flags.writeable = False
+        # 冻结为不可变值对象：拷贝一份**自有**数组并置只读（P2-10）。
+        # 原实现直接对传入数组设 writeable=False——就地改调用者的 buffer，
+        # 上游若还想写它会莫名 ValueError（潜伏副作用）；且 object.__setattr__
+        # 把 data 设成它自身是无效语句。改为拷贝：调用者数组不受影响，
+        # Epoch 持有的副本只读。（唯一生产调用方 EpochProcessor 因此无需
+        # 再自行 .copy()。）
+        frozen = np.array(self.data, copy=True)
+        frozen.flags.writeable = False
+        object.__setattr__(self, "data", frozen)
 
     # ------------------------------------------------------------------
     # Derived properties
