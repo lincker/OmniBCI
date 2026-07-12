@@ -105,7 +105,6 @@ class TestPayloadToJsonable:
         # 对未知类型原样透传（socket 编码方 json.dumps 时自然报错暴露问题）。
         clf = _clf(target_id=4)
         assert payload_to_jsonable(clf) is clf
-        json.dumps(out)
 
     def test_scalar_passthrough(self):
         assert payload_to_jsonable(7) == 7
