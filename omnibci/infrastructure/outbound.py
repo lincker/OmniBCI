@@ -18,35 +18,18 @@ the domain ``Classification`` VO; ``shared/`` must stay dependency-free.
 """
 
 import logging
-from dataclasses import dataclass
 from typing import Any, Optional
 
 from omnibci.shared.events import Event, EventType
 from omnibci.domain.classification import Classification
+# P2-8：载荷类型迁至 application 层（application 服务需对其做显式类型
+# 检查）；此处 re-export 以保持既有导入路径可用。
+from omnibci.application.events import SessionSummary, TrialOutcome
+
+__all__ = ["TrialOutcome", "SessionSummary", "event_to_wire",
+           "make_stimulation_ack", "payload_to_jsonable"]
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class TrialOutcome:
-    """
-    Rich EventBus payload for TrialCompleted — carries the session context the
-    bare Classification lacked.  Picklable (crosses the mp.Queue): str + int +
-    frozen Classification dataclass.
-    """
-    session_id: str
-    trial_number: int
-    classification: Classification
-
-
-@dataclass(frozen=True)
-class SessionSummary:
-    """
-    Rich EventBus payload for SessionEnded — carries session_id alongside the
-    trial count (the bare int payload dropped session_id).  Picklable.
-    """
-    session_id: str
-    total_trials: int
 
 
 def _classification_fields(clf: Classification) -> dict:
@@ -71,27 +54,26 @@ def event_to_wire(event: Event) -> Optional[dict]:
     data = event.data
 
     if etype == EventType.TrialCompleted:
-        if isinstance(data, TrialOutcome):
-            session_id, trial_number, clf = data.session_id, data.trial_number, data.classification
-        elif isinstance(data, Classification):
-            # Back-compat: a bare Classification payload (pre-enrichment).
-            session_id, trial_number, clf = None, 0, data
-        else:
-            logger.error("event_to_wire: TrialCompleted payload is %s, not "
-                         "TrialOutcome/Classification", type(data).__name__)
+        # P2-8：TrialCompleted 载荷从此只有 TrialOutcome 一种形状；
+        # bare-Classification 兼容分支已删（发布端全部走 DomainEventPublisher）。
+        if not isinstance(data, TrialOutcome):
+            logger.error("event_to_wire: TrialCompleted payload is %s, not TrialOutcome",
+                         type(data).__name__)
             return None
-        return {"event": "TrialCompleted", "session_id": session_id,
-                "trial_number": trial_number, **_classification_fields(clf)}
+        return {"event": "TrialCompleted", "session_id": data.session_id,
+                "trial_number": data.trial_number,
+                **_classification_fields(data.classification)}
 
     if etype == EventType.SessionStarted:
         return {"event": "SessionStarted", "session_id": str(data)}
 
     if etype == EventType.SessionEnded:
-        if isinstance(data, SessionSummary):
-            return {"event": "SessionEnded", "session_id": data.session_id,
-                    "total_trials": data.total_trials}
-        # Back-compat: bare total_trials int (pre-enrichment), no session_id.
-        return {"event": "SessionEnded", "session_id": None, "total_trials": int(data)}
+        if not isinstance(data, SessionSummary):
+            logger.error("event_to_wire: SessionEnded payload is %s, not SessionSummary",
+                         type(data).__name__)
+            return None
+        return {"event": "SessionEnded", "session_id": data.session_id,
+                "total_trials": data.total_trials}
 
     if etype == EventType.StimulationAck:
         # Payload arrives from the stimulation process as a JSON dict over the
@@ -134,6 +116,4 @@ def payload_to_jsonable(data: Any) -> Any:
                 **_classification_fields(data.classification)}
     if isinstance(data, SessionSummary):
         return {"session_id": data.session_id, "total_trials": data.total_trials}
-    if isinstance(data, Classification):
-        return _classification_fields(data)
     return data

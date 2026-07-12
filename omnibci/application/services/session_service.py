@@ -30,6 +30,7 @@ from omnibci.application.queries.session_queries import (
     SessionStateDTO,
     TrialDTO,
 )
+from omnibci.application.events import SessionSummary, TrialOutcome
 from omnibci.shared.events import Event, EventType
 from omnibci.domain.classification import Classification
 from omnibci.domain.repositories import (
@@ -199,24 +200,28 @@ class SessionAppService:
     def on_trial_completed(self, event: Event) -> None:
         """
         Receive EventType.TrialCompleted and append the trial to the session
-        identified by the payload's session_id (TrialOutcome).  A record is
-        created on the fly for an unknown id (projection must never lose
-        trials).  A bare Classification payload (no session context, legacy
-        shape) falls back to the active session.
+        identified by the payload's session_id.  A record is created on the
+        fly for an unknown id (projection must never lose trials).
+
+        载荷契约（P2-8）：data 必须是 TrialOutcome —— 发布端统一走
+        DomainEventPublisher 后，bare-Classification 的 legacy 形状及其
+        "fallback 到 active session" 分支已删除。
         """
         payload = event.data
-        clf: Classification = getattr(payload, "classification", payload)
-        if not isinstance(clf, Classification):
-            logger.error("on_trial_completed: expected Classification, got %s", type(clf))
+        if not isinstance(payload, TrialOutcome):
+            logger.error("on_trial_completed: expected TrialOutcome, got %s",
+                         type(payload).__name__)
             return
+        clf: Classification = payload.classification
 
         # 追加逻辑在仓储锁内执行（P1-4）：trial_number 的补算、append、提交
         # 是一个原子单元，EventBus 线程与 HTTP 线程不再有覆盖窗口。
         # Prefer the aggregate's own trial_number (TrialOutcome) over a local
         # count so read model and aggregate can never drift.
         def _append(record: SessionRecord) -> None:
-            trial_number = (getattr(payload, "trial_number", None)
-                            or record.trial_count + 1)
+            # 权威序号来自聚合根（payload.trial_number ≥ 1）；0 = 投递方
+            # 无法提供，按读模型本地计数补算。
+            trial_number = payload.trial_number or record.trial_count + 1
             record.append_trial(TrialRecord(
                 trial_number=trial_number,
                 target_id=clf.target_id,
@@ -228,45 +233,37 @@ class SessionAppService:
             logger.debug("Trial #%d recorded: session=%s target=%d",
                          trial_number, record.session_id, clf.target_id)
 
-        session_id: Optional[str] = getattr(payload, "session_id", None)
-        if session_id is not None:
-            def _create() -> SessionRecord:
-                # Engine session unknown to the read model — project it now
-                # rather than dropping or mis-filing the trial.
-                logger.warning("TrialCompleted for unknown session %s; creating record",
-                               session_id)
-                return SessionRecord(
-                    session_id=session_id,
-                    paradigm=None,
-                    state=SessionRecordState.RUNNING,
-                    started_at=datetime.now(timezone.utc),
-                )
+        session_id = payload.session_id
 
-            self._repo.upsert(session_id, _create, _append)
-        else:
-            # Legacy bare-Classification payload: no id to address by.
-            active = self._repo.find_active()
-            if active is None:
-                logger.warning("TrialCompleted received but no active session; ignoring")
-                return
-            if self._repo.update(active.session_id, _append) is None:
-                logger.warning("Active session %s vanished before trial commit; ignoring",
-                               active.session_id)
+        def _create() -> SessionRecord:
+            # Engine session unknown to the read model — project it now
+            # rather than dropping or mis-filing the trial.
+            logger.warning("TrialCompleted for unknown session %s; creating record",
+                           session_id)
+            return SessionRecord(
+                session_id=session_id,
+                paradigm=None,
+                state=SessionRecordState.RUNNING,
+                started_at=datetime.now(timezone.utc),
+            )
+
+        self._repo.upsert(session_id, _create, _append)
 
     def on_session_ended(self, event: Event) -> None:
         """
         Receive EventType.SessionEnded and close the session identified by the
-        payload (SessionSummary).  A bare int payload (legacy total_trials
-        shape) falls back to closing the active session.
+        payload.
+
+        载荷契约（P2-8）：data 必须是 SessionSummary —— bare-int 的 legacy
+        形状及其 "fallback 到 active session" 分支已删除。
         """
-        session_id = getattr(event.data, "session_id", None)
-        if session_id is None:
-            active = self._repo.find_active()
-            if active is None:
-                return
-            session_id = active.session_id
+        payload = event.data
+        if not isinstance(payload, SessionSummary):
+            logger.error("on_session_ended: expected SessionSummary, got %s",
+                         type(payload).__name__)
+            return
         # 原子化（P1-4）；mark_ended 幂等。
-        record = self._repo.update(session_id, lambda r: r.mark_ended())
+        record = self._repo.update(payload.session_id, lambda r: r.mark_ended())
         if record is None:
             logger.warning("SessionEnded for unknown session %s; ignoring", session_id)
             return

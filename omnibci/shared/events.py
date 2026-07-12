@@ -3,6 +3,7 @@
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-04-21 10:16
 from enum import IntEnum
+from typing import Any, Optional
 
 
 class EventType(IntEnum):
@@ -11,12 +12,13 @@ class EventType(IntEnum):
     DisconnectDataProvider = 102
     StartStream = 111
     StopStream = 112
-    # neuro engine
+    # neuro engine（历史遗留值 33/9：数值是 IPC wire 契约的一部分，
+    # 重新编号需要 bump contracts.PROTOCOL_VERSION，故仅整理注释不改值）
     CloseAllNeuroEngineProcessSystem = 33
     # stimulation
     StartStimTrial = 311
     StimulationAck = 312   # stim → engine: ack/result of a stimulation command
-    MessageFromStimulation = 9
+    MessageFromStimulation = 9   # 历史遗留值，同上
     StartStimulation = 301
     StopStimulation = 302
     # effector (external-device control)
@@ -34,23 +36,37 @@ class EventType(IntEnum):
 
 
 class Event:
+    """EventBus 信封：type 标识事件种类，data 携带载荷。
+
+    载荷契约（P2-8，权威表）——各 EventType 对应的 data 类型：
+
+      TrialCompleted   application.events.TrialOutcome
+      SessionEnded     application.events.SessionSummary
+      SessionStarted   str  (session_id)
+      StartSession     dict {"session_id": str, "paradigm": str|None}
+      EndSession       str  (session_id)
+      StartStimulation str|None (paradigm)
+      StartStimTrial   dict {"n_trials": int, "trial_params": list|None}
+      StimulationAck   dict (make_stimulation_ack 构造，跨 socket 为 JSON)
+      Effector*        dict (设备命令/反馈，跨 socket 为 JSON)
+      其余命令类事件    None
+
+    消费方对富载荷做显式 isinstance 检查；旧的 bare-Classification /
+    bare-int 兼容形状已于 P2-8 移除。
     """
-    events type is command, stimulator
-    """
 
-    def __init__(self, event_type: EventType = None, data=None) -> None:
-        #self.receiver = None
-        self.type:EventType = event_type
-        self.data:int = data
+    __slots__ = ("type", "data")
 
+    def __init__(self, event_type: Optional[EventType] = None, data: Any = None) -> None:
+        self.type: Optional[EventType] = event_type
+        self.data: Any = data
 
-    def to_json(self):
-            return {
-                'type': self.type,
-                'data': self.data
-            }
+    def __repr__(self) -> str:
+        return f"Event({self.type!r}, data={type(self.data).__name__})"
 
     # NOTE: create_from_json was removed — it called cls(**event_json) with key
     # 'type' against parameter 'event_type' (TypeError on any use), and wire
     # decoding is owned by infrastructure/ipc/contracts.body_to_event.
+    # NOTE: to_json was removed (P2-8) — dead code; wire encoding is owned by
+    # infrastructure/ipc/contracts.event_to_body.
 

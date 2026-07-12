@@ -16,6 +16,7 @@ from omnibci.application.queries.session_queries import (
 )
 from omnibci.shared.events import Event, EventType
 from omnibci.domain.classification import Classification
+from omnibci.application.events import SessionSummary, TrialOutcome
 
 
 def _clf(target_id=3, event_id=101, confidence=0.85):
@@ -25,10 +26,6 @@ def _clf(target_id=3, event_id=101, confidence=0.85):
         confidence=confidence,
         produced_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
-
-
-def _trial_event(clf):
-    return Event(event_type=EventType.TrialCompleted, data=clf)
 
 
 class TestCreateSession:
@@ -98,31 +95,43 @@ class TestGetSession:
 
 
 class TestOnTrialCompleted:
-    def test_trial_appended_to_active_session(self, session_service):
+    """P2-8：载荷契约收紧为 TrialOutcome；bare-Classification legacy 形状
+    及其 active-session fallback 已删除，本组测试相应迁移。"""
+
+    def test_trial_appended_by_session_id(self, session_service):
         sid = session_service.handle_create_session(CreateSessionCommand())
-        session_service.on_trial_completed(_trial_event(_clf(target_id=5)))
+        session_service.on_trial_completed(_outcome_event(sid, clf=_clf(target_id=5)))
         dto = session_service.handle_get_session(GetSessionQuery(sid))
         assert dto.trial_count == 1
 
     def test_trial_fields_correct(self, session_service):
         sid = session_service.handle_create_session(CreateSessionCommand())
         clf = _clf(target_id=7, event_id=202, confidence=0.9)
-        session_service.on_trial_completed(_trial_event(clf))
+        session_service.on_trial_completed(_outcome_event(sid, clf=clf))
         trials = session_service.handle_get_trials(GetSessionTrialsQuery(sid))
         assert trials[0].target_id == 7
         assert trials[0].event_id == 202
         assert abs(trials[0].confidence - 0.9) < 1e-6
 
-    def test_trial_numbers_increment(self, session_service):
+    def test_trial_numbers_recomputed_when_zero(self, session_service):
+        """trial_number=0（投递方未提供）→ 按读模型本地计数补算。"""
         sid = session_service.handle_create_session(CreateSessionCommand())
         for i in range(3):
-            session_service.on_trial_completed(_trial_event(_clf(target_id=i)))
+            session_service.on_trial_completed(
+                _outcome_event(sid, trial_number=0, clf=_clf(target_id=i)))
         trials = session_service.handle_get_trials(GetSessionTrialsQuery(sid))
         assert [t.trial_number for t in trials] == [1, 2, 3]
 
-    def test_ignores_event_without_active_session(self, session_service):
-        # No session created — should not raise
-        session_service.on_trial_completed(_trial_event(_clf()))
+    def test_bare_classification_rejected(self, session_service, caplog):
+        """legacy bare-Classification 载荷不再被接受（记错误日志并忽略）。"""
+        import logging
+        sid = session_service.handle_create_session(CreateSessionCommand())
+        bad = Event(event_type=EventType.TrialCompleted, data=_clf())
+        with caplog.at_level(logging.ERROR):
+            session_service.on_trial_completed(bad)
+        assert "TrialOutcome" in caplog.text
+        dto = session_service.handle_get_session(GetSessionQuery(sid))
+        assert dto.trial_count == 0
 
     def test_ignores_wrong_payload_type(self, session_service, caplog):
         import logging
@@ -130,7 +139,7 @@ class TestOnTrialCompleted:
         bad = Event(event_type=EventType.TrialCompleted, data=42)
         with caplog.at_level(logging.ERROR):
             session_service.on_trial_completed(bad)
-        assert "Classification" in caplog.text
+        assert "TrialOutcome" in caplog.text
 
 
 class TestGetLastClassification:
@@ -141,27 +150,38 @@ class TestGetLastClassification:
 
     def test_returns_latest_trial(self, session_service):
         sid = session_service.handle_create_session(CreateSessionCommand())
-        session_service.on_trial_completed(_trial_event(_clf(target_id=1)))
-        session_service.on_trial_completed(_trial_event(_clf(target_id=9)))
+        session_service.on_trial_completed(_outcome_event(sid, 0, _clf(target_id=1)))
+        session_service.on_trial_completed(_outcome_event(sid, 0, _clf(target_id=9)))
         last = session_service.handle_get_last_classification(GetLastClassificationQuery(sid))
         assert last.target_id == 9
 
 
 class TestOnSessionEnded:
-    def test_active_session_marked_ended_via_event(self, session_service):
+    def test_session_marked_ended_via_summary(self, session_service):
         sid = session_service.handle_create_session(CreateSessionCommand())
         session_service.on_session_ended(
-            Event(event_type=EventType.SessionEnded, data=0)
+            Event(event_type=EventType.SessionEnded,
+                  data=SessionSummary(session_id=sid, total_trials=0))
         )
         dto = session_service.handle_get_session(GetSessionQuery(sid))
         assert dto.state == SessionStateDTO.ENDED
+
+    def test_bare_int_payload_rejected(self, session_service, caplog):
+        """legacy bare-int 载荷不再关闭任何会话（记错误日志并忽略）。"""
+        import logging
+        sid = session_service.handle_create_session(CreateSessionCommand())
+        with caplog.at_level(logging.ERROR):
+            session_service.on_session_ended(
+                Event(event_type=EventType.SessionEnded, data=0))
+        assert "SessionSummary" in caplog.text
+        dto = session_service.handle_get_session(GetSessionQuery(sid))
+        assert dto.state == SessionStateDTO.RUNNING
 
 
 # ---------------------------------------------------------------------------
 # Session-id unification (docs/session-id-unification.md)
 # ---------------------------------------------------------------------------
 
-from omnibci.infrastructure.outbound import TrialOutcome, SessionSummary
 
 
 def _outcome_event(session_id, trial_number=1, clf=None):
