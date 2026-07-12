@@ -5,6 +5,7 @@
 import asyncio
 import inspect
 import logging
+import queue
 from typing import Optional
 from omnibci.shared.events import EventType, Event
 
@@ -47,46 +48,53 @@ class EventBus:
         state['_active'] = False
         return state
 
+    #: 阻塞消费的等待窗（秒）。stop() 后消费循环最迟一个窗口内退出；
+    #: 事件到达时立即被取出（不再有 10ms 轮询粒度的派发延迟）。
+    _GET_TIMEOUT_S = 0.2
+
+    def _get_blocking(self) -> "Event | None":
+        """在 executor 线程内阻塞取事件；等待窗内无事件返回 None。"""
+        try:
+            return self._event_queue.get(timeout=self._GET_TIMEOUT_S)
+        except queue.Empty:
+            return None
+
     async def _process_event(self) -> None:
+        """事件消费循环（P2-7 事件化）。
+
+        原实现为 ``empty() + 非阻塞 get + sleep(0.01)`` 忙轮询：空转时每秒
+        100 次唤醒、事件平均带 5ms 派发延迟。现改为把 mp.Queue 的阻塞
+        ``get(timeout)`` 放进默认 executor 线程执行：事件到达即刻唤醒
+        （派发延迟 ≈ 0），空转时每秒仅 1/_GET_TIMEOUT_S 次唤醒。
+        handler 派发逻辑不变（逐个隔离异常）。
+        """
         logger.info('EventBus: processing started')
+        loop = asyncio.get_running_loop()
         while self._active:
             if self._event_queue is None:
                 await asyncio.sleep(0.01)
                 continue
 
-            if not self._event_queue.empty():
-                # Bug 2 fixed: was `self._event_queue.get()` (sync, blocks the
-                # event loop when the queue is an asyncio.Queue).  The queue is
-                # set to an mp.Queue at runtime via set_event_queue(), so the
-                # correct call is the non-blocking `.get()` guarded by
-                # `.empty()` — which is what we have here and is correct for
-                # mp.Queue.  Added an explicit comment so the intent is clear.
-                # (For an asyncio.Queue the correct call would be
-                # `await queue.get()`; the current mp.Queue usage is correct.)
-                event: Event = self._event_queue.get()  # mp.Queue: non-blocking after empty() check
-                event_type = event.type
-                if event_type in self._event_handlers:
-                    # Bug 3 fixed: try/except was wrapping the entire handler
-                    # loop, so a single failing handler would abort all
-                    # subsequent handlers for the same event type.  Each
-                    # handler is now wrapped individually so one failure is
-                    # isolated and logged without affecting the others.
-                    for handler in list(self._event_handlers[event_type]):
-                        try:
-                            if inspect.iscoroutinefunction(handler):
-                                await handler(event)
-                            else:
-                                handler(event)
-                        except Exception as exc:
-                            logger.error(
-                                'EventBus: handler %s raised for event %s: %s',
-                                getattr(handler, '__name__', repr(handler)),
-                                event_type,
-                                exc,
-                                exc_info=True,
-                            )
-            else:
-                await asyncio.sleep(0.01)
+            event: "Event | None" = await loop.run_in_executor(None, self._get_blocking)
+            if event is None:
+                continue
+            event_type = event.type
+            if event_type in self._event_handlers:
+                # 每个 handler 单独包裹：一个失败不影响其余（既有语义）。
+                for handler in list(self._event_handlers[event_type]):
+                    try:
+                        if inspect.iscoroutinefunction(handler):
+                            await handler(event)
+                        else:
+                            handler(event)
+                    except Exception as exc:
+                        logger.error(
+                            'EventBus: handler %s raised for event %s: %s',
+                            getattr(handler, '__name__', repr(handler)),
+                            event_type,
+                            exc,
+                            exc_info=True,
+                        )
         logger.info('EventBus: processing stopped')
 
     def register_event_listener(self, event_type: EventType, handler) -> None:
@@ -107,6 +115,7 @@ class EventBus:
         self._process_task = asyncio.create_task(self._process_event())
 
     def stop(self) -> None:
+        # 消费循环在下一个等待窗（≤_GET_TIMEOUT_S）内观察到 _active=False 退出。
         self._active = False
         self._process_task = None  # loop exits on _active=False; drop the ref
 
