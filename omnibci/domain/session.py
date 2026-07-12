@@ -28,7 +28,7 @@ from enum import Enum, auto
 from typing import Callable, List, Optional
 
 from omnibci.domain.classification import Classification
-from omnibci.domain.epoch import Epoch
+from omnibci.domain.epoch import Epoch, EpochInfo
 from omnibci.domain.events import (
     DomainEvent,
     SessionEnded,
@@ -52,12 +52,13 @@ class Trial:
     """
     A completed trial within a session.
 
-    Lightweight record; the heavy Epoch data is kept here intentionally so
-    session history can be replayed or exported.  If memory is a concern,
-    swap `epoch` for an epoch ID and store epochs in a repository.
+    P1-6：只保留 Epoch 的元数据投影（EpochInfo），不保留信号矩阵——
+    否则长会话中聚合根随 trial 无界增长（每 trial 一整块
+    channels × samples 数组）。需要信号本体的消费者订阅 TrialCompleted
+    领域事件（瞬态携带完整 Epoch），在事件传递时处理/落盘。
     """
     trial_number: int
-    epoch: Epoch
+    epoch_info: EpochInfo
     classification: Classification
     recorded_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -162,7 +163,8 @@ class BCISession:
         trial_number = len(self._trials) + 1
         trial = Trial(
             trial_number=trial_number,
-            epoch=epoch,
+            # 只留元数据投影；信号本体随 TrialCompleted 事件瞬态传递（P1-6）。
+            epoch_info=EpochInfo.from_epoch(epoch),
             classification=classification,
         )
         self._trials.append(trial)

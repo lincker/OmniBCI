@@ -124,3 +124,35 @@ class Epoch:
             f"sample_rate={self.sample_rate}Hz, "
             f"duration={self.duration_seconds:.3f}s)"
         )
+
+
+@dataclass(frozen=True)
+class EpochInfo:
+    """Epoch 的轻量元数据投影 —— 不携带信号矩阵（P1-6）。
+
+    BCISession 的 trial 历史保存它而不是完整 Epoch：长会话中聚合根因此
+    只随 trial 数线性增长几十字节，而不是每 trial 保留一整块
+    (channels × samples) 的信号数据。需要信号本体的消费者应订阅
+    TrialCompleted 领域事件（瞬态携带完整 Epoch），在事件传递时处理。
+    """
+    event_id: int
+    channel_count: int
+    sample_rate: int
+    duration_samples: int
+    trigger_offset: int
+    created_at: datetime
+
+    @classmethod
+    def from_epoch(cls, epoch: "Epoch") -> "EpochInfo":
+        return cls(
+            event_id=epoch.event_id,
+            channel_count=epoch.channel_count,
+            sample_rate=epoch.sample_rate,
+            duration_samples=epoch.duration_samples,
+            trigger_offset=epoch.trigger_offset,
+            created_at=epoch.created_at,
+        )
+
+    @property
+    def duration_seconds(self) -> float:
+        return self.duration_samples / self.sample_rate
