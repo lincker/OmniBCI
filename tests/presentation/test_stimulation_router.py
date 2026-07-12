@@ -5,9 +5,9 @@ from unittest.mock import patch
 
 import pytest
 
-from omnibci.presentation.schemas.stimulation import ParadigmInfo
+from omnibci.application.queries.plugin_queries import PluginInfo
 
-_FAKE_PARADIGM = ParadigmInfo(
+_FAKE_PARADIGM = PluginInfo(
     id="classic40SSVEP",
     plugin_type="STIMULATION_THUBCI_SSVEP_classic40",
     display_name="Classic 40-target SSVEP",
@@ -15,7 +15,8 @@ _FAKE_PARADIGM = ParadigmInfo(
     params={"targets": 40, "refresh_rate_hz": 60},
 )
 
-_PATCH_TARGET = "omnibci.infrastructure.stimulation.paradigm_discovery.list_paradigms"
+# Patch at the use site: the router imports list_plugins at module top level.
+_PATCH_TARGET = "omnibci.presentation.routers.stimulation.list_plugins"
 
 
 class TestParadigms:

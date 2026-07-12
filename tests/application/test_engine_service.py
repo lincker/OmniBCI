@@ -16,7 +16,7 @@ from omnibci.application.services.engine_service import NeuroEngineService
 
 class TestNeuroEngineServiceStatus:
     def test_status_before_init_returns_all_false(self):
-        svc = NeuroEngineService()
+        svc = NeuroEngineService(engine_factory=MagicMock())
         result = svc.handle_get_status(GetEngineStatusQuery())
         assert result.running is False
         assert result.acquisition_alive is False
@@ -58,7 +58,7 @@ class TestNeuroEngineServiceStart:
 
     @pytest.mark.asyncio
     async def test_start_without_init_raises(self):
-        svc = NeuroEngineService()
+        svc = NeuroEngineService(engine_factory=MagicMock())
         # _engine is None — must raise
         with pytest.raises(RuntimeError, match="not initialised"):
             await svc.handle_start_engine(StartEngineCommand())

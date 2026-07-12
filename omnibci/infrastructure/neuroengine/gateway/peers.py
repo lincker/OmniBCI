@@ -9,8 +9,10 @@ from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.ipc.peer_transport import ListenTransport
 from omnibci.infrastructure.neuroengine.gateway.routing import RouteSpec, PeerConfig
 
-# Stimulation peer name (used by PeerGateway.peer("stimulation")).
-STIMULATION = "stimulation"
+# Stimulation peer name — single source is the application-layer port
+# vocabulary (application.ports.engine_port.STIMULATION_PEER); re-exported
+# here under the historical name for gateway-side consumers.
+from omnibci.application.ports.engine_port import STIMULATION_PEER as STIMULATION
 # Effector peer name (used by PeerGateway.peer("effector")).
 EFFECTOR = "effector"
 

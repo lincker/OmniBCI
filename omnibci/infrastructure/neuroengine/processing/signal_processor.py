@@ -17,6 +17,8 @@ from enum import Enum
 import logging
 from typing import Optional
 
+from omnibci.shared.signal import SignalChunk
+
 import numpy as np
 
 from omnibci.domain.session import BCISession
@@ -124,6 +126,17 @@ class SignalProcessor:
             sample_rate=self._sample_rate,
             filters=self._filters,
         )
+
+    async def next_chunk(self, timeout: float = 0.05) -> "SignalChunk | None":
+        """等待下一个数据块（P2-7 事件化取数）。
+
+        在默认 executor 线程内做 mp.Queue 的阻塞 get(timeout)：数据到达
+        即刻返回（原 empty()+sleep(0.01) 轮询带来最多 10ms 的块间延迟），
+        等待窗内无数据返回 None——把控制权还给 serve() 的命令轮询，
+        命令响应延迟上界即本超时（默认 50ms，命令均为人为低频操作）。
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.data_manager.get_data, timeout)
 
     def baseline_from_chunk(self, chunk, start_idx: int) -> np.ndarray:
         """

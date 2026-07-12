@@ -3,13 +3,9 @@
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2026-01-04 11:22
 from abc import ABC, abstractmethod
-from typing import Dict, Type, ClassVar
-
-from omnibci.shared.registry import Registerable
 
 
-class Paradigm(Registerable, ABC):
-    _target_registry: ClassVar[Dict[str, Type['Paradigm']]] = {}
+class Paradigm(ABC):
 
     @abstractmethod
     def setup(self):

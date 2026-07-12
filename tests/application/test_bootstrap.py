@@ -140,5 +140,16 @@ class TestRegisterListeners:
 # ---------------------------------------------------------------------------
 
 def test_build_session_repository_defaults_to_in_memory():
-    repo = _build_session_repository()
+    repo = _build_session_repository(None)
     assert isinstance(repo, InMemorySessionRepository)
+
+
+def test_build_session_repository_in_memory_explicit():
+    assert isinstance(_build_session_repository("in_memory"), InMemorySessionRepository)
+
+
+def test_build_session_repository_unknown_kind_fails_fast():
+    """P2-9：未知实现名必须 fail-fast，不得静默降级到内存实现。"""
+    import pytest
+    with pytest.raises(ValueError, match="sqlite"):
+        _build_session_repository("sqlite")

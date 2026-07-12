@@ -91,14 +91,26 @@ class OmniBCISettings:
             return None
         return value.unwrap() if hasattr(value, 'unwrap') else value
 
-    def get(self, key: str, default=None):
-        """获取**生效**配置值(profile 覆盖优先),支持点分隔符 'section.key'"""
+    #: get() 的"未提供默认值"哨兵——用于区分 get(key)（缺键抛错）与
+    #: get(key, None)（缺键返回 None）。
+    _MISSING = object()
+
+    def get(self, key: str, default=_MISSING):
+        """获取**生效**配置值(profile 覆盖优先),支持点分隔符 'section.key'。
+
+        P2-9 修复：default 参数原先形同虚设（缺键无条件抛 NameError）。
+        现在语义为——
+          get(key)          缺键抛 NameError（原行为，供必填配置 fail-fast）
+          get(key, 默认值)  缺键返回默认值，不记错误日志（可选配置）
+        """
         overlaid = self._raw_get(self._overlay, key)
         if overlaid is not None:
             return overlaid
         value = self._raw_get(self._data, key)
         if value is not None:
             return value
+        if default is not self._MISSING:
+            return default
         logging.error(f'settings can not find key: {key}')
         raise NameError(f'settings key not found: {key}')
 

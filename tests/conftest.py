@@ -38,7 +38,7 @@ def mock_engine():
 @pytest.fixture()
 def engine_service(mock_engine):
     from omnibci.application.services.engine_service import NeuroEngineService
-    svc = NeuroEngineService()
+    svc = NeuroEngineService(engine_factory=lambda: mock_engine)
     svc._engine = mock_engine
     svc._running = False
     return svc

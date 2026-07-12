@@ -308,3 +308,46 @@ class TestACLTranslation:
         bus = _SpyBus()
         DomainEventPublisher(bus).publish(DomainEvent())  # base type, no mapping
         assert bus.events == []
+
+
+# ---------------------------------------------------------------------------
+# P1-6: 聚合根不保留信号数据（内存无界增长修复）
+# ---------------------------------------------------------------------------
+
+class TestTrialsDoNotRetainSignal:
+    def test_trial_stores_epoch_info_not_epoch(self):
+        from omnibci.domain.epoch import EpochInfo
+        s = BCISession()
+        s.start()
+        s.record_trial(_epoch(event_id=1), _clf(event_id=1))
+        trial = s.trials[0]
+        assert isinstance(trial.epoch_info, EpochInfo)
+        assert not hasattr(trial, "epoch")
+        # 元数据投影完整
+        assert trial.epoch_info.event_id == 1
+        assert trial.epoch_info.duration_samples > 0
+
+    def test_signal_array_is_released_after_event_drained(self):
+        """信号矩阵在事件被 drain 并丢弃后即可被 GC —— 聚合根无残留引用。
+
+        旧实现下 Trial.epoch 永久持有数组，此断言必挂。
+        """
+        import gc
+        import weakref
+
+        s = BCISession()
+        s.start()
+        epoch = _epoch(event_id=1)
+        ref = weakref.ref(epoch.data)
+        s.record_trial(epoch, _clf(event_id=1))
+        s.pop_events()          # 事件（携带 epoch）被 drain 并随即丢弃
+        del epoch
+        gc.collect()
+        assert ref() is None    # 聚合根未保留任何信号数据引用
+
+    def test_transient_event_still_carries_full_epoch(self):
+        """TrialCompleted 事件仍携带完整 Epoch（瞬态），供订阅方即时消费。"""
+        s = BCISession()
+        s.start()
+        ev = s.record_trial(_epoch(event_id=3), _clf(event_id=3))
+        assert ev.epoch.data.shape[0] == ev.epoch.channel_count

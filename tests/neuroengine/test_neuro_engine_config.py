@@ -33,7 +33,8 @@ class TestConfigFromSettings:
             "debug": True,
         }
         import omnibci.conf as conf
-        monkeypatch.setattr(conf.settings, "get", lambda key: values[key])
+        monkeypatch.setattr(conf.settings, "get",
+                            lambda key, default=None: values.get(key, default))
 
         cfg = NeuroEngineConfig.from_settings()
         assert cfg.queue_size == 50
@@ -43,10 +44,10 @@ class TestConfigFromSettings:
         assert cfg.debug is True
 
     def test_falls_back_on_missing_keys(self, monkeypatch):
-        def _raise(_key):
-            raise NameError("missing")
         import omnibci.conf as conf
-        monkeypatch.setattr(conf.settings, "get", _raise)
+        # P2-9：缺键语义 = get(key, default) 返回 default（异常吞噬已移除）。
+        monkeypatch.setattr(conf.settings, "get",
+                            lambda key, default=None: default)
 
         cfg = NeuroEngineConfig.from_settings()
         # dataclass defaults
@@ -63,7 +64,8 @@ class TestConfigFromSettings:
     def test_reads_baseline_duration(self, monkeypatch):
         import omnibci.conf as conf
         monkeypatch.setattr(conf.settings, "get",
-                            lambda key: 0.25 if key == "ALGORITHM.baseline_duration" else None)
+                            lambda key, default=None:
+                                0.25 if key == "ALGORITHM.baseline_duration" else default)
         cfg = NeuroEngineConfig.from_settings()
         assert cfg.baseline_duration == 0.25
 
@@ -107,11 +109,15 @@ class TestEngineDebugFlag:
     def test_run_passes_debug_true(self, mock_run):
         _engine(debug=True).run()
         assert mock_run.call_args.kwargs.get("debug") is True
+        # asyncio.run 被 mock，serve() 协程从未被 await——显式关闭，
+        # 否则 GC 时报 "coroutine was never awaited" RuntimeWarning。
+        mock_run.call_args.args[0].close()
 
     @patch("omnibci.infrastructure.neuroengine.engine.asyncio.run")
     def test_run_passes_debug_false(self, mock_run):
         _engine(debug=False).run()
         assert mock_run.call_args.kwargs.get("debug") is False
+        mock_run.call_args.args[0].close()
 
 
 # ---------------------------------------------------------------------------

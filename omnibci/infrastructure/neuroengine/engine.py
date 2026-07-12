@@ -67,7 +67,35 @@ class NeuroEngine:
         self.effector_translator = effector_translator
         self.effector_feedback = effector_feedback
         self._debug = debug
-        self.should_stop = False
+        # P2-7：停机改为事件驱动。should_stop 保持公开属性语义（服务层与
+        # 总线监听器都直接赋值），setter 负责跨线程唤醒主循环。
+        self._should_stop = False
+        self._stop_event: "asyncio.Event | None" = None   # serve() 内创建（绑定其 loop）
+        self._loop: "asyncio.AbstractEventLoop | None" = None
+
+    # ------------------------------------------------------------------
+    # Stop flag — 事件驱动（P2-7）
+    # ------------------------------------------------------------------
+
+    @property
+    def should_stop(self) -> bool:
+        return self._should_stop
+
+    @should_stop.setter
+    def should_stop(self, value: bool) -> None:
+        """置 True 时立即唤醒主循环（原实现靠 50ms 轮询发现标志位）。
+
+        可能从任意线程赋值（NeuroEngineService 在 API 线程、
+        _stop_neuro_engine_system 在引擎自身 loop 内），因此经
+        call_soon_threadsafe 派发 Event.set；loop 尚未运行时只置标志——
+        _main_loop 在等待前会先检查标志位。
+        """
+        self._should_stop = bool(value)
+        if value and self._loop is not None and self._stop_event is not None:
+            try:
+                self._loop.call_soon_threadsafe(self._stop_event.set)
+            except RuntimeError:
+                pass  # loop 已关闭：serve 已经退出，无需唤醒
 
     # ------------------------------------------------------------------
     # Public lifecycle
@@ -78,6 +106,8 @@ class NeuroEngine:
         asyncio.run(self.serve(), debug=self._debug)
 
     async def serve(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._stop_event = asyncio.Event()
         await self._start()
         await self._main_loop()
         await self._stop()
@@ -95,8 +125,13 @@ class NeuroEngine:
         logger.info("NeuroEngine started")
 
     async def _main_loop(self) -> None:
+        # 事件驱动等待（P2-7）：停机延迟从最多 50ms 降到 ≈0，空转唤醒
+        # 从 20 次/秒降到 1 次/秒（超时仅作为跨线程写标志的兜底心跳）。
         while not self.should_stop:
-            await asyncio.sleep(0.05)
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
 
     async def _stop(self) -> None:
         logger.info("NeuroEngine: initiating shutdown")

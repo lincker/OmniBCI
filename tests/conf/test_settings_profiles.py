@@ -28,6 +28,11 @@ class TestDefaultsOnly:
     def test_get_reads_default(self, s):
         assert s.get("ACQUISITION.signal_source") == "file_reader"
 
+    def test_get_default_returned_for_missing_key(self, s):
+        """P2-9：get(key, default) 缺键返回默认值（该参数原先形同虚设）。"""
+        assert s.get("NOPE.missing", "fallback") == "fallback"
+        assert s.get("NOPE.missing", None) is None
+
     def test_missing_key_raises_name_error(self, s):
         with pytest.raises(NameError):
             s.get("NOPE.nothing")

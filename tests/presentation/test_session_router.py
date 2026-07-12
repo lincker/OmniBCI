@@ -6,7 +6,15 @@ from datetime import datetime, timezone
 import pytest
 
 from omnibci.shared.events import Event, EventType
+from omnibci.application.events import TrialOutcome
 from omnibci.domain.classification import Classification
+
+
+def _outcome(sid, clf):
+    """P2-8：TrialCompleted 载荷契约为 TrialOutcome（bare Classification 已拒收）。
+    trial_number=0 → 读模型按本地计数补算。"""
+    return Event(EventType.TrialCompleted,
+                 TrialOutcome(session_id=sid, trial_number=0, classification=clf))
 
 
 def _clf(target_id=3, event_id=101):
@@ -110,7 +118,7 @@ class TestGetTrials:
 
     def test_trials_after_event(self, api_client, session_service):
         sid = api_client.post("/api/v1/sessions").json()["data"]["session_id"]
-        session_service.on_trial_completed(Event(EventType.TrialCompleted, _clf(target_id=4)))
+        session_service.on_trial_completed(_outcome(sid, _clf(target_id=4)))
         resp = api_client.get(f"/api/v1/sessions/{sid}/trials")
         trials = resp.json()["data"]
         assert len(trials) == 1
@@ -118,7 +126,7 @@ class TestGetTrials:
 
     def test_trials_schema_fields(self, api_client, session_service):
         sid = api_client.post("/api/v1/sessions").json()["data"]["session_id"]
-        session_service.on_trial_completed(Event(EventType.TrialCompleted, _clf()))
+        session_service.on_trial_completed(_outcome(sid, _clf()))
         trial = api_client.get(f"/api/v1/sessions/{sid}/trials").json()["data"][0]
         for field in ("trial_number", "target_id", "event_id", "forced", "produced_at"):
             assert field in trial
@@ -136,8 +144,8 @@ class TestGetLastTrial:
 
     def test_returns_latest_target(self, api_client, session_service):
         sid = api_client.post("/api/v1/sessions").json()["data"]["session_id"]
-        session_service.on_trial_completed(Event(EventType.TrialCompleted, _clf(target_id=1)))
-        session_service.on_trial_completed(Event(EventType.TrialCompleted, _clf(target_id=9)))
+        session_service.on_trial_completed(_outcome(sid, _clf(target_id=1)))
+        session_service.on_trial_completed(_outcome(sid, _clf(target_id=9)))
         last = api_client.get(f"/api/v1/sessions/{sid}/trials/last").json()["data"]
         assert last["target_id"] == 9
 

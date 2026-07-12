@@ -33,6 +33,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from omnibci.application.services.config_service import ConfigService
+from omnibci.infrastructure.plugins.plugin_catalog import list_plugins
 from omnibci.conf import settings
 from omnibci.presentation.routers import engine, acquisition, stimulation, session, recording, config, plugins
 from omnibci.presentation.websockets.results import results_broadcaster, results_ws_endpoint
@@ -127,7 +128,7 @@ def create_app() -> FastAPI:
 
     # Layered configuration (defaults + profiles); reads/writes go through
     # the ConfigService whitelist, never raw settings.
-    app.state.config_service = ConfigService(settings)
+    app.state.config_service = ConfigService(settings, plugin_catalog=list_plugins)
 
     prefix = "/api/v1"
     app.include_router(engine.router, prefix=prefix, responses=ERROR_RESPONSES)

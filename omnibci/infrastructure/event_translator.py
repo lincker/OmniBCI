@@ -33,7 +33,7 @@ from typing import Iterable, TYPE_CHECKING
 
 from omnibci.domain.events import DomainEvent, SessionEnded, SessionStarted, TrialCompleted
 from omnibci.shared.events import Event, EventType
-from omnibci.infrastructure.outbound import TrialOutcome, SessionSummary
+from omnibci.application.events import SessionSummary, TrialOutcome
 
 if TYPE_CHECKING:
     from omnibci.infrastructure.ipc.event_bus import EventBus

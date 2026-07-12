@@ -39,18 +39,53 @@ class InMemorySessionRepository(SessionRepository):
         """
         Insert or replace.  On insert, marks this record as the active session
         if its state is RUNNING.
+
+        注意（P1-4 并发契约）：save 仅用于插入全新记录。对既有记录的
+        修改必须走 update()/upsert()，否则读-改-写窗口内的并发写入会
+        互相覆盖。
         """
         with self._lock:
-            is_new = record.session_id not in self._store
-            self._store[record.session_id] = record
-            if is_new:
-                self._insertion_order.append(record.session_id)
-            # Track active: newest RUNNING session
-            if record.state.value == "running":
-                self._active_id = record.session_id
-            elif self._active_id == record.session_id:
-                # This was the active session and is now ended
-                self._active_id = self._find_latest_running()
+            self._commit_locked(record)
+
+    def update(self, session_id, mutate):
+        """原子读-改-写；见 SessionRepository.update 契约。"""
+        with self._lock:
+            current = self._store.get(session_id)
+            if current is None:
+                return None
+            candidate = copy.deepcopy(current)
+            mutate(candidate)          # 异常传播，存储未动（all-or-nothing）
+            self._commit_locked(candidate)
+            return copy.deepcopy(candidate)
+
+    def upsert(self, session_id, create, mutate):
+        """原子 create-if-missing-then-mutate；见端口契约。"""
+        with self._lock:
+            current = self._store.get(session_id)
+            if current is not None:
+                candidate = copy.deepcopy(current)
+            else:
+                candidate = create()
+                if candidate.session_id != session_id:
+                    raise ValueError(
+                        f"upsert create() returned session_id "
+                        f"{candidate.session_id!r}, expected {session_id!r}")
+            mutate(candidate)          # 异常传播，存储未动
+            self._commit_locked(candidate)
+            return copy.deepcopy(candidate)
+
+    def _commit_locked(self, record: SessionRecord) -> None:
+        """Insert or replace + active-id 簿记。调用方必须已持有 self._lock。"""
+        is_new = record.session_id not in self._store
+        self._store[record.session_id] = record
+        if is_new:
+            self._insertion_order.append(record.session_id)
+        # Track active: newest RUNNING session
+        if record.state.value == "running":
+            self._active_id = record.session_id
+        elif self._active_id == record.session_id:
+            # This was the active session and is now ended
+            self._active_id = self._find_latest_running()
 
     def delete(self, session_id: str) -> None:
         with self._lock:

@@ -190,3 +190,111 @@ class TestThreadSafety:
         for t in threads: t.join()
         # No assertion on count (TOCTOU is expected without higher-level locking);
         # only assert no exception was raised.
+
+
+# ---------------------------------------------------------------------------
+# P1-4: atomic update / upsert primitives
+# ---------------------------------------------------------------------------
+
+class TestAtomicUpdate:
+    def test_update_mutates_and_returns_copy(self):
+        repo = InMemorySessionRepository()
+        repo.save(_record("s1"))
+        out = repo.update("s1", lambda r: r.append_trial(_trial(1)))
+        assert out.trial_count == 1
+        assert repo.find_by_id("s1").trial_count == 1
+        out.trials.clear()  # 返回值是拷贝，改它不影响存储
+        assert repo.find_by_id("s1").trial_count == 1
+
+    def test_update_unknown_returns_none_without_calling_mutator(self):
+        repo = InMemorySessionRepository()
+        called = []
+        assert repo.update("ghost", lambda r: called.append(1)) is None
+        assert called == []
+
+    def test_update_is_all_or_nothing_on_mutator_error(self):
+        repo = InMemorySessionRepository()
+        rec = _record("s1")
+        rec.mark_ended()
+        repo.save(rec)
+        with pytest.raises(RuntimeError):
+            repo.update("s1", lambda r: r.append_trial(_trial(1)))  # ended → raises
+        assert repo.find_by_id("s1").trial_count == 0  # 存储未被半改
+
+    def test_update_maintains_active_tracking(self):
+        repo = InMemorySessionRepository()
+        repo.save(_record("s1"))
+        assert repo.find_active().session_id == "s1"
+        repo.update("s1", lambda r: r.mark_ended())
+        assert repo.find_active() is None
+
+
+class TestUpsert:
+    def test_creates_when_missing(self):
+        repo = InMemorySessionRepository()
+        out = repo.upsert("new", lambda: _record("new"),
+                          lambda r: r.append_trial(_trial(1)))
+        assert out.trial_count == 1
+        assert repo.find_by_id("new") is not None
+
+    def test_mutates_existing_without_calling_create(self):
+        repo = InMemorySessionRepository()
+        repo.save(_record("s1", paradigm="p"))
+        created = []
+        out = repo.upsert("s1", lambda: created.append(1) or _record("s1"),
+                          lambda r: r.append_trial(_trial(1)))
+        assert created == []           # 既有记录：create 不被调用
+        assert out.paradigm == "p"     # 原记录字段保留（不会被裸投影覆盖）
+        assert out.trial_count == 1
+
+    def test_create_with_wrong_id_rejected(self):
+        repo = InMemorySessionRepository()
+        with pytest.raises(ValueError):
+            repo.upsert("a", lambda: _record("b"), lambda r: None)
+
+
+class TestConcurrentAppends:
+    """回归锁定 P1-4：并发 read-modify-write 丢更新。
+
+    旧模式（find_by_id 拷贝 → 改 → save 整体替换）在多线程下丢 trial；
+    update() 在仓储锁内执行 mutator，计数必须精确。
+    """
+
+    def test_no_lost_trials_under_concurrent_update(self):
+        repo = InMemorySessionRepository()
+        repo.save(_record("s1"))
+        threads_n, per_thread = 8, 50
+
+        def worker():
+            for _ in range(per_thread):
+                repo.update("s1", lambda r: r.append_trial(
+                    _trial(r.trial_count + 1)))
+
+        threads = [threading.Thread(target=worker) for _ in range(threads_n)]
+        for t in threads: t.start()
+        for t in threads: t.join()
+        assert repo.find_by_id("s1").trial_count == threads_n * per_thread
+
+    def test_end_during_concurrent_appends_is_consistent(self):
+        """end 与 append 并发：结束后记录必须保持 ENDED（不被顶回 RUNNING），
+        且 append 对 ENDED 记录的失败不破坏已有数据。"""
+        repo = InMemorySessionRepository()
+        repo.save(_record("s1"))
+        stop = threading.Event()
+
+        def appender():
+            while not stop.is_set():
+                try:
+                    repo.update("s1", lambda r: r.append_trial(
+                        _trial(r.trial_count + 1)))
+                except RuntimeError:
+                    return  # session 已结束：追加被拒绝是正确行为
+
+        ts = [threading.Thread(target=appender) for _ in range(4)]
+        for t in ts: t.start()
+        repo.update("s1", lambda r: r.mark_ended())
+        stop.set()
+        for t in ts: t.join()
+        final = repo.find_by_id("s1")
+        assert final.state == SessionRecordState.ENDED
+        assert final.ended_at is not None

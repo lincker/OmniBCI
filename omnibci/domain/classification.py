@@ -15,6 +15,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
+#: 判定"高置信"的标准阈值（confidence ≥ 此值）。原先硬编码在
+#: is_high_confidence 内（P2-10 提为常量）。
+HIGH_CONFIDENCE_THRESHOLD = 0.7
+
 
 @dataclass(frozen=True)
 class Classification:
@@ -50,7 +54,7 @@ class Classification:
     @property
     def is_high_confidence(self) -> bool:
         """True when confidence is available and above the standard threshold."""
-        return self.confidence is not None and self.confidence >= 0.7
+        return self.confidence is not None and self.confidence >= HIGH_CONFIDENCE_THRESHOLD
 
     def __repr__(self) -> str:
         conf = f"{self.confidence:.2f}" if self.confidence is not None else "n/a"

@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2026-01-28 05:58
+"""PluginLoader — 动态加载插件模块（原 shared/loader.py，P0-3 迁入：
+插件加载是基础设施关注点，shared 保持零内部依赖）。"""
 import sys
 import logging
 import importlib

@@ -18,7 +18,6 @@ ACL change:
   无需再 import processor 模块。
 """
 
-import asyncio
 import logging
 from typing import Optional, TYPE_CHECKING
 
@@ -49,11 +48,11 @@ class AwaitingEpochState(ProcessingState):
     """Idle state: drain the data queue and watch for a start trigger."""
 
     async def run(self) -> None:
-        if self.context.data_manager.empty():
-            await asyncio.sleep(0.01)
+        # P2-7：阻塞等待取代 empty()+sleep 轮询；None = 等待窗内无数据，
+        # 返回让 serve() 轮询命令队列。
+        chunk: "SignalChunk | None" = await self.context.next_chunk()
+        if chunk is None:
             return
-
-        chunk: SignalChunk = self.context.data_manager.get_data()
         start_idx, event_id = self.context.detector.detect_start(chunk)
 
         if start_idx < 0:
@@ -89,11 +88,10 @@ class AssemblingEpochState(ProcessingState):
     """
 
     async def run(self) -> None:
-        if self.context.data_manager.empty():
-            await asyncio.sleep(0.01)
+        # P2-7：同 AwaitingEpochState —— 阻塞等待取代轮询。
+        chunk: "SignalChunk | None" = await self.context.next_chunk()
+        if chunk is None:
             return
-
-        chunk: SignalChunk = self.context.data_manager.get_data()
 
         end_idx, _ = self.context.detector.detect_end(chunk)
         start_idx, new_event_id = self.context.detector.detect_start(chunk)

@@ -1,0 +1,49 @@
+# 测试 + 架构契约守卫。
+#
+# tests        — 全量测试套件（conftest 全程 mock 硬件与 OpenGL，可无头运行）。
+#                无头环境跑不了的测试给它打 @pytest.mark.gui / hardware 标记，
+#                会被 -m 表达式跳过并在代码里留下显式记号。
+# architecture — import-linter 分层契约（配置在 pyproject [tool.importlinter]）。
+#                豁免表是棘轮：修复 P0 时删对应行；任何新增跨层依赖直接红。
+#
+# 记得在 Settings → Branches → branch protection 里把这两个 job
+# 勾成 required status checks，规矩才真正拦得住合并。
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"   # 与 pyproject 的 requires-python 保持一致
+          cache: pip
+
+      - name: Install package with dev extras
+        run: pip install -e ".[dev]"
+
+      - name: Run test suite
+        run: pytest -m "not gui and not hardware"
+
+  architecture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install import-linter
+        run: pip install import-linter
+
+      - name: Layering contracts
+        run: lint-imports

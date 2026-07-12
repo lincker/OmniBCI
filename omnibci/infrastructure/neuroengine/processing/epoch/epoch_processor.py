@@ -150,7 +150,8 @@ class EpochProcessor:
         else:
             full = self._epoch_data
         return Epoch(
-            data=full.copy(),               # defensive copy before freezing
+            # Epoch 构造时自行拷贝并冻结（P2-10）；此处无需再防御性 copy。
+            data=full,
             event_id=self._event_id,
             sample_rate=self.sample_rate,
             channel_count=channel_count,

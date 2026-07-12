@@ -43,6 +43,10 @@ class TrialCompleted(DomainEvent):
         session_id:     ID of the BCISession that produced this trial.
         trial_number:   1-based index of this trial within the session.
         epoch:          The raw EEG segment that was classified.
+                        瞬态（P1-6）：仅在事件传递期间有效——聚合根的 trial
+                        历史只保留 EpochInfo 元数据，订阅方不应长期持有本
+                        事件（或其 epoch）的引用；需要信号本体请在处理事件
+                        时立即消费/落盘。
         classification: The decoder's result.
     """
     session_id: str

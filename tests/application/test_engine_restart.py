@@ -3,12 +3,14 @@ Engine restart regression — stop → start must rebuild the engine graph.
 
 mp.Process objects are single-use and NeuroEngine._stop() closes the command
 queues, so reusing the old engine raised "cannot start a process twice".
-NeuroEngineService now rebuilds via NeuroEngineBuilder on the first start
-after a stop and replays recorded bus subscriptions onto the fresh EventBus.
+NeuroEngineService rebuilds via the injected engine_factory on the first
+start after a stop and replays recorded bus subscriptions onto the fresh
+EventBus.
 
-NeuroEngineBuilder is patched — no real processes are spawned.
+The factory is a MagicMock — no real processes are spawned (P0-1：原来
+patch 的 NeuroEngineBuilder 符号已随工厂注入从 application 层移除).
 """
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -29,8 +31,13 @@ def _mock_engine():
 
 
 @pytest.fixture()
-def svc():
-    service = NeuroEngineService()
+def factory():
+    return MagicMock(side_effect=_mock_engine)
+
+
+@pytest.fixture()
+def svc(factory):
+    service = NeuroEngineService(engine_factory=factory)
     service._engine = _mock_engine()
     service._running = False
     return service
@@ -38,35 +45,29 @@ def svc():
 
 class TestRestartRebuildsEngine:
     @pytest.mark.asyncio
-    async def test_start_stop_start_builds_new_engine(self, svc):
+    async def test_start_stop_start_builds_new_engine(self, svc, factory):
         first = svc._engine
         rebuilt = _mock_engine()
+        factory.side_effect = None
+        factory.return_value = rebuilt
 
         await svc.handle_start_engine(StartEngineCommand())
         await svc.handle_stop_engine(StopEngineCommand())
-
-        with patch(
-            "omnibci.application.services.engine_service.NeuroEngineBuilder"
-        ) as builder_cls:
-            builder_cls.return_value.build.return_value = rebuilt
-            await svc.handle_start_engine(StartEngineCommand())
+        await svc.handle_start_engine(StartEngineCommand())
 
         assert svc._engine is rebuilt
         assert svc._engine is not first
-        builder_cls.return_value.build.assert_called_once()
+        factory.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_first_start_does_not_rebuild(self, svc):
+    async def test_first_start_does_not_rebuild(self, svc, factory):
         first = svc._engine
-        with patch(
-            "omnibci.application.services.engine_service.NeuroEngineBuilder"
-        ) as builder_cls:
-            await svc.handle_start_engine(StartEngineCommand())
-        builder_cls.return_value.build.assert_not_called()
+        await svc.handle_start_engine(StartEngineCommand())
+        factory.assert_not_called()
         assert svc._engine is first
 
     @pytest.mark.asyncio
-    async def test_subscriptions_replayed_onto_new_bus(self, svc):
+    async def test_subscriptions_replayed_onto_new_bus(self, svc, factory):
         handler = MagicMock()
         svc.subscribe(EventType.TrialCompleted, handler)
 
@@ -74,11 +75,9 @@ class TestRestartRebuildsEngine:
         await svc.handle_stop_engine(StopEngineCommand())
 
         rebuilt = _mock_engine()
-        with patch(
-            "omnibci.application.services.engine_service.NeuroEngineBuilder"
-        ) as builder_cls:
-            builder_cls.return_value.build.return_value = rebuilt
-            await svc.handle_start_engine(StartEngineCommand())
+        factory.side_effect = None
+        factory.return_value = rebuilt
+        await svc.handle_start_engine(StartEngineCommand())
 
         rebuilt.event_bus.register_event_listener.assert_called_once_with(
             EventType.TrialCompleted, handler
@@ -92,16 +91,13 @@ class TestRestartRebuildsEngine:
         assert svc._running is False
 
     @pytest.mark.asyncio
-    async def test_restart_cycle_twice(self, svc):
+    async def test_restart_cycle_twice(self, svc, factory):
         """Two full stop/start cycles — each start after stop rebuilds."""
         await svc.handle_start_engine(StartEngineCommand())
         await svc.handle_stop_engine(StopEngineCommand())
 
-        with patch(
-            "omnibci.application.services.engine_service.NeuroEngineBuilder"
-        ) as builder_cls:
-            builder_cls.return_value.build.side_effect = [_mock_engine(), _mock_engine()]
-            await svc.handle_start_engine(StartEngineCommand())
-            await svc.handle_stop_engine(StopEngineCommand())
-            await svc.handle_start_engine(StartEngineCommand())
-            assert builder_cls.return_value.build.call_count == 2
+        factory.side_effect = [_mock_engine(), _mock_engine()]
+        await svc.handle_start_engine(StartEngineCommand())
+        await svc.handle_stop_engine(StopEngineCommand())
+        await svc.handle_start_engine(StartEngineCommand())
+        assert factory.call_count == 2

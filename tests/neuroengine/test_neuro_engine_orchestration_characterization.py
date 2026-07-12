@@ -217,3 +217,35 @@ class TestLifecycle:
         assert eng.peer_gateway.stopped is True
         assert eng.event_bus.started is True
         assert eng.event_bus.stopped is True
+
+
+# ---------------------------------------------------------------------------
+# P2-7: 主循环事件驱动停机（sleep(0.05) 轮询已移除）
+# ---------------------------------------------------------------------------
+
+class TestEventDrivenShutdown:
+    def test_cross_thread_stop_wakes_main_loop_promptly(self):
+        """从另一线程置 should_stop：serve 应即刻退出，而非等轮询周期。"""
+        import threading
+        import time
+
+        eng = _make_engine()
+        t0 = {}
+
+        def stopper():
+            time.sleep(0.05)          # 让 serve 进入等待
+            t0["set_at"] = time.perf_counter()
+            eng.should_stop = True     # API 线程视角的置停
+
+        threading.Thread(target=stopper).start()
+        asyncio.run(eng.serve())
+        elapsed = time.perf_counter() - t0["set_at"]
+        assert elapsed < 0.5           # 事件唤醒；旧实现上界为一个轮询周期
+        assert eng.peer_gateway.stopped and eng.event_bus.stopped
+
+    def test_stop_flag_set_before_serve_exits_immediately(self):
+        """serve 前预置 should_stop（既有 characterization 场景）仍然成立。"""
+        eng = _make_engine()
+        eng.should_stop = True
+        asyncio.run(eng.serve())
+        assert eng.event_bus.started and eng.event_bus.stopped

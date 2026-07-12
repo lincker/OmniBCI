@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { api, ApiError, type ParadigmInfo, type StimulationStatus } from "./api/client";
+import { api, ApiError, type ParadigmInfo } from "./api/client";
 import { usePoll } from "./hooks/usePoll";
 import { useAction } from "./hooks/useAction";
 import { useResultsFeed } from "./hooks/useResultsFeed";

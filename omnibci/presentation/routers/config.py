@@ -43,10 +43,10 @@ def _patch_errors(exc: Exception) -> ApiError:
         return ApiError(status.HTTP_400_BAD_REQUEST, ErrorCode.CONFIG_KEY_NOT_ALLOWED,
                         "Keys outside the config whitelist", detail={"keys": exc.keys})
     if isinstance(exc, ConfigValidationError):
-        return ApiError(status.HTTP_422_UNPROCESSABLE_ENTITY, ErrorCode.VALIDATION_ERROR,
+        return ApiError(status.HTTP_422_UNPROCESSABLE_CONTENT, ErrorCode.VALIDATION_ERROR,
                         "Config value validation failed", detail=exc.bad_keys)
     if isinstance(exc, ProfileNameError):
-        return ApiError(status.HTTP_422_UNPROCESSABLE_ENTITY, ErrorCode.VALIDATION_ERROR,
+        return ApiError(status.HTTP_422_UNPROCESSABLE_CONTENT, ErrorCode.VALIDATION_ERROR,
                         str(exc))
     raise exc
 
@@ -99,7 +99,7 @@ def get_profile(name: str, svc: ConfigService = Depends(get_config_service)):
         raise ApiError(status.HTTP_404_NOT_FOUND, ErrorCode.CONFIG_PROFILE_NOT_FOUND,
                        f"Profile {name!r} not found")
     except ProfileNameError as exc:
-        raise ApiError(status.HTTP_422_UNPROCESSABLE_ENTITY, ErrorCode.VALIDATION_ERROR, str(exc))
+        raise ApiError(status.HTTP_422_UNPROCESSABLE_CONTENT, ErrorCode.VALIDATION_ERROR, str(exc))
     return ApiResponse(data=ProfileDetailResponse(**detail))
 
 
@@ -129,7 +129,7 @@ def delete_profile(name: str, svc: ConfigService = Depends(get_config_service)):
         raise ApiError(status.HTTP_404_NOT_FOUND, ErrorCode.CONFIG_PROFILE_NOT_FOUND,
                        f"Profile {name!r} not found")
     except ProfileNameError as exc:
-        raise ApiError(status.HTTP_422_UNPROCESSABLE_ENTITY, ErrorCode.VALIDATION_ERROR, str(exc))
+        raise ApiError(status.HTTP_422_UNPROCESSABLE_CONTENT, ErrorCode.VALIDATION_ERROR, str(exc))
     return ApiResponse(message=f"Profile {name!r} deleted")
 
 
@@ -142,6 +142,6 @@ def activate_profile(name: str, svc: ConfigService = Depends(get_config_service)
         raise ApiError(status.HTTP_404_NOT_FOUND, ErrorCode.CONFIG_PROFILE_NOT_FOUND,
                        f"Profile {name!r} not found")
     except ProfileNameError as exc:
-        raise ApiError(status.HTTP_422_UNPROCESSABLE_ENTITY, ErrorCode.VALIDATION_ERROR, str(exc))
+        raise ApiError(status.HTTP_422_UNPROCESSABLE_CONTENT, ErrorCode.VALIDATION_ERROR, str(exc))
     return ApiResponse(message=f"Profile {name!r} activated"
                                " — engine-restart keys apply on next engine start")

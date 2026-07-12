@@ -1,0 +1,118 @@
+# ============================================================================
+# OmniBCI — 项目元数据 + 工具配置的单一真相源（PEP 621）。
+#
+# 安装：
+#   pip install -e .            运行时依赖（服务器）
+#   pip install -e ".[stim]"    + 刺激渲染（显示机）
+#   pip install -e ".[dev]"     + 测试/契约/lint（开发机、CI）
+#
+# 依赖版本钉子平移自原 requirements/*.txt（现已降级为指向此文件的 shim）。
+# ============================================================================
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omnibci"
+version = "1.0.0"
+description = "OmniBCI — a cross-platform BCI framework (DDD / clean architecture)"
+readme = "Readme.md"
+requires-python = ">=3.14"
+dependencies = [
+    # 数值 / 信号
+    "numpy==2.4.4",
+    "mne==1.12.1",
+    "scikit-learn==1.8.0",
+    # 配置
+    "tomlkit==0.14.0",
+    "platformdirs>=4.0",
+    # API
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.7.0",
+    "websockets>=12.0",
+]
+
+[project.optional-dependencies]
+# 刺激渲染：只有运行刺激进程的机器需要（多机部署时服务器可不装）
+stim = [
+    "pyopengl==3.1.10",
+    "glfw==2.10.0",
+    "moderngl==5.12.0",
+]
+dev = [
+    "omnibci[stim]",
+    "pytest==9.0.3",
+    "pytest-asyncio==1.4.0",
+    # starlette TestClient 的运行时依赖；原 requirements 缺失（本地靠环境顺带装上）
+    "httpx>=0.27",
+    "import-linter>=2.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["omnibci*"]
+
+[tool.setuptools.package-data]
+# 包内非 .py 资产。editable 安装不受影响；为将来打 wheel 预留正确性。
+omnibci = ["conf/*.toml", "conf/profiles/*.toml"]
+"omnibci.infrastructure.plugins" = ["**/manifest.toml", "**/resource/**/*.png"]
+
+# ============================================================================
+# pytest
+# ============================================================================
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+# 现有 @pytest.mark.asyncio 均为显式标记 → strict 模式
+asyncio_mode = "strict"
+markers = [
+    "gui: 需要真实显示器/OpenGL 上下文（CI 无头环境跳过）",
+    "hardware: 需要真实 EEG 硬件（CI 永远跳过）",
+]
+
+# ============================================================================
+# import-linter 分层契约
+#
+# 豁免表已随 P0-1/2/3 修复全部清零（2026-07）。此后任何跨层依赖都会让
+# CI 直接失败；确需豁免的必须在 PR 里专门论证后加 ignore_imports。
+# 本地运行：lint-imports
+# ============================================================================
+[tool.importlinter]
+root_package = "omnibci"
+# TYPE_CHECKING 块内的 import 仅用于类型标注，不构成运行时依赖，放行。
+# （stimulation_service 对 StimulationProcessManager 的引用属于此类）
+exclude_type_checking_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Clean architecture 分层（presentation → application → domain）"
+type = "layers"
+layers = [
+    "omnibci.presentation",
+    "omnibci.application",
+    "omnibci.domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "application 不得依赖 infrastructure"
+type = "forbidden"
+source_modules = ["omnibci.application"]
+forbidden_modules = ["omnibci.infrastructure"]
+
+[[tool.importlinter.contracts]]
+name = "infrastructure 不得依赖 presentation"
+type = "forbidden"
+source_modules = ["omnibci.infrastructure"]
+forbidden_modules = ["omnibci.presentation"]
+
+[[tool.importlinter.contracts]]
+name = "shared 保持零内部依赖（纯共享内核）"
+type = "forbidden"
+source_modules = ["omnibci.shared"]
+forbidden_modules = [
+    "omnibci.conf",
+    "omnibci.domain",
+    "omnibci.application",
+    "omnibci.infrastructure",
+    "omnibci.presentation",
+]

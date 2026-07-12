@@ -108,14 +108,16 @@ pip-selfcheck.json
 # backup files
 /backup
 
-# plugins — vendor plugins live here but are not committed until reviewed
-/omnibci/infrastructure/plugins/
+# plugin implementations — vendor/user plugin packages are not committed
+# until reviewed. Framework files directly under plugins/ (registry, factory,
+# loader, plugin_catalog, dirs) ARE tracked.
+/omnibci/infrastructure/plugins/acquisition/
+/omnibci/infrastructure/plugins/algorithms/
+/omnibci/infrastructure/plugins/effectors/
+/omnibci/infrastructure/plugins/paradigms/
 
 # user config profiles — machine-specific, never committed
 /omnibci/conf/profiles/
-
-# tests — committed after review
-/tests
 
 # stimulation picture
 /omnibci/infrastructure/stimulation/creator/stim/*

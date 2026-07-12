@@ -53,9 +53,9 @@ class TestEventToWire:
             "produced_at": _TS.isoformat(),
         }
 
-    def test_trial_completed_backcompat_bare_classification(self):
-        wire = event_to_wire(Event(EventType.TrialCompleted, _clf()))
-        assert wire["session_id"] is None and wire["trial_number"] == 0
+    def test_trial_completed_bare_classification_rejected(self):
+        # P2-8：bare-Classification legacy 形状已删除 → None（并记错误日志）
+        assert event_to_wire(Event(EventType.TrialCompleted, _clf())) is None
 
     def test_session_started(self):
         wire = event_to_wire(Event(EventType.SessionStarted, "sess-2"))
@@ -65,9 +65,9 @@ class TestEventToWire:
         wire = event_to_wire(Event(EventType.SessionEnded, SessionSummary("sess-3", 5)))
         assert wire == {"event": "SessionEnded", "session_id": "sess-3", "total_trials": 5}
 
-    def test_session_ended_backcompat_bare_int(self):
-        wire = event_to_wire(Event(EventType.SessionEnded, 5))
-        assert wire == {"event": "SessionEnded", "session_id": None, "total_trials": 5}
+    def test_session_ended_bare_int_rejected(self):
+        # P2-8：bare-int legacy 形状已删除 → None（并记错误日志）
+        assert event_to_wire(Event(EventType.SessionEnded, 5)) is None
 
     def test_stimulation_ack_from_dict(self):
         data = make_stimulation_ack("StartStimTrial", status="ok", target_index=3)
@@ -100,10 +100,11 @@ class TestPayloadToJsonable:
         assert out["session_id"] == "s" and out["trial_number"] == 2 and out["target_id"] == 9
         json.dumps(out)  # must not raise
 
-    def test_bare_classification_flattened(self):
-        out = payload_to_jsonable(_clf(target_id=4))
-        assert out["target_id"] == 4
-        json.dumps(out)
+    def test_bare_classification_passthrough(self):
+        # P2-8：Classification 不再是任何事件的独立载荷；payload_to_jsonable
+        # 对未知类型原样透传（socket 编码方 json.dumps 时自然报错暴露问题）。
+        clf = _clf(target_id=4)
+        assert payload_to_jsonable(clf) is clf
 
     def test_scalar_passthrough(self):
         assert payload_to_jsonable(7) == 7

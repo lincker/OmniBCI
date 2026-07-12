@@ -22,8 +22,34 @@ only the shared kernel, never application/ or infrastructure/.
 """
 
 from abc import ABC, abstractmethod
+from typing import Any, Callable, Protocol
 
 from omnibci.shared.events import Event
+
+#: 刺激 peer 通道名 —— application 层与 is_peer_connected() 交互使用的词汇；
+#: infrastructure 的 peer 路由表（gateway/peers.py）从这里取名，保证单一来源。
+STIMULATION_PEER = "stimulation"
+
+
+class EngineHandle(Protocol):
+    """构建完成、可运行的引擎对象的最小结构契约（P0-1）。
+
+    NeuroEngineService 通过它管理引擎生命周期，而不知道引擎的具体类型。
+    属性刻意保持宽松（Any）：status 查询目前仍会触达 worker 存活位与
+    peer gateway —— 这是当前真实的耦合面，先如实声明，收紧留给后续。
+    """
+    event_bus: Any
+    acquisition_worker: Any
+    signal_processing_worker: Any
+    peer_gateway: Any
+    should_stop: bool
+
+    def run(self) -> None: ...
+
+
+#: 引擎工厂：每次调用构建一张全新的引擎图（mp.Process 单次使用，
+#: stop 后必须整图重建）。由组合根（bootstrap）注入具体实现。
+EngineFactory = Callable[[], EngineHandle]
 
 
 class EnginePort(ABC):

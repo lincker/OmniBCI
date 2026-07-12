@@ -51,3 +51,63 @@ class TestEventBusPickle:
         bus.register_event_listener(EventType.TrialCompleted, handler)
         pickle.dumps(bus)
         assert bus._event_handlers[EventType.TrialCompleted] == [handler]
+
+
+# ---------------------------------------------------------------------------
+# P2-7: 事件化消费循环（阻塞 get 取代 empty()+sleep 轮询）
+# ---------------------------------------------------------------------------
+
+import asyncio
+import queue as _queue
+import time
+
+import pytest
+
+from omnibci.shared.events import Event, EventType
+
+
+class TestEventDrivenConsumption:
+    @pytest.mark.asyncio
+    async def test_event_dispatched_promptly(self):
+        """事件放入后应立即派发（无 10ms 轮询粒度延迟）。"""
+        bus = EventBus()
+        bus.set_event_queue(_queue.Queue())   # 与 mp.Queue 同 get(timeout) 协议
+        got = asyncio.get_running_loop().create_future()
+        bus.register_event_listener(
+            EventType.SessionStarted, lambda ev: got.set_result(ev.data))
+        await bus.start()
+        try:
+            t0 = time.perf_counter()
+            bus.put_event(Event(EventType.SessionStarted, "s1"))
+            data = await asyncio.wait_for(got, timeout=1.0)
+            elapsed = time.perf_counter() - t0
+            assert data == "s1"
+            assert elapsed < 0.1   # 远小于旧实现的轮询粒度上界
+        finally:
+            bus.stop()
+
+    @pytest.mark.asyncio
+    async def test_stop_terminates_consumer_within_wait_window(self):
+        bus = EventBus()
+        bus.set_event_queue(_queue.Queue())
+        await bus.start()
+        task = bus._process_task
+        bus.stop()
+        await asyncio.wait_for(task, timeout=bus._GET_TIMEOUT_S + 0.5)
+        assert task.done()
+
+    @pytest.mark.asyncio
+    async def test_handler_error_does_not_stop_consumption(self):
+        bus = EventBus()
+        bus.set_event_queue(_queue.Queue())
+        got = asyncio.get_running_loop().create_future()
+        bus.register_event_listener(
+            EventType.SessionStarted, lambda ev: (_ for _ in ()).throw(RuntimeError("boom")))
+        bus.register_event_listener(
+            EventType.SessionStarted, lambda ev: got.set_result(True))
+        await bus.start()
+        try:
+            bus.put_event(Event(EventType.SessionStarted, "x"))
+            assert await asyncio.wait_for(got, timeout=1.0)
+        finally:
+            bus.stop()

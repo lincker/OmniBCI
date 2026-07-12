@@ -67,9 +67,15 @@ class Epoch:
                 f"trigger_offset must be in [0, {self.data.shape[1]}) "
                 f"(at least one window sample required), got {self.trigger_offset}"
             )
-        # Make underlying array read-only to enforce value-object immutability
-        object.__setattr__(self, "data", self.data)
-        self.data.flags.writeable = False
+        # 冻结为不可变值对象：拷贝一份**自有**数组并置只读（P2-10）。
+        # 原实现直接对传入数组设 writeable=False——就地改调用者的 buffer，
+        # 上游若还想写它会莫名 ValueError（潜伏副作用）；且 object.__setattr__
+        # 把 data 设成它自身是无效语句。改为拷贝：调用者数组不受影响，
+        # Epoch 持有的副本只读。（唯一生产调用方 EpochProcessor 因此无需
+        # 再自行 .copy()。）
+        frozen = np.array(self.data, copy=True)
+        frozen.flags.writeable = False
+        object.__setattr__(self, "data", frozen)
 
     # ------------------------------------------------------------------
     # Derived properties
@@ -124,3 +130,35 @@ class Epoch:
             f"sample_rate={self.sample_rate}Hz, "
             f"duration={self.duration_seconds:.3f}s)"
         )
+
+
+@dataclass(frozen=True)
+class EpochInfo:
+    """Epoch 的轻量元数据投影 —— 不携带信号矩阵（P1-6）。
+
+    BCISession 的 trial 历史保存它而不是完整 Epoch：长会话中聚合根因此
+    只随 trial 数线性增长几十字节，而不是每 trial 保留一整块
+    (channels × samples) 的信号数据。需要信号本体的消费者应订阅
+    TrialCompleted 领域事件（瞬态携带完整 Epoch），在事件传递时处理。
+    """
+    event_id: int
+    channel_count: int
+    sample_rate: int
+    duration_samples: int
+    trigger_offset: int
+    created_at: datetime
+
+    @classmethod
+    def from_epoch(cls, epoch: "Epoch") -> "EpochInfo":
+        return cls(
+            event_id=epoch.event_id,
+            channel_count=epoch.channel_count,
+            sample_rate=epoch.sample_rate,
+            duration_samples=epoch.duration_samples,
+            trigger_offset=epoch.trigger_offset,
+            created_at=epoch.created_at,
+        )
+
+    @property
+    def duration_seconds(self) -> float:
+        return self.duration_samples / self.sample_rate

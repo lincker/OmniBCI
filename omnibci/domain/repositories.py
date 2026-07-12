@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +97,17 @@ class SessionRepository(ABC):
 
     Implementations must be thread-safe: the EventBus callbacks run in the
     NeuroEngine thread while HTTP handlers run in the uvicorn event loop.
+
+    并发契约（P1-4）
+    ----------------
+    单个方法各自原子并不足够：``find_by_id → 改副本 → save`` 这样的
+    读-改-写组合在两个线程交错时会整体覆盖对方的修改（丢 trial、或
+    ENDED 状态被顶回 RUNNING）。因此：
+
+      - **跨线程的修改必须走 update() / upsert()** —— mutator 在仓储的
+        原子性保证内执行；
+      - ``save()`` 仅用于插入全新记录（如 REST 创建会话）；
+      - ``find_*`` 保持只读语义，返回的记录仅供读取。
     """
 
     @abstractmethod
@@ -118,3 +129,29 @@ class SessionRepository(ABC):
     @abstractmethod
     def delete(self, session_id: str) -> None:
         """Remove a record; no-op if not found."""
+
+    @abstractmethod
+    def update(
+        self,
+        session_id: str,
+        mutate: Callable[[SessionRecord], None],
+    ) -> Optional[SessionRecord]:
+        """原子读-改-写：在仓储的原子性保证内对记录执行 *mutate*。
+
+        返回更新后的记录拷贝；记录不存在返回 None（mutate 不执行）。
+        All-or-nothing：mutate 抛出异常时原样传播，存储的记录保持不变。
+        """
+
+    @abstractmethod
+    def upsert(
+        self,
+        session_id: str,
+        create: Callable[[], SessionRecord],
+        mutate: Callable[[SessionRecord], None],
+    ) -> SessionRecord:
+        """原子 create-if-missing-then-mutate。
+
+        记录不存在时先调用 *create*（其返回记录的 session_id 必须等于
+        *session_id*），随后对（既有或新建的）记录执行 *mutate* 并提交。
+        返回提交后的记录拷贝。All-or-nothing 语义同 update()。
+        """

@@ -13,7 +13,7 @@ from omnibci.infrastructure.plugins.plugin_catalog import (
 )
 from omnibci.presentation.errors import ApiError
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
-from omnibci.presentation.schemas.stimulation import ParadigmsResponse
+from omnibci.presentation.schemas.stimulation import ParadigmInfo, ParadigmsResponse
 
 router = APIRouter(prefix="/plugins", tags=["Plugins"])
 
@@ -36,4 +36,6 @@ def list_plugins_by_category(category: str):
             f"Valid: {sorted(VALID_CATEGORIES)}",
         )
     plugins = list_plugins(category)
-    return ApiResponse(data=ParadigmsResponse(paradigms=plugins))
+    return ApiResponse(data=ParadigmsResponse(
+        paradigms=[ParadigmInfo.from_plugin_info(p) for p in plugins],
+    ))

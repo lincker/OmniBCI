@@ -10,10 +10,13 @@ import logging
 from threading import Thread
 from typing import Optional
 
-from omnibci.infrastructure.neuroengine.engine import NeuroEngine
-from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder, NeuroEngineConfig
 from omnibci.shared.events import EventType, Event
-from omnibci.application.ports.engine_port import EnginePort
+from omnibci.application.ports.engine_port import (
+    EngineFactory,
+    EngineHandle,
+    EnginePort,
+    STIMULATION_PEER,
+)
 from omnibci.application.commands.engine_commands import (
     StartEngineCommand,
     StopEngineCommand,
@@ -38,8 +41,11 @@ class NeuroEngineService(EnginePort):
     that routers stay free of business logic.
     """
 
-    def __init__(self) -> None:
-        self._engine: Optional[NeuroEngine] = None
+    def __init__(self, engine_factory: EngineFactory) -> None:
+        # 引擎的构建方式由组合根（bootstrap）注入 —— application 层不再
+        # import NeuroEngineBuilder（P0-1）。每次调用工厂得到一张全新引擎图。
+        self._engine_factory = engine_factory
+        self._engine: Optional[EngineHandle] = None
         self._engine_thread: Optional[Thread] = None
         self._running = False
         # mp.Process is single-use and NeuroEngine._stop() closes its queues,
@@ -54,8 +60,8 @@ class NeuroEngineService(EnginePort):
     # ------------------------------------------------------------------
 
     async def startup(self) -> None:
-        """Build (but do not start) the NeuroEngine via the builder."""
-        self._engine = NeuroEngineBuilder().build()
+        """Build (but do not start) the engine via the injected factory."""
+        self._engine = self._engine_factory()
         logger.info("NeuroEngineService initialised")
 
     async def shutdown(self) -> None:
@@ -78,7 +84,7 @@ class NeuroEngineService(EnginePort):
             # Rebuild the engine graph (fresh workers, queues, bus, gateway),
             # then replay listeners (session read-model + WS broadcaster) onto
             # the new EventBus — they were registered on the discarded one.
-            self._engine = NeuroEngineBuilder().build()
+            self._engine = self._engine_factory()
             for event_type, handler in self._subscriptions:
                 self._engine.event_bus.register_event_listener(event_type, handler)
             self._needs_rebuild = False
@@ -111,7 +117,6 @@ class NeuroEngineService(EnginePort):
     def handle_get_status(self, query: GetEngineStatusQuery) -> EngineStatusResult:
         if self._engine is None:
             return EngineStatusResult(running=False, acquisition_alive=False, processor_alive=False)
-        from omnibci.infrastructure.neuroengine.gateway.peers import STIMULATION
         return EngineStatusResult(
             running=self._running,
             acquisition_alive=(
@@ -122,7 +127,7 @@ class NeuroEngineService(EnginePort):
                 self._engine.signal_processing_worker.is_alive()
                 if self._engine.signal_processing_worker else False
             ),
-            stimulation_connected=self.is_peer_connected(STIMULATION),
+            stimulation_connected=self.is_peer_connected(STIMULATION_PEER),
         )
 
     # ------------------------------------------------------------------
