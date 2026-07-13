@@ -17,7 +17,7 @@ from omnibci.domain.epoch import Epoch
 from omnibci.domain.ports.algorithm import Decoder, Prediction
 from omnibci.infrastructure.neuroengine.processing.epoch.epoch_processor import EpochProcessor
 from omnibci.infrastructure.neuroengine.processing.epoch.pretrigger_buffer import PreTriggerBuffer
-from omnibci.shared.signal import SignalChunk
+from omnibci.domain.signal import SignalChunk
 
 
 # ---------------------------------------------------------------------------

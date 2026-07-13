@@ -25,7 +25,7 @@ from omnibci.infrastructure.acquisition.acquisition import (
     AcquisitionCommand,
     AcquisitionState,
 )
-from omnibci.shared.signal import SignalChunk
+from omnibci.domain.signal import SignalChunk
 
 
 def _run(coro):

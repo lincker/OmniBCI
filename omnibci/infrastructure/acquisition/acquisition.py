@@ -15,7 +15,7 @@ from enum import Enum
 from typing import Optional, Protocol, runtime_checkable
 
 from omnibci.domain.ports.acquisition import SignalSource
-from omnibci.shared.signal import SignalChunk
+from omnibci.domain.signal import SignalChunk
 
 logger = logging.getLogger(__name__)
 

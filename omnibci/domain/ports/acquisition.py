@@ -1,19 +1,12 @@
 """
-Author: lincker
-Date: 2026-01-08 14:52:39
-LastEditors: lincker haolin.d.wu@gmail.com
-LastEditTime: 2026-04-23 11:36:41
-FilePath: /OmniBCI/omnibci/interfaces/acquisition.py
-Description:
+Acquisition domain ports.
 
-Copyright (c) 2026 by lincker, All Rights Reserved.
+  SignalSource   — abstraction over an EEG signal source (device or file);
+  TriggerEmitter — abstraction over sending a trigger/event to an
+                   external device.
 """
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# @Author   : lincker <haolin.d.wu@gmail.com>
-# @Date     : 2025-12-31 10:34
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Optional
 
 from numpy import typing as npt
 
@@ -50,7 +43,7 @@ class SignalSource(ABC):
         """start reading data"""
 
     @abstractmethod
-    async def read_chunk(self)-> npt.NDArray[Any]:
+    async def read_chunk(self) -> Optional[npt.NDArray[Any]]:
         """Read a fixed sized chunk.
 
         Returns None to signal a clean end of stream (e.g. file playback

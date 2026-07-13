@@ -11,9 +11,11 @@ Design note — `occurred_at` uses `field(init=False)`:
   without defaults in the combined __init__ signature.  Since DomainEvent's
   `occurred_at` has a default_factory and subclasses add fields without
   defaults, the only clean fix is `init=False`: the field is never an __init__
-  parameter — it is always set automatically by __post_init__.
-  Subclasses that define their own __post_init__ must call
-  super().__post_init__() to ensure `occurred_at` is populated.
+  parameter — the dataclass-generated __init__ populates it from the
+  default_factory *before* any __post_init__ runs.  Subclasses' own
+  __post_init__ therefore need do nothing for `occurred_at`, and must NOT call
+  ``super().__post_init__()`` — DomainEvent defines no __post_init__ (calling
+  it would raise AttributeError).
 """
 
 from dataclasses import dataclass, field
@@ -27,7 +29,8 @@ from omnibci.domain.epoch import Epoch
 @dataclass(frozen=True)
 class DomainEvent:
     """Base for all domain events."""
-    # init=False: never a constructor parameter; always auto-set in __post_init__.
+    # init=False: never a constructor parameter; the generated __init__ sets it
+    # from the default_factory (not __post_init__).
     occurred_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc),
         init=False,
@@ -43,10 +46,11 @@ class TrialCompleted(DomainEvent):
         session_id:     ID of the BCISession that produced this trial.
         trial_number:   1-based index of this trial within the session.
         epoch:          The raw EEG segment that was classified.
-                        瞬态（P1-6）：仅在事件传递期间有效——聚合根的 trial
-                        历史只保留 EpochInfo 元数据，订阅方不应长期持有本
-                        事件（或其 epoch）的引用；需要信号本体请在处理事件
-                        时立即消费/落盘。
+                        Transient: valid only while the event is being
+                        delivered. The aggregate's trial history keeps only
+                        EpochInfo metadata, so subscribers must not retain a
+                        long-lived reference to this event (or its epoch) —
+                        consume/persist the signal while handling the event.
         classification: The decoder's result.
     """
     session_id: str

@@ -2,11 +2,21 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-04-18 10:41
+"""
+SignalChunk — Domain Value Object (moved from shared/signal.py).
+
+A raw slice of acquired signal — the upstream stage of the
+SignalChunk -> Epoch processing chain (Epoch is downstream). It carries an
+acquisition-domain convention: the last channel is the trigger channel, so
+``data`` is the first n-1 rows and ``triggers`` is the last row. Because this
+is domain vocabulary (the EpochDetector port references it in its signature),
+it belongs in domain rather than the shared/ technical area. Depends only on
+numpy and is safe to transport across an mp.Queue.
+"""
 from dataclasses import dataclass
 
 import numpy as np
 from numpy import typing as npt
-
 
 
 @dataclass
@@ -30,4 +40,6 @@ class SignalChunk:
     @property
     def has_trigger_signal(self) -> bool:
         """fast check non zero trigger"""
-        return np.any(self.triggers != 0)
+        # bool(...): np.any returns np.bool_; collapse to a Python bool
+        # to match the annotation.
+        return bool(np.any(self.triggers != 0))

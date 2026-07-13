@@ -8,7 +8,7 @@ from typing import Optional, Tuple
 
 from numpy import typing as npt
 
-from omnibci.shared.signal import SignalChunk
+from omnibci.domain.signal import SignalChunk
 
 
 @dataclass(frozen=True)
@@ -52,8 +52,8 @@ class Decoder(ABC):
       - should_decode(data) — cheap gate: are the conditions ready
         for *data* yet? The engine calls this each chunk and only runs the
         pipeline when it returns True.
-      - decode(data) — produce a Prediction, or None if not ready / not
-        confident. Pure function of *data*.
+      - decode(window, latest) — produce a Prediction, or None if not ready /
+        not confident. Pure function of its inputs.
     """
 
 
@@ -104,14 +104,14 @@ class Decoder(ABC):
 
 
 class EpochDetector(ABC):
-    """detect epoch start and end."""
+    """Detect epoch start / end markers within a signal chunk."""
 
-    """return（index, event_id). If not found, return（-1，0）"""
     @abstractmethod
     def detect_start(self, chunk: SignalChunk, start_event_set=None) -> Tuple[int, int]:
-        pass
+        """Return (index, event_id) of the first start marker in *chunk*,
+        or (-1, 0) if none is found."""
 
-    """return（index, event_id). If not found, return（-1，0）"""
     @abstractmethod
     def detect_end(self, chunk: SignalChunk, end_event_set=None) -> Tuple[int, int]:
-        pass
+        """Return (index, event_id) of the first end marker in *chunk*,
+        or (-1, 0) if none is found."""

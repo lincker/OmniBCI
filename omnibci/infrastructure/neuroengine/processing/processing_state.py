@@ -21,7 +21,7 @@ ACL change:
 import logging
 from typing import Optional, TYPE_CHECKING
 
-from omnibci.shared.signal import SignalChunk
+from omnibci.domain.signal import SignalChunk
 from omnibci.domain.classification import Classification
 
 if TYPE_CHECKING:
