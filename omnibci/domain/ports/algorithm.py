@@ -1,7 +1,10 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# @Author   : lincker <haolin.d.wu@gmail.com>
-# @Date     : 2025-04-25 10:53
+"""
+Algorithm domain ports — the decoding pipeline's plugin contracts.
+
+  Filter        — one ordered preprocessing stage (pure transform).
+  Decoder       — turns a filtered epoch window into a Prediction.
+  EpochDetector — finds epoch start/end markers in a signal chunk.
+"""
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -56,10 +59,6 @@ class Decoder(ABC):
         not confident. Pure function of its inputs.
     """
 
-
-    def __init__(self):
-        super().__init__()
-
     @abstractmethod
     def should_decode(self, window: npt.NDArray) -> bool:
         """
@@ -107,11 +106,11 @@ class EpochDetector(ABC):
     """Detect epoch start / end markers within a signal chunk."""
 
     @abstractmethod
-    def detect_start(self, chunk: SignalChunk, start_event_set=None) -> Tuple[int, int]:
+    def detect_start(self, chunk: SignalChunk) -> Tuple[int, int]:
         """Return (index, event_id) of the first start marker in *chunk*,
         or (-1, 0) if none is found."""
 
     @abstractmethod
-    def detect_end(self, chunk: SignalChunk, end_event_set=None) -> Tuple[int, int]:
+    def detect_end(self, chunk: SignalChunk) -> Tuple[int, int]:
         """Return (index, event_id) of the first end marker in *chunk*,
         or (-1, 0) if none is found."""
