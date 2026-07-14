@@ -10,7 +10,7 @@ Covers:
   - heartbeat staleness trips once and re-arms after a liveness signal;
   - a fresh connection resets the liveness clock (no false stale trip);
   - no failsafe/watchdog configured → not "monitored", nothing trips;
-  - effector_peer_config wires the LINK_LOST failsafe + watchdog.
+  - actuation_peer_config wires the LINK_LOST failsafe + watchdog.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.neuroengine.gateway.routing import RouteSpec, PeerConfig
 from omnibci.infrastructure.neuroengine.gateway.peer_channel import PeerChannel
 from omnibci.infrastructure.neuroengine.gateway.peers import (
-    effector_peer_config, EFFECTOR_LINK_LOST,
+    actuation_peer_config, ACTUATION_LINK_LOST,
 )
 
 
@@ -47,11 +47,11 @@ class FakeBus:
 
 def _channel(transport, failsafe=None, watchdog=None):
     bus = FakeBus()
-    fault = [Event(EventType.EffectorFault, {"code": "LINK_LOST"})]
+    fault = [Event(EventType.ActuationFault, {"code": "LINK_LOST"})]
     cfg = PeerConfig(
-        name="effector", transport=transport,
-        routes=RouteSpec(frozenset({EventType.EffectorCommand}),
-                         frozenset({EventType.EffectorFault})),
+        name="actuation", transport=transport,
+        routes=RouteSpec(frozenset({EventType.ActuationCommand}),
+                         frozenset({EventType.ActuationFault})),
         failsafe=(lambda: fault) if failsafe else None,
         watchdog_timeout_s=watchdog,
     )
@@ -66,7 +66,7 @@ class TestDisconnectEdge:
         assert bus.put == []
         t._connected = False
         ch._evaluate(now=2.0)           # edge → trip
-        assert len(bus.put) == 1 and bus.put[0].type == EventType.EffectorFault
+        assert len(bus.put) == 1 and bus.put[0].type == EventType.ActuationFault
         ch._evaluate(now=3.0)           # still down, no re-trip
         assert len(bus.put) == 1
 
@@ -114,12 +114,12 @@ class TestUnmonitored:
         assert bus.put == []
 
 
-class TestEffectorConfigSafety:
-    def test_effector_config_has_failsafe_and_watchdog(self):
-        cfg = effector_peer_config(host="127.0.0.1", port=8001, watchdog_timeout_s=2.5)
+class TestActuationConfigSafety:
+    def test_actuation_config_has_failsafe_and_watchdog(self):
+        cfg = actuation_peer_config(host="127.0.0.1", port=8001, watchdog_timeout_s=2.5)
         assert cfg.watchdog_timeout_s == 2.5
         assert cfg.failsafe is not None
         events = list(cfg.failsafe())
         assert len(events) == 1
-        assert events[0].type == EventType.EffectorFault
-        assert events[0].data == EFFECTOR_LINK_LOST
+        assert events[0].type == EventType.ActuationFault
+        assert events[0].data == ACTUATION_LINK_LOST

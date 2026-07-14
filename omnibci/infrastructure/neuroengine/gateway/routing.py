@@ -32,7 +32,7 @@ class PeerConfig:
     name: str
     transport: PeerTransport
     routes: RouteSpec
-    # Events to publish onto the bus when the link drops (effector: command a
+    # Events to publish onto the bus when the link drops (actuation: command a
     # safe state). None = nothing special on disconnect (fine for stimulation).
     failsafe: Optional[Callable[[], Iterable[Event]]] = None
     # Seconds; if set, a missing heartbeat past this triggers failsafe (Phase 4).

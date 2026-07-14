@@ -12,8 +12,8 @@ from omnibci.infrastructure.neuroengine.processing.signal_processor import Signa
 from omnibci.infrastructure.neuroengine.processing.worker import SignalProcessingWorker
 from omnibci.infrastructure.neuroengine.gateway import PeerGateway
 from omnibci.infrastructure.neuroengine.stimulation_feedback import StimulationFeedbackHandler
-from omnibci.infrastructure.neuroengine.effector_translator import EffectorCommandTranslator
-from omnibci.infrastructure.neuroengine.effector_feedback import EffectorFeedbackHandler
+from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
+from omnibci.infrastructure.neuroengine.actuation_feedback import ActuationFeedbackHandler
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class NeuroEngine:
     processor_command_queue:
         mp.Queue used to send SignalProcessorCommand values to the process.
     peer_gateway:
-        Routes EventBus events to/from external peers (stimulation, effector).
+        Routes EventBus events to/from external peers (stimulation, actuation).
     """
 
     def __init__(
@@ -49,8 +49,8 @@ class NeuroEngine:
         signal_processing_worker: SignalProcessingWorker,
         processor_command_queue: mp.Queue,
         peer_gateway: PeerGateway,
-        effector_translator: "EffectorCommandTranslator | None" = None,
-        effector_feedback: "EffectorFeedbackHandler | None" = None,
+        actuation_translator: "ActuationCommandTranslator | None" = None,
+        actuation_feedback: "ActuationFeedbackHandler | None" = None,
         debug: bool = False,
     ) -> None:
         self.event_bus = event_bus
@@ -62,10 +62,10 @@ class NeuroEngine:
         self.peer_gateway = peer_gateway
         # Engine-side consumer of stimulation → engine feedback (StimulationAck).
         self.stim_feedback = StimulationFeedbackHandler()
-        # Effector ACL + feedback — present only when the effector peer is
-        # enabled (builder injects them; None disables all effector wiring).
-        self.effector_translator = effector_translator
-        self.effector_feedback = effector_feedback
+        # Actuation ACL + feedback — present only when the actuation peer is
+        # enabled (builder injects them; None disables all actuation wiring).
+        self.actuation_translator = actuation_translator
+        self.actuation_feedback = actuation_feedback
         self._debug = debug
         # P2-7：停机改为事件驱动。should_stop 保持公开属性语义（服务层与
         # 总线监听器都直接赋值），setter 负责跨线程唤醒主循环。
@@ -193,20 +193,20 @@ class NeuroEngine:
         self.event_bus.register_event_listener(
             EventType.StimulationAck, self.stim_feedback.on_ack
         )
-        # Effector wiring (only when enabled): translate each decoded trial into
-        # an EffectorCommand, and consume the device's inbound feedback.
-        if self.effector_translator is not None:
+        # Actuation wiring (only when enabled): translate each decoded trial into
+        # an ActuationCommand, and consume the device's inbound feedback.
+        if self.actuation_translator is not None:
             self.event_bus.register_event_listener(
-                EventType.TrialCompleted, self.effector_translator.on_trial_completed
+                EventType.TrialCompleted, self.actuation_translator.on_trial_completed
             )
-        if self.effector_feedback is not None:
+        if self.actuation_feedback is not None:
             for event_type in (
-                EventType.EffectorAck,
-                EventType.EffectorState,
-                EventType.EffectorFault,
+                EventType.ActuationAck,
+                EventType.ActuationState,
+                EventType.ActuationFault,
             ):
                 self.event_bus.register_event_listener(
-                    event_type, self.effector_feedback.on_feedback
+                    event_type, self.actuation_feedback.on_feedback
                 )
 
     @staticmethod

@@ -10,10 +10,10 @@ from omnibci.infrastructure.neuroengine.processing.worker import SignalProcessin
 from omnibci.infrastructure.neuroengine.gateway import PeerGateway
 from omnibci.infrastructure.neuroengine.gateway.peers import (
     stimulation_peer_config,
-    effector_peer_config,
+    actuation_peer_config,
 )
-from omnibci.infrastructure.neuroengine.effector_translator import EffectorCommandTranslator
-from omnibci.infrastructure.neuroengine.effector_feedback import EffectorFeedbackHandler
+from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
+from omnibci.infrastructure.neuroengine.actuation_feedback import ActuationFeedbackHandler
 
 
 @dataclass
@@ -27,10 +27,10 @@ class NeuroEngineConfig:
     message_server_port: int = 8000         # result-push server bind port
     sample_rate: int = 1000                 # Hz, passed to the SignalProcessor
     baseline_duration: float = 0.2          # seconds of pre-trigger baseline (0 = none)
-    effector_enabled: bool = False          # open an effector listen port + wiring
-    effector_server_ip: str = "127.0.0.1"  # effector channel bind host
-    effector_server_port: int = 8001        # effector channel bind port
-    effector_watchdog_timeout_s: float = 1.0  # silent-link → failsafe (Phase 4)
+    actuation_enabled: bool = False          # open an actuation listen port + wiring
+    actuation_server_ip: str = "127.0.0.1"  # actuation channel bind host
+    actuation_server_port: int = 8001        # actuation channel bind port
+    actuation_watchdog_timeout_s: float = 1.0  # silent-link → failsafe (Phase 4)
     debug: bool = False                     # asyncio debug mode for the engine loop
 
     @classmethod
@@ -52,11 +52,11 @@ class NeuroEngineConfig:
             message_server_port=int(_get("NEUROENGINE.message_server_port", cls.message_server_port)),
             sample_rate=int(_get("ACQUISITION.sample_rate", cls.sample_rate)),
             baseline_duration=float(_get("ALGORITHM.baseline_duration", cls.baseline_duration)),
-            effector_enabled=bool(_get("NEUROENGINE.effector_enabled", cls.effector_enabled)),
-            effector_server_ip=str(_get("NEUROENGINE.effector_server_ip", cls.effector_server_ip)),
-            effector_server_port=int(_get("NEUROENGINE.effector_server_port", cls.effector_server_port)),
-            effector_watchdog_timeout_s=float(
-                _get("NEUROENGINE.effector_watchdog_timeout_s", cls.effector_watchdog_timeout_s)),
+            actuation_enabled=bool(_get("ACTUATION.enabled", cls.actuation_enabled)),
+            actuation_server_ip=str(_get("ACTUATION.server_ip", cls.actuation_server_ip)),
+            actuation_server_port=int(_get("ACTUATION.server_port", cls.actuation_server_port)),
+            actuation_watchdog_timeout_s=float(
+                _get("ACTUATION.watchdog_timeout_s", cls.actuation_watchdog_timeout_s)),
             debug=bool(_get("debug", cls.debug)),
         )
 
@@ -115,7 +115,7 @@ class NeuroEngineBuilder:
 
         # 5. Peer gateway — one routed channel per external peer (host/port
         #    injected, no settings.get inside). Stimulation is the only peer for
-        #    now; effector is added here later (Phase 3).
+        #    now; actuation is added here later (Phase 3).
         peer_gateway = PeerGateway(event_bus)
         peer_gateway.add_peer(
             stimulation_peer_config(
@@ -124,21 +124,21 @@ class NeuroEngineBuilder:
             )
         )
 
-        # Effector peer (opt-in). When enabled, the engine listens on a second
+        # Actuation peer (opt-in). When enabled, the engine listens on a second
         # port for the controller to dial in, and we wire the ACL translator
-        # (decoded trial → EffectorCommand) + inbound feedback consumer.
-        effector_translator = None
-        effector_feedback = None
-        if cfg.effector_enabled:
+        # (decoded trial → ActuationCommand) + inbound feedback consumer.
+        actuation_translator = None
+        actuation_feedback = None
+        if cfg.actuation_enabled:
             peer_gateway.add_peer(
-                effector_peer_config(
-                    host=cfg.effector_server_ip,
-                    port=cfg.effector_server_port,
-                    watchdog_timeout_s=cfg.effector_watchdog_timeout_s,
+                actuation_peer_config(
+                    host=cfg.actuation_server_ip,
+                    port=cfg.actuation_server_port,
+                    watchdog_timeout_s=cfg.actuation_watchdog_timeout_s,
                 )
             )
-            effector_translator = EffectorCommandTranslator(event_bus)
-            effector_feedback = EffectorFeedbackHandler()
+            actuation_translator = ActuationCommandTranslator(event_bus)
+            actuation_feedback = ActuationFeedbackHandler()
 
         # 6. Assemble engine
         return NeuroEngine(
@@ -149,7 +149,7 @@ class NeuroEngineBuilder:
             signal_processing_worker=signal_processing_worker,
             processor_command_queue=processor_command_queue,
             peer_gateway=peer_gateway,
-            effector_translator=effector_translator,
-            effector_feedback=effector_feedback,
+            actuation_translator=actuation_translator,
+            actuation_feedback=actuation_feedback,
             debug=cfg.debug,
         )

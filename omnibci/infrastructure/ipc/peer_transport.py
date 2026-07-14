@@ -3,12 +3,12 @@ PeerTransport — uniform full-duplex link to one external peer.
 
 Two topologies, one interface:
   - ListenTransport  : neuroengine *listens*; the peer dials in (stimulation
-                       displays, or an effector controller that connects out).
+                       displays, or an actuation controller that connects out).
                        Wraps NetworkServer; a single listen port may hold several
                        homogeneous connections (e.g. multiple displays) and
                        ``send`` fans out to all of them.
   - ConnectTransport : neuroengine *dials out* to a peer that hosts its own
-                       server (e.g. an effector box). Wraps NetworkClient.
+                       server (e.g. an actuation controller). Wraps NetworkClient.
 
 A transport is pure plumbing: framing + connection lifecycle. It does NOT decide
 what goes on the EventBus — inbound Events are handed to the handler installed via
