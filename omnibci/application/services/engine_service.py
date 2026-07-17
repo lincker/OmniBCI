@@ -8,7 +8,7 @@ command / query objects.  The API layer never touches NeuroEngine directly.
 import asyncio
 import logging
 from threading import Thread
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from omnibci.shared.events import EventType, Event
 from omnibci.application.ports.engine_port import (
@@ -26,6 +26,9 @@ from omnibci.application.queries.engine_queries import (
     EngineStatusResult,
 )
 
+if TYPE_CHECKING:
+    from omnibci.infrastructure.actuation.process_manager import ActuationProcessManager
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,10 +44,20 @@ class NeuroEngineService(EnginePort):
     that routers stay free of business logic.
     """
 
-    def __init__(self, engine_factory: EngineFactory) -> None:
+    def __init__(
+        self,
+        engine_factory: EngineFactory,
+        actuation_process_manager: "ActuationProcessManager | None" = None,
+    ) -> None:
         # 引擎的构建方式由组合根（bootstrap）注入 —— application 层不再
         # import NeuroEngineBuilder（P0-1）。每次调用工厂得到一张全新引擎图。
         self._engine_factory = engine_factory
+        # Actuation has no user command (stimulation spawns on
+        # handle_start_stimulation); its natural lifecycle hook is the
+        # engine's. Injected by the composition root; None / auto_spawn=False
+        # make both hooks no-ops. Duck-typed like StimulationAppService's
+        # process manager — no infrastructure import at runtime.
+        self._actuation_manager = actuation_process_manager
         self._engine: Optional[EngineHandle] = None
         self._engine_thread: Optional[Thread] = None
         self._running = False
@@ -97,6 +110,10 @@ class NeuroEngineService(EnginePort):
         self._engine_thread.start()
         self._running = True
         logger.info("NeuroEngine started")
+        if self._actuation_manager is not None:
+            # Dial-in client has reconnection backoff, so spawning right after
+            # the engine thread starts is race-tolerant.
+            self._actuation_manager.start()
 
     async def handle_stop_engine(self, cmd: StopEngineCommand) -> None:
         if not self._running or self._engine is None:
@@ -109,6 +126,8 @@ class NeuroEngineService(EnginePort):
         self._running = False
         self._needs_rebuild = True
         logger.info("NeuroEngine stopped")
+        if self._actuation_manager is not None:
+            self._actuation_manager.stop()
 
     # ------------------------------------------------------------------
     # Query handlers

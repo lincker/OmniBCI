@@ -35,6 +35,7 @@ from omnibci.domain.repositories import SessionRepository
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
+from omnibci.infrastructure.actuation.process_manager import ActuationProcessManager
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,9 @@ class AppContainer:
     session_repository: SessionRepository
     session_service: SessionAppService
     recording_service: RecordingService
+    # Optional so existing test constructions stay valid; the composition
+    # root always supplies one (auto_spawn=False when ACTUATION disabled).
+    actuation_process_manager: "ActuationProcessManager | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +90,7 @@ def assemble(
     *,
     settings=None,
     auto_spawn: bool = True,
+    actuation_process_manager: "ActuationProcessManager | None" = None,
 ) -> AppContainer:
     """
     Wire application services around an (already-created) engine service and
@@ -112,6 +117,7 @@ def assemble(
         session_service=session_service,
         # Orchestrates session + acquisition for the "record a run" use case.
         recording_service=RecordingService(session_service, acquisition_service),
+        actuation_process_manager=actuation_process_manager,
     )
 
 
@@ -135,14 +141,25 @@ async def build_container() -> AppContainer:
     repository = _build_session_repository(
         settings.get("PERSISTENCE.session_repository", "in_memory"))
     auto_spawn = bool(settings.get("STIMULATION.auto_spawn", True))
+    # Actuation subprocess management: disabled subsystem → auto_spawn=False,
+    # making every lifecycle hook a no-op (multi-machine runs the script).
+    actuation_auto_spawn = (
+        bool(settings.get("ACTUATION.enabled", False))
+        and bool(settings.get("ACTUATION.auto_spawn", True))
+    )
+    actuation_manager = ActuationProcessManager(auto_spawn=actuation_auto_spawn)
 
     # 每次调用构建全新引擎图（restart 语义）；重启时重读 settings，
     # 使 engine-restart 级配置变更生效 —— 与迁移前 NeuroEngineBuilder()
     # 在 service 内部的行为一致。
-    engine_service = NeuroEngineService(engine_factory=lambda: NeuroEngineBuilder().build())
+    engine_service = NeuroEngineService(
+        engine_factory=lambda: NeuroEngineBuilder().build(),
+        actuation_process_manager=actuation_manager,
+    )
     await engine_service.startup()
     return assemble(engine_service, repository,
-                    settings=settings, auto_spawn=auto_spawn)
+                    settings=settings, auto_spawn=auto_spawn,
+                    actuation_process_manager=actuation_manager)
 
 
 # ---------------------------------------------------------------------------

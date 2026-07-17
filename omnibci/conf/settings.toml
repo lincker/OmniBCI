@@ -52,6 +52,9 @@ enabled = false
 server_ip = '127.0.0.1'
 server_port = 8001
 watchdog_timeout_s = 1.0
+# Spawn the actuation subprocess automatically when the engine starts
+# (single-machine). false = start it manually: python scripts/run_actuation.py
+auto_spawn = true
 # plugin_type of the Effector plugin the actuation subsystem loads (read by the
 # actuation-subsystem loader; empty = none). Parallel to STIMULATION.paradigm.
 effector = ''
