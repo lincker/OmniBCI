@@ -114,7 +114,8 @@ class SessionRepository(ABC):
 
     @abstractmethod
     def save(self, record: SessionRecord) -> None:
-        """Insert or replace the given SessionRecord."""
+        """Insert a brand-new record. Cross-thread mutations go through
+        update()/upsert() — see the class-level concurrency contract."""
 
     @abstractmethod
     def find_by_id(self, session_id: str) -> Optional[SessionRecord]:

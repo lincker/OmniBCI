@@ -18,8 +18,7 @@ Windowing model (generic, paradigm-neutral):
     compatible with epochs that begin at the trigger.
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
@@ -38,14 +37,12 @@ class Epoch:
         channel_count: Number of EEG channels.
         trigger_offset:Pre-trigger sample count = index of the trigger within
                        ``data``. 0 means no baseline was captured.
-        created_at:    Wall-clock time of construction (UTC).
     """
     data: np.ndarray          # shape: (channels, samples)
     event_id: int
     sample_rate: int
     channel_count: int
     trigger_offset: int = 0
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self) -> None:
         if self.data.ndim != 2:
@@ -136,16 +133,13 @@ class EpochInfo:
 
     BCISession's trial history stores this instead of the full Epoch, so the
     aggregate grows by only a few dozen bytes per trial rather than retaining a
-    whole (channels x samples) array. Consumers that need the signal itself
-    subscribe to the TrialCompleted domain event (which carries the full Epoch
-    transiently) and process it as the event is delivered.
+    whole (channels x samples) array.
     """
     event_id: int
     channel_count: int
     sample_rate: int
     duration_samples: int
     trigger_offset: int
-    created_at: datetime
 
     @classmethod
     def from_epoch(cls, epoch: "Epoch") -> "EpochInfo":
@@ -155,7 +149,6 @@ class EpochInfo:
             sample_rate=epoch.sample_rate,
             duration_samples=epoch.duration_samples,
             trigger_offset=epoch.trigger_offset,
-            created_at=epoch.created_at,
         )
 
     @property

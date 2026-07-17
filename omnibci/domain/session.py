@@ -22,8 +22,7 @@ Usage (inside SignalProcessor or an application service):
 """
 
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Callable, List, Optional
 
@@ -54,14 +53,12 @@ class Trial:
 
     Keeps only the Epoch's metadata projection (EpochInfo), not the signal
     matrix — otherwise the aggregate would grow without bound over a long
-    session (a whole channels x samples array per trial). Consumers that need
-    the signal subscribe to the TrialCompleted domain event (which carries the
-    full Epoch transiently) and process/persist it as the event is delivered.
+    session (a whole channels x samples array per trial). The signal itself is
+    not retained anywhere after decoding.
     """
     trial_number: int
     epoch_info: EpochInfo
     classification: Classification
-    recorded_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +158,7 @@ class BCISession:
         trial_number = len(self._trials) + 1
         trial = Trial(
             trial_number=trial_number,
-            # Trial history keeps only metadata; the full signal rides the event.
+            # Trial history keeps only metadata, never the signal matrix.
             epoch_info=EpochInfo.from_epoch(epoch),
             classification=classification,
         )
@@ -170,7 +167,6 @@ class BCISession:
         event = TrialCompleted(
             session_id=self._session_id,
             trial_number=trial_number,
-            epoch=epoch,
             classification=classification,
         )
         self._pending_events.append(event)
