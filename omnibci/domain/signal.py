@@ -3,43 +3,56 @@
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-04-18 10:41
 """
-SignalChunk — Domain Value Object (moved from shared/signal.py).
+SignalChunk — domain value object.
 
 A raw slice of acquired signal — the upstream stage of the
-SignalChunk -> Epoch processing chain (Epoch is downstream). It carries an
-acquisition-domain convention: the last channel is the trigger channel, so
-``data`` is the first n-1 rows and ``triggers`` is the last row. Because this
-is domain vocabulary (the EpochDetector port references it in its signature),
-it belongs in domain rather than the shared/ technical area. Depends only on
-numpy and is safe to transport across an mp.Queue.
+SignalChunk -> Epoch processing chain (Epoch is downstream). It carries the
+acquisition-domain convention that the last channel is the trigger channel:
+``data`` is every row but the last and ``triggers`` is the last row.
+
+Unlike Epoch, the payload array is NOT copied or made read-only: chunks flow
+on the acquisition hot path (one per read), so a per-chunk copy would tax
+throughput for no benefit. ``frozen=True`` protects the field bindings only;
+the producer hands over ownership of ``raw_data`` and must not mutate it
+after construction.
 """
 from dataclasses import dataclass
 
-import numpy as np
 from numpy import typing as npt
 
 
-@dataclass
+@dataclass(frozen=True)
 class SignalChunk:
-    """unified data structure for signal chunks"""
-    # raw data include: n-1 channels data and the n channel is events trigger
+    """One acquired chunk: shape (channels + 1, samples), last row = triggers.
+
+    Attributes:
+        timestamp:   Producer-side acquisition timestamp (the built-in
+                     acquisition worker stamps ``time.time_ns()``).
+        sequence_id: Monotonic chunk counter within one acquisition run.
+        raw_data:    Signal matrix including the trailing trigger row.
+    """
     timestamp: float
     sequence_id: int
     raw_data: npt.NDArray
-    trigger_indices: tuple = (-1,)
+
+    def __post_init__(self) -> None:
+        if self.raw_data.ndim != 2:
+            raise ValueError(
+                f"SignalChunk.raw_data must be 2-D (channels+trigger x samples), "
+                f"got shape {self.raw_data.shape}"
+            )
+        if self.raw_data.shape[0] < 2:
+            raise ValueError(
+                f"SignalChunk.raw_data needs at least 2 rows "
+                f"(>= 1 signal channel + 1 trigger row), got {self.raw_data.shape[0]}"
+            )
 
     @property
     def data(self) -> npt.NDArray:
-        # fix trigger at the last channel
-        return self.raw_data[0:-1, :]
+        """Signal rows only — everything except the trailing trigger row."""
+        return self.raw_data[:-1, :]
 
     @property
     def triggers(self) -> npt.NDArray:
+        """The trigger channel — by convention the last row."""
         return self.raw_data[-1, :]
-
-    @property
-    def has_trigger_signal(self) -> bool:
-        """fast check non zero trigger"""
-        # bool(...): np.any returns np.bool_; collapse to a Python bool
-        # to match the annotation.
-        return bool(np.any(self.triggers != 0))
