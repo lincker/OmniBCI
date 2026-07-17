@@ -77,8 +77,9 @@ def test_lifespan_registers_engine_listeners(monkeypatch):
 
     registered_types = [t for t, _ in engine.subscriptions]
 
-    # 3 read-model (application) + 4 broadcaster (presentation) = 7
-    assert len(engine.subscriptions) == 7
+    # 4 read-model (application) + 4 broadcaster (presentation) = 8
+    assert len(engine.subscriptions) == 8
+    assert EventType.AcquisitionState in registered_types
     # read-model sync
     assert registered_types.count(EventType.TrialCompleted) == 2   # session + broadcaster
     assert registered_types.count(EventType.SessionStarted) == 2   # session + broadcaster

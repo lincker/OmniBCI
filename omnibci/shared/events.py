@@ -12,6 +12,8 @@ class EventType(IntEnum):
     DisconnectDataProvider = 102
     StartStream = 111
     StopStream = 112
+    AcquisitionState = 121  # worker -> API: authoritative device-state snapshot
+                            # payload: application.events.AcquisitionSnapshot
     # neuro engine（历史遗留值 33/9：数值是 IPC wire 契约的一部分，
     # 重新编号需要 bump contracts.PROTOCOL_VERSION，故仅整理注释不改值）
     CloseAllNeuroEngineProcessSystem = 33
@@ -21,11 +23,12 @@ class EventType(IntEnum):
     MessageFromStimulation = 9   # 历史遗留值，同上
     StartStimulation = 301
     StopStimulation = 302
-    # effector (external-device control)
-    EffectorCommand = 401  # engine → effector: drive the external device
-    EffectorAck = 402      # effector → engine: command executed receipt
-    EffectorState = 403    # effector → engine: device state / sensor feedback
-    EffectorFault = 404    # effector → engine: device fault (triggers safety)
+    # actuation (external-device control; the actuation subsystem loads
+    # an Effector plugin to carry out these commands)
+    ActuationCommand = 401  # engine → actuation: drive the external device
+    ActuationAck = 402      # actuation → engine: command executed receipt
+    ActuationState = 403    # actuation → engine: device state / sensor feedback
+    ActuationFault = 404    # actuation → engine: device fault (triggers safety)
     # --- domain events (carry rich domain objects as payload) ---------
     TrialCompleted = 501   # payload: TrialOutcome (session_id + trial_number + Classification)
     SessionStarted = 502   # payload: session_id str
@@ -47,8 +50,9 @@ class Event:
       EndSession       str  (session_id)
       StartStimulation str|None (paradigm)
       StartStimTrial   dict {"n_trials": int, "trial_params": list|None}
+      AcquisitionState application.events.AcquisitionSnapshot
       StimulationAck   dict (make_stimulation_ack 构造，跨 socket 为 JSON)
-      Effector*        dict (设备命令/反馈，跨 socket 为 JSON)
+      Actuation*       dict (设备命令/反馈，跨 socket 为 JSON)
       其余命令类事件    None
 
     消费方对富载荷做显式 isinstance 检查；旧的 bare-Classification /

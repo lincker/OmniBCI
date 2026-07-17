@@ -172,6 +172,7 @@ def register_engine_listeners(
         (EventType.SessionStarted, container.session_service.on_session_started),
         (EventType.TrialCompleted, container.session_service.on_trial_completed),
         (EventType.SessionEnded, container.session_service.on_session_ended),
+        (EventType.AcquisitionState, container.acquisition_service.on_acquisition_state),
         *extra_subscriptions,
     ]
     for event_type, handler in subscriptions:

@@ -10,11 +10,8 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-import numpy as np
-
 from omnibci.shared.events import Event, EventType
 from omnibci.domain.classification import Classification
-from omnibci.domain.epoch import Epoch
 from omnibci.domain.events import TrialCompleted as DomainTrialCompleted
 from omnibci.infrastructure.outbound import (
     TrialOutcome,
@@ -127,9 +124,8 @@ class TestAclEmitsTrialOutcome:
     def test_trial_completed_payload_is_trial_outcome(self):
         bus = _SpyBus()
         pub = DomainEventPublisher(bus)
-        epoch = Epoch(data=np.ones((2, 4)), event_id=101, sample_rate=1000, channel_count=2)
         domain_event = DomainTrialCompleted(
-            session_id="sess-9", trial_number=2, epoch=epoch, classification=_clf(event_id=101),
+            session_id="sess-9", trial_number=2, classification=_clf(event_id=101),
         )
         pub.publish(domain_event)
         assert len(bus.events) == 1

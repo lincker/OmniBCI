@@ -15,8 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
-#: 判定"高置信"的标准阈值（confidence ≥ 此值）。原先硬编码在
-#: is_high_confidence 内（P2-10 提为常量）。
+#: Standard threshold for "high confidence" (confidence >= this value).
 HIGH_CONFIDENCE_THRESHOLD = 0.7
 
 

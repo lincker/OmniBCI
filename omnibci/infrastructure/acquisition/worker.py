@@ -31,12 +31,16 @@ class AcquisitionWorker(mp.Process):
         self,
         command_queue: CommandQueue,
         data_manager: Optional[DataSink] = None,
+        event_bus=None,
     ) -> None:
         super().__init__()
         self.data_source: SignalSource
         self.acquisitor: Optional[Acquisition] = None
         self.command_queue = command_queue
         self.data_manager = data_manager
+        # EventBus 跨进程时 __getstate__ 剥 handler、只带 mp.Queue —— 子进程
+        # 仅能 put_event（与 SignalProcessingWorker 同一机制）。
+        self.event_bus = event_bus
 
     def run(self) -> None:
         self._load_data_source()
@@ -47,6 +51,7 @@ class AcquisitionWorker(mp.Process):
             data_source=self.data_source,
             command_queue=self.command_queue,
             data_manager=self.data_manager,
+            event_bus=self.event_bus,
         )
         self.acquisitor.run()
 

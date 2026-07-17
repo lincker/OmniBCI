@@ -1,5 +1,5 @@
 """
-gateway — neuroengine's boundary to external peers (stimulation, effector, …).
+gateway — neuroengine's boundary to external peers (stimulation, actuation, …).
 
 PeerGateway owns one PeerChannel per peer. Each channel routes EventBus events
 to/from its peer according to a RouteSpec, replacing the old single-peer,

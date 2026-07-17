@@ -1,14 +1,17 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# @Author   : lincker <haolin.d.wu@gmail.com>
-# @Date     : 2025-04-25 10:53
+"""
+Algorithm domain ports — the decoding pipeline's plugin contracts.
+
+  Filter        — one ordered preprocessing stage (pure transform).
+  Decoder       — turns a filtered epoch window into a Prediction.
+  EpochDetector — finds epoch start/end markers in a signal chunk.
+"""
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from numpy import typing as npt
 
-from omnibci.shared.signal import SignalChunk
+from omnibci.domain.signal import SignalChunk
 
 
 @dataclass(frozen=True)
@@ -52,13 +55,9 @@ class Decoder(ABC):
       - should_decode(data) — cheap gate: are the conditions ready
         for *data* yet? The engine calls this each chunk and only runs the
         pipeline when it returns True.
-      - decode(data) — produce a Prediction, or None if not ready / not
-        confident. Pure function of *data*.
+      - decode(window, latest) — produce a Prediction, or None if not ready /
+        not confident. Pure function of its inputs.
     """
-
-
-    def __init__(self):
-        super().__init__()
 
     @abstractmethod
     def should_decode(self, window: npt.NDArray) -> bool:
@@ -104,14 +103,14 @@ class Decoder(ABC):
 
 
 class EpochDetector(ABC):
-    """detect epoch start and end."""
+    """Detect epoch start / end markers within a signal chunk."""
 
-    """return（index, event_id). If not found, return（-1，0）"""
     @abstractmethod
-    def detect_start(self, chunk: SignalChunk, start_event_set=None) -> Tuple[int, int]:
-        pass
+    def detect_start(self, chunk: SignalChunk) -> Tuple[int, int]:
+        """Return (index, event_id) of the first start marker in *chunk*,
+        or (-1, 0) if none is found."""
 
-    """return（index, event_id). If not found, return（-1，0）"""
     @abstractmethod
-    def detect_end(self, chunk: SignalChunk, end_event_set=None) -> Tuple[int, int]:
-        pass
+    def detect_end(self, chunk: SignalChunk) -> Tuple[int, int]:
+        """Return (index, event_id) of the first end marker in *chunk*,
+        or (-1, 0) if none is found."""

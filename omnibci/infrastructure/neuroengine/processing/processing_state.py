@@ -21,7 +21,7 @@ ACL change:
 import logging
 from typing import Optional, TYPE_CHECKING
 
-from omnibci.shared.signal import SignalChunk
+from omnibci.domain.signal import SignalChunk
 from omnibci.domain.classification import Classification
 
 if TYPE_CHECKING:
@@ -190,7 +190,7 @@ class AssemblingEpochState(ProcessingState):
 
         # Delegate to aggregate root — enforces business rules
         try:
-            trial_completed = session.record_trial(epoch, classification)
+            session.record_trial(epoch, classification)
         except (RuntimeError, ValueError) as exc:
             logger.error("BCISession.record_trial() rejected: %s", exc)
             return

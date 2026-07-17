@@ -20,6 +20,7 @@ from omnibci.application.queries.acquisition_queries import (
     GetAcquisitionStatusQuery,
     AcquisitionStatusResult,
 )
+from omnibci.application.events import AcquisitionSnapshot
 from omnibci.application.ports.engine_port import EnginePort
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,8 @@ class AcquisitionAppService:
         None = 元数据不可用（单测默认），status 相应字段为 None。"""
         self._engine = engine
         self._settings = settings
+        # Projection of worker-reported device state (AcquisitionState events);
+        # command handlers no longer guess — see on_acquisition_state().
         self._connected = False
         self._streaming = False
 
@@ -48,35 +51,46 @@ class AcquisitionAppService:
 
     def handle_connect(self, cmd: ConnectDataProviderCommand) -> None:
         self._put_event(EventType.ConnectDataProvider)
-        self._connected = True
         logger.info("ConnectDataProvider event dispatched")
 
     def handle_disconnect(self, cmd: DisconnectDataProviderCommand) -> None:
         self._put_event(EventType.DisconnectDataProvider)
-        self._connected = False
-        self._streaming = False
         logger.info("DisconnectDataProvider event dispatched")
 
     def handle_start_stream(self, cmd: StartStreamCommand) -> None:
         self._put_event(EventType.StartStream)
-        self._streaming = True
         logger.info("StartStream event dispatched")
 
     def handle_stop_stream(self, cmd: StopStreamCommand) -> None:
         self._put_event(EventType.StopStream)
-        self._streaming = False
         logger.info("StopStream event dispatched")
 
     def reset(self) -> None:
-        """Clear connection/stream state.
+        """Clear the state projection.
 
-        These are intent flags held in the API process; they do not track the
-        engine's acquisition worker.  When the engine stops, that worker dies,
-        so without this the status would stay 'connected/streaming' (stale)
-        while the engine panel correctly shows the acquisition process gone.
+        The projection is fed by AcquisitionState events from the acquisition
+        worker.  When the engine stops, that worker is killed and emits no
+        final event, so without this the status would stay 'connected/
+        streaming' (stale) while the engine panel correctly shows the
+        acquisition process gone.
         """
         self._connected = False
         self._streaming = False
+
+    # ------------------------------------------------------------------
+    # EventBus listeners (registered in bootstrap.register_engine_listeners)
+    # ------------------------------------------------------------------
+
+    def on_acquisition_state(self, event: Event) -> None:
+        """Receive EventType.AcquisitionState and update the projection with
+        the worker-reported authoritative device state."""
+        snap = event.data
+        if not isinstance(snap, AcquisitionSnapshot):
+            logger.error("AcquisitionState payload is %s, not AcquisitionSnapshot",
+                         type(snap).__name__)
+            return
+        self._connected = snap.connected
+        self._streaming = snap.streaming
 
     # ------------------------------------------------------------------
     # Query handlers

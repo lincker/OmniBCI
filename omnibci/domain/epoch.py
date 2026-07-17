@@ -18,8 +18,7 @@ Windowing model (generic, paradigm-neutral):
     compatible with epochs that begin at the trigger.
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
@@ -38,14 +37,12 @@ class Epoch:
         channel_count: Number of EEG channels.
         trigger_offset:Pre-trigger sample count = index of the trigger within
                        ``data``. 0 means no baseline was captured.
-        created_at:    Wall-clock time of construction (UTC).
     """
     data: np.ndarray          # shape: (channels, samples)
     event_id: int
     sample_rate: int
     channel_count: int
     trigger_offset: int = 0
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self) -> None:
         if self.data.ndim != 2:
@@ -67,12 +64,8 @@ class Epoch:
                 f"trigger_offset must be in [0, {self.data.shape[1]}) "
                 f"(at least one window sample required), got {self.trigger_offset}"
             )
-        # 冻结为不可变值对象：拷贝一份**自有**数组并置只读（P2-10）。
-        # 原实现直接对传入数组设 writeable=False——就地改调用者的 buffer，
-        # 上游若还想写它会莫名 ValueError（潜伏副作用）；且 object.__setattr__
-        # 把 data 设成它自身是无效语句。改为拷贝：调用者数组不受影响，
-        # Epoch 持有的副本只读。（唯一生产调用方 EpochProcessor 因此无需
-        # 再自行 .copy()。）
+        # Freeze as an immutable value object: hold a read-only copy of our
+        # own, so the caller's array is never mutated in place.
         frozen = np.array(self.data, copy=True)
         frozen.flags.writeable = False
         object.__setattr__(self, "data", frozen)
@@ -115,7 +108,9 @@ class Epoch:
             and self.sample_rate == other.sample_rate
             and self.channel_count == other.channel_count
             and self.trigger_offset == other.trigger_offset
-            and np.array_equal(self.data, other.data)
+            # equal_nan=True keeps reflexivity when data holds NaN
+            # (epoch == epoch); safe for integer arrays too.
+            and np.array_equal(self.data, other.data, equal_nan=True)
         )
 
     def __hash__(self) -> int:
@@ -134,19 +129,17 @@ class Epoch:
 
 @dataclass(frozen=True)
 class EpochInfo:
-    """Epoch 的轻量元数据投影 —— 不携带信号矩阵（P1-6）。
+    """Lightweight metadata projection of an Epoch — carries no signal matrix.
 
-    BCISession 的 trial 历史保存它而不是完整 Epoch：长会话中聚合根因此
-    只随 trial 数线性增长几十字节，而不是每 trial 保留一整块
-    (channels × samples) 的信号数据。需要信号本体的消费者应订阅
-    TrialCompleted 领域事件（瞬态携带完整 Epoch），在事件传递时处理。
+    BCISession's trial history stores this instead of the full Epoch, so the
+    aggregate grows by only a few dozen bytes per trial rather than retaining a
+    whole (channels x samples) array.
     """
     event_id: int
     channel_count: int
     sample_rate: int
     duration_samples: int
     trigger_offset: int
-    created_at: datetime
 
     @classmethod
     def from_epoch(cls, epoch: "Epoch") -> "EpochInfo":
@@ -156,7 +149,6 @@ class EpochInfo:
             sample_rate=epoch.sample_rate,
             duration_samples=epoch.duration_samples,
             trigger_offset=epoch.trigger_offset,
-            created_at=epoch.created_at,
         )
 
     @property

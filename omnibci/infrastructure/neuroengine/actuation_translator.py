@@ -1,13 +1,13 @@
 """
-EffectorCommandTranslator — ACL from decoded trials to effector commands.
+ActuationCommandTranslator — ACL from decoded trials to actuation commands.
 
 Closed loop: each completed trial (TrialCompleted, payload = Classification)
-becomes an EffectorCommand event on the bus, which the effector PeerChannel
+becomes an ActuationCommand event on the bus, which the actuation PeerChannel
 routes out to the device controller.
 
 This is the symmetric counterpart to how stimulation consumes TrialCompleted —
 the engine emits domain events; an adapter translates them to a peer's wire
-vocabulary. The engine domain never references the effector transport.
+vocabulary. The engine domain never references the actuation transport.
 
 Mapping note: the command payload currently carries the decoded ``target_id``
 (+ confidence/event_id). The target → concrete actuation mapping (which joint,
@@ -23,12 +23,12 @@ from omnibci.infrastructure.ipc.event_bus import EventBus
 logger = logging.getLogger(__name__)
 
 
-class EffectorCommandTranslator:
+class ActuationCommandTranslator:
     def __init__(self, event_bus: EventBus) -> None:
         self._bus = event_bus
 
     def on_trial_completed(self, event: Event) -> None:
-        """EventBus listener for TrialCompleted. Emits an EffectorCommand."""
+        """EventBus listener for TrialCompleted. Emits an ActuationCommand."""
         data = event.data
         # The bus payload is a TrialOutcome (session_id + trial_number +
         # classification) since the ACL enrichment — unwrap it. A bare
@@ -38,7 +38,7 @@ class EffectorCommandTranslator:
         target_id = getattr(clf, "target_id", None)
         if target_id is None:
             logger.warning(
-                "EffectorCommandTranslator: TrialCompleted payload %s has no "
+                "ActuationCommandTranslator: TrialCompleted payload %s has no "
                 "target_id; no command emitted", type(data).__name__,
             )
             return
@@ -47,5 +47,5 @@ class EffectorCommandTranslator:
             "event_id": getattr(clf, "event_id", None),
             "confidence": getattr(clf, "confidence", None),
         }
-        self._bus.put_event(Event(EventType.EffectorCommand, command))
-        logger.info("EffectorCommand emitted: %s", command)
+        self._bus.put_event(Event(EventType.ActuationCommand, command))
+        logger.info("ActuationCommand emitted: %s", command)

@@ -22,7 +22,7 @@ from typing import Tuple
 import numpy as np
 import pytest
 
-from omnibci.shared.signal import SignalChunk
+from omnibci.domain.signal import SignalChunk
 from omnibci.domain.classification import Classification
 from omnibci.infrastructure.plugins.algorithms.legacy_decoder import LegacyAnalyseDecoder
 from omnibci.infrastructure.neuroengine.processing.epoch.epoch_processor import EpochProcessor

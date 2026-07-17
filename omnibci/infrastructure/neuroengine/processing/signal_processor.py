@@ -17,7 +17,7 @@ from enum import Enum
 import logging
 from typing import Optional
 
-from omnibci.shared.signal import SignalChunk
+from omnibci.domain.signal import SignalChunk
 
 import numpy as np
 

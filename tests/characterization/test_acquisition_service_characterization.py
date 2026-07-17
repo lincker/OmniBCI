@@ -25,7 +25,7 @@ from omnibci.infrastructure.acquisition.acquisition import (
     AcquisitionCommand,
     AcquisitionState,
 )
-from omnibci.shared.signal import SignalChunk
+from omnibci.domain.signal import SignalChunk
 
 
 def _run(coro):
@@ -260,3 +260,83 @@ if __name__ == "__main__":  # pragma: no cover
                 traceback.print_exc()
     print(f"\n{passed} passed, {failed} failed")
     raise SystemExit(1 if failed else 0)
+
+
+# ---------------------------------------------------------------------------
+# 方案 A：状态投影 —— worker 在状态转换处发射 AcquisitionSnapshot
+# ---------------------------------------------------------------------------
+
+class _SpyBus:
+    def __init__(self):
+        self.events = []
+
+    def put_event(self, event) -> None:
+        self.events.append(event)
+
+
+class _EOFDataSource(_FakeDataSource):
+    """Plays out its chunks, then signals a clean end of stream (None)."""
+
+    async def read_chunk(self):
+        if self._read_idx < len(self._chunks):
+            chunk = self._chunks[self._read_idx]
+            self._read_idx += 1
+            return chunk
+        return None
+
+
+class TestStateProjectionEmission:
+    def _make(self, source):
+        from omnibci.infrastructure.acquisition.acquisition import Acquisition
+        bus = _SpyBus()
+        acq = Acquisition(
+            data_source=source,
+            command_queue=_FakeQueue(),
+            data_manager=_FakeDataManager(),
+            event_bus=bus,
+        )
+        return acq, bus
+
+    def _snaps(self, bus):
+        from omnibci.shared.events import EventType
+        return [(e.data.connected, e.data.streaming)
+                for e in bus.events if e.type == EventType.AcquisitionState]
+
+    def test_connect_and_stream_emit_snapshots(self):
+        source = _FakeDataSource()
+        acq, bus = self._make(source)
+        _run(acq._on_connect())
+        assert self._snaps(bus)[-1] == (True, False)
+        _run(acq._on_stop_stream())
+        assert self._snaps(bus)[-1] == (True, False)
+
+    def test_eof_closes_stream_and_emits_truth(self):
+        """文件回放播完：设备停流 + 投影收到 streaming=False（前端不再假活）。"""
+        source = _EOFDataSource(chunks=[np.ones((2, 3))])
+        acq, bus = self._make(source)
+        _run(acq._on_connect())
+
+        async def start_and_drain():
+            await acq._on_start_stream()
+            await acq.fetch_task
+
+        _run(start_and_drain())
+        assert "stop_stream" in source.calls          # EOF 干净收流
+        assert source.is_streaming is False
+        assert self._snaps(bus)[-1] == (True, False)  # 真相回流投影
+
+    def test_start_stream_when_not_connected_reports_truth(self):
+        source = _FakeDataSource()
+        acq, bus = self._make(source)          # 未 connect，status=stop
+        _run(acq._on_start_stream())
+        assert "start_stream" not in source.calls
+        assert self._snaps(bus)[-1] == (False, False)
+
+    def test_no_bus_is_silent_noop(self):
+        from omnibci.infrastructure.acquisition.acquisition import Acquisition
+        acq = Acquisition(
+            data_source=_FakeDataSource(),
+            command_queue=_FakeQueue(),
+            data_manager=_FakeDataManager(),
+        )
+        _run(acq._on_connect())   # must not raise despite event_bus=None

@@ -263,7 +263,7 @@ class TestACLTranslation:
         bus = _SpyBus()
         pub = DomainEventPublisher(bus)
         clf = _clf(target_id=4, event_id=1)
-        pub.publish(TrialCompleted("s", 1, _epoch(event_id=1), clf))
+        pub.publish(TrialCompleted("s", 1, clf))
         assert len(bus.events) == 1
         assert bus.events[0].type == EventType.TrialCompleted
         payload = bus.events[0].data
@@ -327,11 +327,8 @@ class TestTrialsDoNotRetainSignal:
         assert trial.epoch_info.event_id == 1
         assert trial.epoch_info.duration_samples > 0
 
-    def test_signal_array_is_released_after_event_drained(self):
-        """信号矩阵在事件被 drain 并丢弃后即可被 GC —— 聚合根无残留引用。
-
-        旧实现下 Trial.epoch 永久持有数组，此断言必挂。
-        """
+    def test_signal_array_is_released_after_record_trial(self):
+        """信号矩阵在 record_trial 之后即可被 GC —— 聚合根与事件均无残留引用。"""
         import gc
         import weakref
 
@@ -340,14 +337,7 @@ class TestTrialsDoNotRetainSignal:
         epoch = _epoch(event_id=1)
         ref = weakref.ref(epoch.data)
         s.record_trial(epoch, _clf(event_id=1))
-        s.pop_events()          # 事件（携带 epoch）被 drain 并随即丢弃
+        s.pop_events()
         del epoch
         gc.collect()
         assert ref() is None    # 聚合根未保留任何信号数据引用
-
-    def test_transient_event_still_carries_full_epoch(self):
-        """TrialCompleted 事件仍携带完整 Epoch（瞬态），供订阅方即时消费。"""
-        s = BCISession()
-        s.start()
-        ev = s.record_trial(_epoch(event_id=3), _clf(event_id=3))
-        assert ev.epoch.data.shape[0] == ev.epoch.channel_count

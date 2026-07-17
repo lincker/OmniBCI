@@ -22,8 +22,7 @@ Usage (inside SignalProcessor or an application service):
 """
 
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Callable, List, Optional
 
@@ -52,15 +51,14 @@ class Trial:
     """
     A completed trial within a session.
 
-    P1-6：只保留 Epoch 的元数据投影（EpochInfo），不保留信号矩阵——
-    否则长会话中聚合根随 trial 无界增长（每 trial 一整块
-    channels × samples 数组）。需要信号本体的消费者订阅 TrialCompleted
-    领域事件（瞬态携带完整 Epoch），在事件传递时处理/落盘。
+    Keeps only the Epoch's metadata projection (EpochInfo), not the signal
+    matrix — otherwise the aggregate would grow without bound over a long
+    session (a whole channels x samples array per trial). The signal itself is
+    not retained anywhere after decoding.
     """
     trial_number: int
     epoch_info: EpochInfo
     classification: Classification
-    recorded_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ---------------------------------------------------------------------------
@@ -91,8 +89,6 @@ class BCISession:
         self._state: SessionState = SessionState.IDLE
         self._trials: List[Trial] = []
         self._pending_events: List[DomainEvent] = []
-        self._started_at: Optional[datetime] = None
-        self._ended_at: Optional[datetime] = None
 
     # ------------------------------------------------------------------
     # Identity
@@ -133,7 +129,6 @@ class BCISession:
                 f"current state is {self._state.name}"
             )
         self._state = SessionState.RUNNING
-        self._started_at = datetime.now(timezone.utc)
         self._pending_events.append(
             SessionStarted(session_id=self._session_id, paradigm=self._paradigm)
         )
@@ -163,7 +158,7 @@ class BCISession:
         trial_number = len(self._trials) + 1
         trial = Trial(
             trial_number=trial_number,
-            # 只留元数据投影；信号本体随 TrialCompleted 事件瞬态传递（P1-6）。
+            # Trial history keeps only metadata, never the signal matrix.
             epoch_info=EpochInfo.from_epoch(epoch),
             classification=classification,
         )
@@ -172,7 +167,6 @@ class BCISession:
         event = TrialCompleted(
             session_id=self._session_id,
             trial_number=trial_number,
-            epoch=epoch,
             classification=classification,
         )
         self._pending_events.append(event)
@@ -189,7 +183,6 @@ class BCISession:
                 f"current state is {self._state.name}"
             )
         self._state = SessionState.ENDED
-        self._ended_at = datetime.now(timezone.utc)
         self._pending_events.append(
             SessionEnded(
                 session_id=self._session_id,

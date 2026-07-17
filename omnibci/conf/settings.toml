@@ -40,14 +40,21 @@ filters = []
 queue_size = 100
 message_server_ip = '127.0.0.1'
 message_server_port = 8765   # must differ from uvicorn HTTP port (8000)
-# Effector (external-device control) channel. Engine listens; controller dials in.
-effector_enabled = false
-effector_server_ip = '127.0.0.1'
-effector_server_port = 8001
-effector_watchdog_timeout_s = 1.0
 
 COMMAND_SERVER_IP = '127.0.0.1'
 COMMAND_SERVER_PORT = 8080
+
+[ACTUATION]
+# Actuation (external-device control) subsystem. The engine listens on
+# server_ip:server_port; the actuation controller dials in (same topology as
+# stimulation) and loads the Effector plugin named below to carry out commands.
+enabled = false
+server_ip = '127.0.0.1'
+server_port = 8001
+watchdog_timeout_s = 1.0
+# plugin_type of the Effector plugin the actuation subsystem loads (read by the
+# actuation-subsystem loader; empty = none). Parallel to STIMULATION.paradigm.
+effector = ''
 
 [PERSISTENCE]
 # Session repository implementation (composition-root switch).
