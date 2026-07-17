@@ -104,6 +104,7 @@ class NeuroEngineBuilder:
         acquisition_worker = AcquisitionWorker(
             command_queue=acquisition_command_queue,
             data_manager=data_manager,
+            event_bus=event_bus,
         )
         signal_processing_worker = SignalProcessingWorker(
             command_queue=processor_command_queue,

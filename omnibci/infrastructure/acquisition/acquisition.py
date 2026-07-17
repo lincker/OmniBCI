@@ -14,8 +14,10 @@ import time
 from enum import Enum
 from typing import Optional, Protocol, runtime_checkable
 
+from omnibci.application.events import AcquisitionSnapshot
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.domain.signal import SignalChunk
+from omnibci.shared.events import Event, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +65,16 @@ class Acquisition:
         data_source: SignalSource,
         command_queue: CommandQueue,
         data_manager: DataSink,
+        event_bus=None,
     ) -> None:
         self.data_source = data_source
         self.command_queue = command_queue
+        # 注意区分：本地 AcquisitionState 枚举是 worker 内部相位（stop/running），
+        # EventType.AcquisitionState 是发往 API 投影的 wire 事件。
         self.status = AcquisitionState.stop
         self.fetch_task: Optional[asyncio.Task] = None
         self.data_manager = data_manager
+        self.event_bus = event_bus   # None = 无投影（单测）；只用于 put_event
         self.should_exit = False
 
     def run(self) -> None:
@@ -86,6 +92,7 @@ class Acquisition:
         logger.info('Acquisition shutting down')
         if self.data_source.is_connected:
             await self.data_source.disconnect()
+        self._emit_state()
 
     async def main_loop(self) -> None:
         while not self.should_exit:
@@ -112,26 +119,32 @@ class Acquisition:
     async def _on_connect(self) -> None:
         await self.data_source.connect()
         self.status = AcquisitionState.running
+        self._emit_state()
 
     async def _on_disconnect(self) -> None:
         await self.data_source.disconnect()
         self.status = AcquisitionState.stop
+        self._emit_state()
 
     async def _on_start_stream(self) -> None:
         # start_stream is only honoured once connected (status == running);
-        # otherwise it is silently dropped (no source call, no fetch task).
+        # otherwise it is dropped — but the truth (not streaming) is still
+        # pushed to the projection so the API cannot report a phantom stream.
         if self.status != AcquisitionState.running:
             logger.warning('start_stream ignored: not running (status=%s)', self.status)
+            self._emit_state()
             return
         await self.data_source.start_stream()
         self.fetch_task = asyncio.create_task(self.fetch())
         logger.info('Fetch task started')
+        self._emit_state()
 
     async def _on_stop_stream(self) -> None:
         await self.data_source.stop_stream()
         if self.fetch_task:
             self.fetch_task.cancel()
         logger.info('Fetch task stopped')
+        self._emit_state()
 
     async def _on_stop_acquisition(self) -> None:
         self.should_exit = True
@@ -146,9 +159,11 @@ class Acquisition:
             while True:
                 raw_data = await self.data_source.read_chunk()
                 if raw_data is None:
-                    # 数据源正常播完（如文件回放 EOF）：干净退出，不算异常。
+                    # 数据源正常播完（如文件回放 EOF）：干净收流并把真相
+                    # 推回 API 投影，否则前端会永远显示"读取中"。
                     logger.info('Data source end of stream after %d chunks; fetch task finished',
                                 packets_counter)
+                    await self._finish_stream()
                     break
                 chunk = SignalChunk(
                     timestamp=time.time_ns(),
@@ -159,10 +174,37 @@ class Acquisition:
                 self.data_manager.put_data(chunk)
                 packets_counter += 1
         except asyncio.CancelledError:
+            # 取消来自 _on_stop_stream，那里已 stop_stream 并发射快照。
             logger.info('Fetch task cancelled')
         except Exception as exc:
             logger.error('Error in fetch task: %s', exc)
+            await self._finish_stream()
 
     def preprocess(self, data: SignalChunk) -> SignalChunk:
         # TODO: channel mapping per selected algorithm
         return data
+
+    async def _finish_stream(self) -> None:
+        """Close the stream from inside fetch() (EOF / fatal error) and
+        publish the resulting state."""
+        try:
+            await self.data_source.stop_stream()
+        except Exception as exc:
+            logger.error('stop_stream during fetch teardown failed: %s', exc)
+        self._emit_state()
+
+    def _emit_state(self) -> None:
+        """Publish the device's authoritative state to the API-side projection.
+
+        The snapshot reads the SignalSource port properties directly — the
+        single source of truth — rather than tracking booleans by hand.
+        """
+        if self.event_bus is None:
+            return
+        self.event_bus.put_event(Event(
+            EventType.AcquisitionState,
+            AcquisitionSnapshot(
+                connected=self.data_source.is_connected,
+                streaming=self.data_source.is_streaming,
+            ),
+        ))

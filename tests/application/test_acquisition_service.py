@@ -7,8 +7,9 @@ from omnibci.application.commands.acquisition_commands import (
     StartStreamCommand,
     StopStreamCommand,
 )
+from omnibci.application.events import AcquisitionSnapshot
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
-from omnibci.shared.events import EventType
+from omnibci.shared.events import Event, EventType
 
 
 class TestAcquisitionConnect:
@@ -18,16 +19,11 @@ class TestAcquisitionConnect:
         event = mock_engine.event_bus.put_event.call_args[0][0]
         assert event.type == EventType.ConnectDataProvider
 
-    def test_connect_sets_connected_flag(self, acquisition_service):
+    def test_connect_does_not_guess_state(self, acquisition_service):
+        # Projection semantics: commands dispatch intent; only worker-reported
+        # AcquisitionState events (on_acquisition_state) move the flags.
         acquisition_service.handle_connect(ConnectDataProviderCommand())
-        assert acquisition_service._connected is True
-
-    def test_disconnect_clears_flags(self, acquisition_service):
-        acquisition_service._connected = True
-        acquisition_service._streaming = True
-        acquisition_service.handle_disconnect(DisconnectDataProviderCommand())
         assert acquisition_service._connected is False
-        assert acquisition_service._streaming is False
 
     def test_disconnect_dispatches_event(self, acquisition_service, mock_engine):
         acquisition_service.handle_disconnect(DisconnectDataProviderCommand())
@@ -41,19 +37,15 @@ class TestAcquisitionStream:
         event = mock_engine.event_bus.put_event.call_args[0][0]
         assert event.type == EventType.StartStream
 
-    def test_start_stream_sets_streaming_flag(self, acquisition_service):
+    def test_start_stream_does_not_guess_state(self, acquisition_service):
         acquisition_service.handle_start_stream(StartStreamCommand())
-        assert acquisition_service._streaming is True
+        assert acquisition_service._streaming is False
 
     def test_stop_stream_dispatches_event(self, acquisition_service, mock_engine):
         acquisition_service.handle_stop_stream(StopStreamCommand())
         event = mock_engine.event_bus.put_event.call_args[0][0]
         assert event.type == EventType.StopStream
 
-    def test_stop_stream_clears_streaming_flag(self, acquisition_service):
-        acquisition_service._streaming = True
-        acquisition_service.handle_stop_stream(StopStreamCommand())
-        assert acquisition_service._streaming is False
 
 
 class TestAcquisitionStatus:
@@ -62,9 +54,40 @@ class TestAcquisitionStatus:
         assert result.connected is False
         assert result.streaming is False
 
-    def test_status_after_connect_and_stream(self, acquisition_service):
-        acquisition_service.handle_connect(ConnectDataProviderCommand())
-        acquisition_service.handle_start_stream(StartStreamCommand())
+    def test_status_reflects_worker_snapshots(self, acquisition_service):
+        acquisition_service.on_acquisition_state(
+            Event(EventType.AcquisitionState,
+                  AcquisitionSnapshot(connected=True, streaming=True)))
         result = acquisition_service.handle_get_status(GetAcquisitionStatusQuery())
         assert result.connected is True
         assert result.streaming is True
+
+    def test_snapshot_can_clear_state(self, acquisition_service):
+        acquisition_service.on_acquisition_state(
+            Event(EventType.AcquisitionState,
+                  AcquisitionSnapshot(connected=True, streaming=True)))
+        # e.g. file playback EOF: worker reports stream closed
+        acquisition_service.on_acquisition_state(
+            Event(EventType.AcquisitionState,
+                  AcquisitionSnapshot(connected=True, streaming=False)))
+        result = acquisition_service.handle_get_status(GetAcquisitionStatusQuery())
+        assert result.connected is True
+        assert result.streaming is False
+
+    def test_bad_payload_is_rejected(self, acquisition_service):
+        acquisition_service.on_acquisition_state(
+            Event(EventType.AcquisitionState,
+                  AcquisitionSnapshot(connected=True, streaming=True)))
+        acquisition_service.on_acquisition_state(
+            Event(EventType.AcquisitionState, {"streaming": False}))  # wrong type
+        result = acquisition_service.handle_get_status(GetAcquisitionStatusQuery())
+        assert result.streaming is True   # projection untouched
+
+    def test_reset_clears_projection(self, acquisition_service):
+        acquisition_service.on_acquisition_state(
+            Event(EventType.AcquisitionState,
+                  AcquisitionSnapshot(connected=True, streaming=True)))
+        acquisition_service.reset()
+        result = acquisition_service.handle_get_status(GetAcquisitionStatusQuery())
+        assert result.connected is False
+        assert result.streaming is False

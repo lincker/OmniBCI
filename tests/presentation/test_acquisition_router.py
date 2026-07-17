@@ -47,15 +47,26 @@ class TestAcquisitionStatus:
         assert data["connected"] is False
         assert data["streaming"] is False
 
-    def test_status_after_connect(self, api_client, acquisition_service, mock_engine):
+    def test_connect_alone_does_not_flip_status(self, api_client, acquisition_service, mock_engine):
+        # Projection semantics (方案 A): the command only dispatches intent;
+        # status flips when the worker reports back via AcquisitionState.
         api_client.post("/api/v1/acquisition/connect")
         resp = api_client.get("/api/v1/acquisition/status")
-        assert resp.json()["data"]["connected"] is True
+        assert resp.json()["data"]["connected"] is False
 
-    def test_status_after_stream_start(self, api_client, acquisition_service, mock_engine):
+    def test_status_reflects_worker_snapshot(self, api_client, acquisition_service, mock_engine):
+        from omnibci.application.events import AcquisitionSnapshot
+        from omnibci.shared.events import Event, EventType
+
+        api_client.post("/api/v1/acquisition/connect")
         api_client.post("/api/v1/acquisition/stream/start")
+        acquisition_service.on_acquisition_state(
+            Event(EventType.AcquisitionState,
+                  AcquisitionSnapshot(connected=True, streaming=True)))
         resp = api_client.get("/api/v1/acquisition/status")
-        assert resp.json()["data"]["streaming"] is True
+        data = resp.json()["data"]
+        assert data["connected"] is True
+        assert data["streaming"] is True
 
     def test_status_schema_fields(self, api_client):
         resp = api_client.get("/api/v1/acquisition/status")

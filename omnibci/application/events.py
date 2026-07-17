@@ -36,3 +36,15 @@ class SessionSummary:
     """EventType.SessionEnded 的标准载荷 —— 会话标识 + 总 trial 数。"""
     session_id: str
     total_trials: int
+
+
+@dataclass(frozen=True)
+class AcquisitionSnapshot:
+    """EventType.AcquisitionState 的标准载荷 —— 设备端权威状态快照。
+
+    由采集 worker 在每次状态转换后发布（快照直接读 SignalSource 端口的
+    is_connected / is_streaming，不另设手工布尔）；API 侧
+    AcquisitionAppService 以此维护状态投影，/acquisition/status 如实返回。
+    """
+    connected: bool
+    streaming: bool

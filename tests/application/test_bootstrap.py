@@ -108,25 +108,27 @@ class TestRegisterListeners:
         extra = [(EventType.SessionStarted, broadcaster_handler)]
         count = register_engine_listeners(container, extra)
 
-        assert count == 4
+        assert count == 5
         registered_types = [t for t, _ in engine.subscriptions]
         assert registered_types == [
             EventType.SessionStarted,
             EventType.TrialCompleted,
             EventType.SessionEnded,
+            EventType.AcquisitionState,
             EventType.SessionStarted,
         ]
-        # read-model handlers come from the session service
+        # read-model handlers come from the session / acquisition services
         assert engine.subscriptions[0][1] == sess.on_session_started
         assert engine.subscriptions[1][1] == sess.on_trial_completed
         assert engine.subscriptions[2][1] == sess.on_session_ended
+        assert engine.subscriptions[3][1] == container.acquisition_service.on_acquisition_state
         # extra handler preserved
-        assert engine.subscriptions[3][1] is broadcaster_handler
+        assert engine.subscriptions[4][1] is broadcaster_handler
 
     def test_default_subscriptions_without_extra(self):
         engine = FakeEngine(ready=True)
         count = register_engine_listeners(_container(engine))
-        assert count == 3
+        assert count == 4
 
     def test_noop_when_engine_not_ready(self):
         engine = FakeEngine(ready=False)

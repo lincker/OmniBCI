@@ -12,6 +12,8 @@ class EventType(IntEnum):
     DisconnectDataProvider = 102
     StartStream = 111
     StopStream = 112
+    AcquisitionState = 121  # worker -> API: authoritative device-state snapshot
+                            # payload: application.events.AcquisitionSnapshot
     # neuro engine（历史遗留值 33/9：数值是 IPC wire 契约的一部分，
     # 重新编号需要 bump contracts.PROTOCOL_VERSION，故仅整理注释不改值）
     CloseAllNeuroEngineProcessSystem = 33
@@ -48,6 +50,7 @@ class Event:
       EndSession       str  (session_id)
       StartStimulation str|None (paradigm)
       StartStimTrial   dict {"n_trials": int, "trial_params": list|None}
+      AcquisitionState application.events.AcquisitionSnapshot
       StimulationAck   dict (make_stimulation_ack 构造，跨 socket 为 JSON)
       Actuation*       dict (设备命令/反馈，跨 socket 为 JSON)
       其余命令类事件    None

@@ -28,13 +28,6 @@ class SignalSource(ABC):
 
     @property
     def is_streaming(self) -> bool:
-        """Whether the source is actively producing chunks.
-
-        Authoritative device-side streaming state (lives in the acquisition
-        worker). Not yet surfaced to the API status — the acquisition status
-        projection (event-driven, mirroring the session read model) will read
-        it. Kept for that reason; do not remove as "unused".
-        """
         return self._is_streaming
 
     @abstractmethod
