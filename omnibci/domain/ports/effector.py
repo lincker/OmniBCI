@@ -32,4 +32,10 @@ class Effector(ABC):
         translator: ``{"target_id": int, "event_id": int|None,
         "confidence": float|None}``. The target → concrete device action
         mapping (which joint, which direction, how far) is device-specific
-        and lives in the implementation."""
+        and lives in the implementation.
+
+        May block for the duration of the device action — the actuation
+        subsystem runs it off its event loop (worker thread), so blocking is
+        fine; spawning your own threads is not required. The implementation
+        must tolerate process termination mid-call (the subsystem is stopped
+        by terminating the process)."""

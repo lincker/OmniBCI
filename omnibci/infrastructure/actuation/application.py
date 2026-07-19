@@ -5,8 +5,13 @@ Mirrors stimulation's application.Stimulation: an EventBus + a PeerChannel
 that dials into the engine's actuation port, and an Actuator that drives the
 loaded Effector plugin. Differences from stimulation:
 
-  - commands are executed one at a time as they arrive (no busy-gating —
-    play() is expected to be short; long-running devices go async internally);
+  - the command stream is an *intent* stream: before executing, the queue is
+    drained to the newest command (last-write-wins) and each superseded older
+    command is acked with status="superseded" — a backlog must never make the
+    device replay stale intents in order;
+  - play() runs off the event loop (asyncio.to_thread), so a slow device
+    action cannot starve the heartbeat and trip the engine watchdog into a
+    false LINK_LOST; commands stay serial (one thread at a time);
   - a heartbeat task publishes ActuationState every watchdog_timeout_s / 2 —
     the engine's link watchdog treats inbound silence past the timeout as
     LINK_LOST, so a dialled-in peer must keep talking;
@@ -88,11 +93,28 @@ class Actuation:
     async def execute_command(self):
         if self.command_queue.empty():
             return
+        # Drain to the latest command. Decoded intents supersede one another:
+        # executing a backlog in order would make the device act out stale
+        # intents long after they were meant. Superseded commands are acked
+        # (status="superseded") so the engine side can still account for them.
         command = self.command_queue.get()
+        while not self.command_queue.empty():
+            superseded = command
+            command = self.command_queue.get()
+            old = superseded.data if isinstance(superseded.data, dict) else {}
+            self.event_bus.put_event(Event(
+                EventType.ActuationAck,
+                make_actuation_ack(target_id=old.get("target_id"),
+                                   status="superseded"),
+            ))
         payload = command.data if isinstance(command.data, dict) else {}
         target = payload.get("target_id")
         try:
-            self.actuator.execute(payload)
+            # Off the event loop: play() may legitimately block for the whole
+            # device action (serial writes, motion completion) and the
+            # heartbeat must keep beating meanwhile. asyncio.to_thread keeps
+            # commands serial — one execution at a time.
+            await asyncio.to_thread(self.actuator.execute, payload)
             reply = Event(EventType.ActuationAck,
                           make_actuation_ack(target_id=target))
         except Exception as exc:

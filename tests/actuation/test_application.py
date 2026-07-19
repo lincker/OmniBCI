@@ -69,10 +69,12 @@ class TestCommandExecution:
         assert acks[0].data["status"] == "ok"
 
     def test_failed_command_faults_but_loop_survives(self):
+        # Sequential arrivals (not a backlog): 7 fails, the loop survives and
+        # the later 8 executes normally.
         app = _app(fail_on={7})
         app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 7}))
-        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 8}))
         _run(app.execute_command())
+        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 8}))
         _run(app.execute_command())
         faults = _typed(app.event_bus, EventType.ActuationFault)
         assert len(faults) == 1
@@ -80,6 +82,16 @@ class TestCommandExecution:
         # the next command still executed and acked
         assert app.actuator.executed == [{"target_id": 8}]
         assert len(_typed(app.event_bus, EventType.ActuationAck)) == 1
+
+    def test_queued_failing_command_is_superseded_not_executed(self):
+        # Backlog semantics: a failing command that was already superseded in
+        # the queue never reaches the device at all.
+        app = _app(fail_on={7})
+        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 7}))
+        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 8}))
+        _run(app.execute_command())
+        assert _typed(app.event_bus, EventType.ActuationFault) == []
+        assert app.actuator.executed == [{"target_id": 8}]
 
     def test_non_command_events_are_not_enqueued(self):
         app = _app()
@@ -90,6 +102,60 @@ class TestCommandExecution:
         app = _app()
         _run(app.execute_command())
         assert app.event_bus.events == []
+
+
+class TestBacklogDrainsToLatest:
+    def test_backlog_executes_only_newest(self):
+        app = _app()
+        for tid in (1, 2, 3):
+            app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": tid}))
+        _run(app.execute_command())
+        # only the newest intent reached the device
+        assert app.actuator.executed == [{"target_id": 3}]
+        acks = _typed(app.event_bus, EventType.ActuationAck)
+        by_status = {}
+        for a in acks:
+            by_status.setdefault(a.data["status"], []).append(a.data["target_id"])
+        assert by_status["superseded"] == [1, 2]
+        assert by_status["ok"] == [3]
+
+    def test_single_command_has_no_superseded_acks(self):
+        app = _app()
+        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 9}))
+        _run(app.execute_command())
+        acks = _typed(app.event_bus, EventType.ActuationAck)
+        assert [a.data["status"] for a in acks] == ["ok"]
+
+
+class TestSlowPlayDoesNotStarveHeartbeat:
+    def test_heartbeat_beats_during_slow_play(self):
+        """P1-a: play() runs off the event loop, so a slow device action must
+        not block the heartbeat (which would trip a false LINK_LOST)."""
+        import time as _time
+
+        app = _app()
+        app._heartbeat_interval = 0.02
+
+        def slow_execute(command):
+            _time.sleep(0.15)
+            app.actuator.executed.append(dict(command))
+        app.actuator.execute = slow_execute
+
+        async def scenario():
+            hb = asyncio.create_task(app._heartbeat())
+            app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 1}))
+            await app.execute_command()          # blocks ~0.15s in a thread
+            hb.cancel()
+            try:
+                await hb
+            except asyncio.CancelledError:
+                pass
+
+        _run(scenario())
+        assert app.actuator.executed == [{"target_id": 1}]
+        states = _typed(app.event_bus, EventType.ActuationState)
+        # With play off the loop, ~0.15s / 0.02s ≈ 7 beats; ≥3 is a safe floor.
+        assert len(states) >= 3
 
 
 class TestHeartbeat:
