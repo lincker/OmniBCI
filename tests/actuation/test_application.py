@@ -49,6 +49,7 @@ def _app(fail_on=frozenset()) -> Actuation:
     app.command_queue = __import__("queue").Queue()
     app.actuator = _FakeActuator(fail_on=fail_on)
     app._heartbeat_interval = 0.01
+    app._max_command_age = 0.0        # age gate disabled by default (as in prod)
     app.should_stop = False
     return app
 
@@ -125,6 +126,73 @@ class TestBacklogDrainsToLatest:
         _run(app.execute_command())
         acks = _typed(app.event_bus, EventType.ActuationAck)
         assert [a.data["status"] for a in acks] == ["ok"]
+
+
+class TestSeqEcho:
+    def test_ok_ack_echoes_seq(self):
+        app = _app()
+        app._enqueue_command(Event(EventType.ActuationCommand,
+                                   {"target_id": 1, "seq": 41}))
+        _run(app.execute_command())
+        acks = _typed(app.event_bus, EventType.ActuationAck)
+        assert acks[0].data["seq"] == 41
+
+    def test_superseded_and_ok_echo_their_own_seqs(self):
+        app = _app()
+        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 1, "seq": 1}))
+        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 2, "seq": 2}))
+        _run(app.execute_command())
+        acks = _typed(app.event_bus, EventType.ActuationAck)
+        assert [(a.data["status"], a.data["seq"]) for a in acks] == [
+            ("superseded", 1), ("ok", 2)]
+
+    def test_fault_echoes_seq(self):
+        app = _app(fail_on={7})
+        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 7, "seq": 9}))
+        _run(app.execute_command())
+        faults = _typed(app.event_bus, EventType.ActuationFault)
+        assert faults[0].data["seq"] == 9
+
+
+class TestAgeGate:
+    def test_disabled_by_default_executes_old_commands(self):
+        import time
+        app = _app()          # _max_command_age = 0
+        app._enqueue_command(Event(EventType.ActuationCommand,
+                                   {"target_id": 1, "seq": 1,
+                                    "issued_at": time.time() - 3600}))
+        _run(app.execute_command())
+        assert app.actuator.executed and app.actuator.executed[0]["target_id"] == 1
+
+    def test_enabled_drops_stale_without_touching_device(self):
+        import time
+        app = _app()
+        app._max_command_age = 0.5
+        app._enqueue_command(Event(EventType.ActuationCommand,
+                                   {"target_id": 1, "seq": 7,
+                                    "issued_at": time.time() - 10}))
+        _run(app.execute_command())
+        assert app.actuator.executed == []
+        acks = _typed(app.event_bus, EventType.ActuationAck)
+        assert acks[0].data["status"] == "stale" and acks[0].data["seq"] == 7
+
+    def test_fresh_command_passes_enabled_gate(self):
+        import time
+        app = _app()
+        app._max_command_age = 5.0
+        app._enqueue_command(Event(EventType.ActuationCommand,
+                                   {"target_id": 2, "seq": 8,
+                                    "issued_at": time.time()}))
+        _run(app.execute_command())
+        assert app.actuator.executed[0]["target_id"] == 2
+
+    def test_command_without_issued_at_is_never_gated(self):
+        app = _app()
+        app._max_command_age = 0.5
+        app._enqueue_command(Event(EventType.ActuationCommand,
+                                   {"target_id": 3, "seq": 9}))
+        _run(app.execute_command())
+        assert app.actuator.executed[0]["target_id"] == 3
 
 
 class TestSlowPlayDoesNotStarveHeartbeat:

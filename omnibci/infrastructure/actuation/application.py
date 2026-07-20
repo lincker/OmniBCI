@@ -24,6 +24,7 @@ loaded Effector plugin. Differences from stimulation:
 import asyncio
 import logging
 import multiprocessing as mp
+import time
 from queue import Queue
 
 from omnibci.infrastructure.ipc.event_bus import EventBus, Event, EventType
@@ -45,6 +46,11 @@ class Actuation:
         port = int(settings.get("ACTUATION.server_port", 8001))
         self._heartbeat_interval = float(
             settings.get("ACTUATION.watchdog_timeout_s", 1.0)) / 2.0
+        # Age gate for the slow-trickle case (old commands arriving one at a
+        # time on a live-but-slow link, where drain-to-latest cannot help).
+        # 0 = disabled; requires engine/device clocks roughly in sync to use.
+        self._max_command_age = float(
+            settings.get("ACTUATION.max_command_age_s", 0.0))
         self.peer_channel = PeerChannel(engine_peer_config(host, port), self.event_bus)
 
         self.should_stop = False
@@ -105,10 +111,24 @@ class Actuation:
             self.event_bus.put_event(Event(
                 EventType.ActuationAck,
                 make_actuation_ack(target_id=old.get("target_id"),
-                                   status="superseded"),
+                                   status="superseded",
+                                   seq=old.get("seq")),
             ))
         payload = command.data if isinstance(command.data, dict) else {}
         target = payload.get("target_id")
+        seq = payload.get("seq")
+        # Age gate: an accounting outcome (like superseded), not a device
+        # fault. Commands without issued_at (older senders) are never gated.
+        issued_at = payload.get("issued_at")
+        if (self._max_command_age > 0 and issued_at is not None
+                and time.time() - float(issued_at) > self._max_command_age):
+            logger.warning("Command seq=%s target_id=%s dropped as stale "
+                           "(age > %.3fs)", seq, target, self._max_command_age)
+            self.event_bus.put_event(Event(
+                EventType.ActuationAck,
+                make_actuation_ack(target_id=target, status="stale", seq=seq),
+            ))
+            return
         try:
             # Off the event loop: play() may legitimately block for the whole
             # device action (serial writes, motion completion) and the
@@ -116,12 +136,13 @@ class Actuation:
             # commands serial — one execution at a time.
             await asyncio.to_thread(self.actuator.execute, payload)
             reply = Event(EventType.ActuationAck,
-                          make_actuation_ack(target_id=target))
+                          make_actuation_ack(target_id=target, seq=seq))
         except Exception as exc:
             logger.error("Effector command failed (target_id=%s): %s", target, exc)
             reply = Event(EventType.ActuationFault,
                           make_actuation_fault("COMMAND_FAILED",
-                                               target_id=target, message=str(exc)))
+                                               target_id=target,
+                                               message=str(exc), seq=seq))
         # PeerChannel's outbound subscription forwards these to the engine.
         self.event_bus.put_event(reply)
 

@@ -52,6 +52,10 @@ enabled = false
 server_ip = '127.0.0.1'
 server_port = 8001
 watchdog_timeout_s = 1.0
+# Drop commands older than this on the actuation side (seconds). 0 = disabled
+# (default). Requires engine/device clocks roughly in sync (LAN + NTP is
+# plenty); leave 0 if clocks are not trustworthy.
+max_command_age_s = 0.0
 # Spawn the actuation subprocess automatically when the engine starts
 # (single-machine). false = start it manually: python scripts/run_actuation.py
 auto_spawn = true

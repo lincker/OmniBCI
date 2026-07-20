@@ -16,6 +16,7 @@ controller side or in a future configurable map — kept out of here on purpose.
 """
 
 import logging
+import time
 
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.ipc.event_bus import EventBus
@@ -26,6 +27,10 @@ logger = logging.getLogger(__name__)
 class ActuationCommandTranslator:
     def __init__(self, event_bus: EventBus) -> None:
         self._bus = event_bus
+        # Monotonic per engine process — enough for correlation/accounting
+        # (replies cannot outlive a connection, so restarts starting over at 1
+        # are harmless). Echoed back by the actuation side in ack/fault.
+        self._seq = 0
 
     def on_trial_completed(self, event: Event) -> None:
         """EventBus listener for TrialCompleted. Emits an ActuationCommand."""
@@ -42,7 +47,10 @@ class ActuationCommandTranslator:
                 "target_id; no command emitted", type(data).__name__,
             )
             return
+        self._seq += 1
         command = {
+            "seq": self._seq,              # correlation id, echoed in ack/fault
+            "issued_at": time.time(),      # engine clock; advisory age marker
             "target_id": int(target_id),
             "event_id": getattr(clf, "event_id", None),
             "confidence": getattr(clf, "confidence", None),
