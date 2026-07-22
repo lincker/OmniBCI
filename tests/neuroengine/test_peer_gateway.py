@@ -32,6 +32,7 @@ class FakeTransport:
         self.started = False
         self.stopped = False
         self._connected = True
+        self.lifecycle = []
 
     def set_inbound_handler(self, handler) -> None:
         self.inbound_handler = handler
@@ -40,9 +41,11 @@ class FakeTransport:
         self.liveness_handler = handler
 
     async def start(self) -> None:
+        self.lifecycle.append("start")
         self.started = True
 
     async def stop(self) -> None:
+        self.lifecycle.append("stop")
         self.stopped = True
 
     async def send(self, event) -> None:
@@ -139,6 +142,16 @@ class TestLifecycle:
         asyncio.run(_run())
         assert bus.listeners.get(EventType.TrialCompleted) == []
         assert transport.stopped is True
+
+    def test_immediate_stop_waits_for_scheduled_transport_start(self):
+        ch, transport, _ = _channel(set(), set())
+
+        async def _run():
+            ch.start()
+            await ch.stop()
+
+        asyncio.run(_run())
+        assert transport.lifecycle == ["start", "stop"]
 
 
 # ---------------------------------------------------------------------------

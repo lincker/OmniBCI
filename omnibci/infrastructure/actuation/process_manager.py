@@ -21,22 +21,23 @@ from __future__ import annotations
 
 import logging
 import multiprocessing as mp
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def _run_actuation(effector: str | None = None) -> None:
+def _run_actuation(effector: str | None = None, stop_event: Any = None) -> None:
     """Actuation subprocess entry point.  Runs in the spawned child process.
 
     *effector* — when provided, overrides ``ACTUATION.effector`` in the
     subprocess's in-memory settings before the Actuator loads plugins.
     The override is subprocess-local: the settings file on disk is unchanged.
     """
-    if effector:
+    if effector is not None:
         from omnibci.conf import settings
         settings.set("ACTUATION.effector", effector)
     from omnibci.infrastructure.actuation.application import Actuation
-    Actuation().run()
+    Actuation(stop_event=stop_event).run()
 
 
 class ActuationProcessManager:
@@ -48,9 +49,14 @@ class ActuationProcessManager:
     auto_spawn=False).
     """
 
+    _GRACEFUL_TIMEOUT_S = 3.0
+    _TERMINATE_TIMEOUT_S = 3.0
+    _KILL_TIMEOUT_S = 3.0
+
     def __init__(self, auto_spawn: bool = True) -> None:
         self._auto_spawn = auto_spawn
         self._process: mp.Process | None = None
+        self._stop_event: Any = None
         # Effector the *running* subprocess was spawned with (None = config default).
         self._effector: str | None = None
 
@@ -65,38 +71,110 @@ class ActuationProcessManager:
         if not self._auto_spawn:
             logger.debug("auto_spawn=False — Actuation process must be started manually")
             return
-        if self.is_alive:
-            if effector == self._effector:
+        if self._process is not None:
+            process_alive = self._process.is_alive()
+            if process_alive and effector == self._effector:
                 logger.debug(
                     "Actuation process already running requested effector (pid=%s, effector=%s)",
                     self._process.pid, effector or "<config>",
                 )
                 return
-            logger.info(
-                "Actuation effector change %s → %s; restarting subprocess",
-                self._effector or "<config>", effector or "<config>",
-            )
+            if process_alive:
+                logger.info(
+                    "Actuation effector change %s → %s; restarting subprocess",
+                    self._effector or "<config>", effector or "<config>",
+                )
+            else:
+                logger.info(
+                    "Reaping exited Actuation subprocess before restart (pid=%s, exitcode=%s)",
+                    self._process.pid,
+                    self._process.exitcode,
+                )
+            # stop() only clears the old handle after confirming exit.  If it
+            # cannot stop the process it raises and this method must not spawn a
+            # second controller for the same device.
             self.stop()
-        self._process = mp.Process(
+
+        stop_event = mp.Event()
+        process = mp.Process(
             target=_run_actuation,
-            args=(effector,),
+            args=(effector, stop_event),
             name="ActuationProcess",
             daemon=True,
         )
-        self._process.start()
+        process.start()
+        self._process = process
+        self._stop_event = stop_event
         self._effector = effector
         logger.info("Actuation subprocess spawned (pid=%s, effector=%s)",
-                    self._process.pid, effector or "<config>")
+                    process.pid, effector or "<config>")
 
     def stop(self) -> None:
-        """Terminate the Actuation subprocess if it is running."""
+        """Stop the Actuation subprocess, escalating only when necessary.
+
+        The cooperative stop event lets ``Actuation.serve`` run its ``finally``
+        block and tear the device down.  A child that ignores that request is
+        terminated, then killed when the platform exposes ``Process.kill``.
+        State is cleared only after the process is confirmed dead; retaining the
+        handle on failure prevents a later ``start`` from creating a second
+        controller for the same hardware.
+        """
         if not self._auto_spawn:
             return
-        if self._process is not None and self._process.is_alive():
-            self._process.terminate()
-            self._process.join(timeout=3.0)
-            logger.info("Actuation subprocess stopped (pid=%s)", self._process.pid)
+        process = self._process
+        if process is None:
+            return
+
+        pid = process.pid
+        if process.is_alive():
+            if self._stop_event is not None:
+                self._stop_event.set()
+            process.join(timeout=self._GRACEFUL_TIMEOUT_S)
+
+        if process.is_alive():
+            logger.warning(
+                "Actuation subprocess did not stop gracefully; terminating (pid=%s)",
+                pid,
+            )
+            process.terminate()
+            process.join(timeout=self._TERMINATE_TIMEOUT_S)
+
+        if process.is_alive():
+            kill = getattr(process, "kill", None)
+            if callable(kill):
+                logger.warning(
+                    "Actuation subprocess ignored terminate; killing (pid=%s)", pid
+                )
+                kill()
+                process.join(timeout=self._KILL_TIMEOUT_S)
+
+        if process.is_alive():
+            message = (
+                "Actuation subprocess is still alive after graceful stop, "
+                f"terminate, and kill escalation (pid={pid}); refusing to "
+                "discard its handle or start another controller"
+            )
+            logger.error(message)
+            raise RuntimeError(message)
+
+        exitcode = process.exitcode
+        logger.info(
+            "Actuation subprocess stopped (pid=%s, exitcode=%s)",
+            pid,
+            exitcode,
+        )
+        close = getattr(process, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception as exc:  # pragma: no cover - platform defensive path
+                logger.warning(
+                    "Failed to close stopped Actuation process handle (pid=%s): %s",
+                    pid,
+                    exc,
+                )
         self._process = None
+        self._stop_event = None
         self._effector = None
 
     @property

@@ -76,7 +76,9 @@ def actuation_peer_config(host: str, port: int,
     """
     return PeerConfig(
         name=ACTUATION,
-        transport=ListenTransport(host=host, port=port),
+        # One controller owns an actuation command stream.  A second connection
+        # must not receive and execute the same physical command.
+        transport=ListenTransport(host=host, port=port, max_clients=1),
         routes=RouteSpec(
             outbound=frozenset({
                 EventType.ActuationCommand,

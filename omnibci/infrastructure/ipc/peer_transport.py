@@ -61,8 +61,14 @@ class PeerTransport(abc.ABC):
 class ListenTransport(PeerTransport):
     """neuroengine listens; peer(s) dial in. Wraps NetworkServer."""
 
-    def __init__(self, host: str, port: int) -> None:
-        self._server = NetworkServer(event_bus=None, host=host, port=port)
+    def __init__(self, host: str, port: int,
+                 max_clients: int | None = None) -> None:
+        self._server = NetworkServer(
+            event_bus=None,
+            host=host,
+            port=port,
+            max_clients=max_clients,
+        )
         self._serve_task: Optional[asyncio.Task] = None
 
     def set_inbound_handler(self, handler: InboundHandler) -> None:

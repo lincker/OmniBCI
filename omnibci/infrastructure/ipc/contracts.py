@@ -66,6 +66,12 @@ def body_to_event(body: bytes, frame_version: int) -> Optional[Event]:
     except (ValueError, UnicodeDecodeError) as exc:
         logger.warning("IPC: undecodable frame body dropped: %s", exc)
         return None
+    if not isinstance(payload, dict):
+        logger.warning(
+            "IPC: frame body must be a JSON object, got %s; frame dropped",
+            type(payload).__name__,
+        )
+        return None
     raw_type = payload.get("type")
     try:
         event_type = EventType(raw_type)

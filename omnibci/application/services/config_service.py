@@ -26,6 +26,7 @@ class ConfigPolicy:
 #: the discovered plugin catalog (warn-only, never block a write).
 _PLUGIN_SOFT_VALIDATE: Dict[str, str] = {
     "STIMULATION.paradigm":      "paradigm",
+    "ACTUATION.effector":        "effector",
     "ACQUISITION.signal_source": "acquisition",
     "ALGORITHM.decoder":         "decoder",
 }
@@ -44,6 +45,7 @@ CONFIG_WHITELIST: Dict[str, ConfigPolicy] = {
     "ALGORITHM.baseline_duration": ConfigPolicy("float", "engine-restart", "基线时长 (s)"),
     "ALGORITHM.filters": ConfigPolicy("list[str]", "engine-restart", "预处理滤波器链"),
     "STIMULATION.paradigm": ConfigPolicy("str", "hot", "刺激范式 plugin_type"),
+    "ACTUATION.effector": ConfigPolicy("str", "engine-restart", "控制输出 plugin_type"),
     "NEUROENGINE.queue_size": ConfigPolicy("int", "engine-restart", "进程间队列容量"),
 }
 

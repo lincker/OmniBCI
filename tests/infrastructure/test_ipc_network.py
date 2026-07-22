@@ -157,9 +157,83 @@ class TestLoopbackRoundTrip:
             import json
             assert _decode_event(json.dumps({"type": 999999, "data": 1}).encode()) is None
             assert _decode_event(b"not json") is None
+            assert _decode_event(b"[]") is None
             ev = _decode_event(json.dumps({"type": int(EventType.SessionEnded), "data": 2}).encode())
             assert ev is not None and ev.type == EventType.SessionEnded and ev.data == 2
         asyncio.run(scenario())
+
+
+class TestClientLimit:
+    def test_invalid_limit_is_rejected(self):
+        with pytest.raises(ValueError, match="max_clients"):
+            NetworkServer(max_clients=0)
+
+    def test_connection_over_limit_is_closed_before_reading(self):
+        class _Reader:
+            async def readexactly(self, _):  # pragma: no cover - must not run
+                raise AssertionError("rejected connection must not be read")
+
+        class _Writer:
+            def __init__(self):
+                self.closed = False
+                self.waited = False
+
+            def get_extra_info(self, _):
+                return ("127.0.0.1", 12345)
+
+            def close(self):
+                self.closed = True
+
+            async def wait_closed(self):
+                self.waited = True
+
+        async def scenario():
+            server = NetworkServer(max_clients=1)
+            existing = object()
+            server._clients.add(existing)
+            writer = _Writer()
+            await server.handle_client(_Reader(), writer)
+            assert writer.closed is True and writer.waited is True
+            assert server._clients == {existing}
+
+        asyncio.run(scenario())
+
+
+class TestReconnectBackoff:
+    def test_immediate_disconnects_are_rate_limited(self, monkeypatch):
+        client = NetworkClient(reconnect_initial=0.25, reconnect_max=1.0)
+        attempts = 0
+        delays = []
+
+        async def connect():
+            nonlocal attempts
+            attempts += 1
+            return True
+
+        async def receive():
+            if attempts == 3:
+                client._should_run = False
+            raise asyncio.IncompleteReadError(partial=b"", expected=1)
+
+        async def close_writer():
+            return None
+
+        async def sleep(delay):
+            delays.append(delay)
+
+        monkeypatch.setattr(client, "_connect", connect)
+        monkeypatch.setattr(client, "receive", receive)
+        monkeypatch.setattr(client, "_close_writer", close_writer)
+        monkeypatch.setattr(asyncio, "sleep", sleep)
+        monkeypatch.setattr(
+            "omnibci.infrastructure.ipc.network.time.monotonic",
+            lambda: 0.0,
+        )
+
+        asyncio.run(client.start())
+
+        assert attempts == 3
+        assert delays == [0.25, 0.5]
 
 
 # ---------------------------------------------------------------------------

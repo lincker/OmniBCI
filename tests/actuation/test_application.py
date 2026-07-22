@@ -46,11 +46,12 @@ class _FakeActuator:
 def _app(fail_on=frozenset()) -> Actuation:
     app = Actuation.__new__(Actuation)          # skip __init__: no settings/socket
     app.event_bus = _SpyBus()
-    app.command_queue = __import__("queue").Queue()
+    app.command_queue = __import__("queue").Queue(maxsize=1)
     app.actuator = _FakeActuator(fail_on=fail_on)
     app._heartbeat_interval = 0.01
     app._max_command_age = 0.0        # age gate disabled by default (as in prod)
     app.should_stop = False
+    app._stop_event = None
     return app
 
 
@@ -104,12 +105,57 @@ class TestCommandExecution:
         _run(app.execute_command())
         assert app.event_bus.events == []
 
+    @pytest.mark.parametrize("payload", [
+        None,
+        [],
+        "not-a-command",
+        {},
+        {"target_id": True},
+        {"target_id": -1},
+        {"target_id": 1.0},
+        {"target_id": 1, "seq": True},
+        {"target_id": 1, "seq": -1},
+        {"target_id": 1, "issued_at": "yesterday"},
+        {"target_id": 1, "issued_at": float("nan")},
+        {"target_id": 1, "event_id": True},
+        {"target_id": 1, "event_id": -1},
+        {"target_id": 1, "confidence": float("inf")},
+        {"target_id": 1, "confidence": 1.01},
+    ])
+    def test_invalid_command_faults_without_touching_device_or_loop(self, payload):
+        app = _app()
+        app._enqueue_command(Event(EventType.ActuationCommand, payload))
+
+        assert app.command_queue.empty()
+        assert app.actuator.executed == []
+        faults = _typed(app.event_bus, EventType.ActuationFault)
+        assert len(faults) == 1
+        assert faults[0].data["code"] == "INVALID_COMMAND"
+
+        # A bad frame is isolated to that command; a later valid intent still runs.
+        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 9}))
+        _run(app.execute_command())
+        assert app.actuator.executed == [{"target_id": 9}]
+
+    def test_invalid_fault_echoes_only_valid_correlation_fields(self):
+        app = _app()
+        app._enqueue_command(Event(EventType.ActuationCommand, {
+            "target_id": 4, "seq": 12, "confidence": 2.0,
+        }))
+        fault = _typed(app.event_bus, EventType.ActuationFault)[0]
+        assert fault.data["code"] == "INVALID_COMMAND"
+        assert fault.data["target_id"] == 4 and fault.data["seq"] == 12
+
 
 class TestBacklogDrainsToLatest:
     def test_backlog_executes_only_newest(self):
         app = _app()
         for tid in (1, 2, 3):
             app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": tid}))
+        assert app.command_queue.qsize() == 1
+        # Replacement accounting is emitted immediately by the mailbox.
+        assert [a.data["target_id"] for a in
+                _typed(app.event_bus, EventType.ActuationAck)] == [1, 2]
         _run(app.execute_command())
         # only the newest intent reached the device
         assert app.actuator.executed == [{"target_id": 3}]
@@ -126,6 +172,30 @@ class TestBacklogDrainsToLatest:
         _run(app.execute_command())
         acks = _typed(app.event_bus, EventType.ActuationAck)
         assert [a.data["status"] for a in acks] == ["ok"]
+
+    def test_invalid_new_command_does_not_displace_valid_pending_intent(self):
+        app = _app()
+        app._enqueue_command(Event(EventType.ActuationCommand,
+                                   {"target_id": 1, "seq": 1}))
+        app._enqueue_command(Event(EventType.ActuationCommand,
+                                   {"target_id": 2, "seq": 2, "confidence": 3.0}))
+
+        assert _typed(app.event_bus, EventType.ActuationAck) == []
+        _run(app.execute_command())
+        assert app.actuator.executed == [{"target_id": 1, "seq": 1}]
+        assert _typed(app.event_bus, EventType.ActuationFault)[0].data["seq"] == 2
+
+    def test_payload_is_snapshotted_when_it_enters_mailbox(self):
+        app = _app()
+        payload = {"target_id": 1, "device_option": "left"}
+        app._enqueue_command(Event(EventType.ActuationCommand, payload))
+        payload["target_id"] = 99
+        payload["device_option"] = "right"
+
+        _run(app.execute_command())
+        assert app.actuator.executed == [
+            {"target_id": 1, "device_option": "left"},
+        ]
 
 
 class TestSeqEcho:
@@ -268,4 +338,27 @@ class TestSetupFailure:
         faults = _typed(app.event_bus, EventType.ActuationFault)
         assert len(faults) == 1 and faults[0].data["code"] == "SETUP_FAILED"
         assert "no effector configured" in faults[0].data["message"]
+        assert stopped == [True]
+
+
+class TestCooperativeStop:
+    def test_pre_set_stop_event_exits_serve_and_tears_down(self, monkeypatch):
+        from threading import Event as ThreadEvent
+
+        app = _app()
+        app._stop_event = ThreadEvent()
+        app._stop_event.set()
+        stopped = []
+
+        async def _start():
+            return None
+
+        async def _stop():
+            stopped.append(True)
+
+        monkeypatch.setattr(app, "start", _start)
+        monkeypatch.setattr(app, "stop", _stop)
+
+        _run(app.serve())
+        assert app.actuator.torn_down is True
         assert stopped == [True]

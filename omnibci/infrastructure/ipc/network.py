@@ -5,6 +5,7 @@
 import logging
 import multiprocessing as mp
 import asyncio
+import time
 from omnibci.shared.events import Event
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.ipc.contracts import (
@@ -27,10 +28,18 @@ def _decode_event(raw: bytes) -> "Event | None":
 
 
 class NetworkServer:
-    def __init__(self, event_bus=None, host=None, port=None):
+    def __init__(self, event_bus=None, host=None, port=None,
+                 max_clients: int | None = None):
+        if max_clients is not None and max_clients < 1:
+            raise ValueError("max_clients must be >= 1 or None")
         self.event_bus = event_bus
         self.host = host
         self.port = port
+        # Stimulation intentionally supports fan-out to multiple displays, while
+        # actuation must normally have a single command owner.  Keeping the limit
+        # on the transport makes that topology explicit without forking the
+        # framing/server implementation.
+        self.max_clients = max_clients
         self.status = 'INIT'
         self.server = None
         # Multiple peers may connect to one listen port (e.g. several stimulation
@@ -73,8 +82,20 @@ class NetworkServer:
 
     async def handle_client(self, reader, writer):
         addr = writer.get_extra_info('peername')
+        if self.max_clients is not None and len(self._clients) >= self.max_clients:
+            logger.warning(
+                "Peer connection rejected from %s: client limit (%d) reached",
+                addr,
+                self.max_clients,
+            )
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:  # pragma: no cover - defensive close path
+                pass
+            return
         self._clients.add(writer)
-        logger.info("Stimulation client connected: %s (%d total)", addr, len(self._clients))
+        logger.info("Peer client connected: %s (%d total)", addr, len(self._clients))
         try:
             while True:
                 header_bytes = await reader.readexactly(Frame.Header.HEADER_SIZE)
@@ -87,7 +108,7 @@ class NetworkServer:
                 if event is not None:
                     self._dispatch_inbound(event)
         except asyncio.IncompleteReadError:
-            logger.info("Stimulation client disconnected: %s", addr)
+            logger.info("Peer client disconnected: %s", addr)
         finally:
             self._clients.discard(writer)
 
@@ -101,10 +122,10 @@ class NetworkServer:
 
     async def send(self, message):
         if not self._clients:
-            logger.warning("NetworkServer.send: no stimulation client connected; dropping message")
+            logger.warning("NetworkServer.send: no peer client connected; dropping message")
             return
         frame = Frame(message, version=PROTOCOL_VERSION).to_bytes()
-        logger.debug("Send to %d stimulation client(s): %s", len(self._clients), message)
+        logger.debug("Send to %d peer client(s): %s", len(self._clients), message)
         dead = set()
         for writer in list(self._clients):
             try:
@@ -178,7 +199,7 @@ class NetworkClient:
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, self._reconnect_max)
                 continue
-            delay = self._reconnect_initial  # connected: reset backoff
+            connected_at = time.monotonic()
 
             # ---- Phase 2: receive until the link drops ------------------
             try:
@@ -190,6 +211,15 @@ class NetworkClient:
                 logger.info("NetworkClient: link lost (%s); reconnecting", exc)
                 self.status = 'DISCONNECTED'
                 await self._close_writer()
+                # A server-side client limit is observed as a successful TCP
+                # connect followed by an immediate EOF.  Retrying that path
+                # without a delay creates a tight connection/logging loop.
+                # Long-lived connections reset the backoff; short-lived ones
+                # keep escalating until the peer becomes available.
+                if time.monotonic() - connected_at >= self._reconnect_initial:
+                    delay = self._reconnect_initial
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, self._reconnect_max)
         logger.info("NetworkClient: supervisor loop exited")
 
     async def _connect(self) -> bool:

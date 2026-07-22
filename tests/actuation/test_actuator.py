@@ -71,6 +71,44 @@ class TestLifecycle:
         a.setup()
         assert eff.calls == ["setup"]
 
+    def test_failed_setup_rolls_back_and_clears_effector(self, monkeypatch):
+        class _PartiallyInitialisedEffector(_FakeEffector):
+            plugin_type = "partial_setup_for_actuator_test"
+
+            def setup(self):
+                self.calls.append("setup")
+                raise RuntimeError("device acquisition failed")
+
+        eff = _PartiallyInitialisedEffector()
+        a = Actuator()
+        monkeypatch.setattr(a, "_load_effector", lambda: eff)
+
+        with pytest.raises(RuntimeError, match="device acquisition failed"):
+            a.setup()
+
+        assert eff.calls == ["setup", "teardown"]
+        assert a.effector is None
+
+    def test_failed_setup_preserves_original_error_when_rollback_fails(
+        self, monkeypatch
+    ):
+        class _BrokenRollbackEffector(_FakeEffector):
+            plugin_type = "broken_setup_rollback_for_actuator_test"
+
+            def setup(self):
+                raise RuntimeError("original setup failure")
+
+            def teardown(self):
+                raise ValueError("secondary teardown failure")
+
+        a = Actuator()
+        monkeypatch.setattr(a, "_load_effector", _BrokenRollbackEffector)
+
+        with pytest.raises(RuntimeError, match="original setup failure"):
+            a.setup()
+
+        assert a.effector is None
+
     def test_teardown_releases_and_clears(self):
         eff = _FakeEffector()
         a = _actuator_with(eff)

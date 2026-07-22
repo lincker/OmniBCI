@@ -355,8 +355,12 @@ function EffectorCard() {
     setNotice(null);
     setSaveError(null);
     try {
-      await api.patchConfig({ "NEUROENGINE.effector": selected });
-      setNotice("已保存");
+      const result = await api.patchConfig({ "ACTUATION.effector": selected });
+      setNotice(
+        result?.engine_restart_required
+          ? "已保存——停止→启动引擎后生效"
+          : "已保存",
+      );
     } catch (e) {
       setSaveError(e instanceof ApiError ? `[${e.code}] ${e.message}` : String(e));
     } finally {

@@ -115,5 +115,5 @@ def acquisition_search_roots() -> list[Path]:
 
 
 def effector_search_roots() -> list[Path]:
-    """Return effector plugin search roots: [user_effector, vendor_effector]."""
-    return _search_roots("effector")
+    """Return effector plugin search roots: [user_effectors, vendor_effectors]."""
+    return _search_roots("effectors")

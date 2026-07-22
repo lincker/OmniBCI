@@ -132,6 +132,7 @@ class TestActuationPeerConfig:
         cfg = actuation_peer_config(host="127.0.0.1", port=8001)
         assert cfg.name == ACTUATION
         assert isinstance(cfg.transport, ListenTransport)
+        assert cfg.transport._server.max_clients == 1
         assert cfg.routes.outbound == frozenset({EventType.ActuationCommand})
         assert cfg.routes.inbound == frozenset({
             EventType.ActuationAck, EventType.ActuationState, EventType.ActuationFault,

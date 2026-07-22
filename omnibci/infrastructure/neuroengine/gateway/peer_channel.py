@@ -42,6 +42,8 @@ class PeerChannel:
         self._was_connected: bool = False
         self._stale_tripped: bool = False
         self._monitor_task: Optional[asyncio.Task] = None
+        self._transport_start_task: Optional[asyncio.Task] = None
+        self._started: bool = False
 
     @property
     def name(self) -> str:
@@ -65,11 +67,17 @@ class PeerChannel:
         failsafe/watchdog is configured) starts the monitor. Must be called from
         within a running event loop.
         """
+        if self._started:
+            return
+        self._started = True
         self._transport.set_inbound_handler(self._on_inbound)
         self._transport.set_liveness_handler(self._on_liveness)
         for event_type in self._config.routes.outbound:
             self._bus.register_event_listener(event_type, self._forward)
-        asyncio.create_task(self._transport.start())
+        # Keep and later await the startup task.  Without this, stop() can run in
+        # the same event-loop tick and finish before the scheduled start begins,
+        # leaving a transport alive after the channel is supposedly stopped.
+        self._transport_start_task = asyncio.create_task(self._transport.start())
         if self._monitored:
             self._monitor_task = asyncio.create_task(self._monitor())
         logger.info(
@@ -89,9 +97,22 @@ class PeerChannel:
             except asyncio.CancelledError:
                 pass
         self._monitor_task = None
+        if self._transport_start_task is not None:
+            try:
+                await self._transport_start_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:  # pragma: no cover - defensive startup failure
+                logger.warning(
+                    "PeerChannel '%s': transport startup failed during stop: %s",
+                    self._config.name,
+                    exc,
+                )
+        self._transport_start_task = None
         for event_type in self._config.routes.outbound:
             self._bus.unregister_event_listener(event_type, self._forward)
         await self._transport.stop()
+        self._started = False
 
     async def _forward(self, event: Event) -> None:
         """Outbound: engine → peer. Only subscribed types reach here."""

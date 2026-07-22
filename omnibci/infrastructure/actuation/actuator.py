@@ -45,14 +45,32 @@ class Actuator:
         subsystem cannot serve without one (same failure mode as stimulation
         failing to load a paradigm).
         """
-        self.effector = self._load_effector()
-        if self.effector is None:
+        effector = self._load_effector()
+        if effector is None:
             raise RuntimeError(
                 "No Effector plugin loaded (check ACTUATION.effector and the "
                 "effectors plugin directory)"
             )
-        self.effector.setup()
-        logger.info("Actuator ready (effector=%s)", type(self.effector).__name__)
+        self.effector = effector
+        try:
+            effector.setup()
+        except BaseException:
+            # setup() may fail after opening a serial port, claiming a device,
+            # or moving hardware into an intermediate state.  Always give the
+            # plugin a best-effort chance to roll that work back, while keeping
+            # the original setup exception as the one callers observe.
+            try:
+                effector.teardown()
+            except BaseException as teardown_exc:
+                logger.error(
+                    "Effector teardown after failed setup also failed: %s",
+                    teardown_exc,
+                    exc_info=True,
+                )
+            finally:
+                self.effector = None
+            raise
+        logger.info("Actuator ready (effector=%s)", type(effector).__name__)
 
     def execute(self, command: Mapping[str, Any]) -> None:
         """Carry out one ActuationCommand payload via the effector.

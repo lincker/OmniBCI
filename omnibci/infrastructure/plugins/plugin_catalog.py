@@ -10,7 +10,7 @@ Categories
 paradigm    plugins/paradigms/
 decoder     plugins/algorithms/decoders/
 acquisition plugins/acquisition/
-effector    plugins/effector/
+effector    plugins/effectors/
 
 User-area plugins (same id) shadow vendor plugins.
 """
