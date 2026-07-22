@@ -116,7 +116,12 @@ pip-selfcheck.json
 # loader, plugin_catalog, dirs) ARE tracked.
 /omnibci/infrastructure/plugins/acquisition/
 /omnibci/infrastructure/plugins/algorithms/
-/omnibci/infrastructure/plugins/effectors/
+# The first-party logger effector is reviewed framework code; keep other
+# effector implementations ignored until they are reviewed individually.
+/omnibci/infrastructure/plugins/effectors/*
+!/omnibci/infrastructure/plugins/effectors/logger/
+!/omnibci/infrastructure/plugins/effectors/logger/**
+/omnibci/infrastructure/plugins/effectors/logger/__pycache__/
 /omnibci/infrastructure/plugins/paradigms/
 
 # user config profiles — machine-specific, never committed

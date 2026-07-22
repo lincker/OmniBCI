@@ -59,7 +59,7 @@ class Stimulator:
             next(iter(omnibci.__path__)), 'infrastructure', 'plugins', 'acquisition'
         )
         from omnibci.infrastructure.plugins.loader import PluginLoader
-        from omnibci.infrastructure.plugins.factory import ObjectFactory
+        from omnibci.infrastructure.plugins.registry import ObjectFactory
         PluginLoader.load_from_dir(
             plugin_path,
             base_package='omnibci.infrastructure.plugins.acquisition',
@@ -71,7 +71,7 @@ class Stimulator:
             next(iter(omnibci.__path__)), 'infrastructure', 'plugins', 'paradigms'
         )
         from omnibci.infrastructure.plugins.loader import PluginLoader
-        from omnibci.infrastructure.plugins.factory import ObjectFactory
+        from omnibci.infrastructure.plugins.registry import ObjectFactory
         PluginLoader.load_from_dir(
             plugin_path,
             base_package='omnibci.infrastructure.plugins.paradigms',

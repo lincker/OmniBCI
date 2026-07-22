@@ -11,3 +11,4 @@ def test_effector_catalog_includes_builtin_logger(monkeypatch, tmp_path):
 
     assert "logger" in effectors
     assert effectors["logger"].plugin_type == "logger"
+    assert effectors["logger"].source == "builtin"

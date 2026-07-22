@@ -47,7 +47,7 @@ class SignalProcessingWorker(mp.Process):
         )
         from omnibci.conf import settings
         from omnibci.infrastructure.plugins.loader import PluginLoader
-        from omnibci.infrastructure.plugins.factory import ObjectFactory
+        from omnibci.infrastructure.plugins.registry import ObjectFactory
 
         PluginLoader.load_from_dir(
             algorithm_plugin_path,

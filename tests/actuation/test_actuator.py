@@ -1,4 +1,6 @@
-"""Actuator: plugin loading via registry/factory, lifecycle, error propagation."""
+"""Actuator descriptor loading, lifecycle and error propagation."""
+from textwrap import dedent
+
 import pytest
 
 from omnibci.domain.ports.effector import Effector
@@ -58,6 +60,71 @@ class TestExecute:
 
 
 class TestLifecycle:
+    def test_user_effector_descriptor_drives_full_lifecycle(self, monkeypatch, tmp_path):
+        from omnibci.conf import settings
+
+        plugin_root = tmp_path / "plugins"
+        package_dir = plugin_root / "effectors" / "user-device"
+        package_dir.mkdir(parents=True)
+        (package_dir / "manifest.toml").write_text(
+            dedent(
+                """
+                [package]
+                id = "user-device"
+                publisher = "alice"
+                version = "1.0.0"
+                kind = "effector"
+                api_version = "1"
+                plugin_type = "user_device"
+                entrypoint = "driver:UserDevice"
+                display_name = "User Device"
+                """
+            ),
+            encoding="utf-8",
+        )
+        (package_dir / "driver.py").write_text(
+            dedent(
+                """
+                from omnibci.domain.ports.effector import Effector
+
+                class UserDevice(Effector):
+                    plugin_type = "user_device"
+
+                    def __init__(self):
+                        self.calls = []
+
+                    def setup(self):
+                        self.calls.append("setup")
+
+                    def play(self, command):
+                        self.calls.append(("play", dict(command)))
+
+                    def teardown(self):
+                        self.calls.append("teardown")
+                """
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(plugin_root))
+        original_get = settings.get
+        monkeypatch.setattr(
+            settings,
+            "get",
+            lambda key, *args: "user_device"
+            if key == "ACTUATION.effector"
+            else original_get(key, *args),
+        )
+
+        actuator = Actuator()
+        actuator.setup()
+        loaded = actuator.effector
+        actuator.execute({"target_id": 7})
+        actuator.teardown()
+
+        assert loaded is not None
+        assert loaded.calls == ["setup", ("play", {"target_id": 7}), "teardown"]
+        assert actuator.effector is None
+
     def test_setup_without_configured_effector_raises(self, monkeypatch):
         a = Actuator()
         monkeypatch.setattr(a, "_load_effector", lambda: None)
@@ -125,10 +192,9 @@ class TestLifecycle:
         assert a.effector is None
 
     def test_registry_loading_via_factory(self):
-        # Register the fake in the real registry, then load through the same
-        # factory path Actuator uses (ObjectFactory.create by plugin_type).
-        from omnibci.infrastructure.plugins.registry import register_plugin
-        from omnibci.infrastructure.plugins.factory import ObjectFactory
+        # Legacy registry/factory remains available to subsystems not yet
+        # migrated to selected-entrypoint descriptors.
+        from omnibci.infrastructure.plugins.registry import ObjectFactory, register_plugin
         register_plugin(Effector)(_FakeEffector)
         instance = ObjectFactory.create(Effector, "fake_for_actuator_test")
         assert isinstance(instance, _FakeEffector)

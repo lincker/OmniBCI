@@ -116,3 +116,16 @@ forbidden_modules = [
     "omnibci.infrastructure",
     "omnibci.presentation",
 ]
+
+[[tool.importlinter.contracts]]
+name = "plugin catalog 保持只读，不得依赖执行边界或插件实现"
+type = "forbidden"
+source_modules = ["omnibci.infrastructure.plugins.plugin_catalog"]
+forbidden_modules = [
+    "omnibci.infrastructure.plugins.loader",
+    "omnibci.infrastructure.plugins.registry",
+    "omnibci.infrastructure.plugins.acquisition",
+    "omnibci.infrastructure.plugins.algorithms",
+    "omnibci.infrastructure.plugins.effectors",
+    "omnibci.infrastructure.plugins.paradigms",
+]

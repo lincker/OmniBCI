@@ -8,33 +8,38 @@ No render loop — the actuator is command-driven.
 """
 
 import logging
-import os
 from typing import Any, Mapping, Optional
 
-import omnibci
 from omnibci.domain.ports.effector import Effector
+from omnibci.infrastructure.plugins.loader import PluginLoader
+from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 
 logger = logging.getLogger(__name__)
 
 
 class Actuator:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        plugin_catalog: PluginCatalog | None = None,
+        plugin_loader: type[PluginLoader] = PluginLoader,
+    ) -> None:
         self.effector: Optional[Effector] = None
+        self._plugin_catalog = (
+            plugin_catalog if plugin_catalog is not None else PluginCatalog()
+        )
+        self._plugin_loader = plugin_loader
 
-    # ── Plugin loading (mirrors Stimulator._load_paradigm) ────────────────
+    # ── Manifest-resolved plugin loading ──────────────────────────────────
 
     def _load_effector(self) -> Optional[Effector]:
-        plugin_path = os.path.join(
-            next(iter(omnibci.__path__)), 'infrastructure', 'plugins', 'effectors'
-        )
         from omnibci.conf import settings
-        from omnibci.infrastructure.plugins.loader import PluginLoader
-        from omnibci.infrastructure.plugins.factory import ObjectFactory
-        PluginLoader.load_from_dir(
-            plugin_path,
-            base_package='omnibci.infrastructure.plugins.effectors',
-        )
-        return ObjectFactory.create(Effector, settings.get('ACTUATION.effector'))
+
+        plugin_type = settings.get('ACTUATION.effector')
+        if not plugin_type:
+            return None
+        descriptor = self._plugin_catalog.resolve("effector", plugin_type)
+        return self._plugin_loader.instantiate(descriptor, Effector)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
