@@ -31,14 +31,19 @@ from omnibci.shared.events import Event, EventType
 # ---------------------------------------------------------------------------
 
 class FakeEngine(EnginePort):
-    """Engine stub recording subscribe() calls; ready flag toggleable."""
+    """Engine stub recording subscribe() calls; lifecycle flags toggleable."""
 
-    def __init__(self, ready: bool = True):
+    def __init__(self, initialized: bool = True, ready: bool = False):
+        self._initialized = initialized
         self._ready = ready
         self.subscriptions = []
 
     def dispatch(self, event: Event) -> None:  # unused here
         pass
+
+    @property
+    def is_initialized(self) -> bool:
+        return self._initialized
 
     @property
     def is_engine_ready(self) -> bool:
@@ -98,7 +103,9 @@ class TestAssemble:
 
 class TestRegisterListeners:
     def test_registers_readmodel_then_extra_in_order(self):
-        engine = FakeEngine(ready=True)
+        # Listener wiring is valid after graph construction and deliberately
+        # does not require the runtime-ready state.
+        engine = FakeEngine(initialized=True, ready=False)
         sess = _FakeSessionService()
         container = _container(engine, sess)
 
@@ -126,12 +133,12 @@ class TestRegisterListeners:
         assert engine.subscriptions[4][1] is broadcaster_handler
 
     def test_default_subscriptions_without_extra(self):
-        engine = FakeEngine(ready=True)
+        engine = FakeEngine(initialized=True, ready=False)
         count = register_engine_listeners(_container(engine))
         assert count == 4
 
-    def test_noop_when_engine_not_ready(self):
-        engine = FakeEngine(ready=False)
+    def test_noop_when_engine_not_initialized(self):
+        engine = FakeEngine(initialized=False)
         count = register_engine_listeners(_container(engine))
         assert count == 0
         assert engine.subscriptions == []

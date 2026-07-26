@@ -3,7 +3,7 @@ Tests for /api/v1/engine endpoints.
 
 NeuroEngine is mocked via the engine_service fixture in conftest.py.
 """
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 class TestEngineStatus:
@@ -19,6 +19,9 @@ class TestEngineStatus:
 
     def test_status_running_true_when_service_running(self, api_client, engine_service):
         engine_service._running = True
+        engine_service._accepting_commands = True
+        engine_service._engine_thread = MagicMock()
+        engine_service._engine_thread.is_alive.return_value = True
         resp = api_client.get("/api/v1/engine/status")
         assert resp.json()["data"]["running"] is True
 

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import multiprocessing as mp
+from threading import RLock
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,7 @@ class ActuationProcessManager:
         self._stop_event: Any = None
         # Effector the *running* subprocess was spawned with (None = config default).
         self._effector: str | None = None
+        self._lifecycle_lock = RLock()
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -68,6 +70,10 @@ class ActuationProcessManager:
         *effector* is forwarded to the subprocess and overrides the
         ``ACTUATION.effector`` config value in-process only.
         """
+        with self._lifecycle_lock:
+            self._start_locked(effector)
+
+    def _start_locked(self, effector: str | None = None) -> None:
         if not self._auto_spawn:
             logger.debug("auto_spawn=False — Actuation process must be started manually")
             return
@@ -93,7 +99,7 @@ class ActuationProcessManager:
             # stop() only clears the old handle after confirming exit.  If it
             # cannot stop the process it raises and this method must not spawn a
             # second controller for the same device.
-            self.stop()
+            self._stop_locked()
 
         stop_event = mp.Event()
         process = mp.Process(
@@ -119,6 +125,10 @@ class ActuationProcessManager:
         handle on failure prevents a later ``start`` from creating a second
         controller for the same hardware.
         """
+        with self._lifecycle_lock:
+            self._stop_locked()
+
+    def _stop_locked(self) -> None:
         if not self._auto_spawn:
             return
         process = self._process
@@ -179,9 +189,15 @@ class ActuationProcessManager:
 
     @property
     def is_alive(self) -> bool:
-        return self._process is not None and self._process.is_alive()
+        with self._lifecycle_lock:
+            return self._process is not None and self._process.is_alive()
 
     @property
     def current_effector(self) -> str | None:
         """Effector the running subprocess was spawned with (None if stopped or config default)."""
-        return self._effector if self.is_alive else None
+        with self._lifecycle_lock:
+            return (
+                self._effector
+                if self._process is not None and self._process.is_alive()
+                else None
+            )

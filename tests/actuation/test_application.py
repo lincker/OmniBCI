@@ -4,6 +4,7 @@ the loop survives; heartbeat publishes ActuationState; failed setup exits
 with a Fault as its last word.
 """
 import asyncio
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -13,6 +14,32 @@ from omnibci.infrastructure.actuation.application import Actuation
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def test_owned_event_queue_close_is_idempotent_and_non_blocking():
+    app = Actuation.__new__(Actuation)
+    app._event_queue = MagicMock()
+    app._event_queue_closed = False
+
+    app._close_event_queue()
+    app._close_event_queue()
+
+    app._event_queue.cancel_join_thread.assert_called_once_with()
+    app._event_queue.close.assert_called_once_with()
+    app._event_queue.join_thread.assert_not_called()
+
+
+def test_event_queue_close_failure_keeps_cleanup_obligation():
+    app = Actuation.__new__(Actuation)
+    app._event_queue = MagicMock()
+    app._event_queue.close.side_effect = OSError("close failed")
+    app._event_queue_closed = False
+
+    with pytest.raises(ExceptionGroup, match="queue cleanup failed") as raised:
+        app._close_event_queue()
+
+    assert isinstance(raised.value.exceptions[0], OSError)
+    assert app._event_queue_closed is False
 
 
 class _SpyBus:
@@ -340,6 +367,53 @@ class TestSetupFailure:
         assert "no effector configured" in faults[0].data["message"]
         assert stopped == [True]
 
+    def test_fault_publish_failure_still_stops_ipc(self, monkeypatch):
+        app = _app()
+
+        async def _bad_start():
+            raise RuntimeError("setup failed")
+
+        async def _stop():
+            stopped.append(True)
+
+        stopped = []
+        monkeypatch.setattr(app, "start", _bad_start)
+        monkeypatch.setattr(app, "stop", _stop)
+        monkeypatch.setattr(
+            app.event_bus,
+            "put_event",
+            lambda _event: (_ for _ in ()).throw(RuntimeError("bus closed")),
+        )
+
+        with pytest.raises(RuntimeError, match="bus closed"):
+            _run(app.serve())
+
+        assert stopped == [True]
+
+    def test_teardown_failure_still_stops_ipc(self, monkeypatch):
+        app = _app()
+        app._stop_event = type("_Stop", (), {"is_set": lambda self: True})()
+        stopped = []
+
+        async def _start():
+            return None
+
+        async def _stop():
+            stopped.append(True)
+
+        monkeypatch.setattr(app, "start", _start)
+        monkeypatch.setattr(app, "stop", _stop)
+        monkeypatch.setattr(
+            app.actuator,
+            "teardown",
+            lambda: (_ for _ in ()).throw(RuntimeError("teardown failed")),
+        )
+
+        with pytest.raises(RuntimeError, match="teardown failed"):
+            _run(app.serve())
+
+        assert stopped == [True]
+
 
 class TestCooperativeStop:
     def test_pre_set_stop_event_exits_serve_and_tears_down(self, monkeypatch):
@@ -362,3 +436,27 @@ class TestCooperativeStop:
         _run(app.serve())
         assert app.actuator.torn_down is True
         assert stopped == [True]
+
+
+class TestQueueOwnership:
+    def test_owned_event_queue_is_closed_once(self):
+        class _Queue:
+            def __init__(self):
+                self.close_calls = 0
+                self.cancel_join_calls = 0
+
+            def close(self):
+                self.close_calls += 1
+
+            def cancel_join_thread(self):
+                self.cancel_join_calls += 1
+
+        app = _app()
+        app._event_queue = _Queue()
+        app._event_queue_closed = False
+
+        app._close_event_queue()
+        app._close_event_queue()
+
+        assert app._event_queue.close_calls == 1
+        assert app._event_queue.cancel_join_calls == 1

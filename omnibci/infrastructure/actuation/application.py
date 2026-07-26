@@ -45,8 +45,9 @@ logger = logging.getLogger(__name__)
 
 class Actuation:
     def __init__(self, stop_event: Any = None):
-        self.event_bus = EventBus()
-        self.event_bus.set_event_queue(queue=mp.Queue())
+        self._event_queue = mp.Queue()
+        self._event_queue_closed = False
+        self.event_bus = EventBus(self._event_queue)
 
         from omnibci.conf import settings
         host = settings.get("ACTUATION.server_ip", "127.0.0.1")
@@ -76,17 +77,25 @@ class Actuation:
     async def serve(self):
         try:
             await self.start()
+        except asyncio.CancelledError:
+            # start() may already have started the EventBus or allocated a
+            # transport before cancellation reaches it.
+            await self.stop()
+            raise
         except Exception as exc:
             # Without a working effector the subsystem cannot serve; leave a
             # Fault as the last word (best effort — the channel may not have
             # connected yet) and exit.
             logger.error("Actuation setup failed: %s", exc)
-            self.event_bus.put_event(Event(
-                EventType.ActuationFault,
-                make_actuation_fault("SETUP_FAILED", message=str(exc)),
-            ))
-            await asyncio.sleep(0.5)   # give the channel a beat to flush
-            await self.stop()
+            try:
+                self.event_bus.put_event(Event(
+                    EventType.ActuationFault,
+                    make_actuation_fault("SETUP_FAILED", message=str(exc)),
+                ))
+                await asyncio.sleep(0.5)   # give the channel a beat to flush
+            finally:
+                # Even a closed/broken EventBus must not strand the socket.
+                await self.stop()
             return
 
         self._heartbeat_task = asyncio.create_task(self._heartbeat())
@@ -95,20 +104,28 @@ class Actuation:
                 await self.execute_command()
                 await asyncio.sleep(0.01)
         finally:
-            self._heartbeat_task.cancel()
             try:
-                await self._heartbeat_task
-            except asyncio.CancelledError:
-                pass
-            self.actuator.teardown()
-            await self.stop()
+                self._heartbeat_task.cancel()
+                try:
+                    await self._heartbeat_task
+                except asyncio.CancelledError:
+                    pass
+            finally:
+                try:
+                    self.actuator.teardown()
+                finally:
+                    # Plugin teardown and heartbeat failures must not skip the
+                    # IPC ownership boundary.
+                    await self.stop()
 
     async def start(self):
         logger.info('---ActuationMain start---')
-        await self.event_bus.start()
-        self.peer_channel.start()
+        # Install the route before a newly connected peer can deliver its first
+        # command.  The command remains queued until setup completes.
         self.event_bus.register_event_listener(
             event_type=EventType.ActuationCommand, handler=self._enqueue_command)
+        await self.event_bus.start()
+        await self.peer_channel.start()
         self.actuator.setup()
 
     async def execute_command(self):
@@ -218,5 +235,52 @@ class Actuation:
 
     async def stop(self):
         logger.info('---ActuationMain stop---')
-        await self.peer_channel.stop()
-        self.event_bus.stop()
+        errors: list[Exception] = []
+        cancellation: asyncio.CancelledError | None = None
+        try:
+            await self.peer_channel.stop()
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+        except Exception as exc:
+            errors.append(exc)
+        try:
+            await self.event_bus.stop()
+        except asyncio.CancelledError as exc:
+            cancellation = cancellation or exc
+        except Exception as exc:
+            errors.append(exc)
+        try:
+            self._close_event_queue()
+        except Exception as exc:
+            errors.append(exc)
+
+        if cancellation is not None:
+            if errors:
+                raise cancellation from ExceptionGroup(
+                    "Actuation cleanup also failed during cancellation", errors
+                )
+            raise cancellation
+        if errors:
+            raise ExceptionGroup("Actuation IPC cleanup failed", errors)
+
+    def _close_event_queue(self) -> None:
+        if getattr(self, "_event_queue_closed", False):
+            return
+        event_queue = getattr(self, "_event_queue", None)
+        if event_queue is not None:
+            # No consumer remains after EventBus.stop().  Do not wait forever
+            # for a feeder to flush discarded events into a full pipe.
+            errors = []
+            cancel_join = getattr(event_queue, "cancel_join_thread", None)
+            if callable(cancel_join):
+                try:
+                    cancel_join()
+                except Exception as exc:
+                    errors.append(exc)
+            try:
+                event_queue.close()
+            except Exception as exc:
+                errors.append(exc)
+            if errors:
+                raise ExceptionGroup("Actuation event queue cleanup failed", errors)
+        self._event_queue_closed = True

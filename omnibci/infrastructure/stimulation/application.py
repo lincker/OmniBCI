@@ -8,7 +8,8 @@ import multiprocessing as mp
 import asyncio
 from queue import Queue
 
-from omnibci.infrastructure.ipc.event_bus import EventBus, Event, EventType
+from omnibci.infrastructure.ipc.event_bus import EventBus
+from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.outbound import make_stimulation_ack
 from omnibci.infrastructure.neuroengine.gateway.peer_channel import PeerChannel
 from omnibci.infrastructure.stimulation.engine_channel import engine_peer_config
@@ -16,9 +17,10 @@ from omnibci.infrastructure.stimulation.stimulator import Stimulator
 
 
 class Stimulation:
-    def __init__(self):
-        self.event_bus = EventBus()
-        self.event_bus.set_event_queue(queue=mp.Queue())
+    def __init__(self, stop_event=None):
+        self._event_queue = mp.Queue()
+        self._event_queue_closed = False
+        self.event_bus = EventBus(self._event_queue)
 
         from omnibci.conf import settings
         host = settings.get("NEUROENGINE.message_server_ip", "127.0.0.1")
@@ -26,6 +28,7 @@ class Stimulation:
         self.peer_channel = PeerChannel(engine_peer_config(host, port), self.event_bus)
 
         self.should_stop = False
+        self._stop_event = stop_event
         self.stim_command_queue = Queue()
         self.result_command_queue = Queue()
         self.stimulator = Stimulator()
@@ -36,29 +39,70 @@ class Stimulation:
         asyncio.run(self.serve())
 
     async def serve(self):
-        await self.start()
-        # Render loop runs as a concurrent coroutine on the asyncio main thread.
-        # On macOS this satisfies Cocoa's requirement that GLFW event polling
-        # (nextEventMatchingMask) is called only from the main thread.
-        self._render_task = asyncio.create_task(self.stimulator.start_async())
-        # IPC command loop — the engine connection lives as long as this loop runs.
-        # It is deliberately decoupled from the render window: closing the GLFW
-        # window finishes _render_task but MUST NOT end the process or drop the
-        # engine connection.  Only an explicit StopStimulation (should_stop) stops.
-        while not self.should_stop:
-            await self.execute_command()
-            await asyncio.sleep(0.01)
-        # Ensure render loop is stopped (sets _stop_event; idempotent if already done)
-        self.stimulator.stop()
-        await self._render_task   # wait for teardown + shutdown to finish on GL context
-        await self.stop()
+        try:
+            # A cooperative stop can win the race before the spawned child gets
+            # CPU time.  In that case do not open IPC or initialise a GL window
+            # merely to tear it straight back down.
+            if self._stop_requested():
+                return
+            await self.start()
+            if self._stop_requested():
+                return
+            # Render loop runs as a concurrent coroutine on the asyncio main thread.
+            # On macOS this satisfies Cocoa's requirement that GLFW event polling
+            # (nextEventMatchingMask) is called only from the main thread.
+            self._render_task = asyncio.create_task(self.stimulator.start_async())
+            # Let start_async() install its RenderLoop before checking the stop
+            # flag again.  Without this hand-off, a stop arriving immediately
+            # after create_task() makes stimulator.stop() a no-op, after which
+            # awaiting the not-yet-started renderer can hang forever.
+            await asyncio.sleep(0)
+            # IPC command loop — the engine connection lives as long as this loop runs.
+            # It is deliberately decoupled from a normally-closed render window.
+            while not self._stop_requested():
+                # A normal render-task return means "window closed" and the IPC
+                # process stays available to report explicit errors.  An actual
+                # renderer exception is a subsystem failure and must not become an
+                # unobserved task exception.
+                if self._render_task.done() and not self._render_task.cancelled():
+                    render_error = self._render_task.exception()
+                    if render_error is not None:
+                        raise render_error
+                await self.execute_command()
+                await asyncio.sleep(0.01)
+        finally:
+            # Ensure GL/paradigm teardown and IPC teardown happen on every exit
+            # path, including render setup failures and task cancellation.
+            try:
+                try:
+                    self.stimulator.stop()
+                except BaseException:
+                    # A failed stop hook may have left the render coroutine
+                    # blocked forever.  Cancel it, but continue through the
+                    # outer finally so sockets and the EventBus still close.
+                    if (
+                        self._render_task is not None
+                        and not self._render_task.done()
+                    ):
+                        self._render_task.cancel()
+                    raise
+            finally:
+                try:
+                    if self._render_task is not None:
+                        await self._render_task
+                except asyncio.CancelledError:
+                    pass
+                finally:
+                    # Renderer teardown failures must not skip IPC cleanup.
+                    await self.stop()
 
     async def start(self):
         print('---StimulationMain start---')
-        await self.event_bus.start()
-        # PeerChannel.start() is synchronous — schedules asyncio tasks internally
-        self.peer_channel.start()
+        # Install inbound routes before the reconnecting transport can receive
+        # its first frame.
         self._register_event_listener()
+        await self.event_bus.start()
+        await self.peer_channel.start()
 
     async def execute_command(self):
         # Serialize trials: only pull the next StartStimTrial once the paradigm
@@ -142,10 +186,61 @@ class Stimulation:
         if command.type == EventType.TrialCompleted:
             self.result_command_queue.put(command)
 
-    async def _stop_stimulation_system(self):
+    async def _stop_stimulation_system(self, _event=None):
         self.should_stop = True
+
+    def _stop_requested(self) -> bool:
+        if self.should_stop:
+            return True
+        stop_event = getattr(self, "_stop_event", None)
+        return stop_event is not None and stop_event.is_set()
 
     async def stop(self):
         print('---StimulationMain stop---')
-        await self.peer_channel.stop()
-        self.event_bus.stop()
+        errors: list[Exception] = []
+        cancellation: asyncio.CancelledError | None = None
+        try:
+            await self.peer_channel.stop()
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+        except Exception as exc:
+            errors.append(exc)
+        try:
+            await self.event_bus.stop()
+        except asyncio.CancelledError as exc:
+            cancellation = cancellation or exc
+        except Exception as exc:
+            errors.append(exc)
+        try:
+            self._close_event_queue()
+        except Exception as exc:
+            errors.append(exc)
+
+        if cancellation is not None:
+            if errors:
+                raise cancellation from ExceptionGroup(
+                    "Stimulation cleanup also failed during cancellation", errors
+                )
+            raise cancellation
+        if errors:
+            raise ExceptionGroup("Stimulation IPC cleanup failed", errors)
+
+    def _close_event_queue(self) -> None:
+        if getattr(self, "_event_queue_closed", False):
+            return
+        event_queue = getattr(self, "_event_queue", None)
+        if event_queue is not None:
+            errors = []
+            cancel_join = getattr(event_queue, "cancel_join_thread", None)
+            if callable(cancel_join):
+                try:
+                    cancel_join()
+                except Exception as exc:
+                    errors.append(exc)
+            try:
+                event_queue.close()
+            except Exception as exc:
+                errors.append(exc)
+            if errors:
+                raise ExceptionGroup("Stimulation event queue cleanup failed", errors)
+        self._event_queue_closed = True

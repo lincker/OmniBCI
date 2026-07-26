@@ -34,8 +34,9 @@ class ClientMessageManagement:
             logger.debug("send_event skipped: stimulation client not connected")
             return False
         try:
-            await self.client.send_event(event)
-            return True
+            # NetworkClient's bool means the frame was written/drained on the
+            # active socket.  Preserve it; it is not an application-level ack.
+            return await self.client.send_event(event)
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("send_event failed: %s", exc)
             return False

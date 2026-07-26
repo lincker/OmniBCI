@@ -35,6 +35,14 @@ class FakeEnginePort(EnginePort):
     def __init__(self):
         self.dispatched = []
 
+    @property
+    def is_initialized(self) -> bool:
+        return True
+
+    @property
+    def is_engine_ready(self) -> bool:
+        return True
+
     def dispatch(self, event: Event) -> None:
         self.dispatched.append(event)
 
@@ -42,8 +50,16 @@ class FakeEnginePort(EnginePort):
 class RaisingEnginePort(EnginePort):
     """Port that always rejects dispatch (engine not ready)."""
 
+    @property
+    def is_initialized(self) -> bool:
+        return True
+
+    @property
+    def is_engine_ready(self) -> bool:
+        return False
+
     def dispatch(self, event: Event) -> None:
-        raise RuntimeError("engine not initialised")
+        raise RuntimeError("engine not running")
 
 
 # ---------------------------------------------------------------------------

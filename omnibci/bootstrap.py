@@ -172,17 +172,18 @@ def register_engine_listeners(
 ) -> int:
     """
     Subscribe read-model and any extra (e.g. presentation) listeners to the
-    engine's EventBus.  Must be called *after* the engine process is running.
+    engine's EventBus.  The graph must already be initialised, but the engine
+    process need not be running: listener wiring is a composition-time action.
 
     Application-level subscriptions (read-model sync) are owned here; the caller
     supplies presentation-level ones (e.g. WebSocket broadcaster) via
     ``extra_subscriptions`` so this module need not import the presentation layer.
 
-    Returns the number of subscriptions registered (0 if the engine isn't ready).
+    Returns the number of subscriptions registered (0 if no graph exists yet).
     """
     engine = container.engine_service
-    if not engine.is_engine_ready:
-        logger.warning("register_engine_listeners: engine not ready — skipped")
+    if not engine.is_initialized:
+        logger.warning("register_engine_listeners: engine not initialised — skipped")
         return 0
 
     subscriptions: list[Subscription] = [

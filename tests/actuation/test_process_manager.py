@@ -1,5 +1,6 @@
 """ActuationProcessManager: cooperative shutdown and escalation semantics."""
 import multiprocessing as mp
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -67,6 +68,27 @@ class TestSpawnMode:
         m = ActuationProcessManager(auto_spawn=True)
         m.start(effector="logger")
         m.start(effector="logger")
+        assert mock_proc_cls.call_count == 1
+        assert mock_event_cls.call_count == 1
+
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
+    def test_concurrent_start_creates_one_controller(
+        self, mock_proc_cls, mock_event_cls
+    ):
+        proc, _ = _mock_process()
+        mock_proc_cls.return_value = proc
+        manager = ActuationProcessManager(auto_spawn=True)
+
+        threads = [
+            threading.Thread(target=manager.start, kwargs={"effector": "logger"})
+            for _ in range(2)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
         assert mock_proc_cls.call_count == 1
         assert mock_event_cls.call_count == 1
 
