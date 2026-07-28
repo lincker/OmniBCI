@@ -374,7 +374,7 @@ def _parse_descriptor(
 
     return PluginDescriptor(
         category=category,
-        id=plugin_id,
+        name=plugin_id,
         plugin_type=plugin_type,
         publisher=publisher,
         source=root.source,
@@ -517,7 +517,7 @@ class PluginCatalog:
     ) -> dict[tuple[str, str], list[PluginDescriptor]]:
         by_identifier: dict[tuple[str, str], list[PluginDescriptor]] = defaultdict(list)
         for descriptor in descriptors:
-            by_identifier[(descriptor.publisher, descriptor.id)].append(descriptor)
+            by_identifier[(descriptor.publisher, descriptor.name)].append(descriptor)
         return {
             identity: candidates
             for identity, candidates in by_identifier.items()
@@ -571,7 +571,7 @@ class PluginCatalog:
         descriptors = tuple(
             descriptor
             for descriptor in descriptors
-            if (descriptor.publisher, descriptor.id) not in conflicts
+            if (descriptor.publisher, descriptor.name) not in conflicts
         )
         grouped: dict[str, list[PluginDescriptor]] = defaultdict(list)
         order: list[str] = []
@@ -628,7 +628,7 @@ class PluginCatalog:
         eligible_descriptors = tuple(
             descriptor
             for descriptor in descriptors
-            if (descriptor.publisher, descriptor.id) not in conflicts
+            if (descriptor.publisher, descriptor.name) not in conflicts
         )
         matches = [
             descriptor
@@ -699,7 +699,7 @@ def list_plugins(category: str) -> list["PluginInfo"]:
 
     return [
         PluginInfo(
-            id=descriptor.id,
+            id=descriptor.name,
             plugin_type=descriptor.plugin_type,
             display_name=descriptor.display_name,
             description=descriptor.description,

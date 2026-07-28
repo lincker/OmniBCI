@@ -64,7 +64,7 @@ def test_builtin_descriptor_retains_exact_location_and_publisher(monkeypatch, tm
 
     descriptor = PluginCatalog().resolve("effector", "logger")
 
-    assert descriptor.id == "logger"
+    assert descriptor.name == "logger"
     assert descriptor.identifier == "omnibci.logger"
     assert descriptor.publisher == "omnibci"
     assert descriptor.source == "builtin"
