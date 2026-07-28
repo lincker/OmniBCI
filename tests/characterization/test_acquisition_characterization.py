@@ -91,8 +91,26 @@ class TestFileReaderLifecycle:
 
     def test_initial_flags(self):
         r = FileReader()
+        assert r.is_connected is False
         assert r._is_streaming is False
         assert r.file_pointer == 0
+
+    def test_connect_and_disconnect_update_public_connected_state(
+        self, monkeypatch, tmp_path
+    ):
+        from omnibci.infrastructure.plugins.acquisition.file import adapter
+
+        monkeypatch.setattr(adapter, "CNTReaderAdapter", lambda _: _FakeAdapter())
+        file_path = tmp_path / "sample.cnt"
+        file_path.touch()
+
+        r = FileReader()
+        r.set_file_path(str(file_path))
+
+        assert _run(r.connect()) is True
+        assert r.is_connected is True
+        assert _run(r.disconnect()) is True
+        assert r.is_connected is False
 
     def test_start_stream_resets_pointer_and_sets_flag(self):
         r = self._reader()
