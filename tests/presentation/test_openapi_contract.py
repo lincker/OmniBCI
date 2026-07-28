@@ -84,6 +84,20 @@ class TestOperationSurface:
         api_paths = [p for p in spec["paths"] if p.startswith("/api/")]
         assert api_paths and all(p.startswith("/api/v1/") for p in api_paths)
 
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/api/v1/acquisition/connect",
+            "/api/v1/acquisition/disconnect",
+            "/api/v1/acquisition/stream/start",
+            "/api/v1/acquisition/stream/stop",
+        ],
+    )
+    def test_acquisition_commands_are_accepted_asynchronously(self, spec, path):
+        responses = spec["paths"][path]["post"]["responses"]
+        assert "202" in responses
+        assert "200" not in responses
+
 
 # ---------------------------------------------------------------------------
 # Response DTO freeze — field names + required-ness.

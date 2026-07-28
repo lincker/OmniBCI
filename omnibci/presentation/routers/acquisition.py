@@ -19,38 +19,58 @@ from omnibci.application.services.acquisition_service import AcquisitionAppServi
 router = APIRouter(prefix="/acquisition", tags=["Acquisition"])
 
 
-@router.post("/connect", response_model=ApiResponse, summary="Connect to data source")
+@router.post(
+    "/connect",
+    response_model=ApiResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Request data-source connection",
+)
 def connect(svc: AcquisitionAppService = Depends(get_acquisition_service)):
     try:
         svc.handle_connect(ConnectDataProviderCommand())
-        return ApiResponse(message="Data provider connected")
+        return ApiResponse(message="Data provider connection requested")
     except RuntimeError as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
 
-@router.post("/disconnect", response_model=ApiResponse, summary="Disconnect from data source")
+@router.post(
+    "/disconnect",
+    response_model=ApiResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Request data-source disconnection",
+)
 def disconnect(svc: AcquisitionAppService = Depends(get_acquisition_service)):
     try:
         svc.handle_disconnect(DisconnectDataProviderCommand())
-        return ApiResponse(message="Data provider disconnected")
+        return ApiResponse(message="Data provider disconnection requested")
     except RuntimeError as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
 
-@router.post("/stream/start", response_model=ApiResponse, summary="Start EEG data stream")
+@router.post(
+    "/stream/start",
+    response_model=ApiResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Request EEG data-stream start",
+)
 def start_stream(svc: AcquisitionAppService = Depends(get_acquisition_service)):
     try:
         svc.handle_start_stream(StartStreamCommand())
-        return ApiResponse(message="Stream started")
+        return ApiResponse(message="Stream start requested")
     except RuntimeError as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
 
-@router.post("/stream/stop", response_model=ApiResponse, summary="Stop EEG data stream")
+@router.post(
+    "/stream/stop",
+    response_model=ApiResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Request EEG data-stream stop",
+)
 def stop_stream(svc: AcquisitionAppService = Depends(get_acquisition_service)):
     try:
         svc.handle_stop_stream(StopStreamCommand())
-        return ApiResponse(message="Stream stopped")
+        return ApiResponse(message="Stream stop requested")
     except RuntimeError as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 

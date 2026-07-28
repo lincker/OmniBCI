@@ -254,10 +254,10 @@
         "tags": [
           "Acquisition"
         ],
-        "summary": "Connect to data source",
+        "summary": "Request data-source connection",
         "operationId": "connect_api_v1_acquisition_connect_post",
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -335,10 +335,10 @@
         "tags": [
           "Acquisition"
         ],
-        "summary": "Disconnect from data source",
+        "summary": "Request data-source disconnection",
         "operationId": "disconnect_api_v1_acquisition_disconnect_post",
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -416,10 +416,10 @@
         "tags": [
           "Acquisition"
         ],
-        "summary": "Start EEG data stream",
+        "summary": "Request EEG data-stream start",
         "operationId": "start_stream_api_v1_acquisition_stream_start_post",
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -497,10 +497,10 @@
         "tags": [
           "Acquisition"
         ],
-        "summary": "Stop EEG data stream",
+        "summary": "Request EEG data-stream stop",
         "operationId": "stop_stream_api_v1_acquisition_stream_stop_post",
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -1000,7 +1000,9 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/StartTrialRequest",
-                "default": {}
+                "default": {
+                  "n_trials": 1
+                }
               }
             }
           }
@@ -3278,7 +3280,7 @@
           "message"
         ],
         "title": "ErrorResponse",
-        "description": "Unified error envelope \u2014 mirrors ApiResponse so clients see one consistent\nshape across success and failure (`success` discriminates)."
+        "description": "Unified error envelope — mirrors ApiResponse so clients see one consistent\nshape across success and failure (`success` discriminates)."
       },
       "ParadigmInfo": {
         "properties": {
@@ -3322,14 +3324,17 @@
             "default": "user"
           },
           "params": {
+            "additionalProperties": true,
             "type": "object",
-            "title": "Params",
-            "description": "Read-only plugin parameters from manifest [params]; shown in the Web UI."
+            "title": "Params"
           },
           "controls": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
             "type": "object",
-            "title": "Controls",
-            "description": "Editable controls from manifest [controls.<name>]; rendered as inputs and sent when triggering a trial."
+            "title": "Controls"
           },
           "name": {
             "type": "string",
@@ -3370,7 +3375,7 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Updates",
-            "description": "Dotted key \u2192 new value"
+            "description": "Dotted key → new value"
           },
           "scope": {
             "type": "string",
@@ -3413,7 +3418,7 @@
           "engine_restart_required": {
             "type": "boolean",
             "title": "Engine Restart Required",
-            "description": "True \u2192 stop/start the engine for changes to take effect"
+            "description": "True → stop/start the engine for changes to take effect"
           }
         },
         "type": "object",
@@ -3692,10 +3697,10 @@
           "trial_params": {
             "anyOf": [
               {
-                "type": "array",
                 "items": {
                   "type": "integer"
-                }
+                },
+                "type": "array"
               },
               {
                 "type": "null"
@@ -3705,7 +3710,8 @@
           }
         },
         "type": "object",
-        "title": "StartTrialRequest"
+        "title": "StartTrialRequest",
+        "description": "Trigger one or more stimulation trials.\n\nn_trials     — how many trials to run (paradigm-agnostic base parameter).\ntrial_params — per-trial target/event ids; len must equal n_trials when\n               provided.  None → each trial uses the paradigm default."
       },
       "StimulationStatusResponse": {
         "properties": {
@@ -3740,7 +3746,7 @@
           "engine_connected"
         ],
         "title": "StimulationStatusResponse",
-        "description": "Live status of the Stimulation subsystem.\n\nactive          \u2014 the application service has issued a StartStimulation command.\nprocess_alive   \u2014 the Stimulation subprocess is currently running (auto_spawn only).\nengine_connected \u2014 the Stimulation process has an active IPC connection to the engine."
+        "description": "Live status of the Stimulation subsystem.\n\nactive          — the application service has issued a StartStimulation command.\nprocess_alive   — the Stimulation subprocess is currently running (auto_spawn only).\nengine_connected — the Stimulation process has an active IPC connection to the engine."
       },
       "TrialResponse": {
         "properties": {

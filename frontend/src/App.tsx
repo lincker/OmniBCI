@@ -1,5 +1,10 @@
 import { useState, useEffect } from "react";
-import { api, ApiError, type ParadigmInfo } from "./api/client";
+import {
+  api,
+  ApiError,
+  type AcquisitionStatus,
+  type ParadigmInfo,
+} from "./api/client";
 import { usePoll } from "./hooks/usePoll";
 import { useAction } from "./hooks/useAction";
 import { useResultsFeed } from "./hooks/useResultsFeed";
@@ -30,10 +35,10 @@ function EngineCard({
   const stop = useAction(api.engineStop, refresh);
   const running = data?.running ?? false;
 
-  // 数据源 / 解码器 下拉(原加载面板),内置于引擎面板
+  // Data-source and decoder selectors (formerly in the load panel), embedded in the engine panel.
   const [options, setOptions] = useState<Record<string, ParadigmInfo[]>>({});
-  const [values, setValues] = useState<Record<string, string>>({}); // 已生效配置值
-  const [draft, setDraft] = useState<Record<string, string>>({});   // 本地暂选
+  const [values, setValues] = useState<Record<string, string>>({}); // Applied configuration values.
+  const [draft, setDraft] = useState<Record<string, string>>({});   // Local pending selections.
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
 
@@ -62,7 +67,7 @@ function EngineCard({
     void load();
   }, []);
 
-  // 数据源/解码器下拉相对已生效配置是否有改动 → 上报给流水线步骤(用于变绿)。
+  // Report whether the selectors differ from the applied configuration so the pipeline can update.
   const dirty = PLUGIN_CATEGORIES.some(
     ({ configKey }) => !!draft[configKey] && draft[configKey] !== values[configKey],
   );
@@ -70,7 +75,7 @@ function EngineCard({
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
 
-  // 启动引擎:先执行"加载"(持久化改动的下拉选择),再启动引擎。
+  // Starting the engine first persists changed selections, then starts the engine.
   const handleStart = async () => {
     setStarting(true);
     setStartError(null);
@@ -97,7 +102,7 @@ function EngineCard({
   return (
     <section className="card card-stack">
       <h2>引擎</h2>
-      {/* 状态置顶 */}
+      {/* Keep status indicators at the top. */}
       <div className="engine-status">
         {error ? (
           <p className="error">后端不可达：{error.message}</p>
@@ -110,7 +115,7 @@ function EngineCard({
           </>
         )}
       </div>
-      {/* 下方两个子面板:左 数据源/解码器,右 启动/停止引擎 */}
+      {/* Lower panels: source/decoder selectors on the left, engine controls on the right. */}
       <div className="engine-body">
         <div className="engine-selectors">
           {PLUGIN_CATEGORIES.map(({ category, label, configKey }) => (
@@ -147,35 +152,42 @@ function EngineCard({
 
 function AcquisitionSessionCard({
   engineRunning,
+  acquisitionStatus,
+  acquisitionError,
+  refreshAcquisitionStatus,
   session,
   trialCount,
 }: {
   engineRunning: boolean;
+  acquisitionStatus: AcquisitionStatus | null;
+  acquisitionError: Error | null;
+  refreshAcquisitionStatus: () => Promise<void>;
   session: { session_id: string; paradigm?: string | null; state: string } | null;
   trialCount: number;
 }) {
-  const { data, error, refresh } = usePoll(api.acquisitionStatus);
-  const connect = useAction(api.acqConnect, refresh);
-  const disconnect = useAction(api.acqDisconnect, refresh);
-  const recStart = useAction(api.recordingStart, refresh); // 开始读取(建会话→开流)
-  const recStop = useAction(api.recordingStop, refresh); // 停止读取(停流→排水→结束会话)
-  const connected = data?.connected ?? false;
-  const streaming = data?.streaming ?? false;
+  const connect = useAction(api.acqConnect, refreshAcquisitionStatus);
+  const disconnect = useAction(api.acqDisconnect, refreshAcquisitionStatus);
+  const recStart = useAction(api.recordingStart, refreshAcquisitionStatus); // Create a session, then start the stream.
+  const recStop = useAction(api.recordingStop, refreshAcquisitionStatus); // Stop the stream, drain it, then end the session.
+  const connected = acquisitionStatus?.connected ?? false;
+  const streaming = acquisitionStatus?.streaming ?? false;
+  const recordingActive = session?.state === "running";
 
   return (
     <section className="card card-stack">
       <h2>采集</h2>
-      {error ? (
+      {acquisitionError ? (
         <p className="error">不可达</p>
       ) : (
         <>
           <p>
-            <Dot on={data?.connected} label="已连接" />
-            <Dot on={data?.streaming} label="读取中" />
+            <Dot on={acquisitionStatus?.connected} label="已连接" />
+            <Dot on={acquisitionStatus?.streaming} label="读取中" />
           </p>
           <p className="meta">
-            数据源 {data?.source ?? "—"} ・ 采样率 {data?.sample_rate ?? "—"} Hz ・ 通道{" "}
-            {data?.channel_count ?? "—"}
+            数据源 {acquisitionStatus?.source ?? "—"} ・ 采样率{" "}
+            {acquisitionStatus?.sample_rate ?? "—"} Hz ・ 通道{" "}
+            {acquisitionStatus?.channel_count ?? "—"}
           </p>
         </>
       )}
@@ -207,12 +219,16 @@ function AcquisitionSessionCard({
         <div className="btn-group">
           <span className="btn-group-title">数据读取</span>
           <button
-            disabled={!connected || streaming || recStart.pending}
+            disabled={!connected || streaming || recordingActive || recStart.pending}
             onClick={() => recStart.run()}
           >
             开始读取
           </button>
-          <button className="danger" disabled={!streaming || recStop.pending} onClick={() => recStop.run()}>
+          <button
+            className="danger"
+            disabled={!recordingActive || recStop.pending}
+            onClick={() => recStop.run()}
+          >
             停止读取
           </button>
         </div>
@@ -390,7 +406,7 @@ function EffectorCard() {
   );
 }
 
-// 引擎面板内置的插件下拉类别
+// Plugin selector categories embedded in the engine panel.
 const PLUGIN_CATEGORIES = [
   { category: "acquisition", label: "数据源", configKey: "ACQUISITION.signal_source" as const },
   { category: "decoder",     label: "解码器", configKey: "ALGORITHM.decoder" as const },
@@ -413,7 +429,7 @@ function PipelineStepper({
     { label: "数据源连接", done: connected },
     { label: "数据读取", done: streaming },
   ];
-  // 第一个未完成的步骤是"当前步"
+  // The first incomplete step is the current step.
   const currentIdx = steps.findIndex((s) => !s.done);
 
   return (
@@ -444,9 +460,13 @@ export default function App() {
   const [dataSourceDirty, setDataSourceDirty] = useState(false);
   const { connection, session, trials, acks } = useResultsFeed();
   const { data: engineStatus } = usePoll(api.engineStatus);
-  const { data: acqStatus } = usePoll(api.acquisitionStatus);
+  const {
+    data: acqStatus,
+    error: acqError,
+    refresh: refreshAcqStatus,
+  } = usePoll(api.acquisitionStatus);
   const engineRunning = engineStatus?.running ?? false;
-  // 引擎已在运行说明配置必然已加载过（页面刷新场景）
+  // A running engine implies the configuration was already loaded before a page refresh.
   const effectiveConfigLoaded = configLoaded || engineRunning;
   const sessionActive = session != null && session.state === "running";
 
@@ -508,6 +528,9 @@ export default function App() {
         <EngineCard onLoaded={() => setConfigLoaded(true)} onDirtyChange={setDataSourceDirty} />
         <AcquisitionSessionCard
           engineRunning={engineRunning}
+          acquisitionStatus={acqStatus}
+          acquisitionError={acqError}
+          refreshAcquisitionStatus={refreshAcqStatus}
           session={session}
           trialCount={trials.length}
         />

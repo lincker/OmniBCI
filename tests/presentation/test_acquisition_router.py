@@ -14,18 +14,20 @@ def _running_engine(engine_service):
 
 
 class TestAcquisitionConnect:
-    def test_connect_returns_200(self, api_client, mock_engine):
+    def test_connect_returns_202_accepted(self, api_client, mock_engine):
         resp = api_client.post("/api/v1/acquisition/connect")
-        assert resp.status_code == 200
+        assert resp.status_code == 202
         assert resp.json()["success"] is True
+        assert resp.json()["message"] == "Data provider connection requested"
 
     def test_connect_dispatches_event(self, api_client, mock_engine):
         api_client.post("/api/v1/acquisition/connect")
         mock_engine.event_bus.put_event.assert_called()
 
-    def test_disconnect_returns_200(self, api_client, mock_engine):
+    def test_disconnect_returns_202_accepted(self, api_client, mock_engine):
         resp = api_client.post("/api/v1/acquisition/disconnect")
-        assert resp.status_code == 200
+        assert resp.status_code == 202
+        assert resp.json()["message"] == "Data provider disconnection requested"
 
     def test_connect_without_engine_returns_503(self, api_client, engine_service):
         engine_service._engine = None
@@ -34,14 +36,16 @@ class TestAcquisitionConnect:
 
 
 class TestAcquisitionStream:
-    def test_start_stream_returns_200(self, api_client, mock_engine):
+    def test_start_stream_returns_202_accepted(self, api_client, mock_engine):
         resp = api_client.post("/api/v1/acquisition/stream/start")
-        assert resp.status_code == 200
+        assert resp.status_code == 202
         assert resp.json()["success"] is True
+        assert resp.json()["message"] == "Stream start requested"
 
-    def test_stop_stream_returns_200(self, api_client, mock_engine):
+    def test_stop_stream_returns_202_accepted(self, api_client, mock_engine):
         resp = api_client.post("/api/v1/acquisition/stream/stop")
-        assert resp.status_code == 200
+        assert resp.status_code == 202
+        assert resp.json()["message"] == "Stream stop requested"
 
     def test_start_stream_without_engine_returns_503(self, api_client, engine_service):
         engine_service._engine = None
@@ -58,7 +62,7 @@ class TestAcquisitionStatus:
         assert data["streaming"] is False
 
     def test_connect_alone_does_not_flip_status(self, api_client, acquisition_service, mock_engine):
-        # Projection semantics (方案 A): the command only dispatches intent;
+        # Projection semantics (option A): the command only dispatches intent;
         # status flips when the worker reports back via AcquisitionState.
         api_client.post("/api/v1/acquisition/connect")
         resp = api_client.get("/api/v1/acquisition/status")

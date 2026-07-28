@@ -64,7 +64,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Connect to data source */
+        /** Request data-source connection */
         post: operations["connect_api_v1_acquisition_connect_post"];
         delete?: never;
         options?: never;
@@ -81,7 +81,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Disconnect from data source */
+        /** Request data-source disconnection */
         post: operations["disconnect_api_v1_acquisition_disconnect_post"];
         delete?: never;
         options?: never;
@@ -98,7 +98,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Start EEG data stream */
+        /** Request EEG data-stream start */
         post: operations["start_stream_api_v1_acquisition_stream_start_post"];
         delete?: never;
         options?: never;
@@ -115,7 +115,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Stop EEG data stream */
+        /** Request EEG data-stream stop */
         post: operations["stop_stream_api_v1_acquisition_stream_stop_post"];
         delete?: never;
         options?: never;
@@ -807,17 +807,11 @@ export interface components {
              * @default user
              */
             source: string;
-            /**
-             * Params
-             * @description Read-only plugin parameters from manifest [params]; shown in the Web UI.
-             */
+            /** Params */
             params?: {
                 [key: string]: unknown;
             };
-            /**
-             * Controls
-             * @description Editable controls from manifest [controls.<name>]; rendered as inputs and sent when triggering a trial.
-             */
+            /** Controls */
             controls?: {
                 [key: string]: {
                     [key: string]: unknown;
@@ -955,13 +949,20 @@ export interface components {
             /** Paradigm */
             paradigm?: string | null;
         };
-        /** StartTrialRequest */
+        /**
+         * StartTrialRequest
+         * @description Trigger one or more stimulation trials.
+         *
+         *     n_trials     — how many trials to run (paradigm-agnostic base parameter).
+         *     trial_params — per-trial target/event ids; len must equal n_trials when
+         *                    provided.  None → each trial uses the paradigm default.
+         */
         StartTrialRequest: {
             /**
              * N Trials
              * @default 1
              */
-            n_trials?: number;
+            n_trials: number;
             /** Trial Params */
             trial_params?: number[] | null;
         };
@@ -1242,7 +1243,7 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1316,7 +1317,7 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1390,7 +1391,7 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1464,7 +1465,7 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
