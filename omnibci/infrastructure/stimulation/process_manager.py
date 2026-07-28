@@ -27,12 +27,19 @@ import multiprocessing as mp
 from threading import RLock
 from typing import Any
 
+from omnibci.infrastructure.process_lifecycle import (
+    ChildProcessState,
+    StartupReporter,
+    wait_for_startup_report,
+)
+
 logger = logging.getLogger(__name__)
 
 
 def _run_stimulation(
     paradigm: str | None = None,
     stop_event: Any = None,
+    startup_connection: Any = None,
 ) -> None:
     """Stimulation subprocess entry point.  Runs in the spawned child process.
 
@@ -40,11 +47,27 @@ def _run_stimulation(
     subprocess's in-memory settings before the Stimulator loads plugins.
     The override is subprocess-local: the settings file on disk is unchanged.
     """
-    if paradigm:
-        from omnibci.conf import settings
-        settings.set("STIMULATION.paradigm", paradigm)
-    from omnibci.infrastructure.stimulation.application import Stimulation
-    Stimulation(stop_event=stop_event).run()
+    reporter = (
+        StartupReporter(startup_connection, component="Stimulation")
+        if startup_connection is not None
+        else None
+    )
+    try:
+        if paradigm:
+            from omnibci.conf import settings
+            settings.set("STIMULATION.paradigm", paradigm)
+        from omnibci.infrastructure.stimulation.application import Stimulation
+        kwargs = {"stop_event": stop_event}
+        if reporter is not None:
+            kwargs["startup_reporter"] = reporter
+        Stimulation(**kwargs).run()
+    except BaseException as exc:
+        if reporter is not None:
+            reporter.failed("entrypoint", exc)
+        raise
+    finally:
+        if reporter is not None:
+            reporter.close()
 
 
 class StimulationProcessManager:
@@ -57,13 +80,24 @@ class StimulationProcessManager:
     _GRACEFUL_TIMEOUT_S = 3.0
     _TERMINATE_TIMEOUT_S = 3.0
     _KILL_TIMEOUT_S = 3.0
+    _STARTUP_TIMEOUT_S = 10.0
 
-    def __init__(self, auto_spawn: bool = True) -> None:
+    def __init__(
+        self,
+        auto_spawn: bool = True,
+        *,
+        startup_timeout_s: float = _STARTUP_TIMEOUT_S,
+    ) -> None:
+        if startup_timeout_s <= 0:
+            raise ValueError("startup_timeout_s must be greater than zero")
         self._auto_spawn = auto_spawn
+        self._startup_timeout_s = float(startup_timeout_s)
         self._process: mp.Process | None = None
         self._stop_event: Any = None
+        self._startup_receiver: Any = None
         # Paradigm the *running* subprocess was spawned with (None = config default).
         self._paradigm: str | None = None
+        self._state = ChildProcessState.STOPPED
         # Synchronous API routes may run concurrently in a thread pool.  The
         # re-entrant lock also permits start() to reuse the single stop path
         # when a paradigm change requires a restart.
@@ -83,9 +117,14 @@ class StimulationProcessManager:
                     "auto_spawn=False — Stimulation process must be started manually"
                 )
                 return
+            self._refresh_state_locked()
             if self._process is not None:
                 process_alive = self._process.is_alive()
-                if process_alive and paradigm == self._paradigm:
+                if (
+                    process_alive
+                    and self._state is ChildProcessState.READY
+                    and paradigm == self._paradigm
+                ):
                     logger.debug(
                         "Stimulation process already running requested paradigm "
                         "(pid=%s, paradigm=%s)",
@@ -109,18 +148,68 @@ class StimulationProcessManager:
                 self._stop_locked()
 
             stop_event = mp.Event()
+            startup_receiver, startup_sender = mp.Pipe(duplex=False)
             process = mp.Process(
                 target=_run_stimulation,
-                args=(paradigm, stop_event),
+                args=(paradigm, stop_event, startup_sender),
                 name="StimulationProcess",
                 daemon=True,
             )
-            process.start()
+            self._state = ChildProcessState.STARTING
+            try:
+                process.start()
+            except BaseException:
+                self._state = ChildProcessState.FAILED
+                for connection in (startup_receiver, startup_sender):
+                    try:
+                        connection.close()
+                    except OSError:
+                        pass
+                close = getattr(process, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:
+                        pass
+                raise
+
             self._process = process
             self._stop_event = stop_event
+            self._startup_receiver = startup_receiver
             self._paradigm = paradigm
+            try:
+                startup_sender.close()
+            except OSError as exc:
+                logger.warning(
+                    "Failed to close parent copy of Stimulation startup sender: %s",
+                    exc,
+                )
             logger.info(
-                "Stimulation subprocess spawned (pid=%s, paradigm=%s)",
+                "Stimulation subprocess spawned; waiting for readiness "
+                "(pid=%s, paradigm=%s)",
+                process.pid,
+                paradigm or "<config>",
+            )
+            try:
+                wait_for_startup_report(
+                    startup_receiver,
+                    process,
+                    component="Stimulation",
+                    timeout_s=self._startup_timeout_s,
+                )
+            except BaseException as startup_exc:
+                self._state = ChildProcessState.FAILED
+                try:
+                    self._stop_locked(final_state=ChildProcessState.FAILED)
+                except BaseException as cleanup_exc:
+                    raise startup_exc from cleanup_exc
+                raise
+            finally:
+                self._close_startup_receiver()
+
+            self._state = ChildProcessState.READY
+            logger.info(
+                "Stimulation subprocess ready (pid=%s, paradigm=%s)",
                 process.pid,
                 paradigm or "<config>",
             )
@@ -130,13 +219,21 @@ class StimulationProcessManager:
         with self._lifecycle_lock:
             self._stop_locked()
 
-    def _stop_locked(self) -> None:
+    def _stop_locked(
+        self,
+        *,
+        final_state: ChildProcessState = ChildProcessState.STOPPED,
+    ) -> None:
         if not self._auto_spawn:
+            self._state = ChildProcessState.STOPPED
             return
         process = self._process
         if process is None:
+            self._close_startup_receiver()
+            self._state = final_state
             return
 
+        self._state = ChildProcessState.STOPPING
         pid = process.pid
         if process.is_alive():
             if self._stop_event is not None:
@@ -169,6 +266,7 @@ class StimulationProcessManager:
                 "discard its handle or start another renderer"
             )
             logger.error(message)
+            self._state = ChildProcessState.FAILED
             raise RuntimeError(message)
 
         logger.info(
@@ -189,19 +287,64 @@ class StimulationProcessManager:
                 )
         self._process = None
         self._stop_event = None
+        self._close_startup_receiver()
         self._paradigm = None
+        self._state = final_state
+
+    def _close_startup_receiver(self) -> None:
+        receiver = self._startup_receiver
+        self._startup_receiver = None
+        if receiver is None:
+            return
+        try:
+            receiver.close()
+        except OSError:
+            pass
+
+    def _refresh_state_locked(self) -> None:
+        if (
+            self._process is not None
+            and self._state in (
+                ChildProcessState.STARTING,
+                ChildProcessState.READY,
+            )
+            and not self._process.is_alive()
+        ):
+            self._state = ChildProcessState.FAILED
 
     @property
     def is_alive(self) -> bool:
         with self._lifecycle_lock:
+            self._refresh_state_locked()
             return self._process is not None and self._process.is_alive()
+
+    @property
+    def is_ready(self) -> bool:
+        with self._lifecycle_lock:
+            self._refresh_state_locked()
+            return (
+                self._state is ChildProcessState.READY
+                and self._process is not None
+                and self._process.is_alive()
+            )
+
+    @property
+    def state(self) -> ChildProcessState:
+        with self._lifecycle_lock:
+            self._refresh_state_locked()
+            return self._state
 
     @property
     def current_paradigm(self) -> str | None:
         """Paradigm the running subprocess was spawned with (None if stopped or config default)."""
         with self._lifecycle_lock:
+            self._refresh_state_locked()
             return (
                 self._paradigm
-                if self._process is not None and self._process.is_alive()
+                if (
+                    self._state is ChildProcessState.READY
+                    and self._process is not None
+                    and self._process.is_alive()
+                )
                 else None
             )

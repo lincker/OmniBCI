@@ -41,16 +41,21 @@ class StimulationAppService:
         self._active          = False
 
     def handle_start_stimulation(self, cmd: StartStimulationCommand) -> None:
-        if self._process_manager is not None:
-            self._process_manager.start(paradigm=cmd.paradigm)
+        process_ready = False
+        self._active = False
         try:
+            if self._process_manager is not None:
+                # Managed mode blocks here until IPC + renderer/paradigm setup
+                # has reported READY.  External mode remains an immediate no-op.
+                self._process_manager.start(paradigm=cmd.paradigm)
+                process_ready = True
             self._put_event(EventType.StartStimulation, data=cmd.paradigm)
         except BaseException:
             # Process spawn and engine dispatch form one application-level
             # transaction.  If the engine rejects the command, do not leave an
             # orphan renderer behind.  Cleanup failure is secondary: preserve
             # the dispatch exception that explains why start failed.
-            if self._process_manager is not None:
+            if self._process_manager is not None and process_ready:
                 try:
                     self._process_manager.stop()
                 except BaseException:

@@ -4,7 +4,7 @@ the loop survives; heartbeat publishes ActuationState; failed setup exits
 with a Fault as its last word.
 """
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -361,13 +361,16 @@ class TestSetupFailure:
             return None
         monkeypatch.setattr(asyncio, "sleep", fast_sleep)
 
-        _run(app.serve())
+        with pytest.raises(RuntimeError, match="no effector configured"):
+            _run(app.serve())
         faults = _typed(app.event_bus, EventType.ActuationFault)
         assert len(faults) == 1 and faults[0].data["code"] == "SETUP_FAILED"
         assert "no effector configured" in faults[0].data["message"]
         assert stopped == [True]
 
-    def test_fault_publish_failure_still_stops_ipc(self, monkeypatch):
+    def test_fault_publish_failure_preserves_startup_error_and_stops_ipc(
+        self, monkeypatch
+    ):
         app = _app()
 
         async def _bad_start():
@@ -385,10 +388,57 @@ class TestSetupFailure:
             lambda _event: (_ for _ in ()).throw(RuntimeError("bus closed")),
         )
 
-        with pytest.raises(RuntimeError, match="bus closed"):
+        with pytest.raises(RuntimeError, match="setup failed"):
             _run(app.serve())
 
         assert stopped == [True]
+
+    def test_managed_start_reports_ready_after_link_connection(self):
+        app = _app()
+        app._startup_reporter = MagicMock()
+        app.peer_channel = MagicMock()
+        app.peer_channel.wait_until_connected = AsyncMock()
+        app.start = AsyncMock()
+        app.stop = AsyncMock()
+
+        class _StopAfterReady:
+            def __init__(self):
+                self.calls = 0
+
+            def is_set(self):
+                self.calls += 1
+                return self.calls >= 2
+
+        app._stop_event = _StopAfterReady()
+
+        _run(app.serve())
+
+        app.peer_channel.wait_until_connected.assert_awaited_once()
+        app._startup_reporter.ready.assert_called_once_with()
+        app._startup_reporter.failed.assert_not_called()
+
+    def test_managed_connection_failure_reports_failed(self, monkeypatch):
+        app = _app()
+        app._startup_reporter = MagicMock()
+        app.peer_channel = MagicMock()
+        app.peer_channel.wait_until_connected = AsyncMock(
+            side_effect=TimeoutError("engine link unavailable")
+        )
+        app.start = AsyncMock()
+        app.stop = AsyncMock()
+
+        async def fast_sleep(_):
+            return None
+
+        monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+
+        with pytest.raises(TimeoutError, match="link unavailable"):
+            _run(app.serve())
+
+        app._startup_reporter.ready.assert_not_called()
+        failed = app._startup_reporter.failed.call_args
+        assert failed.args[0] == "initialization"
+        assert isinstance(failed.args[1], TimeoutError)
 
     def test_teardown_failure_still_stops_ipc(self, monkeypatch):
         app = _app()

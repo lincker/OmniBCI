@@ -204,6 +204,47 @@ class TestLifecycle:
         assert transport.stop_count == 1
         assert bus.listeners[EventType.TrialCompleted] == []
 
+    def test_wait_until_connected_is_a_stronger_barrier_than_start(self):
+        transport = FakeTransport()
+        transport._connected = False
+        ch, _, _ = _channel(set(), set(), transport=transport)
+
+        async def _run():
+            await ch.start()
+
+            async def connect_next_turn():
+                await asyncio.sleep(0)
+                transport._connected = True
+
+            connect_task = asyncio.create_task(connect_next_turn())
+            await ch.wait_until_connected(timeout_s=0.2)
+            await connect_task
+            await ch.stop()
+
+        asyncio.run(_run())
+
+    def test_wait_until_connected_times_out_without_link(self):
+        transport = FakeTransport()
+        transport._connected = False
+        ch, _, _ = _channel(set(), set(), transport=transport)
+
+        async def _run():
+            await ch.start()
+            with pytest.raises(TimeoutError, match="did not connect"):
+                await ch.wait_until_connected(timeout_s=0.001)
+            await ch.stop()
+
+        asyncio.run(_run())
+
+    def test_wait_until_connected_rejects_unstarted_channel(self):
+        ch, _, _ = _channel(set(), set())
+
+        async def _run():
+            with pytest.raises(RuntimeError, match="not cleanly started"):
+                await ch.wait_until_connected(timeout_s=0.1)
+
+        asyncio.run(_run())
+
     def test_failed_start_rolls_back_transport_listener_and_safety_state(self):
         transport = FakeTransport(fail_start=True)
         ch, _, bus = _channel({EventType.TrialCompleted}, set(), transport=transport)

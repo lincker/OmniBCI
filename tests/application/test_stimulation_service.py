@@ -55,6 +55,22 @@ class TestStimulationStart:
         manager.stop.assert_called_once_with()
         assert stimulation_service.is_active is False
 
+    def test_child_startup_failure_never_dispatches_or_marks_active(
+        self, stimulation_service, mock_engine
+    ):
+        manager = MagicMock()
+        manager.start.side_effect = RuntimeError("renderer unavailable")
+        stimulation_service._process_manager = manager
+
+        with pytest.raises(RuntimeError, match="renderer unavailable"):
+            stimulation_service.handle_start_stimulation(
+                StartStimulationCommand(paradigm="classic40SSVEP")
+            )
+
+        mock_engine.event_bus.put_event.assert_not_called()
+        manager.stop.assert_not_called()
+        assert stimulation_service.is_active is False
+
 
 class TestStimulationStop:
     def test_stop_dispatches_event(self, stimulation_service, mock_engine):

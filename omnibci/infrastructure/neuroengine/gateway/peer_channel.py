@@ -159,6 +159,43 @@ class PeerChannel:
         async with self._lifecycle_lock:
             await self._cleanup_shielded()
 
+    async def wait_until_connected(self, timeout_s: float) -> None:
+        """Wait until the started channel has a healthy socket connection.
+
+        ``start()`` intentionally means that the transport supervisor exists;
+        reconnecting clients may still be between attempts.  Managed child
+        processes use this stronger barrier before reporting READY to their
+        parent.  Manually launched peers keep the original reconnect-forever
+        behaviour by simply not calling this method.
+        """
+        if timeout_s <= 0:
+            raise ValueError("connection timeout must be greater than zero")
+        if not self._started or self._dirty:
+            raise RuntimeError(
+                f"PeerChannel '{self._config.name}' is not cleanly started"
+            )
+
+        deadline = asyncio.get_running_loop().time() + timeout_s
+        while True:
+            if self.is_connected:
+                return
+            if self._monitor_fault is not None:
+                raise RuntimeError(
+                    f"PeerChannel '{self._config.name}' watchdog failed"
+                ) from self._monitor_fault
+            transport_error = getattr(self._transport, "terminal_error", None)
+            if transport_error is not None:
+                raise RuntimeError(
+                    f"PeerChannel '{self._config.name}' transport stopped"
+                ) from transport_error
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"PeerChannel '{self._config.name}' did not connect within "
+                    f"{timeout_s:g}s"
+                )
+            await asyncio.sleep(min(_MONITOR_POLL_S, remaining))
+
     @property
     def _has_lifecycle_resources(self) -> bool:
         """Backward-compatible private alias used by older tests/callers."""

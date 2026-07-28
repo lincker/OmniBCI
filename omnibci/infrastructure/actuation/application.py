@@ -39,12 +39,19 @@ from omnibci.infrastructure.actuation.contracts import (
     ValidatedActuationCommand,
     validate_actuation_command,
 )
+from omnibci.infrastructure.process_lifecycle import StartupReporter
 
 logger = logging.getLogger(__name__)
 
+_MANAGED_CONNECT_TIMEOUT_S = 5.0
+
 
 class Actuation:
-    def __init__(self, stop_event: Any = None):
+    def __init__(
+        self,
+        stop_event: Any = None,
+        startup_reporter: StartupReporter | None = None,
+    ):
         self._event_queue = mp.Queue()
         self._event_queue_closed = False
         self.event_bus = EventBus(self._event_queue)
@@ -63,6 +70,7 @@ class Actuation:
 
         self.should_stop = False
         self._stop_event = stop_event
+        self._startup_reporter = startup_reporter
         # Pending intents are a latest-value mailbox, not a FIFO backlog.  A
         # command already executing remains serial; among commands waiting for
         # it, only the newest valid intent is retained.
@@ -75,41 +83,57 @@ class Actuation:
         asyncio.run(self.serve())
 
     async def serve(self):
+        startup_complete = False
         try:
+            if self._stop_requested():
+                self._report_startup_failed(
+                    "preflight",
+                    RuntimeError("stop requested before Actuation startup"),
+                )
+                return
             await self.start()
-        except asyncio.CancelledError:
-            # start() may already have started the EventBus or allocated a
-            # transport before cancellation reaches it.
-            await self.stop()
-            raise
-        except Exception as exc:
-            # Without a working effector the subsystem cannot serve; leave a
-            # Fault as the last word (best effort — the channel may not have
-            # connected yet) and exit.
-            logger.error("Actuation setup failed: %s", exc)
-            try:
-                self.event_bus.put_event(Event(
-                    EventType.ActuationFault,
-                    make_actuation_fault("SETUP_FAILED", message=str(exc)),
-                ))
-                await asyncio.sleep(0.5)   # give the channel a beat to flush
-            finally:
-                # Even a closed/broken EventBus must not strand the socket.
-                await self.stop()
-            return
+            self._heartbeat_task = asyncio.create_task(self._heartbeat())
+            await self._await_managed_connection()
+            reporter = getattr(self, "_startup_reporter", None)
+            if reporter is not None:
+                reporter.ready()
+            startup_complete = True
 
-        self._heartbeat_task = asyncio.create_task(self._heartbeat())
-        try:
             while not self._stop_requested():
                 await self.execute_command()
                 await asyncio.sleep(0.01)
+        except asyncio.CancelledError:
+            if not startup_complete:
+                self._report_startup_failed(
+                    "initialization",
+                    asyncio.CancelledError("Actuation startup cancelled"),
+                )
+            raise
+        except Exception as exc:
+            if not startup_complete:
+                # Without a working effector/link the subsystem cannot serve.
+                # Report the original cause synchronously to the parent, then
+                # leave a wire Fault as a best-effort last word.
+                self._report_startup_failed("initialization", exc)
+                logger.error("Actuation setup failed: %s", exc)
+                try:
+                    self.event_bus.put_event(Event(
+                        EventType.ActuationFault,
+                        make_actuation_fault("SETUP_FAILED", message=str(exc)),
+                    ))
+                    await asyncio.sleep(0.5)   # give the channel a beat to flush
+                except Exception:
+                    logger.exception("Could not publish Actuation setup fault")
+            raise
         finally:
             try:
-                self._heartbeat_task.cancel()
-                try:
-                    await self._heartbeat_task
-                except asyncio.CancelledError:
-                    pass
+                heartbeat = getattr(self, "_heartbeat_task", None)
+                if heartbeat is not None:
+                    heartbeat.cancel()
+                    try:
+                        await heartbeat
+                    except asyncio.CancelledError:
+                        pass
             finally:
                 try:
                     self.actuator.teardown()
@@ -127,6 +151,17 @@ class Actuation:
         await self.event_bus.start()
         await self.peer_channel.start()
         self.actuator.setup()
+
+    async def _await_managed_connection(self) -> None:
+        """Use the stronger connection barrier only for parent-managed starts."""
+        if getattr(self, "_startup_reporter", None) is None:
+            return
+        await self.peer_channel.wait_until_connected(_MANAGED_CONNECT_TIMEOUT_S)
+
+    def _report_startup_failed(self, stage: str, error: BaseException) -> None:
+        reporter = getattr(self, "_startup_reporter", None)
+        if reporter is not None:
+            reporter.failed(stage, error)
 
     async def execute_command(self):
         try:

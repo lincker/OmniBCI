@@ -133,8 +133,8 @@ class NeuroEngineService(EnginePort):
         # NeuroEngine.run() calls asyncio.run() internally, so we spin it in a
         # thread.  Starting the OS thread is not readiness: wait for the engine's
         # explicit barrier so parent-loop IPC/listener bind failures reach this
-        # caller.  Child-process plugin readiness is not covered by this
-        # parent-loop barrier and remains a separate follow-up.
+        # caller.  The managed Actuation child has its own READY/FAILED barrier
+        # below because plugin/device setup happens in that subprocess.
         self._engine_thread = Thread(target=self._engine.run, daemon=True, name="neuro-engine")
         self._engine_thread.start()
         try:
@@ -162,17 +162,18 @@ class NeuroEngineService(EnginePort):
             raise
 
         self._running = True
-        logger.info("NeuroEngine started")
         if self._actuation_manager is not None:
             try:
-                # Listening sockets are now bound, so controller startup no
-                # longer races an unobserved server task.
+                # Listening sockets are now bound.  Managed mode returns only
+                # after the child has connected and its Effector setup succeeds;
+                # external/disabled mode remains an immediate no-op.
                 await asyncio.to_thread(self._actuation_manager.start)
             except BaseException:
                 logger.exception("Actuation process failed to start; stopping engine")
                 await self._stop_engine_locked(StopEngineCommand())
                 raise
         self._accepting_commands = True
+        logger.info("NeuroEngine started")
 
     async def handle_stop_engine(self, cmd: StopEngineCommand) -> None:
         async with self._lifecycle_lock:

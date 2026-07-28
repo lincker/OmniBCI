@@ -256,6 +256,29 @@ class TestNeuroEngineServiceStart:
         with pytest.raises(RuntimeError, match="restart is blocked"):
             await engine_service.handle_start_engine(StartEngineCommand())
 
+    @pytest.mark.asyncio
+    async def test_actuation_readiness_failure_rolls_back_engine_before_admission(
+        self, engine_service
+    ):
+        manager = MagicMock()
+        manager.start.side_effect = RuntimeError("effector unavailable")
+        engine_service._actuation_manager = manager
+        thread = MagicMock()
+        thread.is_alive.return_value = False
+
+        with patch(
+            "omnibci.application.services.engine_service.Thread",
+            return_value=thread,
+        ):
+            with pytest.raises(RuntimeError, match="effector unavailable"):
+                await engine_service.handle_start_engine(StartEngineCommand())
+
+        manager.start.assert_called_once_with()
+        manager.stop.assert_called_once_with()
+        assert engine_service._running is False
+        assert engine_service._accepting_commands is False
+        assert engine_service.is_engine_ready is False
+
 
 class TestNeuroEngineServiceStop:
     @pytest.mark.asyncio

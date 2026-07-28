@@ -12,12 +12,19 @@ from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.outbound import make_stimulation_ack
 from omnibci.infrastructure.neuroengine.gateway.peer_channel import PeerChannel
+from omnibci.infrastructure.process_lifecycle import StartupReporter
 from omnibci.infrastructure.stimulation.engine_channel import engine_peer_config
 from omnibci.infrastructure.stimulation.stimulator import Stimulator
 
+_MANAGED_CONNECT_TIMEOUT_S = 5.0
+
 
 class Stimulation:
-    def __init__(self, stop_event=None):
+    def __init__(
+        self,
+        stop_event=None,
+        startup_reporter: StartupReporter | None = None,
+    ):
         self._event_queue = mp.Queue()
         self._event_queue_closed = False
         self.event_bus = EventBus(self._event_queue)
@@ -29,6 +36,7 @@ class Stimulation:
 
         self.should_stop = False
         self._stop_event = stop_event
+        self._startup_reporter = startup_reporter
         self.stim_command_queue = Queue()
         self.result_command_queue = Queue()
         self.stimulator = Stimulator()
@@ -39,37 +47,69 @@ class Stimulation:
         asyncio.run(self.serve())
 
     async def serve(self):
+        startup_complete = False
         try:
-            # A cooperative stop can win the race before the spawned child gets
-            # CPU time.  In that case do not open IPC or initialise a GL window
-            # merely to tear it straight back down.
-            if self._stop_requested():
-                return
-            await self.start()
-            if self._stop_requested():
-                return
-            # Render loop runs as a concurrent coroutine on the asyncio main thread.
-            # On macOS this satisfies Cocoa's requirement that GLFW event polling
-            # (nextEventMatchingMask) is called only from the main thread.
-            self._render_task = asyncio.create_task(self.stimulator.start_async())
-            # Let start_async() install its RenderLoop before checking the stop
-            # flag again.  Without this hand-off, a stop arriving immediately
-            # after create_task() makes stimulator.stop() a no-op, after which
-            # awaiting the not-yet-started renderer can hang forever.
-            await asyncio.sleep(0)
-            # IPC command loop — the engine connection lives as long as this loop runs.
-            # It is deliberately decoupled from a normally-closed render window.
-            while not self._stop_requested():
-                # A normal render-task return means "window closed" and the IPC
-                # process stays available to report explicit errors.  An actual
-                # renderer exception is a subsystem failure and must not become an
-                # unobserved task exception.
+            try:
+                # A cooperative stop can win the race before the spawned child
+                # gets CPU time.  Do not open IPC/GL merely to tear it down.
+                if self._stop_requested():
+                    self._report_startup_failed(
+                        "preflight",
+                        RuntimeError("stop requested before Stimulation startup"),
+                    )
+                    return
+                await self.start()
+                if self._stop_requested():
+                    self._report_startup_failed(
+                        "initialization",
+                        RuntimeError("stop requested during Stimulation startup"),
+                    )
+                    return
+                # Render loop runs as a concurrent coroutine on the asyncio main
+                # thread. On macOS this keeps Cocoa event polling on that thread.
+                self._render_task = asyncio.create_task(
+                    self.stimulator.start_async()
+                )
+                # Let start_async() install its RenderLoop before checking the
+                # stop flag again. Without this hand-off an immediate stop can
+                # make stimulator.stop() a no-op and strand the renderer.
+                await asyncio.sleep(0)
+
                 if self._render_task.done() and not self._render_task.cancelled():
                     render_error = self._render_task.exception()
                     if render_error is not None:
                         raise render_error
-                await self.execute_command()
-                await asyncio.sleep(0.01)
+                    if getattr(self, "_startup_reporter", None) is not None:
+                        raise RuntimeError(
+                            "stimulation window closed during startup"
+                        )
+
+                await self._await_managed_readiness()
+                reporter = getattr(self, "_startup_reporter", None)
+                if reporter is not None:
+                    reporter.ready()
+                startup_complete = True
+
+                # IPC command loop — the engine connection lives as long as this
+                # loop runs. It is deliberately decoupled from a normally-closed
+                # render window.
+                while not self._stop_requested():
+                    # A normal render-task return means "window closed" and the
+                    # IPC process stays available to report explicit errors. An
+                    # exception is a subsystem failure and must be observed.
+                    if (
+                        self._render_task.done()
+                        and not self._render_task.cancelled()
+                    ):
+                        render_error = self._render_task.exception()
+                        if render_error is not None:
+                            raise render_error
+                    await self.execute_command()
+                    await asyncio.sleep(0.01)
+            except BaseException as exc:
+                if not startup_complete:
+                    self._report_startup_failed("initialization", exc)
+                raise
         finally:
             # Ensure GL/paradigm teardown and IPC teardown happen on every exit
             # path, including render setup failures and task cancellation.
@@ -103,6 +143,48 @@ class Stimulation:
         self._register_event_listener()
         await self.event_bus.start()
         await self.peer_channel.start()
+
+    async def _await_managed_readiness(self) -> None:
+        """Wait for the engine link while continuing to supervise GL startup."""
+        if getattr(self, "_startup_reporter", None) is None:
+            return
+        connection_task = asyncio.create_task(
+            self.peer_channel.wait_until_connected(_MANAGED_CONNECT_TIMEOUT_S),
+            name="stimulation-startup-engine-link",
+        )
+        render_task = self._render_task
+        if render_task is None:
+            connection_task.cancel()
+            await asyncio.gather(connection_task, return_exceptions=True)
+            raise RuntimeError("stimulation renderer was not started")
+        try:
+            done, _ = await asyncio.wait(
+                {connection_task, render_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if render_task in done:
+                if not connection_task.done():
+                    connection_task.cancel()
+                await asyncio.gather(connection_task, return_exceptions=True)
+                if render_task.cancelled():
+                    raise RuntimeError(
+                        "stimulation renderer was cancelled during startup"
+                    )
+                render_error = render_task.exception()
+                if render_error is not None:
+                    raise render_error
+                raise RuntimeError("stimulation window closed during startup")
+            await connection_task
+        except BaseException:
+            if not connection_task.done():
+                connection_task.cancel()
+            await asyncio.gather(connection_task, return_exceptions=True)
+            raise
+
+    def _report_startup_failed(self, stage: str, error: BaseException) -> None:
+        reporter = getattr(self, "_startup_reporter", None)
+        if reporter is not None:
+            reporter.failed(stage, error)
 
     async def execute_command(self):
         # Serialize trials: only pull the next StartStimTrial once the paradigm

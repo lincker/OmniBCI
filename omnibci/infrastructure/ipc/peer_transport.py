@@ -282,3 +282,8 @@ class ConnectTransport(PeerTransport):
     @property
     def is_connected(self) -> bool:
         return self._client.is_connected
+
+    @property
+    def terminal_error(self) -> Optional[BaseException]:
+        """Last error that terminated the reconnect supervisor, if any."""
+        return self._last_supervisor_error

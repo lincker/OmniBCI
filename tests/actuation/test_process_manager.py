@@ -1,10 +1,18 @@
 """ActuationProcessManager: cooperative shutdown and escalation semantics."""
 import multiprocessing as mp
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from omnibci.infrastructure.process_lifecycle import (
+    ChildProcessStartupError,
+    ChildProcessStartupTimeout,
+    ChildProcessState,
+    StartupReport,
+)
+from omnibci.infrastructure.actuation import process_manager as process_manager_module
 from omnibci.infrastructure.actuation.process_manager import (
     ActuationProcessManager,
     _run_actuation,
@@ -35,11 +43,24 @@ def _mock_process(*, exits_after_join=None, alive=True, pid=1234):
     return process, state
 
 
+@pytest.fixture(autouse=True)
+def startup_pipe(monkeypatch):
+    """Every mocked child reports READY unless a test overrides the receiver."""
+    receiver = MagicMock()
+    receiver.poll.return_value = True
+    receiver.recv.return_value = StartupReport.ready("Actuation")
+    sender = MagicMock()
+    pipe = MagicMock(return_value=(receiver, sender))
+    monkeypatch.setattr(process_manager_module.mp, "Pipe", pipe)
+    return SimpleNamespace(receiver=receiver, sender=sender, factory=pipe)
+
+
 class TestNoSpawnMode:
     def test_all_public_methods_are_noops(self):
         m = ActuationProcessManager(auto_spawn=False)
         m.start(effector="logger")
         assert m.is_alive is False and m.current_effector is None
+        assert m.state is ChildProcessState.STOPPED
         m.stop()   # no error
 
 
@@ -47,7 +68,7 @@ class TestSpawnMode:
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
     def test_start_spawns_with_effector_and_stop_event(
-        self, mock_proc_cls, mock_event_cls
+        self, mock_proc_cls, mock_event_cls, startup_pipe
     ):
         proc, _ = _mock_process()
         stop_event = MagicMock()
@@ -56,13 +77,18 @@ class TestSpawnMode:
         m = ActuationProcessManager(auto_spawn=True)
         m.start(effector="logger")
         kwargs = mock_proc_cls.call_args.kwargs
-        assert kwargs["args"] == ("logger", stop_event)
+        assert kwargs["args"] == ("logger", stop_event, startup_pipe.sender)
         assert kwargs["daemon"] is True
-        assert m.is_alive is True and m.current_effector == "logger"
+        assert m.is_alive is True and m.is_ready is True
+        assert m.state is ChildProcessState.READY
+        assert m.current_effector == "logger"
+        startup_pipe.sender.close.assert_called_once_with()
 
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
-    def test_same_effector_is_idempotent(self, mock_proc_cls, mock_event_cls):
+    def test_same_effector_is_idempotent(
+        self, mock_proc_cls, mock_event_cls, startup_pipe
+    ):
         proc, _ = _mock_process()
         mock_proc_cls.return_value = proc
         m = ActuationProcessManager(auto_spawn=True)
@@ -70,6 +96,7 @@ class TestSpawnMode:
         m.start(effector="logger")
         assert mock_proc_cls.call_count == 1
         assert mock_event_cls.call_count == 1
+        assert startup_pipe.factory.call_count == 1
 
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
@@ -153,6 +180,7 @@ class TestSpawnMode:
         proc.terminate.assert_called_once_with()
         proc.kill.assert_not_called()
         assert m._process is None and m._stop_event is None
+        assert m.state is ChildProcessState.STOPPED
 
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
@@ -194,6 +222,7 @@ class TestSpawnMode:
         assert m._process is proc
         assert m._stop_event is stop_event
         assert m._effector == "logger"
+        assert m.state is ChildProcessState.FAILED
         proc.close.assert_not_called()
 
         with pytest.raises(RuntimeError, match="still alive"):
@@ -225,6 +254,146 @@ class TestSpawnMode:
                 process.kill()
                 process.join(timeout=3.0)
 
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
+    def test_failed_startup_report_is_raised_and_child_is_reaped(
+        self,
+        mock_proc_cls,
+        mock_event_cls,
+        startup_pipe,
+    ):
+        process, _ = _mock_process(exits_after_join=1)
+        mock_proc_cls.return_value = process
+        mock_event_cls.return_value = MagicMock()
+        startup_pipe.receiver.recv.return_value = StartupReport.failed(
+            "Actuation",
+            stage="initialization",
+            error=RuntimeError("effector unavailable"),
+        )
+        manager = ActuationProcessManager()
+
+        with pytest.raises(
+            ChildProcessStartupError,
+            match="effector unavailable",
+        ):
+            manager.start("logger")
+
+        assert manager.state is ChildProcessState.FAILED
+        assert manager.is_alive is False
+        assert manager._process is None
+
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
+    def test_startup_timeout_stops_child_and_remains_failed(
+        self,
+        mock_proc_cls,
+        mock_event_cls,
+        startup_pipe,
+    ):
+        process, _ = _mock_process(exits_after_join=1)
+        mock_proc_cls.return_value = process
+        mock_event_cls.return_value = MagicMock()
+        startup_pipe.receiver.poll.return_value = False
+        manager = ActuationProcessManager(startup_timeout_s=0.001)
+
+        with pytest.raises(ChildProcessStartupTimeout):
+            manager.start("logger")
+
+        assert manager.state is ChildProcessState.FAILED
+        assert manager._process is None
+
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
+    def test_child_exit_before_report_is_reaped_without_waiting_for_timeout(
+        self,
+        mock_proc_cls,
+        mock_event_cls,
+        startup_pipe,
+    ):
+        process, _ = _mock_process(alive=False)
+        process.exitcode = 9
+        mock_proc_cls.return_value = process
+        mock_event_cls.return_value = MagicMock()
+        startup_pipe.receiver.poll.return_value = False
+        manager = ActuationProcessManager(startup_timeout_s=1.0)
+
+        with pytest.raises(
+            ChildProcessStartupError,
+            match=r"exitcode=9",
+        ):
+            manager.start("logger")
+
+        assert manager.state is ChildProcessState.FAILED
+        assert manager._process is None
+
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
+    def test_stop_serializes_behind_startup_without_spawning_twice(
+        self,
+        mock_proc_cls,
+        mock_event_cls,
+        startup_pipe,
+    ):
+        process, _ = _mock_process(exits_after_join=1)
+        stop_event = MagicMock()
+        mock_proc_cls.return_value = process
+        mock_event_cls.return_value = stop_event
+        poll_entered = threading.Event()
+        release_report = threading.Event()
+
+        def poll(_timeout):
+            poll_entered.set()
+            release_report.wait(timeout=1.0)
+            return True
+
+        startup_pipe.receiver.poll.side_effect = poll
+        manager = ActuationProcessManager()
+        errors = []
+
+        def start():
+            try:
+                manager.start("logger")
+            except BaseException as exc:  # pragma: no cover - assertion below
+                errors.append(exc)
+
+        def stop():
+            try:
+                manager.stop()
+            except BaseException as exc:  # pragma: no cover - assertion below
+                errors.append(exc)
+
+        start_thread = threading.Thread(target=start)
+        stop_thread = threading.Thread(target=stop)
+        start_thread.start()
+        assert poll_entered.wait(timeout=1.0)
+        stop_thread.start()
+        release_report.set()
+        start_thread.join(timeout=1.0)
+        stop_thread.join(timeout=1.0)
+
+        assert errors == []
+        assert mock_proc_cls.call_count == 1
+        stop_event.set.assert_called_once_with()
+        assert manager.state is ChildProcessState.STOPPED
+
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
+    def test_ready_state_detects_child_that_dies_later(
+        self,
+        mock_proc_cls,
+        mock_event_cls,
+    ):
+        process, state = _mock_process()
+        mock_proc_cls.return_value = process
+        mock_event_cls.return_value = MagicMock()
+        manager = ActuationProcessManager()
+        manager.start("logger")
+
+        state["alive"] = False
+
+        assert manager.is_ready is False
+        assert manager.state is ChildProcessState.FAILED
+
 
 class TestChildEntryPoint:
     @patch("omnibci.infrastructure.actuation.application.Actuation")
@@ -235,6 +404,27 @@ class TestChildEntryPoint:
 
         mock_actuation_cls.assert_called_once_with(stop_event=stop_event)
         mock_actuation_cls.return_value.run.assert_called_once_with()
+
+    @patch("omnibci.infrastructure.actuation.application.Actuation")
+    def test_entrypoint_reports_constructor_or_run_failure(
+        self, mock_actuation_cls
+    ):
+        connection = MagicMock()
+        mock_actuation_cls.return_value.run.side_effect = RuntimeError(
+            "configuration failed"
+        )
+
+        with pytest.raises(RuntimeError, match="configuration failed"):
+            _run_actuation(
+                stop_event=object(),
+                startup_connection=connection,
+            )
+
+        report = connection.send.call_args.args[0]
+        assert report.state is ChildProcessState.FAILED
+        assert report.stage == "entrypoint"
+        assert report.message == "configuration failed"
+        connection.close.assert_called_once_with()
 
     @patch("omnibci.conf.settings.set")
     @patch("omnibci.infrastructure.actuation.application.Actuation")
