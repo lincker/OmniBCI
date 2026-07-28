@@ -1,6 +1,9 @@
 """
 Unit tests for AcquisitionAppService.
 """
+import pytest
+from unittest.mock import MagicMock
+
 from omnibci.application.commands.acquisition_commands import (
     ConnectDataProviderCommand,
     DisconnectDataProviderCommand,
@@ -10,6 +13,15 @@ from omnibci.application.commands.acquisition_commands import (
 from omnibci.application.events import AcquisitionSnapshot
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 from omnibci.shared.events import Event, EventType
+
+
+@pytest.fixture(autouse=True)
+def _running_engine(engine_service):
+    """Command-focused tests exercise a runtime-ready EnginePort."""
+    engine_service._running = True
+    engine_service._accepting_commands = True
+    engine_service._engine_thread = MagicMock()
+    engine_service._engine_thread.is_alive.return_value = True
 
 
 class TestAcquisitionConnect:

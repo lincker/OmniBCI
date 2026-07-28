@@ -105,6 +105,32 @@ def make_stimulation_ack(command: str, status: str = "ok",
             "target_index": target_index, "message": message}
 
 
+def make_actuation_ack(target_id: Optional[int] = None,
+                       status: str = "ok",
+                       message: Optional[str] = None,
+                       seq: Optional[int] = None) -> dict:
+    """
+    Build the JSON-safe payload the actuation process sends back to ack an
+    ActuationCommand. Mirrors make_stimulation_ack. *seq* echoes the
+    command's correlation id (statuses: ok | superseded | stale).
+    """
+    return {"target_id": target_id, "status": status, "message": message,
+            "seq": seq}
+
+
+def make_actuation_fault(code: str,
+                         target_id: Optional[int] = None,
+                         message: Optional[str] = None,
+                         seq: Optional[int] = None) -> dict:
+    """
+    Build the JSON-safe ActuationFault payload (same {"code", ...} shape as
+    the engine watchdog's ACTUATION_LINK_LOST). *seq* echoes the failing
+    command's correlation id when there is one.
+    """
+    return {"code": code, "source": "actuation_subsystem",
+            "target_id": target_id, "message": message, "seq": seq}
+
+
 def payload_to_jsonable(data: Any) -> Any:
     """
     Convert an EventBus payload into a JSON-serialisable value for the socket

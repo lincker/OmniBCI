@@ -43,8 +43,10 @@ class EngineHandle(Protocol):
     signal_processing_worker: Any
     peer_gateway: Any
     should_stop: bool
+    shutdown_complete: bool
 
     def run(self) -> None: ...
+    def wait_until_started(self, timeout: float | None = None) -> None: ...
 
 
 #: 引擎工厂：每次调用构建一张全新的引擎图（mp.Process 单次使用，
@@ -56,9 +58,22 @@ class EnginePort(ABC):
     """
     Contract for dispatching events into the running engine.
 
-    Implementations must raise RuntimeError if the engine is not yet
-    initialised, so callers fail loudly instead of silently dropping events.
+    ``is_initialized`` means that an engine graph exists and can accept
+    composition-time listener registration.  ``is_engine_ready`` is the
+    stronger runtime state: commands may be dispatched only while it is true.
+    Implementations must raise ``RuntimeError`` outside that running-ready
+    state so callers fail loudly instead of writing into an idle or closed bus.
     """
+
+    @property
+    @abstractmethod
+    def is_initialized(self) -> bool:
+        """Whether the engine graph has been constructed."""
+
+    @property
+    @abstractmethod
+    def is_engine_ready(self) -> bool:
+        """Whether the engine has crossed its startup readiness barrier."""
 
     @abstractmethod
     def dispatch(self, event: Event) -> None:

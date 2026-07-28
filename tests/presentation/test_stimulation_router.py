@@ -1,7 +1,7 @@
 """
 Tests for /api/v1/stimulation endpoints.
 """
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -17,6 +17,14 @@ _FAKE_PARADIGM = PluginInfo(
 
 # Patch at the use site: the router imports list_plugins at module top level.
 _PATCH_TARGET = "omnibci.presentation.routers.stimulation.list_plugins"
+
+
+@pytest.fixture(autouse=True)
+def _running_engine(engine_service):
+    engine_service._running = True
+    engine_service._accepting_commands = True
+    engine_service._engine_thread = MagicMock()
+    engine_service._engine_thread.is_alive.return_value = True
 
 
 class TestParadigms:

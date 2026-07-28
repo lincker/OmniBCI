@@ -1,12 +1,25 @@
 """
 Unit tests for StimulationAppService.
 """
+from unittest.mock import MagicMock
+
+import pytest
+
 from omnibci.application.commands.stimulation_commands import (
     StartStimulationCommand,
     StopStimulationCommand,
     StartStimTrialCommand,
 )
 from omnibci.shared.events import EventType
+
+
+@pytest.fixture(autouse=True)
+def _running_engine(engine_service):
+    """Command-focused tests exercise a runtime-ready EnginePort."""
+    engine_service._running = True
+    engine_service._accepting_commands = True
+    engine_service._engine_thread = MagicMock()
+    engine_service._engine_thread.is_alive.return_value = True
 
 
 class TestStimulationStart:
@@ -26,6 +39,38 @@ class TestStimulationStart:
         event = mock_engine.event_bus.put_event.call_args[0][0]
         assert event.data == "classic40SSVEP"
 
+    def test_dispatch_failure_rolls_back_spawned_process(
+        self, stimulation_service, engine_service
+    ):
+        manager = MagicMock()
+        stimulation_service._process_manager = manager
+        engine_service._running = False
+
+        with pytest.raises(RuntimeError, match="not running"):
+            stimulation_service.handle_start_stimulation(
+                StartStimulationCommand(paradigm="classic40SSVEP")
+            )
+
+        manager.start.assert_called_once_with(paradigm="classic40SSVEP")
+        manager.stop.assert_called_once_with()
+        assert stimulation_service.is_active is False
+
+    def test_child_startup_failure_never_dispatches_or_marks_active(
+        self, stimulation_service, mock_engine
+    ):
+        manager = MagicMock()
+        manager.start.side_effect = RuntimeError("renderer unavailable")
+        stimulation_service._process_manager = manager
+
+        with pytest.raises(RuntimeError, match="renderer unavailable"):
+            stimulation_service.handle_start_stimulation(
+                StartStimulationCommand(paradigm="classic40SSVEP")
+            )
+
+        mock_engine.event_bus.put_event.assert_not_called()
+        manager.stop.assert_not_called()
+        assert stimulation_service.is_active is False
+
 
 class TestStimulationStop:
     def test_stop_dispatches_event(self, stimulation_service, mock_engine):
@@ -37,6 +82,21 @@ class TestStimulationStop:
     def test_stop_clears_active_flag(self, stimulation_service):
         stimulation_service._active = True
         stimulation_service.handle_stop_stimulation(StopStimulationCommand())
+        assert stimulation_service.is_active is False
+
+    def test_dispatch_failure_still_stops_process_and_preserves_error(
+        self, stimulation_service, engine_service
+    ):
+        manager = MagicMock()
+        manager.stop.side_effect = RuntimeError("cleanup also failed")
+        stimulation_service._process_manager = manager
+        stimulation_service._active = True
+        engine_service._running = False
+
+        with pytest.raises(RuntimeError, match="NeuroEngine is not running"):
+            stimulation_service.handle_stop_stimulation(StopStimulationCommand())
+
+        manager.stop.assert_called_once_with()
         assert stimulation_service.is_active is False
 
 

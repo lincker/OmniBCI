@@ -64,10 +64,12 @@ class TestNeuroEngineBuilder:
     def test_event_bus_queue_is_set(self, patched_builder):
         eng = patched_builder.build()
         assert eng.event_bus._event_queue is not None
+        assert eng.event_bus._event_queue in eng._owned_ipc_queues
 
     def test_engine_has_data_manager(self, patched_builder):
         eng = patched_builder.build()
         assert isinstance(eng.data_manager, DataManager)
+        assert eng.data_manager.buffer in eng._owned_ipc_queues
 
     def test_engine_has_acquisition_worker(self, patched_builder):
         eng = patched_builder.build()

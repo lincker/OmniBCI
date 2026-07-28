@@ -74,9 +74,24 @@ def actuation_peer_config(host: str, port: int,
     (LINK_LOST). Pass ``watchdog_timeout_s=None`` to disable the heartbeat check
     (disconnect-edge failsafe still applies via ``failsafe``).
     """
+    # The watchdog raises the safety fault at its configured deadline.  Give
+    # the transport one additional window, then close a silent/half-open
+    # controller so it cannot occupy the sole control slot forever.
+    connection_idle_timeout = (
+        watchdog_timeout_s * 2
+        if watchdog_timeout_s is not None and watchdog_timeout_s > 0
+        else None
+    )
     return PeerConfig(
         name=ACTUATION,
-        transport=ListenTransport(host=host, port=port),
+        # One controller owns an actuation command stream.  A second connection
+        # must not receive and execute the same physical command.
+        transport=ListenTransport(
+            host=host,
+            port=port,
+            max_clients=1,
+            idle_timeout=connection_idle_timeout,
+        ),
         routes=RouteSpec(
             outbound=frozenset({
                 EventType.ActuationCommand,

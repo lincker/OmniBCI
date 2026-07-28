@@ -41,17 +41,55 @@ class StimulationAppService:
         self._active          = False
 
     def handle_start_stimulation(self, cmd: StartStimulationCommand) -> None:
-        if self._process_manager is not None:
-            self._process_manager.start(paradigm=cmd.paradigm)
-        self._put_event(EventType.StartStimulation, data=cmd.paradigm)
+        process_ready = False
+        self._active = False
+        try:
+            if self._process_manager is not None:
+                # Managed mode blocks here until IPC + renderer/paradigm setup
+                # has reported READY.  External mode remains an immediate no-op.
+                self._process_manager.start(paradigm=cmd.paradigm)
+                process_ready = True
+            self._put_event(EventType.StartStimulation, data=cmd.paradigm)
+        except BaseException:
+            # Process spawn and engine dispatch form one application-level
+            # transaction.  If the engine rejects the command, do not leave an
+            # orphan renderer behind.  Cleanup failure is secondary: preserve
+            # the dispatch exception that explains why start failed.
+            if self._process_manager is not None and process_ready:
+                try:
+                    self._process_manager.stop()
+                except BaseException:
+                    logger.exception(
+                        "Failed to roll back Stimulation process after dispatch error"
+                    )
+            self._active = False
+            raise
         self._active = True
         logger.info("StartStimulation event dispatched (paradigm=%s)", cmd.paradigm)
 
     def handle_stop_stimulation(self, cmd: StopStimulationCommand) -> None:
-        self._put_event(EventType.StopStimulation)
-        if self._process_manager is not None:
-            self._process_manager.stop()
-        self._active = False
+        try:
+            self._put_event(EventType.StopStimulation)
+        except BaseException:
+            # The engine may already be down, but the locally-owned renderer
+            # still has to stop.  Never replace the dispatch error with a
+            # secondary process-cleanup failure.
+            try:
+                if self._process_manager is not None:
+                    self._process_manager.stop()
+            except BaseException:
+                logger.exception(
+                    "Failed to stop Stimulation process after dispatch error"
+                )
+            finally:
+                self._active = False
+            raise
+        else:
+            try:
+                if self._process_manager is not None:
+                    self._process_manager.stop()
+            finally:
+                self._active = False
         logger.info("StopStimulation event dispatched")
 
     def handle_start_trial(self, cmd: StartStimTrialCommand) -> None:

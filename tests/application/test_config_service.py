@@ -26,7 +26,9 @@ def svc(tmp_path):
         "window_duration = 3.0\n"
         "filters = []\n"
         "[STIMULATION]\n"
-        "paradigm = \"classic40\"\n",
+        "paradigm = \"classic40\"\n"
+        "[ACTUATION]\n"
+        "effector = \"\"\n",
         encoding="utf-8",
     )
     return ConfigService(OmniBCISettings(toml_file=toml))
@@ -72,6 +74,23 @@ class TestApplyValidation:
     def test_list_str_checked_elementwise(self, svc):
         with pytest.raises(ConfigValidationError):
             svc.apply({"ALGORITHM.filters": ["ok", 42]})
+
+    def test_effector_key_is_allowed_and_type_checked(self, svc):
+        applied, restart = svc.apply({"ACTUATION.effector": "logger"})
+        assert applied == ["ACTUATION.effector"]
+        assert restart is True
+        assert svc._settings.get_default("ACTUATION.effector") == "logger"
+
+        with pytest.raises(ConfigValidationError):
+            svc.apply({"ACTUATION.effector": 42})
+
+    def test_effector_is_soft_validated_against_effector_catalog(self, svc):
+        categories = []
+        svc._plugin_catalog = lambda category: categories.append(category) or []
+
+        svc.apply({"ACTUATION.effector": "logger"})
+
+        assert categories == ["effector"]
 
     def test_empty_updates_rejected(self, svc):
         with pytest.raises(ConfigValidationError):

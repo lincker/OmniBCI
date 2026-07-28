@@ -44,7 +44,7 @@ class FakeBus:
     async def start(self) -> None:
         self.started = True
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         self.stopped = True
 
 
@@ -54,6 +54,9 @@ class FakeQueue:
         self.closed = False
 
     def put(self, item) -> None:
+        self.items.append(item)
+
+    def put_nowait(self, item) -> None:
         self.items.append(item)
 
     def close(self) -> None:
@@ -81,6 +84,10 @@ class FakeProcess:
 
     def terminate(self) -> None:
         self.terminated = True
+        self._alive = False
+
+    def close(self) -> None:
+        pass
 
 
 class FakeServerMgmt:
@@ -88,7 +95,7 @@ class FakeServerMgmt:
         self.started = False
         self.stopped = False
 
-    def start(self) -> None:
+    async def start(self) -> None:
         self.started = True
 
     async def stop(self) -> None:
@@ -184,7 +191,10 @@ class TestLifecycle:
 
     def test_stop_tears_down_all_subsystems(self):
         eng = _make_engine()
-        asyncio.run(eng._stop())
+        async def scenario():
+            await eng._start()
+            await eng._stop()
+        asyncio.run(scenario())
         # stop commands sent
         assert AcquisitionCommand.stop_acquisition in eng.acquisition_command_queue.items
         assert eng.processor_command_queue.items == [SignalProcessorCommand.should_stop]
@@ -205,7 +215,10 @@ class TestLifecycle:
             processor_command_queue=FakeQueue(),
             peer_gateway=FakeServerMgmt(),
         )
-        asyncio.run(eng._stop())
+        async def scenario():
+            await eng._start()
+            await eng._stop()
+        asyncio.run(scenario())
         assert eng.acquisition_worker.terminated is True
 
     def test_serve_runs_start_then_stop_when_should_stop_preset(self):

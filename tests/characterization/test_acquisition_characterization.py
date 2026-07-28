@@ -25,8 +25,7 @@ import numpy as np
 import pytest
 
 from omnibci.domain.ports.acquisition import SignalSource
-from omnibci.infrastructure.plugins.factory import ObjectFactory
-from omnibci.infrastructure.plugins.registry import registry_for
+from omnibci.infrastructure.plugins.registry import ObjectFactory, registry_for
 from omnibci.infrastructure.plugins.acquisition.file.reader import FileReader
 
 

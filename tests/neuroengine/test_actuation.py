@@ -69,6 +69,29 @@ class TestActuationCommandTranslator:
         tr.on_trial_completed(Event(EventType.TrialCompleted, object()))
         assert bus.put == []
 
+    def test_commands_carry_monotonic_seq_and_issued_at(self):
+        import time
+        bus = _Bus()
+        tr = ActuationCommandTranslator(bus)
+        before = time.time()
+        for tid in (1, 2, 3):
+            tr.on_trial_completed(Event(
+                EventType.TrialCompleted,
+                Classification(target_id=tid, event_id=1, confidence=0.9)))
+        after = time.time()
+        assert [c.data["seq"] for c in bus.put] == [1, 2, 3]
+        for c in bus.put:
+            assert before <= c.data["issued_at"] <= after
+
+    def test_skipped_payload_does_not_consume_seq(self):
+        bus = _Bus()
+        tr = ActuationCommandTranslator(bus)
+        tr.on_trial_completed(Event(EventType.TrialCompleted, object()))   # no target_id
+        tr.on_trial_completed(Event(
+            EventType.TrialCompleted,
+            Classification(target_id=1, event_id=1)))
+        assert bus.put[0].data["seq"] == 1
+
 
 class TestActuationFeedbackHandler:
     def test_ack_state_fault_accounting(self):
@@ -81,12 +104,35 @@ class TestActuationFeedbackHandler:
         assert h.last_state == {"pos": 1.0}
         assert h.last_fault == {"code": "ESTOP"}
 
+    def test_acks_bucketed_by_status(self):
+        h = ActuationFeedbackHandler()
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "seq": 1}))
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "superseded", "seq": 2}))
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "stale", "seq": 3}))
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "seq": 4}))
+        assert h.ack_count == 4                      # total preserved
+        assert (h.ok_count, h.superseded_count, h.stale_count) == (2, 1, 1)
+        assert h.last_acked_seq == 4
+
+    def test_ack_without_status_counts_as_ok(self):
+        # Back-compat: a bare dict ack (older sender) defaults to ok.
+        h = ActuationFeedbackHandler()
+        h.on_feedback(Event(EventType.ActuationAck, {"ok": True}))
+        assert h.ok_count == 1 and h.last_acked_seq is None
+
+    def test_seq_gap_is_tolerated(self):
+        h = ActuationFeedbackHandler()
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "seq": 1}))
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "seq": 5}))
+        assert h.last_acked_seq == 5                 # gap logged, not raised
+
 
 class TestActuationPeerConfig:
     def test_routes_and_transport(self):
         cfg = actuation_peer_config(host="127.0.0.1", port=8001)
         assert cfg.name == ACTUATION
         assert isinstance(cfg.transport, ListenTransport)
+        assert cfg.transport._server.max_clients == 1
         assert cfg.routes.outbound == frozenset({EventType.ActuationCommand})
         assert cfg.routes.inbound == frozenset({
             EventType.ActuationAck, EventType.ActuationState, EventType.ActuationFault,

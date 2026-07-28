@@ -2,6 +2,8 @@
 import asyncio
 import logging
 import multiprocessing as mp
+import threading
+from queue import Full
 
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
@@ -38,6 +40,9 @@ class NeuroEngine:
         mp.Queue used to send SignalProcessorCommand values to the process.
     peer_gateway:
         Routes EventBus events to/from external peers (stimulation, actuation).
+    owned_ipc_queues:
+        Additional builder-created queues whose close lifecycle belongs to this
+        single-use engine graph (EventBus input and DataManager buffer).
     """
 
     def __init__(
@@ -52,6 +57,7 @@ class NeuroEngine:
         actuation_translator: "ActuationCommandTranslator | None" = None,
         actuation_feedback: "ActuationFeedbackHandler | None" = None,
         debug: bool = False,
+        owned_ipc_queues: tuple[mp.Queue, ...] = (),
     ) -> None:
         self.event_bus = event_bus
         self.data_manager = data_manager
@@ -60,6 +66,11 @@ class NeuroEngine:
         self.signal_processing_worker = signal_processing_worker
         self.processor_command_queue = processor_command_queue
         self.peer_gateway = peer_gateway
+        # Queues constructed by the composition builder but not otherwise
+        # exposed as command queues (EventBus input + DataManager buffer).
+        # Injecting them makes ownership explicit without teaching EventBus or
+        # DataManager to close resources they merely consume.
+        self._owned_ipc_queues = tuple(owned_ipc_queues)
         # Engine-side consumer of stimulation → engine feedback (StimulationAck).
         self.stim_feedback = StimulationFeedbackHandler()
         # Actuation ACL + feedback — present only when the actuation peer is
@@ -72,6 +83,22 @@ class NeuroEngine:
         self._should_stop = False
         self._stop_event: "asyncio.Event | None" = None   # serve() 内创建（绑定其 loop）
         self._loop: "asyncio.AbstractEventLoop | None" = None
+        # ``run()`` executes in NeuroEngineService's dedicated thread.  This
+        # thread-safe barrier is the boundary between "the thread was
+        # scheduled" and "all async IPC listeners were actually bound".
+        self._startup_complete = threading.Event()
+        self._startup_error: BaseException | None = None
+
+        # Explicit ownership flags make startup transactional and shutdown
+        # idempotent.  A failed bind must unwind workers/bus/queues instead of
+        # leaving a half-started engine graph behind.
+        self._acquisition_started = False
+        self._processor_started = False
+        self._event_bus_started = False
+        self._gateway_started = False
+        self._started = False
+        self._queues_closed = False
+        self._shutdown_complete = False
 
     # ------------------------------------------------------------------
     # Stop flag — 事件驱动（P2-7）
@@ -103,25 +130,83 @@ class NeuroEngine:
 
     def run(self) -> None:
         """Blocking entry point — call from a dedicated thread."""
-        asyncio.run(self.serve(), debug=self._debug)
+        try:
+            asyncio.run(self.serve(), debug=self._debug)
+        except BaseException as exc:
+            # Publish startup failures (most importantly listen/bind errors) to
+            # the service thread before re-raising for normal error logging.
+            if not self._startup_complete.is_set():
+                self._startup_error = exc
+                self._startup_complete.set()
+            raise
+
+    def wait_until_started(self, timeout: float | None = None) -> None:
+        """Block the caller until async startup either succeeds or fails.
+
+        ``Thread.start()`` only says that the OS thread exists.  This method is
+        the readiness contract used by the application service: success means
+        the EventBus consumer is running and every listening transport has
+        completed ``asyncio.start_server``.
+        """
+        if not self._startup_complete.wait(timeout):
+            raise TimeoutError("NeuroEngine startup timed out")
+        if self._startup_error is not None:
+            raise RuntimeError("NeuroEngine startup failed") from self._startup_error
+
+    @property
+    def shutdown_complete(self) -> bool:
+        """Whether this single-use graph released every resource it owns."""
+        return self._shutdown_complete
 
     async def serve(self) -> None:
         self._loop = asyncio.get_running_loop()
         self._stop_event = asyncio.Event()
-        await self._start()
-        await self._main_loop()
-        await self._stop()
+        try:
+            await self._start()
+            self._startup_complete.set()
+            await self._main_loop()
+        finally:
+            # _start() is transactional, so this is safe after both normal
+            # execution and partial startup failure.
+            await self._stop()
 
     # ------------------------------------------------------------------
     # Internal lifecycle steps
     # ------------------------------------------------------------------
 
     async def _start(self) -> None:
-        self.acquisition_worker.start()
-        self.signal_processing_worker.start()
-        await self.event_bus.start()
-        self.peer_gateway.start()
-        self._register_event_listeners()
+        if self._started:
+            return
+        if any((self._acquisition_started, self._processor_started,
+                self._event_bus_started, self._gateway_started)):
+            raise RuntimeError("NeuroEngine is in a partial lifecycle state")
+        if self._shutdown_complete:
+            raise RuntimeError("A stopped NeuroEngine graph cannot be restarted")
+
+        try:
+            # Install every internal consumer before workers or peers can
+            # publish.  Registering after the gateway bind left a small window
+            # where a valid inbound event could be consumed and then lost.
+            self._register_event_listeners()
+            self.acquisition_worker.start()
+            self._acquisition_started = True
+            self.signal_processing_worker.start()
+            self._processor_started = True
+            await self.event_bus.start()
+            self._event_bus_started = True
+            # start() may allocate a listener and then fail while rolling it
+            # back.  Record the cleanup obligation before awaiting so a failed
+            # rollback keeps the engine graph dirty and blocks replacement.
+            self._gateway_started = True
+            await self.peer_gateway.start()
+            self._started = True
+        except BaseException:
+            logger.exception("NeuroEngine startup failed; rolling back")
+            try:
+                await self._shutdown_resources()
+            except Exception:
+                logger.exception("NeuroEngine startup rollback was incomplete")
+            raise
         logger.info("NeuroEngine started")
 
     async def _main_loop(self) -> None:
@@ -134,21 +219,113 @@ class NeuroEngine:
                 continue
 
     async def _stop(self) -> None:
+        if self._shutdown_complete:
+            return
         logger.info("NeuroEngine: initiating shutdown")
-
-        # Tell both sub-processes to stop, then tear down bus/server/queues.
-        self.acquisition_command_queue.put(AcquisitionCommand.stop_acquisition)
-        self.processor_command_queue.put(SignalProcessorCommand.should_stop)
-        self.event_bus.stop()
-        await self.peer_gateway.stop()
-
-        self._join_process(self.acquisition_worker, "AcquisitionWorker")
-        self._join_process(self.signal_processing_worker, "SignalProcessingWorker")
-
-        self._close_queue(self.processor_command_queue)
-        self._close_queue(self.acquisition_command_queue)
-
+        await self._shutdown_resources()
         logger.info("NeuroEngine: shutdown complete")
+
+    async def _shutdown_resources(self) -> None:
+        """Release every resource owned by this engine graph, best-effort.
+
+        Workers are stopped while the EventBus is still consuming so their
+        final state events are not stranded.  Blocking ``Process.join`` calls
+        run off the asyncio loop, allowing those events and socket close tasks
+        to continue making progress.
+        """
+        errors: list[Exception] = []
+        self._started = False
+
+        if self._acquisition_started:
+            self._put_stop_command(
+                self.acquisition_command_queue,
+                AcquisitionCommand.stop_acquisition,
+                "AcquisitionWorker",
+            )
+        if self._processor_started:
+            self._put_stop_command(
+                self.processor_command_queue,
+                SignalProcessorCommand.should_stop,
+                "SignalProcessingWorker",
+            )
+
+        for attr, process, name in (
+            ("_acquisition_started", self.acquisition_worker, "AcquisitionWorker"),
+            ("_processor_started", self.signal_processing_worker, "SignalProcessingWorker"),
+        ):
+            if not getattr(self, attr):
+                continue
+            try:
+                await asyncio.to_thread(self._join_process, process, name)
+            except Exception as exc:  # keep releasing the remaining owners
+                errors.append(exc)
+                logger.exception("Error stopping %s", name)
+            else:
+                setattr(self, attr, False)
+
+        if self._gateway_started:
+            try:
+                await self.peer_gateway.stop()
+            except Exception as exc:
+                errors.append(exc)
+                logger.exception("Error stopping PeerGateway")
+            else:
+                self._gateway_started = False
+
+        if self._event_bus_started:
+            try:
+                await self.event_bus.stop()
+            except Exception as exc:
+                errors.append(exc)
+                logger.exception("Error stopping EventBus")
+            else:
+                self._event_bus_started = False
+
+        # A still-live worker owns its queue endpoints.  Retain those handles on
+        # escalation failure instead of advertising a clean shutdown and
+        # allowing a second graph to be built beside it.
+        workers_stopped = not (
+            self._acquisition_started or self._processor_started
+        )
+        if workers_stopped and not self._event_bus_started and not self._queues_closed:
+            queue_errors = []
+            for queue in (
+                self.processor_command_queue,
+                self.acquisition_command_queue,
+                *self._owned_ipc_queues,
+            ):
+                try:
+                    self._close_queue(queue)
+                except Exception as exc:
+                    queue_errors.append(exc)
+                    logger.exception("Error closing an engine-owned IPC queue")
+            if queue_errors:
+                errors.extend(queue_errors)
+            else:
+                self._queues_closed = True
+
+        self._shutdown_complete = (
+            workers_stopped
+            and not self._gateway_started
+            and not self._event_bus_started
+            and self._queues_closed
+        )
+        if errors:
+            raise ExceptionGroup("NeuroEngine shutdown failed", errors)
+
+    @staticmethod
+    def _put_stop_command(queue: mp.Queue, command, owner: str) -> None:
+        """Never block the engine loop on a full bounded command queue."""
+        try:
+            put_nowait = getattr(queue, "put_nowait", None)
+            if callable(put_nowait):
+                put_nowait(command)
+            else:  # simple test doubles / compatible queue adapters
+                queue.put(command)
+        except Full:
+            logger.warning("%s command queue is full; escalating during join", owner)
+        except Exception as exc:
+            logger.warning("Could not enqueue stop command for %s: %s", owner, exc)
 
     # ------------------------------------------------------------------
     # Event routing — translate EventBus events into process commands
@@ -238,11 +415,40 @@ class NeuroEngine:
         if process.is_alive():
             logger.warning("%s did not exit gracefully; terminating", name)
             process.terminate()
+            process.join(timeout=timeout)
+        if process.is_alive():
+            kill = getattr(process, "kill", None)
+            if callable(kill):
+                logger.warning("%s ignored terminate; killing", name)
+                kill()
+                process.join(timeout=timeout)
+        if process.is_alive():
+            raise RuntimeError(f"{name} is still alive after shutdown escalation")
+        close = getattr(process, "close", None)
+        if callable(close):
+            close()
 
     @staticmethod
     def _close_queue(queue: mp.Queue) -> None:
+        """Close a queue without waiting forever for discarded backlog.
+
+        At this point every producer/consumer process and the EventBus have
+        stopped, so queued work has no valid recipient.  ``join_thread()`` can
+        block forever if a feeder is flushing into a full pipe whose reader
+        exited.  Cancelling that implicit join makes the discard policy
+        explicit; close failures are propagated so ``shutdown_complete`` can
+        never claim success for an owned handle that was not released.
+        """
+        errors = []
+        cancel_join = getattr(queue, "cancel_join_thread", None)
+        if callable(cancel_join):
+            try:
+                cancel_join()
+            except Exception as exc:
+                errors.append(exc)
         try:
             queue.close()
-            queue.join_thread()
         except Exception as exc:
-            logger.warning("Error closing queue: %s", exc)
+            errors.append(exc)
+        if errors:
+            raise ExceptionGroup("IPC queue cleanup failed", errors)

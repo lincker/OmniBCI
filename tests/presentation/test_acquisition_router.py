@@ -1,6 +1,16 @@
 """
 Tests for /api/v1/acquisition endpoints.
 """
+import pytest
+from unittest.mock import MagicMock
+
+
+@pytest.fixture(autouse=True)
+def _running_engine(engine_service):
+    engine_service._running = True
+    engine_service._accepting_commands = True
+    engine_service._engine_thread = MagicMock()
+    engine_service._engine_thread.is_alive.return_value = True
 
 
 class TestAcquisitionConnect:

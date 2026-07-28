@@ -14,9 +14,12 @@ Covers:
 """
 from __future__ import annotations
 
+import asyncio
+
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.neuroengine.gateway.routing import RouteSpec, PeerConfig
 from omnibci.infrastructure.neuroengine.gateway.peer_channel import PeerChannel
+from omnibci.infrastructure.neuroengine.gateway import peer_channel as peer_channel_module
 from omnibci.infrastructure.neuroengine.gateway.peers import (
     actuation_peer_config, ACTUATION_LINK_LOST,
 )
@@ -27,12 +30,15 @@ class FakeTransport:
         self._connected = connected
         self.inbound_handler = None
         self.liveness_handler = None
+        self.sent = []
 
     def set_inbound_handler(self, h): self.inbound_handler = h
     def set_liveness_handler(self, h): self.liveness_handler = h
     async def start(self): pass
     async def stop(self): pass
-    async def send(self, e): pass
+    async def send(self, e):
+        self.sent.append(e)
+        return True
 
     @property
     def is_connected(self): return self._connected
@@ -48,11 +54,14 @@ class FakeBus:
 def _channel(transport, failsafe=None, watchdog=None):
     bus = FakeBus()
     fault = [Event(EventType.ActuationFault, {"code": "LINK_LOST"})]
+    failsafe_factory = failsafe if callable(failsafe) else (
+        (lambda: fault) if failsafe else None
+    )
     cfg = PeerConfig(
         name="actuation", transport=transport,
         routes=RouteSpec(frozenset({EventType.ActuationCommand}),
                          frozenset({EventType.ActuationFault})),
-        failsafe=(lambda: fault) if failsafe else None,
+        failsafe=failsafe_factory,
         watchdog_timeout_s=watchdog,
     )
     return PeerChannel(cfg, bus), bus
@@ -82,16 +91,78 @@ class TestHeartbeatStaleness:
     def test_stale_trips_then_rearms(self):
         t = FakeTransport(connected=True)
         ch, bus = _channel(t, failsafe=True, watchdog=1.0)
+        ch._started = True
         ch._evaluate(now=10.0)          # connect → last_seen=10
+        assert ch.is_connected is True
         ch._evaluate(now=10.5)          # within window
         assert bus.put == []
         ch._evaluate(now=11.5)          # >1s since last_seen → trip
         assert len(bus.put) == 1
+        assert ch.is_connected is False
+
+        sent = asyncio.run(ch._forward(Event(EventType.ActuationCommand, {})))
+        assert sent is False
+        assert t.sent == []
+
         ch._evaluate(now=12.0)          # already tripped, no spam
         assert len(bus.put) == 1
         ch._on_liveness()               # a frame arrives → re-arm + refresh clock
+        assert ch.is_connected is True
         ch._evaluate(now=12.1)          # healthy again
         assert len(bus.put) == 1
+
+    def test_idle_disconnect_after_stale_does_not_duplicate_failsafe(self):
+        t = FakeTransport(connected=True)
+        ch, bus = _channel(t, failsafe=True, watchdog=1.0)
+        ch._started = True
+        ch._evaluate(now=1.0)
+        ch._evaluate(now=2.1)           # stale → one fault
+        assert len(bus.put) == 1
+        assert ch.is_connected is False
+
+        t._connected = False
+        ch._evaluate(now=3.0)           # transport idle-close for same outage
+        ch._evaluate(now=4.0)
+        assert len(bus.put) == 1
+        assert ch.is_connected is False
+
+    def test_failsafe_exception_cannot_leave_stale_channel_healthy(self):
+        def _broken_failsafe():
+            raise RuntimeError("failsafe callback failed")
+
+        t = FakeTransport(connected=True)
+        ch, _ = _channel(t, failsafe=_broken_failsafe, watchdog=1.0)
+        ch._started = True
+        ch._evaluate(now=1.0)
+
+        try:
+            ch._evaluate(now=2.1)
+        except RuntimeError as exc:
+            assert str(exc) == "failsafe callback failed"
+        else:  # pragma: no cover - assertion clarity
+            raise AssertionError("broken failsafe must remain observable")
+
+        assert ch._stale_tripped is True
+        assert ch.is_connected is False
+
+    def test_monitor_fault_is_recorded_and_marks_channel_unhealthy(self, monkeypatch):
+        def _broken_failsafe():
+            raise RuntimeError("monitor failed")
+
+        async def _run():
+            t = FakeTransport(connected=True)
+            ch, _ = _channel(t, failsafe=_broken_failsafe, watchdog=0.01)
+            ch._started = True
+            ch._was_connected = True
+            ch._last_seen = 0.0
+            await ch._monitor()
+            return ch
+
+        monkeypatch.setattr(peer_channel_module, "_MONITOR_POLL_S", 0)
+        ch = asyncio.run(_run())
+        assert isinstance(ch.monitor_fault, RuntimeError)
+        assert str(ch.monitor_fault) == "monitor failed"
+        assert ch.is_connected is False
 
     def test_fresh_connection_resets_clock(self):
         t = FakeTransport(connected=False)
@@ -118,6 +189,7 @@ class TestActuationConfigSafety:
     def test_actuation_config_has_failsafe_and_watchdog(self):
         cfg = actuation_peer_config(host="127.0.0.1", port=8001, watchdog_timeout_s=2.5)
         assert cfg.watchdog_timeout_s == 2.5
+        assert cfg.transport._server.idle_timeout == 5.0
         assert cfg.failsafe is not None
         events = list(cfg.failsafe())
         assert len(events) == 1

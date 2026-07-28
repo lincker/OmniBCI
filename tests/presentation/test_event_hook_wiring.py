@@ -27,7 +27,7 @@ from omnibci.shared.events import Event, EventType
 
 
 class _RecordingEngine(EnginePort):
-    """Engine stub that records subscribe() calls; reports itself ready."""
+    """Records composition-time subscriptions before runtime startup."""
 
     def __init__(self) -> None:
         self.subscriptions: list[tuple] = []
@@ -36,8 +36,12 @@ class _RecordingEngine(EnginePort):
         pass
 
     @property
-    def is_engine_ready(self) -> bool:
+    def is_initialized(self) -> bool:
         return True
+
+    @property
+    def is_engine_ready(self) -> bool:
+        return False
 
     def subscribe(self, event_type, handler) -> None:
         self.subscriptions.append((event_type, handler))

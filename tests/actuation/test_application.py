@@ -1,0 +1,512 @@
+"""
+Actuation application loop: command → play + Ack; play failure → Fault and
+the loop survives; heartbeat publishes ActuationState; failed setup exits
+with a Fault as its last word.
+"""
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from omnibci.shared.events import Event, EventType
+from omnibci.infrastructure.actuation.application import Actuation
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+def test_owned_event_queue_close_is_idempotent_and_non_blocking():
+    app = Actuation.__new__(Actuation)
+    app._event_queue = MagicMock()
+    app._event_queue_closed = False
+
+    app._close_event_queue()
+    app._close_event_queue()
+
+    app._event_queue.cancel_join_thread.assert_called_once_with()
+    app._event_queue.close.assert_called_once_with()
+    app._event_queue.join_thread.assert_not_called()
+
+
+def test_event_queue_close_failure_keeps_cleanup_obligation():
+    app = Actuation.__new__(Actuation)
+    app._event_queue = MagicMock()
+    app._event_queue.close.side_effect = OSError("close failed")
+    app._event_queue_closed = False
+
+    with pytest.raises(ExceptionGroup, match="queue cleanup failed") as raised:
+        app._close_event_queue()
+
+    assert isinstance(raised.value.exceptions[0], OSError)
+    assert app._event_queue_closed is False
+
+
+class _SpyBus:
+    """Records put_event; register/start/stop are no-ops."""
+
+    def __init__(self):
+        self.events = []
+
+    def put_event(self, event):
+        self.events.append(event)
+
+
+class _FakeActuator:
+    def __init__(self, fail_on=frozenset()):
+        self.executed = []
+        self.torn_down = False
+        self._fail_on = fail_on
+
+    def setup(self):
+        pass
+
+    def execute(self, command):
+        if command.get("target_id") in self._fail_on:
+            raise RuntimeError("boom")
+        self.executed.append(dict(command))
+
+    def teardown(self):
+        self.torn_down = True
+
+
+def _app(fail_on=frozenset()) -> Actuation:
+    app = Actuation.__new__(Actuation)          # skip __init__: no settings/socket
+    app.event_bus = _SpyBus()
+    app.command_queue = __import__("queue").Queue(maxsize=1)
+    app.actuator = _FakeActuator(fail_on=fail_on)
+    app._heartbeat_interval = 0.01
+    app._max_command_age = 0.0        # age gate disabled by default (as in prod)
+    app.should_stop = False
+    app._stop_event = None
+    return app
+
+
+def _typed(bus, etype):
+    return [e for e in bus.events if e.type == etype]
+
+
+class TestCommandExecution:
+    def test_command_is_executed_and_acked(self):
+        app = _app()
+        app._enqueue_command(Event(EventType.ActuationCommand,
+                                   {"target_id": 5, "event_id": 2, "confidence": 0.8}))
+        _run(app.execute_command())
+        assert app.actuator.executed == [{"target_id": 5, "event_id": 2, "confidence": 0.8}]
+        acks = _typed(app.event_bus, EventType.ActuationAck)
+        assert len(acks) == 1 and acks[0].data["target_id"] == 5
+        assert acks[0].data["status"] == "ok"
+
+    def test_failed_command_faults_but_loop_survives(self):
+        # Sequential arrivals (not a backlog): 7 fails, the loop survives and
+        # the later 8 executes normally.
+        app = _app(fail_on={7})
+        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 7}))
+        _run(app.execute_command())
+        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 8}))
+        _run(app.execute_command())
+        faults = _typed(app.event_bus, EventType.ActuationFault)
+        assert len(faults) == 1
+        assert faults[0].data["code"] == "COMMAND_FAILED" and faults[0].data["target_id"] == 7
+        # the next command still executed and acked
+        assert app.actuator.executed == [{"target_id": 8}]
+        assert len(_typed(app.event_bus, EventType.ActuationAck)) == 1
+
+    def test_queued_failing_command_is_superseded_not_executed(self):
+        # Backlog semantics: a failing command that was already superseded in
+        # the queue never reaches the device at all.
+        app = _app(fail_on={7})
+        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 7}))
+        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 8}))
+        _run(app.execute_command())
+        assert _typed(app.event_bus, EventType.ActuationFault) == []
+        assert app.actuator.executed == [{"target_id": 8}]
+
+    def test_non_command_events_are_not_enqueued(self):
+        app = _app()
+        app._enqueue_command(Event(EventType.ActuationState, {"heartbeat": True}))
+        assert app.command_queue.empty()
+
+    def test_empty_queue_is_noop(self):
+        app = _app()
+        _run(app.execute_command())
+        assert app.event_bus.events == []
+
+    @pytest.mark.parametrize("payload", [
+        None,
+        [],
+        "not-a-command",
+        {},
+        {"target_id": True},
+        {"target_id": -1},
+        {"target_id": 1.0},
+        {"target_id": 1, "seq": True},
+        {"target_id": 1, "seq": -1},
+        {"target_id": 1, "issued_at": "yesterday"},
+        {"target_id": 1, "issued_at": float("nan")},
+        {"target_id": 1, "event_id": True},
+        {"target_id": 1, "event_id": -1},
+        {"target_id": 1, "confidence": float("inf")},
+        {"target_id": 1, "confidence": 1.01},
+    ])
+    def test_invalid_command_faults_without_touching_device_or_loop(self, payload):
+        app = _app()
+        app._enqueue_command(Event(EventType.ActuationCommand, payload))
+
+        assert app.command_queue.empty()
+        assert app.actuator.executed == []
+        faults = _typed(app.event_bus, EventType.ActuationFault)
+        assert len(faults) == 1
+        assert faults[0].data["code"] == "INVALID_COMMAND"
+
+        # A bad frame is isolated to that command; a later valid intent still runs.
+        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 9}))
+        _run(app.execute_command())
+        assert app.actuator.executed == [{"target_id": 9}]
+
+    def test_invalid_fault_echoes_only_valid_correlation_fields(self):
+        app = _app()
+        app._enqueue_command(Event(EventType.ActuationCommand, {
+            "target_id": 4, "seq": 12, "confidence": 2.0,
+        }))
+        fault = _typed(app.event_bus, EventType.ActuationFault)[0]
+        assert fault.data["code"] == "INVALID_COMMAND"
+        assert fault.data["target_id"] == 4 and fault.data["seq"] == 12
+
+
+class TestBacklogDrainsToLatest:
+    def test_backlog_executes_only_newest(self):
+        app = _app()
+        for tid in (1, 2, 3):
+            app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": tid}))
+        assert app.command_queue.qsize() == 1
+        # Replacement accounting is emitted immediately by the mailbox.
+        assert [a.data["target_id"] for a in
+                _typed(app.event_bus, EventType.ActuationAck)] == [1, 2]
+        _run(app.execute_command())
+        # only the newest intent reached the device
+        assert app.actuator.executed == [{"target_id": 3}]
+        acks = _typed(app.event_bus, EventType.ActuationAck)
+        by_status = {}
+        for a in acks:
+            by_status.setdefault(a.data["status"], []).append(a.data["target_id"])
+        assert by_status["superseded"] == [1, 2]
+        assert by_status["ok"] == [3]
+
+    def test_single_command_has_no_superseded_acks(self):
+        app = _app()
+        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 9}))
+        _run(app.execute_command())
+        acks = _typed(app.event_bus, EventType.ActuationAck)
+        assert [a.data["status"] for a in acks] == ["ok"]
+
+    def test_invalid_new_command_does_not_displace_valid_pending_intent(self):
+        app = _app()
+        app._enqueue_command(Event(EventType.ActuationCommand,
+                                   {"target_id": 1, "seq": 1}))
+        app._enqueue_command(Event(EventType.ActuationCommand,
+                                   {"target_id": 2, "seq": 2, "confidence": 3.0}))
+
+        assert _typed(app.event_bus, EventType.ActuationAck) == []
+        _run(app.execute_command())
+        assert app.actuator.executed == [{"target_id": 1, "seq": 1}]
+        assert _typed(app.event_bus, EventType.ActuationFault)[0].data["seq"] == 2
+
+    def test_payload_is_snapshotted_when_it_enters_mailbox(self):
+        app = _app()
+        payload = {"target_id": 1, "device_option": "left"}
+        app._enqueue_command(Event(EventType.ActuationCommand, payload))
+        payload["target_id"] = 99
+        payload["device_option"] = "right"
+
+        _run(app.execute_command())
+        assert app.actuator.executed == [
+            {"target_id": 1, "device_option": "left"},
+        ]
+
+
+class TestSeqEcho:
+    def test_ok_ack_echoes_seq(self):
+        app = _app()
+        app._enqueue_command(Event(EventType.ActuationCommand,
+                                   {"target_id": 1, "seq": 41}))
+        _run(app.execute_command())
+        acks = _typed(app.event_bus, EventType.ActuationAck)
+        assert acks[0].data["seq"] == 41
+
+    def test_superseded_and_ok_echo_their_own_seqs(self):
+        app = _app()
+        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 1, "seq": 1}))
+        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 2, "seq": 2}))
+        _run(app.execute_command())
+        acks = _typed(app.event_bus, EventType.ActuationAck)
+        assert [(a.data["status"], a.data["seq"]) for a in acks] == [
+            ("superseded", 1), ("ok", 2)]
+
+    def test_fault_echoes_seq(self):
+        app = _app(fail_on={7})
+        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 7, "seq": 9}))
+        _run(app.execute_command())
+        faults = _typed(app.event_bus, EventType.ActuationFault)
+        assert faults[0].data["seq"] == 9
+
+
+class TestAgeGate:
+    def test_disabled_by_default_executes_old_commands(self):
+        import time
+        app = _app()          # _max_command_age = 0
+        app._enqueue_command(Event(EventType.ActuationCommand,
+                                   {"target_id": 1, "seq": 1,
+                                    "issued_at": time.time() - 3600}))
+        _run(app.execute_command())
+        assert app.actuator.executed and app.actuator.executed[0]["target_id"] == 1
+
+    def test_enabled_drops_stale_without_touching_device(self):
+        import time
+        app = _app()
+        app._max_command_age = 0.5
+        app._enqueue_command(Event(EventType.ActuationCommand,
+                                   {"target_id": 1, "seq": 7,
+                                    "issued_at": time.time() - 10}))
+        _run(app.execute_command())
+        assert app.actuator.executed == []
+        acks = _typed(app.event_bus, EventType.ActuationAck)
+        assert acks[0].data["status"] == "stale" and acks[0].data["seq"] == 7
+
+    def test_fresh_command_passes_enabled_gate(self):
+        import time
+        app = _app()
+        app._max_command_age = 5.0
+        app._enqueue_command(Event(EventType.ActuationCommand,
+                                   {"target_id": 2, "seq": 8,
+                                    "issued_at": time.time()}))
+        _run(app.execute_command())
+        assert app.actuator.executed[0]["target_id"] == 2
+
+    def test_command_without_issued_at_is_never_gated(self):
+        app = _app()
+        app._max_command_age = 0.5
+        app._enqueue_command(Event(EventType.ActuationCommand,
+                                   {"target_id": 3, "seq": 9}))
+        _run(app.execute_command())
+        assert app.actuator.executed[0]["target_id"] == 3
+
+
+class TestSlowPlayDoesNotStarveHeartbeat:
+    def test_heartbeat_beats_during_slow_play(self):
+        """P1-a: play() runs off the event loop, so a slow device action must
+        not block the heartbeat (which would trip a false LINK_LOST)."""
+        import time as _time
+
+        app = _app()
+        app._heartbeat_interval = 0.02
+
+        def slow_execute(command):
+            _time.sleep(0.15)
+            app.actuator.executed.append(dict(command))
+        app.actuator.execute = slow_execute
+
+        async def scenario():
+            hb = asyncio.create_task(app._heartbeat())
+            app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 1}))
+            await app.execute_command()          # blocks ~0.15s in a thread
+            hb.cancel()
+            try:
+                await hb
+            except asyncio.CancelledError:
+                pass
+
+        _run(scenario())
+        assert app.actuator.executed == [{"target_id": 1}]
+        states = _typed(app.event_bus, EventType.ActuationState)
+        # With play off the loop, ~0.15s / 0.02s ≈ 7 beats; ≥3 is a safe floor.
+        assert len(states) >= 3
+
+
+class TestHeartbeat:
+    def test_heartbeat_publishes_state(self):
+        app = _app()
+
+        async def scenario():
+            task = asyncio.create_task(app._heartbeat())
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        _run(scenario())
+        states = _typed(app.event_bus, EventType.ActuationState)
+        assert len(states) >= 2
+        assert all(s.data == {"heartbeat": True} for s in states)
+
+
+class TestSetupFailure:
+    def test_setup_failure_emits_fault_and_exits(self, monkeypatch):
+        app = _app()
+
+        async def _bad_start():
+            raise RuntimeError("no effector configured")
+
+        stopped = []
+
+        async def _stop():
+            stopped.append(True)
+
+        monkeypatch.setattr(app, "start", _bad_start)
+        monkeypatch.setattr(app, "stop", _stop)
+
+        async def fast_sleep(_):
+            return None
+        monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+
+        with pytest.raises(RuntimeError, match="no effector configured"):
+            _run(app.serve())
+        faults = _typed(app.event_bus, EventType.ActuationFault)
+        assert len(faults) == 1 and faults[0].data["code"] == "SETUP_FAILED"
+        assert "no effector configured" in faults[0].data["message"]
+        assert stopped == [True]
+
+    def test_fault_publish_failure_preserves_startup_error_and_stops_ipc(
+        self, monkeypatch
+    ):
+        app = _app()
+
+        async def _bad_start():
+            raise RuntimeError("setup failed")
+
+        async def _stop():
+            stopped.append(True)
+
+        stopped = []
+        monkeypatch.setattr(app, "start", _bad_start)
+        monkeypatch.setattr(app, "stop", _stop)
+        monkeypatch.setattr(
+            app.event_bus,
+            "put_event",
+            lambda _event: (_ for _ in ()).throw(RuntimeError("bus closed")),
+        )
+
+        with pytest.raises(RuntimeError, match="setup failed"):
+            _run(app.serve())
+
+        assert stopped == [True]
+
+    def test_managed_start_reports_ready_after_link_connection(self):
+        app = _app()
+        app._startup_reporter = MagicMock()
+        app.peer_channel = MagicMock()
+        app.peer_channel.wait_until_connected = AsyncMock()
+        app.start = AsyncMock()
+        app.stop = AsyncMock()
+
+        class _StopAfterReady:
+            def __init__(self):
+                self.calls = 0
+
+            def is_set(self):
+                self.calls += 1
+                return self.calls >= 2
+
+        app._stop_event = _StopAfterReady()
+
+        _run(app.serve())
+
+        app.peer_channel.wait_until_connected.assert_awaited_once()
+        app._startup_reporter.ready.assert_called_once_with()
+        app._startup_reporter.failed.assert_not_called()
+
+    def test_managed_connection_failure_reports_failed(self, monkeypatch):
+        app = _app()
+        app._startup_reporter = MagicMock()
+        app.peer_channel = MagicMock()
+        app.peer_channel.wait_until_connected = AsyncMock(
+            side_effect=TimeoutError("engine link unavailable")
+        )
+        app.start = AsyncMock()
+        app.stop = AsyncMock()
+
+        async def fast_sleep(_):
+            return None
+
+        monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+
+        with pytest.raises(TimeoutError, match="link unavailable"):
+            _run(app.serve())
+
+        app._startup_reporter.ready.assert_not_called()
+        failed = app._startup_reporter.failed.call_args
+        assert failed.args[0] == "initialization"
+        assert isinstance(failed.args[1], TimeoutError)
+
+    def test_teardown_failure_still_stops_ipc(self, monkeypatch):
+        app = _app()
+        app._stop_event = type("_Stop", (), {"is_set": lambda self: True})()
+        stopped = []
+
+        async def _start():
+            return None
+
+        async def _stop():
+            stopped.append(True)
+
+        monkeypatch.setattr(app, "start", _start)
+        monkeypatch.setattr(app, "stop", _stop)
+        monkeypatch.setattr(
+            app.actuator,
+            "teardown",
+            lambda: (_ for _ in ()).throw(RuntimeError("teardown failed")),
+        )
+
+        with pytest.raises(RuntimeError, match="teardown failed"):
+            _run(app.serve())
+
+        assert stopped == [True]
+
+
+class TestCooperativeStop:
+    def test_pre_set_stop_event_exits_serve_and_tears_down(self, monkeypatch):
+        from threading import Event as ThreadEvent
+
+        app = _app()
+        app._stop_event = ThreadEvent()
+        app._stop_event.set()
+        stopped = []
+
+        async def _start():
+            return None
+
+        async def _stop():
+            stopped.append(True)
+
+        monkeypatch.setattr(app, "start", _start)
+        monkeypatch.setattr(app, "stop", _stop)
+
+        _run(app.serve())
+        assert app.actuator.torn_down is True
+        assert stopped == [True]
+
+
+class TestQueueOwnership:
+    def test_owned_event_queue_is_closed_once(self):
+        class _Queue:
+            def __init__(self):
+                self.close_calls = 0
+                self.cancel_join_calls = 0
+
+            def close(self):
+                self.close_calls += 1
+
+            def cancel_join_thread(self):
+                self.cancel_join_calls += 1
+
+        app = _app()
+        app._event_queue = _Queue()
+        app._event_queue_closed = False
+
+        app._close_event_queue()
+        app._close_event_queue()
+
+        assert app._event_queue.close_calls == 1
+        assert app._event_queue.cancel_join_calls == 1

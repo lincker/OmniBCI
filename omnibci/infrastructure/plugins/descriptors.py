@@ -1,0 +1,88 @@
+"""Runtime descriptors for discovered OmniBCI plugins.
+
+``PluginInfo`` is the application/query DTO exposed to the UI.  This module
+contains the infrastructure-only contract used to resolve and execute a
+plugin.  In particular, filesystem locations and Python entrypoints must never
+be reconstructed later from a plugin id.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Mapping
+
+
+@dataclass(frozen=True, slots=True)
+class PluginEntrypoint:
+    """A Python object addressed relative to a plugin package directory."""
+
+    module: str
+    attribute: str
+
+    @classmethod
+    def parse(cls, value: str) -> "PluginEntrypoint":
+        """Parse ``module:Attribute`` without accepting absolute/path imports."""
+        if not isinstance(value, str):
+            raise ValueError("entrypoint must be a string in 'module:Attribute' form")
+
+        module, separator, attribute = value.strip().partition(":")
+        if not separator or not module or not attribute:
+            raise ValueError("entrypoint must be in 'module:Attribute' form")
+
+        # Accept the earlier documented ``driver.py:Class`` spelling while
+        # storing the canonical dotted-module form internally.
+        if module.endswith(".py"):
+            module = module[:-3]
+
+        if any(char in module for char in ("/", "\\")):
+            raise ValueError("entrypoint module must be dotted, not a file path")
+        if any(not part.isidentifier() for part in module.split(".")):
+            raise ValueError("entrypoint module must contain Python identifiers only")
+        if not attribute.isidentifier():
+            raise ValueError("entrypoint attribute must be a Python identifier")
+
+        return cls(module=module, attribute=attribute)
+
+    def __str__(self) -> str:
+        return f"{self.module}:{self.attribute}"
+
+
+@dataclass(frozen=True, slots=True)
+class PluginDescriptor:
+    """Complete, trusted-location description of one plugin package.
+
+    ``source``, ``location`` and ``precedence`` are derived from configured
+    search roots.  A manifest cannot claim to be builtin or redirect loading
+    to another directory.
+    """
+
+    category: str
+    name: str
+    plugin_type: str
+    publisher: str
+    source: str
+    location: Path
+    entrypoint: PluginEntrypoint | None
+    api_version: str
+    display_name: str
+    description: str | None = None
+    version: str | None = None
+    params: Mapping[str, Any] = field(default_factory=dict)
+    controls: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    # Catalog metadata: lower values have higher priority.  It is intentionally
+    # excluded from equality/repr because it is not plugin identity.
+    precedence: int = field(default=0, repr=False, compare=False)
+
+    @property
+    def identifier(self) -> str:
+        """Publisher-qualified package identity (not the runtime registry key).
+
+        Publisher is manifest-declared metadata, not a verified signature or
+        trust decision. ``source`` remains derived from the configured root.
+        """
+        return f"{self.publisher}.{self.name}"
+
+    @property
+    def manifest_path(self) -> Path:
+        return self.location / "manifest.toml"

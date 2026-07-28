@@ -5,16 +5,12 @@ An Effector is the pluggable device driver the actuation subsystem loads to
 carry out decoded intent — the output-side analogue of a stimulation Paradigm
 (actuation : Effector :: stimulation : Paradigm). The engine emits
 ActuationCommand events (neuroengine/actuation_translator); the actuation
-subsystem — gated by ACTUATION.enabled and selected via ACTUATION.effector —
-receives them over the actuation peer channel and drives the concrete device
-through this interface.
-
-Status (WIP): the engine-side wiring exists, but the actuation subsystem that
-loads and drives Effector plugins is not built yet, so this port currently has
-no concrete implementation. play()'s signature is intentionally left open until
-there is a real caller to define it against.
+subsystem (infrastructure/actuation) — gated by ACTUATION.enabled and
+selected via ACTUATION.effector — receives them over the actuation peer
+channel and drives the concrete device through this interface.
 """
 from abc import ABC, abstractmethod
+from typing import Any, Mapping
 
 
 class Effector(ABC):
@@ -29,7 +25,17 @@ class Effector(ABC):
         """Release the device and its resources."""
 
     @abstractmethod
-    def play(self, *args, **kwargs) -> None:
-        """Carry out one actuation command. Signature is provisional — it will
-        be tightened (likely to ``play(command)``) when the actuation subsystem
-        that calls it is built."""
+    def play(self, command: Mapping[str, Any]) -> None:
+        """Carry out one actuation command.
+
+        *command* is the ActuationCommand payload emitted by the engine\'s
+        translator: ``{"target_id": int, "event_id": int|None,
+        "confidence": float|None}``. The target → concrete device action
+        mapping (which joint, which direction, how far) is device-specific
+        and lives in the implementation.
+
+        May block for the duration of the device action — the actuation
+        subsystem runs it off its event loop (worker thread), so blocking is
+        fine; spawning your own threads is not required. The implementation
+        must tolerate process termination mid-call (the subsystem is stopped
+        by terminating the process)."""

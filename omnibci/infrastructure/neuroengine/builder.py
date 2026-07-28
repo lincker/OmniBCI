@@ -90,11 +90,12 @@ class NeuroEngineBuilder:
         cfg = self._config
 
         # 1. EventBus — event_queue must be mp.Queue for cross-process delivery
-        event_bus = EventBus()
-        event_bus.set_event_queue(mp.Queue())
+        event_queue = mp.Queue()
+        event_bus = EventBus(event_queue)
 
         # 2. Shared data buffer
-        data_manager = DataManager(buffer=mp.Queue())
+        data_buffer = mp.Queue()
+        data_manager = DataManager(buffer=data_buffer)
 
         # 3. Command queues
         acquisition_command_queue = mp.Queue(cfg.queue_size)
@@ -150,6 +151,7 @@ class NeuroEngineBuilder:
             signal_processing_worker=signal_processing_worker,
             processor_command_queue=processor_command_queue,
             peer_gateway=peer_gateway,
+            owned_ipc_queues=(event_queue, data_buffer),
             actuation_translator=actuation_translator,
             actuation_feedback=actuation_feedback,
             debug=cfg.debug,
