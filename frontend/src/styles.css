@@ -108,6 +108,29 @@ body {
 .nav-item.active .nav-ico { opacity: 1; }
 .nav-dot { margin-left: auto; font-size: 0.65rem; }
 
+.language-switcher {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0 0.7rem;
+  font-size: 0.74rem;
+  color: var(--off);
+}
+.language-switcher select {
+  width: 100%;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.32rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+}
+.language-switcher select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .sidebar .badge { align-self: flex-start; margin-left: 0.7rem; }
 
 .content {
@@ -167,7 +190,7 @@ h2 {
 .dot-on { color: var(--ok); text-shadow: 0 0 8px var(--ok-soft); }
 .dot-off { color: var(--off); opacity: 0.7; }
 
-/* ================= pipeline stepper (系统页顶部) ================= */
+/* ================= pipeline stepper (top of the system page) ================= */
 
 .pipeline {
   display: flex;
@@ -348,7 +371,7 @@ h2 {
   padding: 0.6rem 0.7rem;
 }
 .engine-buttons button { min-width: 0; width: 100%; }
-/* Vertically-stacked button group (e.g. 连接/断开, 开始读取/停止读取) —
+/* Vertically stacked button group (for paired connect/read controls) —
    shows the pair belongs together; groups sit side by side in .actions. */
 .btn-group {
   display: flex;
@@ -506,5 +529,10 @@ code {
   }
   .sidebar h1 { margin: 0; padding: 0; }
   .sidebar nav { flex-direction: row; flex: 1; }
+  .language-switcher {
+    margin: 0;
+    min-width: 5.5rem;
+  }
+  .language-switcher > span { display: none; }
   .content { padding: 1.2rem 1rem 2rem; }
 }

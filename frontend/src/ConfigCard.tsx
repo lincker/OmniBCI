@@ -1,12 +1,17 @@
 /**
- * 配置卡 — 分级配置(默认 + 个性化 profile)。
+ * Layered configuration editor for defaults and named profiles.
  *
- * 三列语义:默认值 / 本配置覆盖 / 生效值。
- * 选中"默认配置"时编辑写 settings.toml;选中 profile 时编辑写该 profile 文件。
- * engine-restart 键保存后提示停止→启动引擎生效。
+ * The table distinguishes default, profile override, and effective values.
+ * Editing the default scope writes settings.toml; editing a profile writes its
+ * profile file. Engine-restart settings display a restart notice after saving.
  */
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, type ConfigData, type ParadigmInfo, type ProfileList } from "./api/client";
+import {
+  translateConfigDescription,
+  translatePluginName,
+  useI18n,
+} from "./i18n";
 
 const DEFAULT = "__default__";
 
@@ -26,17 +31,18 @@ function show(v: unknown): string {
 }
 
 export function ConfigCard() {
+  const { t } = useI18n();
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [profiles, setProfiles] = useState<ProfileList | null>(null);
-  // plugin_type options keyed by config key
+  // Plugin-type options keyed by configuration key.
   const [pluginOptions, setPluginOptions] = useState<Record<string, ParadigmInfo[]>>({});
-  const [selected, setSelected] = useState<string>(DEFAULT); // 编辑目标
+  const [selected, setSelected] = useState<string>(DEFAULT);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // config key → plugin category
+  // Configuration key to plugin category.
   const PLUGIN_CATEGORIES: Record<string, string> = {
     "STIMULATION.paradigm":      "paradigm",
     "ACQUISITION.signal_source": "acquisition",
@@ -93,13 +99,13 @@ export function ConfigCard() {
     void run(async () => {
       const result = await api.patchConfig(updates, scope);
       if (result?.engine_restart_required)
-        setNotice("已保存——停止→启动引擎后生效");
-    }, "已保存");
+        setNotice(t("common.savedRestart"));
+    }, t("common.saved"));
   };
 
   const saveAsNew = () => {
     if (!config) return;
-    const name = window.prompt("新配置名称(中英文、数字、_-、空格):");
+    const name = window.prompt(t("config.newProfilePrompt"));
     if (!name) return;
     const updates: Record<string, unknown> = {};
     for (const [key, raw] of Object.entries(draft)) {
@@ -107,21 +113,24 @@ export function ConfigCard() {
       if (entry) updates[key] = parseInput(raw, entry.type);
     }
     if (Object.keys(updates).length === 0) {
-      setError("没有改动可保存——先在覆盖列输入差异值");
+      setError(t("config.noChanges"));
       return;
     }
-    void run(() => api.putProfile(name, updates), `配置 ${name} 已创建`);
+    void run(
+      () => api.putProfile(name, updates),
+      t("config.profileCreated", { name }),
+    );
   };
 
   const active = config?.active_profile ?? null;
 
   return (
     <section className="card card-wide">
-      <h2>配置</h2>
+      <h2>{t("config.title")}</h2>
 
       <div className="actions">
         <label className="meta">
-          激活:
+          {t("config.active")}
           <select
             disabled={busy}
             value={active ?? DEFAULT}
@@ -131,11 +140,11 @@ export function ConfigCard() {
                   e.target.value === DEFAULT
                     ? api.deactivateProfile()
                     : api.activateProfile(e.target.value),
-                "已切换——引擎相关键在下次启动引擎时生效",
+                t("config.switchedRestart"),
               )
             }
           >
-            <option value={DEFAULT}>默认配置</option>
+            <option value={DEFAULT}>{t("config.default")}</option>
             {profiles?.profiles.map((p) => (
               <option key={p.name} value={p.name}>
                 {p.name}
@@ -146,9 +155,9 @@ export function ConfigCard() {
         </label>
 
         <label className="meta">
-          编辑:
+          {t("config.edit")}
           <select disabled={busy} value={selected} onChange={(e) => { setSelected(e.target.value); setDraft({}); }}>
-            <option value={DEFAULT}>默认配置</option>
+            <option value={DEFAULT}>{t("config.default")}</option>
             {profiles?.profiles.map((p) => (
               <option key={p.name} value={p.name}>{p.name}</option>
             ))}
@@ -156,18 +165,23 @@ export function ConfigCard() {
         </label>
 
         <button disabled={busy || Object.keys(draft).length === 0} onClick={save}>
-          保存
+          {t("config.save")}
         </button>
         <button disabled={busy || Object.keys(draft).length === 0} onClick={saveAsNew}>
-          另存为…
+          {t("config.saveAs")}
         </button>
         {selected !== DEFAULT && (
           <button
             className="danger"
             disabled={busy}
-            onClick={() => void run(() => api.deleteProfile(selected).then(() => setSelected(DEFAULT)), "已删除")}
+            onClick={() =>
+              void run(
+                () => api.deleteProfile(selected).then(() => setSelected(DEFAULT)),
+                t("config.deleted"),
+              )
+            }
           >
-            删除此配置
+            {t("config.delete")}
           </button>
         )}
       </div>
@@ -175,13 +189,13 @@ export function ConfigCard() {
       {notice && <p className="meta config-notice">{notice}</p>}
       {error && <p className="error action-error">{error}</p>}
 
-      {/* datalists for plugin_type config keys */}
+      {/* Datalists for plugin-type configuration keys. */}
       {Object.entries(pluginOptions).map(([key, plugins]) =>
         plugins.length > 0 ? (
           <datalist key={key} id={`plugin-options-${key}`}>
             {plugins.map((p) => (
               <option key={p.plugin_type} value={p.plugin_type}>
-                {p.display_name}
+                {translatePluginName(p.plugin_type, p.display_name, t)}
               </option>
             ))}
           </datalist>
@@ -192,24 +206,38 @@ export function ConfigCard() {
         <table>
           <thead>
             <tr>
-              <th>键</th>
-              <th>说明</th>
-              <th>默认值</th>
-              <th>{selected === DEFAULT ? "激活覆盖" : `${selected} 覆盖`}</th>
-              <th>生效值</th>
-              <th>生效方式</th>
-              <th>{selected === DEFAULT ? "改默认为" : "改覆盖为"}</th>
+              <th>{t("config.key")}</th>
+              <th>{t("config.description")}</th>
+              <th>{t("config.defaultValue")}</th>
+              <th>
+                {selected === DEFAULT
+                  ? t("config.activeOverride")
+                  : t("config.profileOverride", { name: selected })}
+              </th>
+              <th>{t("config.effectiveValue")}</th>
+              <th>{t("config.applyMode")}</th>
+              <th>
+                {selected === DEFAULT
+                  ? t("config.changeDefaultTo")
+                  : t("config.changeOverrideTo")}
+              </th>
             </tr>
           </thead>
           <tbody>
             {config.entries.map((e) => (
               <tr key={e.key}>
                 <td><code>{e.key}</code></td>
-                <td className="meta">{e.description}</td>
+                <td className="meta">
+                  {translateConfigDescription(e.key, e.description, t)}
+                </td>
                 <td>{show(e.default_value)}</td>
                 <td>{show(e.profile_value)}</td>
                 <td className="target">{show(e.effective_value)}</td>
-                <td className="meta">{e.requires === "hot" ? "即时" : "重启引擎"}</td>
+                <td className="meta">
+                  {e.requires === "hot"
+                    ? t("config.hot")
+                    : t("config.engineRestart")}
+                </td>
                 <td>
                   <input
                     className={draft[e.key] !== undefined ? "dirty" : ""}

@@ -9,6 +9,11 @@ import { usePoll } from "./hooks/usePoll";
 import { useAction } from "./hooks/useAction";
 import { useResultsFeed } from "./hooks/useResultsFeed";
 import { ConfigCard } from "./ConfigCard";
+import {
+  translateControlLabel,
+  translatePluginName,
+  useI18n,
+} from "./i18n";
 import "./styles.css";
 
 function Dot({ on, label }: { on: boolean | undefined; label: string }) {
@@ -31,6 +36,7 @@ function EngineCard({
   onLoaded?: () => void;
   onDirtyChange?: (dirty: boolean) => void;
 }) {
+  const { t } = useI18n();
   const { data, error, refresh } = usePoll(api.engineStatus);
   const stop = useAction(api.engineStop, refresh);
   const running = data?.running ?? false;
@@ -101,35 +107,40 @@ function EngineCard({
 
   return (
     <section className="card card-stack">
-      <h2>引擎</h2>
+      <h2>{t("engine.title")}</h2>
       {/* Keep status indicators at the top. */}
       <div className="engine-status">
         {error ? (
-          <p className="error">后端不可达：{error.message}</p>
+          <p className="error">
+            {t("engine.backendUnreachable", { message: error.message })}
+          </p>
         ) : (
           <>
-            <Dot on={data?.running} label="运行中" />
-            <Dot on={data?.acquisition_alive} label="采集进程" />
-            <Dot on={data?.processor_alive} label="处理进程" />
-            <Dot on={data?.stimulation_connected} label="刺激已连接" />
+            <Dot on={data?.running} label={t("engine.running")} />
+            <Dot on={data?.acquisition_alive} label={t("engine.acquisitionProcess")} />
+            <Dot on={data?.processor_alive} label={t("engine.processingProcess")} />
+            <Dot
+              on={data?.stimulation_connected}
+              label={t("engine.stimulationConnected")}
+            />
           </>
         )}
       </div>
       {/* Lower panels: source/decoder selectors on the left, engine controls on the right. */}
       <div className="engine-body">
         <div className="engine-selectors">
-          {PLUGIN_CATEGORIES.map(({ category, label, configKey }) => (
+          {PLUGIN_CATEGORIES.map(({ category, labelKey, configKey }) => (
             <label key={category}>
-              <span className="plugin-bar-label">{label}</span>
+              <span className="plugin-bar-label">{t(labelKey)}</span>
               <select
                 disabled={running || starting}
                 value={draft[configKey] ?? ""}
                 onChange={(e) => setDraft((d) => ({ ...d, [configKey]: e.target.value }))}
               >
-                {!draft[configKey] && <option value="">— 选择 —</option>}
+                {!draft[configKey] && <option value="">{t("common.select")}</option>}
                 {(options[category] ?? []).map((p) => (
                   <option key={p.plugin_type} value={p.plugin_type}>
-                    {p.display_name}
+                    {translatePluginName(p.plugin_type, p.display_name, t)}
                   </option>
                 ))}
               </select>
@@ -138,10 +149,10 @@ function EngineCard({
         </div>
         <div className="actions engine-buttons">
           <button disabled={running || starting} onClick={() => void handleStart()}>
-            {starting ? "启动中…" : "启动引擎"}
+            {starting ? t("engine.starting") : t("engine.start")}
           </button>
           <button className="danger" disabled={!running || stop.pending} onClick={() => stop.run()}>
-            停止引擎
+            {t("engine.stop")}
           </button>
         </div>
       </div>
@@ -165,6 +176,7 @@ function AcquisitionSessionCard({
   session: { session_id: string; paradigm?: string | null; state: string } | null;
   trialCount: number;
 }) {
+  const { t } = useI18n();
   const connect = useAction(api.acqConnect, refreshAcquisitionStatus);
   const disconnect = useAction(api.acqDisconnect, refreshAcquisitionStatus);
   const recStart = useAction(api.recordingStart, refreshAcquisitionStatus); // Create a session, then start the stream.
@@ -175,61 +187,76 @@ function AcquisitionSessionCard({
 
   return (
     <section className="card card-stack">
-      <h2>采集</h2>
+      <h2>{t("acquisition.title")}</h2>
       {acquisitionError ? (
-        <p className="error">不可达</p>
+        <p className="error">{t("common.unreachable")}</p>
       ) : (
         <>
           <p>
-            <Dot on={acquisitionStatus?.connected} label="已连接" />
-            <Dot on={acquisitionStatus?.streaming} label="读取中" />
+            <Dot
+              on={acquisitionStatus?.connected}
+              label={t("acquisition.connected")}
+            />
+            <Dot
+              on={acquisitionStatus?.streaming}
+              label={t("acquisition.streaming")}
+            />
           </p>
           <p className="meta">
-            数据源 {acquisitionStatus?.source ?? "—"} ・ 采样率{" "}
-            {acquisitionStatus?.sample_rate ?? "—"} Hz ・ 通道{" "}
-            {acquisitionStatus?.channel_count ?? "—"}
+            {t("acquisition.metadata", {
+              source: acquisitionStatus?.source ?? "—",
+              sampleRate: acquisitionStatus?.sample_rate ?? "—",
+              channelCount: acquisitionStatus?.channel_count ?? "—",
+            })}
           </p>
         </>
       )}
       {session ? (
         <p className="meta">
-          会话 <code>{session.session_id}</code> ・ 范式 {session.paradigm ?? "—"} ・{" "}
-          {session.state === "running" ? "进行中" : "已结束"} ・ 试次 {trialCount}
+          {t("acquisition.session", {
+            sessionId: session.session_id,
+            paradigm: session.paradigm ?? "—",
+            state:
+              session.state === "running"
+                ? t("acquisition.sessionRunning")
+                : t("acquisition.sessionEnded"),
+            trialCount,
+          })}
         </p>
       ) : (
-        <p className="meta">无活动会话</p>
+        <p className="meta">{t("acquisition.noActiveSession")}</p>
       )}
       <div className="actions actions-grouped">
         <div className="btn-group">
-          <span className="btn-group-title">数据源连接</span>
+          <span className="btn-group-title">{t("acquisition.sourceConnection")}</span>
           <button
             disabled={!engineRunning || connected || connect.pending}
             onClick={() => connect.run()}
           >
-            连接
+            {t("acquisition.connect")}
           </button>
           <button
             className="danger"
             disabled={!connected || disconnect.pending}
             onClick={() => disconnect.run()}
           >
-            断开
+            {t("acquisition.disconnect")}
           </button>
         </div>
         <div className="btn-group">
-          <span className="btn-group-title">数据读取</span>
+          <span className="btn-group-title">{t("acquisition.dataReading")}</span>
           <button
             disabled={!connected || streaming || recordingActive || recStart.pending}
             onClick={() => recStart.run()}
           >
-            开始读取
+            {t("acquisition.startReading")}
           </button>
           <button
             className="danger"
             disabled={!recordingActive || recStop.pending}
             onClick={() => recStop.run()}
           >
-            停止读取
+            {t("acquisition.stopReading")}
           </button>
         </div>
       </div>
@@ -239,6 +266,7 @@ function AcquisitionSessionCard({
 }
 
 function StimulationCard({ sessionActive }: { sessionActive: boolean }) {
+  const { t } = useI18n();
   const [controlValues, setControlValues] = useState<Record<string, string>>({});
   const [paradigm, setParadigm] = useState<string>("");
   const [paradigms, setParadigms] = useState<ParadigmInfo[]>([]);
@@ -284,32 +312,42 @@ function StimulationCard({ sessionActive }: { sessionActive: boolean }) {
 
   return (
     <section className="card">
-      <h2>刺激</h2>
+      <h2>{t("stimulation.title")}</h2>
       <p>
-        <Dot on={status?.process_alive}    label="进程运行" />
-        <Dot on={status?.engine_connected} label="引擎已连接" />
+        <Dot on={status?.process_alive} label={t("stimulation.processRunning")} />
+        <Dot
+          on={status?.engine_connected}
+          label={t("stimulation.engineConnected")}
+        />
       </p>
       {status?.paradigm && (
         <p className="meta">
-          运行范式{" "}
-          {paradigms.find((p) => p.plugin_type === status.paradigm)?.display_name ??
-            status.paradigm}
+          {t("stimulation.runningParadigm", {
+            paradigm: (() => {
+              const active = paradigms.find(
+                (p) => p.plugin_type === status.paradigm,
+              );
+              return active
+                ? translatePluginName(active.plugin_type, active.display_name, t)
+                : status.paradigm;
+            })(),
+          })}
         </p>
       )}
       <div className="actions">
         <select value={paradigm} onChange={(e) => setParadigm(e.target.value)}>
-          <option value="">— 用配置值 —</option>
+          <option value="">{t("stimulation.useConfigured")}</option>
           {paradigms.map((p) => (
             <option key={p.plugin_type} value={p.plugin_type}>
-              {p.display_name}
+              {translatePluginName(p.plugin_type, p.display_name, t)}
             </option>
           ))}
         </select>
         <button disabled={stimStart.pending} onClick={() => stimStart.run(paradigm || undefined)}>
-          启动刺激
+          {t("stimulation.start")}
         </button>
         <button className="danger" disabled={stimStop.pending} onClick={() => stimStop.run()}>
-          停止刺激
+          {t("stimulation.stop")}
         </button>
       </div>
       {selectedParadigm && Object.keys(selectedParadigm.params ?? {}).length > 0 && (
@@ -327,7 +365,9 @@ function StimulationCard({ sessionActive }: { sessionActive: boolean }) {
       <div className="actions">
         {Object.entries(controls).map(([name, desc]) => (
           <label key={name} className="control">
-            <span className="meta">{String(desc?.label ?? name)}</span>
+            <span className="meta">
+              {translateControlLabel(name, String(desc?.label ?? name), t)}
+            </span>
             <input
               type="number"
               min={desc?.min != null ? Number(desc.min) : undefined}
@@ -341,10 +381,10 @@ function StimulationCard({ sessionActive }: { sessionActive: boolean }) {
         ))}
         <button
           disabled={!sessionActive || trial.pending}
-          title={sessionActive ? "" : "需要活动会话"}
+          title={sessionActive ? "" : t("stimulation.sessionRequired")}
           onClick={triggerTrial}
         >
-          触发试次
+          {t("stimulation.triggerTrial")}
         </button>
       </div>
       <ActionError messages={[stimStart.error, stimStop.error, trial.error]} />
@@ -353,6 +393,7 @@ function StimulationCard({ sessionActive }: { sessionActive: boolean }) {
 }
 
 function EffectorCard() {
+  const { t } = useI18n();
   const [effectors, setEffectors] = useState<ParadigmInfo[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [saving, setSaving] = useState(false);
@@ -374,8 +415,8 @@ function EffectorCard() {
       const result = await api.patchConfig({ "ACTUATION.effector": selected });
       setNotice(
         result?.engine_restart_required
-          ? "已保存——停止→启动引擎后生效"
-          : "已保存",
+          ? t("common.savedRestart")
+          : t("common.saved"),
       );
     } catch (e) {
       setSaveError(e instanceof ApiError ? `[${e.code}] ${e.message}` : String(e));
@@ -386,18 +427,18 @@ function EffectorCard() {
 
   return (
     <section className="card">
-      <h2>控制输出</h2>
+      <h2>{t("effector.title")}</h2>
       <div className="actions">
         <select value={selected} onChange={(e) => setSelected(e.target.value)}>
-          <option value="">— 选择控制输出 —</option>
+          <option value="">{t("effector.select")}</option>
           {effectors.map((e) => (
             <option key={e.plugin_type} value={e.plugin_type}>
-              {e.display_name}
+              {translatePluginName(e.plugin_type, e.display_name, t)}
             </option>
           ))}
         </select>
         <button disabled={!selected || saving} onClick={() => void handleLoad()}>
-          {saving ? "保存中…" : "加载"}
+          {saving ? t("common.saving") : t("common.load")}
         </button>
       </div>
       {notice && <p className="meta">{notice}</p>}
@@ -408,8 +449,16 @@ function EffectorCard() {
 
 // Plugin selector categories embedded in the engine panel.
 const PLUGIN_CATEGORIES = [
-  { category: "acquisition", label: "数据源", configKey: "ACQUISITION.signal_source" as const },
-  { category: "decoder",     label: "解码器", configKey: "ALGORITHM.decoder" as const },
+  {
+    category: "acquisition",
+    labelKey: "engine.dataSource",
+    configKey: "ACQUISITION.signal_source" as const,
+  },
+  {
+    category: "decoder",
+    labelKey: "engine.decoder",
+    configKey: "ALGORITHM.decoder" as const,
+  },
 ] as const;
 
 function PipelineStepper({
@@ -423,11 +472,12 @@ function PipelineStepper({
   connected: boolean;
   streaming: boolean;
 }) {
+  const { t } = useI18n();
   const steps = [
-    { label: "选择数据源与解码器", done: configLoaded },
-    { label: "引擎启动", done: engineRunning },
-    { label: "数据源连接", done: connected },
-    { label: "数据读取", done: streaming },
+    { label: t("pipeline.selectPlugins"), done: configLoaded },
+    { label: t("pipeline.engineStarted"), done: engineRunning },
+    { label: t("pipeline.sourceConnected"), done: connected },
+    { label: t("pipeline.reading"), done: streaming },
   ];
   // The first incomplete step is the current step.
   const currentIdx = steps.findIndex((s) => !s.done);
@@ -452,10 +502,11 @@ function PipelineStepper({
   );
 }
 
-type Tab = "系统" | "配置";
+type Tab = "system" | "config";
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("系统");
+  const { language, setLanguage, t } = useI18n();
+  const [tab, setTab] = useState<Tab>("system");
   const [configLoaded, setConfigLoaded] = useState(false);
   const [dataSourceDirty, setDataSourceDirty] = useState(false);
   const { connection, session, trials, acks } = useResultsFeed();
@@ -475,16 +526,16 @@ export default function App() {
       <aside className="sidebar">
         <h1>
           <span className="brand-mark">Ω</span>
-          OmniBCI 控制台
+          {t("app.title")}
         </h1>
         <nav>
-          {(["系统", "配置"] as Tab[]).map((t) => (
+          {(["system", "config"] as Tab[]).map((navTab) => (
             <button
-              key={t}
-              className={t === tab ? "nav-item active" : "nav-item"}
-              onClick={() => setTab(t)}
+              key={navTab}
+              className={navTab === tab ? "nav-item active" : "nav-item"}
+              onClick={() => setTab(navTab)}
             >
-              {t === "系统" ? (
+              {navTab === "system" ? (
                 <svg className="nav-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
                   <rect x="1.5" y="1.5" width="13" height="13" rx="2.5" />
                   <path d="M4.5 9.5 7 6.5l2 2.5 2.5-3.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -495,24 +546,39 @@ export default function App() {
                   <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" strokeLinecap="round" />
                 </svg>
               )}
-              {t}
-              {t === "系统" && (
+              {navTab === "system" ? t("nav.system") : t("nav.config")}
+              {navTab === "system" && (
                 <span className={`nav-dot ${engineRunning ? "dot-on" : "dot-off"}`}>●</span>
               )}
             </button>
           ))}
         </nav>
+        <label className="language-switcher">
+          <span>{t("language.selector")}</span>
+          <select
+            aria-label={t("language.selector")}
+            value={language}
+            onChange={(event) => setLanguage(event.target.value as "zh" | "en")}
+          >
+            <option value="zh">{t("language.chinese")}</option>
+            <option value="en">{t("language.english")}</option>
+          </select>
+        </label>
         <span className={`badge badge-${connection}`}>
-          {connection === "open" ? "实时" : connection === "connecting" ? "连接中…" : "已断开，重连中…"}
+          {connection === "open"
+            ? t("connection.live")
+            : connection === "connecting"
+              ? t("connection.connecting")
+              : t("connection.reconnecting")}
         </span>
       </aside>
 
       <main className="content">
         <header className="content-head">
-          <h1>{tab}</h1>
+          <h1>{tab === "system" ? t("nav.system") : t("nav.config")}</h1>
         </header>
 
-        {tab === "配置" ? (
+        {tab === "config" ? (
           <div className="grid">
             <ConfigCard />
           </div>
@@ -538,30 +604,36 @@ export default function App() {
         <EffectorCard />
 
         <section className="card card-wide">
-          <h2>试次结果</h2>
+          <h2>{t("results.title")}</h2>
           {trials.length === 0 ? (
-            <p className="meta">暂无结果</p>
+            <p className="meta">{t("results.empty")}</p>
           ) : (
             <table>
               <thead>
                 <tr>
                   <th>#</th>
-                  <th>目标</th>
-                  <th>事件</th>
-                  <th>置信度</th>
-                  <th>强制</th>
-                  <th>时间 (UTC)</th>
+                  <th>{t("results.target")}</th>
+                  <th>{t("results.event")}</th>
+                  <th>{t("results.confidence")}</th>
+                  <th>{t("results.forced")}</th>
+                  <th>{t("results.time")}</th>
                 </tr>
               </thead>
               <tbody>
-                {[...trials].reverse().map((t) => (
-                  <tr key={t.trial_number}>
-                    <td>{t.trial_number}</td>
-                    <td className="target">{t.target_id}</td>
-                    <td>{t.event_id}</td>
-                    <td>{t.confidence != null ? t.confidence.toFixed(2) : "—"}</td>
-                    <td>{t.forced ? "是" : ""}</td>
-                    <td className="meta">{t.produced_at.replace("T", " ").slice(0, 19)}</td>
+                {[...trials].reverse().map((trialResult) => (
+                  <tr key={trialResult.trial_number}>
+                    <td>{trialResult.trial_number}</td>
+                    <td className="target">{trialResult.target_id}</td>
+                    <td>{trialResult.event_id}</td>
+                    <td>
+                      {trialResult.confidence != null
+                        ? trialResult.confidence.toFixed(2)
+                        : "—"}
+                    </td>
+                    <td>{trialResult.forced ? t("common.yes") : ""}</td>
+                    <td className="meta">
+                      {trialResult.produced_at.replace("T", " ").slice(0, 19)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -570,15 +642,18 @@ export default function App() {
         </section>
 
         <section className="card card-wide">
-          <h2>刺激回执</h2>
+          <h2>{t("acks.title")}</h2>
           {acks.length === 0 ? (
-            <p className="meta">暂无回执</p>
+            <p className="meta">{t("acks.empty")}</p>
           ) : (
             <ul className="acks">
               {acks.map((a, i) => (
                 <li key={i}>
                   <code>{a.command}</code>
-                  {a.target_index != null && <> → 目标 {a.target_index}</>} ・ {a.status}
+                  {a.target_index != null && (
+                    <> → {t("acks.target", { target: a.target_index })}</>
+                  )}{" "}
+                  ・ {a.status}
                   {a.message && <span className="meta"> {a.message}</span>}
                 </li>
               ))}
