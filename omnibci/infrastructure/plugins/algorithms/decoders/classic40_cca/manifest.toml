@@ -1,0 +1,12 @@
+# OmniBCI Plugin Manifest — schema version 1
+
+[package]
+id           = "classic40_cca"
+version      = "0.1.0"
+kind         = "decoder"
+api_version  = "1"
+plugin_type  = "THUBCI_SSVEP_classic40CCA"
+display_name = "Classic 40 CCA"
+description  = "40目标 SSVEP — 标准 CCA 解码"
+author       = "OmniBCI"
+source       = "builtin"

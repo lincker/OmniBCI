@@ -119,7 +119,12 @@ pip-selfcheck.json
 !/omnibci/infrastructure/plugins/acquisition/file/
 !/omnibci/infrastructure/plugins/acquisition/file/**
 /omnibci/infrastructure/plugins/acquisition/file/__pycache__/
-/omnibci/infrastructure/plugins/algorithms/
+/omnibci/infrastructure/plugins/algorithms/*
+!/omnibci/infrastructure/plugins/algorithms/decoders/
+!/omnibci/infrastructure/plugins/algorithms/decoders/**
+!/omnibci/infrastructure/plugins/algorithms/epoch/
+!/omnibci/infrastructure/plugins/algorithms/epoch/**
+/omnibci/infrastructure/plugins/algorithms/**/__pycache__/
 # The first-party logger effector is reviewed framework code; keep other
 # effector implementations ignored until they are reviewed individually.
 /omnibci/infrastructure/plugins/effectors/*
