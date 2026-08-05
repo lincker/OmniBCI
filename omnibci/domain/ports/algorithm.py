@@ -18,7 +18,6 @@ from omnibci.domain.signal import SignalChunk
 class FilterContext:
     """Per-run metadata handed to each Filter (immutable)."""
     sample_rate: int
-    forced: bool = False
     event_id: Optional[int] = None
     # Pre-trigger segment (channels × n) captured for this epoch, or None when no
     # baseline was configured. A baseline-correction Filter reads it from here so

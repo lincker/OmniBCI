@@ -136,7 +136,7 @@ class TestEpochProcessorBaseline:
         window = np.ones((2, 7))
         baseline = np.zeros((2, 3))
         ep.initialize_epoch(_chunk(window), start_idx=0, event_id=5, baseline=baseline)
-        ok, clf = ep.run_pipeline(force_recognize=True)
+        ok, clf = ep.force_recognize()
         assert ok is True
         # _ConstDecoder echoes window length → confirms baseline was NOT prepended.
         assert clf.target_id == 7
@@ -241,7 +241,7 @@ class TestBaselineCorrectionInPipeline:
         window = np.full((2, 6), 5.0)
         baseline = np.full((2, 3), 2.0)
         ep.initialize_epoch(_chunk(window), start_idx=0, event_id=1, baseline=baseline)
-        ep.run_pipeline(force_recognize=True)
+        ep.force_recognize()
         np.testing.assert_array_equal(dec.seen, np.full((2, 6), 3.0))
 
     @staticmethod

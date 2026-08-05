@@ -181,21 +181,20 @@ class EpochProcessor:
         self.append_chunk(chunk)
         if not self.should_decode():
             return False, None
-        return self._decode()
+        return self._run_pipeline()
 
-    def run_pipeline(self, force_recognize: bool = False) -> Tuple[bool, Optional[Classification]]:
+    def force_recognize(self) -> Tuple[bool, Optional[Classification]]:
+        return self._run_pipeline(force_recognize=True)
+
+    def _run_pipeline(self, force_recognize: bool = False) -> Tuple[bool, Optional[Classification]]:
         """
         Decode the current buffer. Used by marker-forced paths
         (end / unexpected-start), which bypass the should_decode() gate.
         """
         if self._epoch_data.size == 0 or self._event_id is None:
             return False, None
-        return self._decode(forced=force_recognize)
-
-    def _decode(self, *, forced: bool = False) -> Tuple[bool, Optional[Classification]]:
         prediction = self.pipeline.run(
             self._epoch_data,
-            forced=forced,
             event_id=self._event_id,
             baseline=self._baseline_data,
             latest=self._current_chunk_data,  # delta for incremental decoders
@@ -206,7 +205,7 @@ class EpochProcessor:
             target_id=int(prediction.target_id),
             event_id=self._event_id,
             confidence=prediction.confidence,
-            forced=forced,
+            forced=force_recognize,
         )
-        logger.info("Decoder produced: %s (forced=%s)", classification, forced)
+        logger.info("Decoder produced: %s (forced=%s)", classification, force_recognize)
         return True, classification

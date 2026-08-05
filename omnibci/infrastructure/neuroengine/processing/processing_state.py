@@ -131,7 +131,7 @@ class AssemblingEpochState(ProcessingState):
         new_event_id: Optional[int],
     ) -> None:
         self.context.current_epoch.append_until_index(chunk, end_idx)
-        _, classification = self.context.current_epoch.run_pipeline(force_recognize=True)
+        _, classification = self.context.current_epoch.force_recognize()
         logger.info("End event forced recognition: %s", classification)
 
         if classification is not None:
@@ -157,7 +157,7 @@ class AssemblingEpochState(ProcessingState):
     ) -> None:
         logger.warning("Unexpected start event during collection — forcing recognition")
         self.context.current_epoch.append_until_index(chunk, start_idx)
-        _, classification = self.context.current_epoch.run_pipeline(force_recognize=True)
+        _, classification = self.context.current_epoch.force_recognize()
         logger.info("Forced recognition (unexpected start): %s", classification)
 
         if classification is not None:

@@ -5,7 +5,7 @@ Characterization / contract tests — ProcessingPipeline（Filter* → Decoder.d
   - 无 filter 时 pipeline.run 等价于直接 decoder.decode(epoch_data)。
   - filters 按顺序作用于 epoch_data，再交给 decoder。
   - 返回 Optional[Prediction]（decoder 不出结果 → None）。
-  - decode 已无 forced 形参：pipeline 的 forced 只传给 FilterContext，不影响 decode。
+  - 强制识别由 EpochProcessor 管理，pipeline 不接收 forced 参数。
 
 只依赖 numpy；纯 numpy 环境用独立 runner 可跑。
 """
@@ -56,37 +56,30 @@ class TestPipelineNoFilters:
         dec = _SpyDecoder(ready=True, target=9)
         pipe = ProcessingPipeline(decoder=dec, filters=None, sample_rate=250)
         epoch = np.ones((3, 5))
-        pred = pipe.run(epoch, forced=False, event_id=4)
+        pred = pipe.run(epoch, event_id=4)
         assert pred == Prediction(target_id=9, confidence=0.9)
         assert np.array_equal(dec.seen_data, epoch)   # decoder saw the unfiltered data
 
     def test_decline_returns_none(self):
         dec = _SpyDecoder(ready=False)
         pipe = ProcessingPipeline(decoder=dec)
-        assert pipe.run(np.ones((2, 4)), forced=False) is None
-
-    def test_forced_does_not_reach_decoder(self):
-        # decode lost its forced param: a not-ready decoder still declines even
-        # when the pipeline is asked with forced=True (forced only feeds filters).
-        dec = _SpyDecoder(ready=False)
-        pipe = ProcessingPipeline(decoder=dec)
-        assert pipe.run(np.ones((2, 4)), forced=True) is None
+        assert pipe.run(np.ones((2, 4))) is None
 
 
 class TestPipelineWithFilters:
     def test_filters_apply_in_order_before_decode(self):
         dec = _SpyDecoder()
         pipe = ProcessingPipeline(decoder=dec, filters=[_AddFilter(1), _AddFilter(10)])
-        pipe.run(np.zeros((2, 3)), forced=False, event_id=7)
+        pipe.run(np.zeros((2, 3)), event_id=7)
         assert np.all(dec.seen_data == 11)   # 0 + 1 + 10
 
-    def test_filter_receives_context_including_forced(self):
+    def test_filter_receives_context_metadata(self):
         dec = _SpyDecoder()
         f = _AddFilter(0)
         pipe = ProcessingPipeline(decoder=dec, filters=[f], sample_rate=512)
-        pipe.run(np.ones((2, 2)), forced=True, event_id=42)
+        pipe.run(np.ones((2, 2)), event_id=42)
         assert f.seen_ctx.sample_rate == 512
-        assert f.seen_ctx.forced is True       # forced still reaches filters
+        assert f.seen_ctx.forced is False
         assert f.seen_ctx.event_id == 42
 
 

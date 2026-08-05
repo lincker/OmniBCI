@@ -1,11 +1,5 @@
 """
-ProcessingPipeline — 有序 Filter* → Decoder 的处理流水线。
-
-把"就绪的 epoch 窗口"依次过一串 Filter（带通、基线、降采样…），再交给 Decoder.decode，
-回传 `Optional[Prediction]`（None = decoder 暂不出结果）。是否**该**跑流水线由上游
-EpochProcessor 经 `decoder.should_decode(...)` 门控；强制路径（marker 收尾）传 forced=True。
-
-filters 为空时 pipeline.run 等价于直接 `decoder.decode(epoch_data, forced=...)`。
+ProcessingPipeline —  Filter* → Decoder。
 """
 
 from typing import List, Optional, Sequence
@@ -32,7 +26,6 @@ class ProcessingPipeline:
         self,
         epoch_data: np.ndarray,
         *,
-        forced: bool,
         event_id: Optional[int] = None,
         baseline: Optional[np.ndarray] = None,
         latest: Optional[np.ndarray] = None,
@@ -53,7 +46,6 @@ class ProcessingPipeline:
         """
         ctx = FilterContext(
             sample_rate=self.sample_rate,
-            forced=forced,
             event_id=event_id,
             baseline=baseline,
         )
