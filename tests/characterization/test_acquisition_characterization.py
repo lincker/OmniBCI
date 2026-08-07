@@ -51,7 +51,7 @@ class _FakeAdapter:
     async def close(self):
         self.closed = True
 
-    def get_name(self):
+    def get_metadata(self):
         return "fake-device"
 
 
@@ -159,7 +159,7 @@ class TestFileReaderLifecycle:
         _run(r.disconnect())
         assert r.reader_adapter.closed is True
 
-    def test_get_metadata_returns_device_name(self):
+    def test_get_metadata_returns_adapter_metadata(self):
         r = self._reader()
         assert _run(r.get_metadata()) == "fake-device"
 

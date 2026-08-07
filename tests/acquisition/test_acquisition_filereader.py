@@ -21,6 +21,7 @@ def test_real_cnt_lifecycle_and_first_chunk():
             assert await reader.connect() is True
             assert reader.is_connected is True
             assert type(reader.reader_adapter).__name__ == "CNTReaderAdapter"
+            assert await reader.get_metadata() == "CNTReaderAdapter"
 
             assert await reader.start_stream() is True
             assert reader.is_streaming is True

@@ -95,4 +95,4 @@ class FileReader(SignalSource):
         """获取设备元数据"""
         if self.reader_adapter is None:
             raise ValueError("Reader not initialized. Call connect() first.")
-        return self.reader_adapter.get_name()
+        return self.reader_adapter.get_metadata()
