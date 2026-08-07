@@ -12,7 +12,12 @@ from datetime import datetime, timezone
 
 from omnibci.shared.events import Event, EventType
 from omnibci.domain.classification import Classification
-from omnibci.domain.events import TrialCompleted as DomainTrialCompleted
+from omnibci.domain.events import (
+    DomainEvent,
+    SessionEnded as DomainSessionEnded,
+    SessionStarted as DomainSessionStarted,
+    TrialCompleted as DomainTrialCompleted,
+)
 from omnibci.infrastructure.outbound import (
     TrialOutcome,
     SessionSummary,
@@ -51,7 +56,7 @@ class TestEventToWire:
         }
 
     def test_trial_completed_bare_classification_rejected(self):
-        # P2-8：bare-Classification legacy 形状已删除 → None（并记错误日志）
+        # P2-8: the legacy bare-Classification shape is rejected and logged.
         assert event_to_wire(Event(EventType.TrialCompleted, _clf())) is None
 
     def test_session_started(self):
@@ -63,7 +68,7 @@ class TestEventToWire:
         assert wire == {"event": "SessionEnded", "session_id": "sess-3", "total_trials": 5}
 
     def test_session_ended_bare_int_rejected(self):
-        # P2-8：bare-int legacy 形状已删除 → None（并记错误日志）
+        # P2-8: the legacy bare-int shape is rejected and logged.
         assert event_to_wire(Event(EventType.SessionEnded, 5)) is None
 
     def test_stimulation_ack_from_dict(self):
@@ -98,8 +103,8 @@ class TestPayloadToJsonable:
         json.dumps(out)  # must not raise
 
     def test_bare_classification_passthrough(self):
-        # P2-8：Classification 不再是任何事件的独立载荷；payload_to_jsonable
-        # 对未知类型原样透传（socket 编码方 json.dumps 时自然报错暴露问题）。
+        # P2-8: Classification is no longer a standalone event payload.
+        # Unknown values pass through so the socket encoder exposes the issue.
         clf = _clf(target_id=4)
         assert payload_to_jsonable(clf) is clf
 
@@ -136,3 +141,40 @@ class TestAclEmitsTrialOutcome:
         # and it flows through to a full WS wire dict with real context
         wire = event_to_wire(bus.events[0])
         assert wire["session_id"] == "sess-9" and wire["trial_number"] == 2
+
+    def test_session_started_maps_to_session_id_payload(self):
+        bus = _SpyBus()
+        DomainEventPublisher(bus).publish(
+            DomainSessionStarted("sid-1", paradigm="p")
+        )
+        assert bus.events[0].type == EventType.SessionStarted
+        assert bus.events[0].data == "sid-1"
+
+    def test_session_ended_maps_to_session_summary(self):
+        bus = _SpyBus()
+        DomainEventPublisher(bus).publish(
+            DomainSessionEnded("sess-9", total_trials=3)
+        )
+        assert bus.events[0].type == EventType.SessionEnded
+        payload = bus.events[0].data
+        assert isinstance(payload, SessionSummary)
+        assert payload.session_id == "sess-9"
+        assert payload.total_trials == 3
+
+    def test_publish_all_preserves_event_order(self):
+        bus = _SpyBus()
+        DomainEventPublisher(bus).publish_all([
+            DomainSessionStarted("sess-9", paradigm="p"),
+            DomainTrialCompleted("sess-9", 1, _clf()),
+            DomainSessionEnded("sess-9", total_trials=1),
+        ])
+        assert [event.type for event in bus.events] == [
+            EventType.SessionStarted,
+            EventType.TrialCompleted,
+            EventType.SessionEnded,
+        ]
+
+    def test_unknown_event_is_ignored(self):
+        bus = _SpyBus()
+        DomainEventPublisher(bus).publish(DomainEvent())
+        assert bus.events == []

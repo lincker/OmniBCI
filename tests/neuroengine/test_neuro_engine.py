@@ -171,7 +171,7 @@ class TestEventRouting:
     """
     Routing is now data-driven (``_command_routes`` + ``_make_command_router``).
     Comprehensive routing-through-registered-listener coverage lives in
-    tests/neuroengine/test_neuro_engine_orchestration_characterization.py;
+    tests/neuroengine/test_neuro_engine_orchestration.py;
     these tests pin the routing table itself and the router/flag behaviour.
     """
 

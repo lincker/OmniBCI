@@ -1,21 +1,4 @@
-"""
-Characterization safety net — NeuroEngine orchestration.
-
-Complements tests/neuroengine/test_neuro_engine.py.  That file asserts routing
-by calling the *private* handler methods (``_connect_data_provider`` …) directly.
-The upcoming P1 refactor will collapse those methods into a data-driven routing
-map, so method-name-coupled tests would break by construction.
-
-This file instead pins the **observable contract through the public seam**:
-  register listeners on a fake EventBus, then invoke whatever handler the bus
-  received for each EventType, and assert the correct command lands on the
-  correct command queue.  That contract must survive the routing-map refactor.
-
-Also pins the full ``serve()`` lifecycle (start → loop exits on should_stop →
-stop), which the existing file does not cover.
-
-Coroutines are driven with ``asyncio.run`` so the suite needs no pytest-asyncio.
-"""
+"""Tests for NeuroEngine routing through listeners and its serve lifecycle."""
 from __future__ import annotations
 
 import asyncio
@@ -233,12 +216,12 @@ class TestLifecycle:
 
 
 # ---------------------------------------------------------------------------
-# P2-7: 主循环事件驱动停机（sleep(0.05) 轮询已移除）
+# P2-7: event-driven main-loop shutdown (sleep polling removed)
 # ---------------------------------------------------------------------------
 
 class TestEventDrivenShutdown:
     def test_cross_thread_stop_wakes_main_loop_promptly(self):
-        """从另一线程置 should_stop：serve 应即刻退出，而非等轮询周期。"""
+        """A cross-thread stop request wakes serve without polling delay."""
         import threading
         import time
 
@@ -246,18 +229,18 @@ class TestEventDrivenShutdown:
         t0 = {}
 
         def stopper():
-            time.sleep(0.05)          # 让 serve 进入等待
+            time.sleep(0.05)          # let serve enter its wait state
             t0["set_at"] = time.perf_counter()
-            eng.should_stop = True     # API 线程视角的置停
+            eng.should_stop = True     # request shutdown from the API thread
 
         threading.Thread(target=stopper).start()
         asyncio.run(eng.serve())
         elapsed = time.perf_counter() - t0["set_at"]
-        assert elapsed < 0.5           # 事件唤醒；旧实现上界为一个轮询周期
+        assert elapsed < 0.5           # event wakeup avoids a polling interval
         assert eng.peer_gateway.stopped and eng.event_bus.stopped
 
     def test_stop_flag_set_before_serve_exits_immediately(self):
-        """serve 前预置 should_stop（既有 characterization 场景）仍然成立。"""
+        """A pre-set should_stop still completes the serve lifecycle."""
         eng = _make_engine()
         eng.should_stop = True
         asyncio.run(eng.serve())

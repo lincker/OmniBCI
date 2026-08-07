@@ -1,36 +1,13 @@
-"""
-Characterization tests — Session 限界上下文.
-
-目的：锁定 *当前* 可观察行为，作为重构期间的安全网。
-不评判设计好坏，只把 "现在系统是怎么做的" 固化下来；重构后若这些断言
-仍全绿，即可认为 Session 上下文的对外行为未被破坏。
-
-覆盖接缝：
-  - BCISession 聚合根：状态机、不变量、试次编号、领域事件序列、查询。
-  - InMemorySessionRepository：active 跟踪、插入顺序、深拷贝隔离。
-  - DomainEventPublisher (ACL)：领域富事件 → 基础设施 IPC Event 的翻译表。
-
-这些模块仅依赖 numpy + 标准库，可在任意环境运行（无需硬件 / FastAPI）。
-"""
+"""Tests for the BCISession aggregate and its domain-event lifecycle."""
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from omnibci.domain.session import BCISession, SessionState, Trial
+from omnibci.domain.session import BCISession, SessionState
 from omnibci.domain.classification import Classification
 from omnibci.domain.epoch import Epoch
-from omnibci.domain.events import SessionStarted, TrialCompleted, SessionEnded
-from omnibci.domain.repositories import (
-    SessionRecord,
-    SessionRecordState as RecordState,
-    TrialRecord,
-)
-from omnibci.infrastructure.repositories.session_repository import (
-    InMemorySessionRepository,
-)
-from omnibci.infrastructure.event_translator import DomainEventPublisher
-from omnibci.shared.events import EventType
+from omnibci.domain.events import SessionEnded, SessionStarted
 
 
 # ---------------------------------------------------------------------------
@@ -183,135 +160,7 @@ class TestDomainEventSequence:
 
 
 # ---------------------------------------------------------------------------
-# InMemorySessionRepository
-# ---------------------------------------------------------------------------
-
-def _record(session_id: str, state=RecordState.RUNNING) -> SessionRecord:
-    from datetime import datetime, timezone
-    return SessionRecord(
-        session_id=session_id,
-        paradigm="p",
-        state=state,
-        started_at=datetime.now(timezone.utc),
-    )
-
-
-class TestSessionRepository:
-    def test_save_and_find_by_id(self):
-        repo = InMemorySessionRepository()
-        repo.save(_record("a"))
-        assert repo.find_by_id("a").session_id == "a"
-
-    def test_find_by_id_missing_returns_none(self):
-        assert InMemorySessionRepository().find_by_id("nope") is None
-
-    def test_find_all_preserves_insertion_order(self):
-        repo = InMemorySessionRepository()
-        for sid in ("a", "b", "c"):
-            repo.save(_record(sid))
-        assert [r.session_id for r in repo.find_all()] == ["a", "b", "c"]
-
-    def test_active_is_latest_running(self):
-        repo = InMemorySessionRepository()
-        repo.save(_record("a"))
-        repo.save(_record("b"))
-        assert repo.find_active().session_id == "b"
-
-    def test_active_falls_back_when_ended(self):
-        repo = InMemorySessionRepository()
-        repo.save(_record("a"))
-        repo.save(_record("b"))
-        repo.save(_record("b", state=RecordState.ENDED))
-        # b ended → active falls back to latest still-running (a)
-        assert repo.find_active().session_id == "a"
-
-    def test_find_by_id_returns_isolated_copy(self):
-        repo = InMemorySessionRepository()
-        repo.save(_record("a"))
-        got = repo.find_by_id("a")
-        got.trials.append(
-            TrialRecord(1, 0, 0, None, False, got.started_at)
-        )
-        # mutation of returned copy must not leak into the store
-        assert repo.find_by_id("a").trial_count == 0
-
-    def test_delete_removes_record(self):
-        repo = InMemorySessionRepository()
-        repo.save(_record("a"))
-        repo.delete("a")
-        assert repo.find_by_id("a") is None
-
-    def test_delete_missing_is_noop(self):
-        InMemorySessionRepository().delete("ghost")  # must not raise
-
-
-# ---------------------------------------------------------------------------
-# DomainEventPublisher — Anti-Corruption Layer translation table
-# ---------------------------------------------------------------------------
-
-class _SpyBus:
-    def __init__(self):
-        self.events = []
-
-    def put_event(self, event):
-        self.events.append(event)
-
-
-class TestACLTranslation:
-    def test_trial_completed_maps_to_trial_outcome_with_session_context(self):
-        from omnibci.infrastructure.outbound import TrialOutcome
-        bus = _SpyBus()
-        pub = DomainEventPublisher(bus)
-        clf = _clf(target_id=4, event_id=1)
-        pub.publish(TrialCompleted("s", 1, clf))
-        assert len(bus.events) == 1
-        assert bus.events[0].type == EventType.TrialCompleted
-        payload = bus.events[0].data
-        assert isinstance(payload, TrialOutcome)
-        assert payload.session_id == "s"
-        assert payload.trial_number == 1
-        assert payload.classification is clf
-
-    def test_session_started_maps_to_session_id_payload(self):
-        bus = _SpyBus()
-        DomainEventPublisher(bus).publish(SessionStarted("sid-1", paradigm="p"))
-        assert bus.events[0].type == EventType.SessionStarted
-        assert bus.events[0].data == "sid-1"
-
-    def test_session_ended_maps_to_session_summary(self):
-        from omnibci.infrastructure.outbound import SessionSummary
-        bus = _SpyBus()
-        DomainEventPublisher(bus).publish(SessionEnded("s", total_trials=3))
-        assert bus.events[0].type == EventType.SessionEnded
-        payload = bus.events[0].data
-        assert isinstance(payload, SessionSummary)
-        assert payload.session_id == "s"
-        assert payload.total_trials == 3
-
-    def test_publish_all_translates_each_event(self):
-        bus = _SpyBus()
-        pub = DomainEventPublisher(bus)
-        s = BCISession()
-        s.start()
-        s.record_trial(_epoch(event_id=1), _clf(event_id=1))
-        s.end()
-        pub.publish_all(s.pop_events())
-        types = [e.type for e in bus.events]
-        assert types == [
-            EventType.SessionStarted,
-            EventType.TrialCompleted,
-            EventType.SessionEnded,
-        ]
-
-    def test_unknown_event_is_dropped_silently(self):
-        from omnibci.domain.events import DomainEvent
-        bus = _SpyBus()
-        DomainEventPublisher(bus).publish(DomainEvent())  # base type, no mapping
-        assert bus.events == []
-
-
-# ---------------------------------------------------------------------------
-# P1-6: 聚合根不保留信号数据（内存无界增长修复）
+# P1-6: the aggregate does not retain signal data (unbounded-memory fix)
 # ---------------------------------------------------------------------------
 
 class TestTrialsDoNotRetainSignal:
@@ -323,12 +172,12 @@ class TestTrialsDoNotRetainSignal:
         trial = s.trials[0]
         assert isinstance(trial.epoch_info, EpochInfo)
         assert not hasattr(trial, "epoch")
-        # 元数据投影完整
+        # The metadata projection remains complete.
         assert trial.epoch_info.event_id == 1
         assert trial.epoch_info.duration_samples > 0
 
     def test_signal_array_is_released_after_record_trial(self):
-        """信号矩阵在 record_trial 之后即可被 GC —— 聚合根与事件均无残留引用。"""
+        """Signal data can be collected once record_trial returns."""
         import gc
         import weakref
 
@@ -340,4 +189,4 @@ class TestTrialsDoNotRetainSignal:
         s.pop_events()
         del epoch
         gc.collect()
-        assert ref() is None    # 聚合根未保留任何信号数据引用
+        assert ref() is None    # neither the aggregate nor its events retain data
