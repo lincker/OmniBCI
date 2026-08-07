@@ -6,8 +6,11 @@ multiprocessing or OS resources are used.
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, call, patch
+import asyncio
 import threading
+import time
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from omnibci.infrastructure.acquisition.service import AcquisitionCommand
@@ -49,6 +52,60 @@ def _mark_resources_started(eng: NeuroEngine) -> None:
     eng._gateway_started = True
 
 
+_COMMAND_ROUTES = [
+    (
+        EventType.ConnectDataProvider,
+        "acquisition_command_queue",
+        AcquisitionCommand.connect,
+        None,
+    ),
+    (
+        EventType.DisconnectDataProvider,
+        "acquisition_command_queue",
+        AcquisitionCommand.disconnect,
+        None,
+    ),
+    (
+        EventType.StartStream,
+        "acquisition_command_queue",
+        AcquisitionCommand.start_stream,
+        None,
+    ),
+    (
+        EventType.StopStream,
+        "acquisition_command_queue",
+        AcquisitionCommand.stop_stream,
+        None,
+    ),
+    (
+        EventType.StartSession,
+        "processor_command_queue",
+        SignalProcessorCommand.start_session,
+        {"session_id": "session-1", "paradigm": "classic40SSVEP"},
+    ),
+    (
+        EventType.EndSession,
+        "processor_command_queue",
+        SignalProcessorCommand.end_session,
+        "session-1",
+    ),
+]
+
+_EXPECTED_EVENT_TYPES = {
+    *(route[0] for route in _COMMAND_ROUTES),
+    EventType.CloseAllNeuroEngineProcessSystem,
+    EventType.StimulationAck,
+}
+
+
+def _registered_handlers(eng: NeuroEngine) -> dict:
+    eng._register_event_listeners()
+    return {
+        registration.args[0]: registration.args[1]
+        for registration in eng.event_bus.register_event_listener.call_args_list
+    }
+
+
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
@@ -62,9 +119,6 @@ class TestConstruction:
         assert eng.signal_processing_worker is not None
         assert eng.should_stop is False
 
-    def test_should_stop_defaults_false(self):
-        assert _make_engine().should_stop is False
-
 
 # ---------------------------------------------------------------------------
 # _start: spawns processes, starts bus and server
@@ -72,39 +126,13 @@ class TestConstruction:
 
 class TestStart:
     @pytest.mark.asyncio
-    async def test_starts_acquisition_worker(self):
+    async def test_starts_all_subsystems(self):
         eng = _make_engine()
-        eng.event_bus.start = AsyncMock()
         await eng._start()
         eng.acquisition_worker.start.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_starts_signal_processing_worker(self):
-        eng = _make_engine()
-        eng.event_bus.start = AsyncMock()
-        await eng._start()
         eng.signal_processing_worker.start.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_starts_event_bus(self):
-        eng = _make_engine()
-        eng.event_bus.start = AsyncMock()
-        await eng._start()
         eng.event_bus.start.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_starts_server_management(self):
-        eng = _make_engine()
-        await eng._start()
         eng.peer_gateway.start.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_registers_eight_event_listeners(self):
-        # 6 command routes (incl. StartSession/EndSession) + CloseAll + StimulationAck
-        eng = _make_engine()
-        eng.event_bus.start = AsyncMock()
-        await eng._start()
-        assert eng.event_bus.register_event_listener.call_count == 8
 
     @pytest.mark.asyncio
     async def test_gateway_bind_failure_rolls_back_started_resources(self):
@@ -164,45 +192,54 @@ class TestThreadReadiness:
 
 
 # ---------------------------------------------------------------------------
-# Event routing
+# Event registration and routing through the public bus seam
 # ---------------------------------------------------------------------------
 
 class TestEventRouting:
-    """
-    Routing is now data-driven (``_command_routes`` + ``_make_command_router``).
-    Comprehensive routing-through-registered-listener coverage lives in
-    tests/neuroengine/test_neuro_engine_orchestration.py;
-    these tests pin the routing table itself and the router/flag behaviour.
-    """
-
-    def test_command_routes_table_maps_events_to_queue_and_command(self):
+    def test_registers_each_expected_event_once(self):
         eng = _make_engine()
-        routes = eng._command_routes()
-        acq, proc = eng.acquisition_command_queue, eng.processor_command_queue
-        assert routes == {
-            EventType.ConnectDataProvider:            (acq, AcquisitionCommand.connect, False),
-            EventType.DisconnectDataProvider:         (acq, AcquisitionCommand.disconnect, False),
-            EventType.StartStream:                    (acq, AcquisitionCommand.start_stream, False),
-            EventType.StopStream:                     (acq, AcquisitionCommand.stop_stream, False),
-            EventType.StartSession:                   (proc, SignalProcessorCommand.start_session, True),
-            EventType.EndSession:                     (proc, SignalProcessorCommand.end_session, True),
-        }
+        _registered_handlers(eng)
+        registrations = eng.event_bus.register_event_listener.call_args_list
+        event_types = [registration.args[0] for registration in registrations]
+        assert len(event_types) == len(_EXPECTED_EVENT_TYPES)
+        assert set(event_types) == _EXPECTED_EVENT_TYPES
 
-    def test_router_enqueues_command_and_ignores_event_arg(self):
+    @pytest.mark.parametrize(
+        "event_type,queue_name,command,payload",
+        _COMMAND_ROUTES,
+    )
+    def test_registered_command_routes(
+        self,
+        event_type,
+        queue_name,
+        command,
+        payload,
+    ):
         eng = _make_engine()
-        router = eng._make_command_router(eng.acquisition_command_queue, AcquisitionCommand.connect)
-        router(Event(EventType.ConnectDataProvider))  # event arg is ignored
-        eng.acquisition_command_queue.put.assert_called_once_with(AcquisitionCommand.connect)
+        handler = _registered_handlers(eng)[event_type]
+        handler(Event(event_type, payload))
 
-    def test_stop_neuro_engine_sets_should_stop(self):
+        expected = (command, payload) if payload is not None else command
+        target_queue = getattr(eng, queue_name)
+        target_queue.put.assert_called_once_with(expected)
+
+        other_queue = (
+            eng.processor_command_queue
+            if queue_name == "acquisition_command_queue"
+            else eng.acquisition_command_queue
+        )
+        other_queue.put.assert_not_called()
+
+    def test_registered_close_handler_stops_without_queueing(self):
         eng = _make_engine()
-        eng._stop_neuro_engine_system()
+        handler = _registered_handlers(eng)[
+            EventType.CloseAllNeuroEngineProcessSystem
+        ]
+        handler(Event(EventType.CloseAllNeuroEngineProcessSystem))
+
         assert eng.should_stop is True
-
-    def test_stop_neuro_engine_accepts_event_arg(self):
-        eng = _make_engine()
-        eng._stop_neuro_engine_system(Event(EventType.CloseAllNeuroEngineProcessSystem))
-        assert eng.should_stop is True
+        eng.acquisition_command_queue.put.assert_not_called()
+        eng.processor_command_queue.put.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -211,35 +248,28 @@ class TestEventRouting:
 
 class TestStop:
     @pytest.mark.asyncio
-    async def test_stop_sends_acquisition_stop(self):
+    async def test_stop_tears_down_all_started_resources(self):
         eng = _make_engine()
         _mark_resources_started(eng)
         eng.acquisition_worker.is_alive.return_value = False
         eng.signal_processing_worker.is_alive.return_value = False
         await eng._stop()
-        eng.acquisition_command_queue.put_nowait.assert_any_call(
+
+        eng.acquisition_command_queue.put_nowait.assert_called_once_with(
             AcquisitionCommand.stop_acquisition
         )
-
-    @pytest.mark.asyncio
-    async def test_stop_sends_processor_stop(self):
-        eng = _make_engine()
-        _mark_resources_started(eng)
-        eng.acquisition_worker.is_alive.return_value = False
-        eng.signal_processing_worker.is_alive.return_value = False
-        await eng._stop()
         eng.processor_command_queue.put_nowait.assert_called_once_with(
             SignalProcessorCommand.should_stop
         )
-
-    @pytest.mark.asyncio
-    async def test_stop_stops_event_bus(self):
-        eng = _make_engine()
-        _mark_resources_started(eng)
-        eng.acquisition_worker.is_alive.return_value = False
-        eng.signal_processing_worker.is_alive.return_value = False
-        await eng._stop()
+        eng.acquisition_worker.join.assert_called_once_with(timeout=3)
+        eng.signal_processing_worker.join.assert_called_once_with(timeout=3)
+        eng.acquisition_worker.terminate.assert_not_called()
+        eng.signal_processing_worker.terminate.assert_not_called()
+        eng.peer_gateway.stop.assert_awaited_once()
         eng.event_bus.stop.assert_awaited_once()
+        eng.processor_command_queue.close.assert_called_once()
+        eng.acquisition_command_queue.close.assert_called_once()
+        assert eng.shutdown_complete is True
 
     @pytest.mark.asyncio
     async def test_terminates_process_that_does_not_exit(self):
@@ -249,16 +279,6 @@ class TestStop:
         eng.signal_processing_worker.is_alive.return_value = False
         await eng._stop()
         eng.acquisition_worker.terminate.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_closes_both_queues(self):
-        eng = _make_engine()
-        _mark_resources_started(eng)
-        eng.acquisition_worker.is_alive.return_value = False
-        eng.signal_processing_worker.is_alive.return_value = False
-        await eng._stop()
-        eng.processor_command_queue.close.assert_called_once()
-        eng.acquisition_command_queue.close.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_closes_builder_owned_ipc_queues(self):
@@ -293,18 +313,44 @@ class TestStop:
 
 
 # ---------------------------------------------------------------------------
-# _join_process static helper
+# Full serve lifecycle and event-driven shutdown
 # ---------------------------------------------------------------------------
 
-class TestJoinProcess:
-    def test_no_terminate_when_process_exits(self):
-        proc = MagicMock()
-        proc.is_alive.return_value = False
-        NeuroEngine._join_process(proc, "TestProc")
-        proc.terminate.assert_not_called()
+class TestServeLifecycle:
+    @pytest.mark.asyncio
+    async def test_preset_stop_runs_start_and_stop(self):
+        eng = _make_engine()
+        eng.acquisition_worker.is_alive.return_value = False
+        eng.signal_processing_worker.is_alive.return_value = False
+        eng.should_stop = True
 
-    def test_terminate_when_process_hangs(self):
-        proc = MagicMock()
-        proc.is_alive.side_effect = [True, False, False]
-        NeuroEngine._join_process(proc, "TestProc", timeout=0)
-        proc.terminate.assert_called_once()
+        await eng.serve()
+
+        eng.acquisition_worker.start.assert_called_once()
+        eng.signal_processing_worker.start.assert_called_once()
+        eng.event_bus.start.assert_awaited_once()
+        eng.peer_gateway.start.assert_awaited_once()
+        eng.event_bus.stop.assert_awaited_once()
+        eng.peer_gateway.stop.assert_awaited_once()
+        assert eng.shutdown_complete is True
+
+    def test_cross_thread_stop_wakes_main_loop_promptly(self):
+        eng = _make_engine()
+        eng.acquisition_worker.is_alive.return_value = False
+        eng.signal_processing_worker.is_alive.return_value = False
+        stop_time = {}
+
+        def stop_engine():
+            time.sleep(0.05)
+            stop_time["requested_at"] = time.perf_counter()
+            eng.should_stop = True
+
+        thread = threading.Thread(target=stop_engine)
+        thread.start()
+        asyncio.run(eng.serve())
+        thread.join(timeout=1.0)
+
+        elapsed = time.perf_counter() - stop_time["requested_at"]
+        assert elapsed < 0.5
+        eng.event_bus.stop.assert_awaited_once()
+        eng.peer_gateway.stop.assert_awaited_once()

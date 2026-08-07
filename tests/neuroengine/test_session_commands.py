@@ -7,7 +7,6 @@ Covers:
   - start_session enforces the single-active-session invariant (ends the
     previous session, fresh aggregate uses the API-supplied id).
   - end_session ignores a stale id (mismatch guard).
-  - NeuroEngine._make_command_router: carry_data routes enqueue (command, data).
   - SignalProcessor standby mode (auto_start_session=False): no running
     session until the first start_session command.
 """
@@ -16,13 +15,10 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from omnibci.domain.session import SessionState
-from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
-from omnibci.infrastructure.neuroengine.engine import NeuroEngine
 from omnibci.infrastructure.neuroengine.processing.signal_processor import (
     SignalProcessor,
     SignalProcessorCommand,
 )
-from omnibci.shared.events import Event, EventType
 
 
 def _processor(auto_start: bool = True) -> SignalProcessor:
@@ -87,27 +83,3 @@ class TestStandbyMode:
     def test_auto_start_true_keeps_legacy_behaviour(self):
         p = _processor(auto_start=True)
         assert p.session.state == SessionState.RUNNING
-
-
-class _FakeQueue:
-    def __init__(self):
-        self.items = []
-
-    def put(self, item):
-        self.items.append(item)
-
-
-class TestCarryDataRouting:
-    def test_plain_route_enqueues_bare_command(self):
-        q = _FakeQueue()
-        route = NeuroEngine._make_command_router(q, AcquisitionCommand.stop_stream)
-        route(Event(EventType.StopStream))
-        assert q.items == [AcquisitionCommand.stop_stream]
-
-    def test_carry_data_route_enqueues_tuple(self):
-        q = _FakeQueue()
-        route = NeuroEngine._make_command_router(
-            q, SignalProcessorCommand.start_session, carry_data=True)
-        payload = {"session_id": "abc", "paradigm": None}
-        route(Event(EventType.StartSession, payload))
-        assert q.items == [(SignalProcessorCommand.start_session, payload)]
