@@ -79,8 +79,8 @@ class TestPipelineWithFilters:
         pipe = ProcessingPipeline(decoder=dec, filters=[f], sample_rate=512)
         pipe.run(np.ones((2, 2)), event_id=42)
         assert f.seen_ctx.sample_rate == 512
-        assert f.seen_ctx.forced is False
         assert f.seen_ctx.event_id == 42
+        assert f.seen_ctx.baseline is None
 
 
 if __name__ == "__main__":  # pragma: no cover
