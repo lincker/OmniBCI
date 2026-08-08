@@ -1,19 +1,4 @@
-"""
-Characterization tests — Acquisition 领域服务（命令/状态机）.
-
-补齐采集上下文此前的测试缺口：`tests/characterization/test_acquisition_characterization.py`
-只锁了插件注册表 + `FileReader` 端口生命周期，但真正编排采集子进程行为的
-`Acquisition` 领域服务（`infrastructure/acquisition/acquisition.py`）一直没有单元级
-安全网——它的命令分派、fetch 循环、shutdown 都只在需要真实 mne / 子进程的集成测试
-里被间接触达。
-
-本组用注入的 fake data_source / queue / data_manager 把 `Acquisition` 当前的
-**可观察行为**钉死，使后续对 `execute()` 的结构收口、端口属性化（消除
-`_is_connected` 私有穿透）等重构有红线可依。
-
-只依赖 numpy + asyncio，可在纯 numpy 环境用独立 runner 跑通（无需 pytest 插件、
-无需 tomlkit / mne）。
-"""
+"""Unit tests for Acquisition command dispatch, streaming, and state projection."""
 from __future__ import annotations
 
 import asyncio
@@ -235,35 +220,8 @@ class TestAcquisitionShutdown:
 
 
 # ---------------------------------------------------------------------------
-# Standalone runner — lets this file run under a bare numpy environment
-# (no pytest plugin), mirroring tests/characterization/README.md convention.
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":  # pragma: no cover
-    import traceback
-
-    passed = failed = 0
-    for cls in (
-        TestAcquisitionCommandDispatch,
-        TestAcquisitionFetch,
-        TestAcquisitionShutdown,
-    ):
-        inst = cls()
-        for name in sorted(n for n in dir(inst) if n.startswith("test_")):
-            try:
-                getattr(inst, name)()
-                passed += 1
-                print(f"PASS {cls.__name__}.{name}")
-            except Exception:
-                failed += 1
-                print(f"FAIL {cls.__name__}.{name}")
-                traceback.print_exc()
-    print(f"\n{passed} passed, {failed} failed")
-    raise SystemExit(1 if failed else 0)
-
-
-# ---------------------------------------------------------------------------
-# 方案 A：状态投影 —— worker 在状态转换处发射 AcquisitionSnapshot
+# Scheme A: state projection — the worker emits an AcquisitionSnapshot on
+# every state transition.
 # ---------------------------------------------------------------------------
 
 class _SpyBus:
@@ -311,7 +269,7 @@ class TestStateProjectionEmission:
         assert self._snaps(bus)[-1] == (True, False)
 
     def test_eof_closes_stream_and_emits_truth(self):
-        """文件回放播完：设备停流 + 投影收到 streaming=False（前端不再假活）。"""
+        """EOF stops the source and projects streaming=False to clients."""
         source = _EOFDataSource(chunks=[np.ones((2, 3))])
         acq, bus = self._make(source)
         _run(acq._on_connect())
@@ -321,13 +279,13 @@ class TestStateProjectionEmission:
             await acq.fetch_task
 
         _run(start_and_drain())
-        assert "stop_stream" in source.calls          # EOF 干净收流
+        assert "stop_stream" in source.calls          # EOF closes the stream cleanly
         assert source.is_streaming is False
-        assert self._snaps(bus)[-1] == (True, False)  # 真相回流投影
+        assert self._snaps(bus)[-1] == (True, False)  # projection reflects source truth
 
     def test_start_stream_when_not_connected_reports_truth(self):
         source = _FakeDataSource()
-        acq, bus = self._make(source)          # 未 connect，status=stop
+        acq, bus = self._make(source)          # never connected, status=stop
         _run(acq._on_start_stream())
         assert "start_stream" not in source.calls
         assert self._snaps(bus)[-1] == (False, False)

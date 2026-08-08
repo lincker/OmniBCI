@@ -1,18 +1,4 @@
-"""
-Characterization tests — Stimulation 限界上下文.
-
-刺激上下文的渲染路径依赖 OpenGL/GLFW（需窗口/显卡），不适合在 CI/无头
-环境断言；这里把可稳定固化的 **范式配置 (SSVEPConfig)** 作为接缝，锁定
-classic40SSVEP 范式的关键参数与字符布局。
-
-重构（尤其把 stimulation/ 迁入 infrastructure/）后，只要本文件全绿，即可
-确信刺激范式的对外契约（频率表、相位表、字符排布、目标几何）未漂移。
-
-注意：omnibci/stimulation/creator/ssvep_target_rect.py 当前含一处可疑的
-裸导入 `from stimulation.ui.view import View`（缺少 omnibci. 前缀），在多数
-环境下无法直接导入该模块。这正是特征测试网应当在重构时暴露的问题之一，
-已在 README 中记录；此处刻意不依赖该模块。
-"""
+"""Tests for SSVEP paradigm configuration and target brightness."""
 from __future__ import annotations
 
 import math
@@ -20,6 +6,9 @@ import math
 import numpy as np
 
 from omnibci.infrastructure.stimulation.creator.stim_config import SSVEPConfig
+from omnibci.infrastructure.stimulation.creator.ssvep_target_rect import (
+    StimTargetRect,
+)
 
 
 class TestSSVEPConfigInvariants:
@@ -73,27 +62,35 @@ class TestSSVEPConfigInvariants:
 
 
 class TestSSVEPBrightnessContract:
-    """
-    刺激亮度的数学契约（与 StimTargetRect.cal_brightness 一致）：
-        brightness(frame) = 0.5 + 0.5 * sin(2π·f/fs·frame + phase)
-    由于 ssvep_target_rect 模块当前存在裸导入问题（见模块 docstring），
-    这里以独立实现固化该不变量，作为重构修复该导入后比对真实实现的基准。
-    """
+    """Exercise the production brightness calculation directly."""
 
     @staticmethod
-    def _brightness(frame_no, frequency, fs, start_phase):
-        return 0.5 + 0.5 * math.sin(2 * math.pi * frequency / fs * frame_no + start_phase)
+    def _target(frequency=10.0, fs=60, start_phase=0.0):
+        return StimTargetRect(
+            rectINX=0,
+            site_point=(0, 0),
+            rect_size=(140, 140),
+            fs=fs,
+            frequency=frequency,
+            start_phase=start_phase,
+            max_amplitude=1.0,
+        )
 
     def test_brightness_bounds(self):
+        target = self._target()
         for frame in range(0, 120):
-            b = self._brightness(frame, frequency=10.0, fs=60, start_phase=0.0)
+            b = target.cal_brightness(frame)
             assert 0.0 <= b <= 1.0
 
     def test_brightness_at_frame_zero_with_zero_phase(self):
-        assert math.isclose(self._brightness(0, 10.0, 60, 0.0), 0.5, abs_tol=1e-12)
+        assert math.isclose(
+            self._target().cal_brightness(0), 0.5, abs_tol=1e-12
+        )
 
     def test_brightness_phase_shift(self):
         # phase = π/2 → sin starts at 1 → brightness = 1.0 at frame 0
         assert math.isclose(
-            self._brightness(0, 10.0, 60, math.pi / 2), 1.0, abs_tol=1e-12
+            self._target(start_phase=math.pi / 2).cal_brightness(0),
+            1.0,
+            abs_tol=1e-12,
         )

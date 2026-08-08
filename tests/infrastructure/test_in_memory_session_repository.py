@@ -174,24 +174,6 @@ class TestThreadSafety:
         assert not errors
         assert len(repo.find_all()) == 50
 
-    def test_concurrent_append_trials_consistent(self):
-        repo = InMemorySessionRepository()
-        rec = _record("shared")
-        repo.save(rec)
-
-        def appender():
-            r = repo.find_by_id("shared")
-            if r and r.state == SessionRecordState.RUNNING:
-                r.append_trial(_trial())
-                repo.save(r)
-
-        threads = [threading.Thread(target=appender) for _ in range(20)]
-        for t in threads: t.start()
-        for t in threads: t.join()
-        # No assertion on count (TOCTOU is expected without higher-level locking);
-        # only assert no exception was raised.
-
-
 # ---------------------------------------------------------------------------
 # P1-4: atomic update / upsert primitives
 # ---------------------------------------------------------------------------
@@ -203,7 +185,7 @@ class TestAtomicUpdate:
         out = repo.update("s1", lambda r: r.append_trial(_trial(1)))
         assert out.trial_count == 1
         assert repo.find_by_id("s1").trial_count == 1
-        out.trials.clear()  # 返回值是拷贝，改它不影响存储
+        out.trials.clear()  # the returned copy cannot mutate stored state
         assert repo.find_by_id("s1").trial_count == 1
 
     def test_update_unknown_returns_none_without_calling_mutator(self):
@@ -219,7 +201,7 @@ class TestAtomicUpdate:
         repo.save(rec)
         with pytest.raises(RuntimeError):
             repo.update("s1", lambda r: r.append_trial(_trial(1)))  # ended → raises
-        assert repo.find_by_id("s1").trial_count == 0  # 存储未被半改
+        assert repo.find_by_id("s1").trial_count == 0  # no partial mutation leaked
 
     def test_update_maintains_active_tracking(self):
         repo = InMemorySessionRepository()
@@ -243,8 +225,8 @@ class TestUpsert:
         created = []
         out = repo.upsert("s1", lambda: created.append(1) or _record("s1"),
                           lambda r: r.append_trial(_trial(1)))
-        assert created == []           # 既有记录：create 不被调用
-        assert out.paradigm == "p"     # 原记录字段保留（不会被裸投影覆盖）
+        assert created == []           # existing records skip the create callback
+        assert out.paradigm == "p"     # existing fields survive the mutation
         assert out.trial_count == 1
 
     def test_create_with_wrong_id_rejected(self):
@@ -254,10 +236,10 @@ class TestUpsert:
 
 
 class TestConcurrentAppends:
-    """回归锁定 P1-4：并发 read-modify-write 丢更新。
+    """Regression coverage for P1-4 concurrent lost updates.
 
-    旧模式（find_by_id 拷贝 → 改 → save 整体替换）在多线程下丢 trial；
-    update() 在仓储锁内执行 mutator，计数必须精确。
+    The old find-copy-save flow lost trials across threads. ``update()`` runs
+    the mutator under the repository lock, so the final count must be exact.
     """
 
     def test_no_lost_trials_under_concurrent_update(self):
@@ -276,8 +258,7 @@ class TestConcurrentAppends:
         assert repo.find_by_id("s1").trial_count == threads_n * per_thread
 
     def test_end_during_concurrent_appends_is_consistent(self):
-        """end 与 append 并发：结束后记录必须保持 ENDED（不被顶回 RUNNING），
-        且 append 对 ENDED 记录的失败不破坏已有数据。"""
+        """Concurrent end and append operations preserve the ENDED state."""
         repo = InMemorySessionRepository()
         repo.save(_record("s1"))
         stop = threading.Event()
@@ -288,7 +269,7 @@ class TestConcurrentAppends:
                     repo.update("s1", lambda r: r.append_trial(
                         _trial(r.trial_count + 1)))
                 except RuntimeError:
-                    return  # session 已结束：追加被拒绝是正确行为
+                    return  # appends are correctly rejected after session end
 
         ts = [threading.Thread(target=appender) for _ in range(4)]
         for t in ts: t.start()

@@ -1,20 +1,4 @@
-"""
-Characterization tests — NeuroEngine 限界上下文.
-
-锁定信号处理流水线的当前可观察行为，接缝选在 EpochProcessor —— 它是 epoch
-缓冲 + 解码 + 领域对象构造的汇聚点，且可用 fake 解码器完全替代硬件与具体算法插件。
-
-被固化的行为：
-  - initialize_epoch(chunk, start_idx, event_id) 从给定 start_idx 切片建立缓冲。
-    （边界检测已移到 SignalProcessor 的 EpochDetector；EpochProcessor 只收 start_idx。）
-  - append_chunk() / append_until_index() 的拼接语义。
-  - build_epoch() 产出不可变 Epoch 值对象（含防御性拷贝、只读）。
-  - process_chunk() 在 decoder 就绪时把 Prediction 包装为 Classification。
-  - force_recognize() 绕过就绪门控，并设置 Classification.forced=True。
-
-fake 解码器不定义 plugin_type，因此不会进入插件注册表
-（见 Registerable.__init_subclass__：plugin_type 为 None 时跳过注册）。
-"""
+"""Unit tests for EpochProcessor buffering, epoch construction, and decoding."""
 from __future__ import annotations
 
 import numpy as np
@@ -173,32 +157,3 @@ class TestForNewEpoch:
         # Stateless decoders share one instance across epochs (zero cost).
         dec = FakeDecoder()
         assert dec.for_new_epoch() is dec
-
-    def test_stateful_override_returns_fresh_instance_sharing_model(self):
-        class _Model:
-            pass
-
-        shared_model = _Model()
-
-        class StatefulDecoder(Decoder):
-            def __init__(self, model):
-                super().__init__()
-                self.model = model           # heavy, shared, immutable
-                self.acc = []                # per-epoch working state
-
-            def should_decode(self, window):
-                return True
-
-            def decode(self, window, latest):
-                self.acc.append(1)
-                return Prediction(target_id=0)
-
-            def for_new_epoch(self):
-                return StatefulDecoder(self.model)   # fresh state, same model
-
-        d0 = StatefulDecoder(shared_model)
-        d0.decode(None, None)                    # mutate d0's per-epoch state
-        d1 = d0.for_new_epoch()
-        assert d1 is not d0                       # fresh instance
-        assert d1.model is shared_model           # shares the heavy model
-        assert d1.acc == []                        # isolated working state

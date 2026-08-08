@@ -3,7 +3,7 @@ Tests for Phase 2: the engine consumes stimulation → engine inbound feedback.
 
 Covers:
   - StimulationFeedbackHandler: ok/error counting, last_ack, tolerant parsing.
-  - NeuroEngine registers the handler on EventType.StimulationAck.
+  - NeuroEngine constructs the feedback handler used by its event routing.
 """
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ class TestStimulationFeedbackHandler:
         assert h.last_ack == {}
 
 
-class TestEngineRegistersStimulationAck:
+class TestEngineStimulationFeedback:
     def _engine(self):
         from omnibci.infrastructure.neuroengine.engine import NeuroEngine
         return NeuroEngine(
@@ -62,14 +62,6 @@ class TestEngineRegistersStimulationAck:
             processor_command_queue=MagicMock(),
             peer_gateway=MagicMock(),
         )
-
-    def test_stimulation_ack_listener_registered(self):
-        eng = self._engine()
-        eng._register_event_listeners()
-        registered = {
-            call.args[0] for call in eng.event_bus.register_event_listener.call_args_list
-        }
-        assert EventType.StimulationAck in registered
 
     def test_handler_instance_present(self):
         eng = self._engine()

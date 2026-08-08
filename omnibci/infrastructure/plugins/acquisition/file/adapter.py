@@ -43,6 +43,9 @@ class CNTReaderAdapter(ReaderAdapter):
         arr = np.vstack((self.data, event_channel))
         self.data = arr
 
+    def get_metadata(self):
+        return self.__class__.__name__
+
     async def read_chunk(self, start: int, end: int):
         # EOF: numpy 越界切片返回空数组而非 None，上游 FileReader 以
         # `raw_data is None` 判断流结束，因此这里显式返回 None。

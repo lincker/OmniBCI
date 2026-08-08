@@ -1,14 +1,4 @@
-"""
-Characterization / contract tests — ProcessingPipeline（Filter* → Decoder.decode）.
-
-锁定解码契约：
-  - 无 filter 时 pipeline.run 等价于直接 decoder.decode(epoch_data)。
-  - filters 按顺序作用于 epoch_data，再交给 decoder。
-  - 返回 Optional[Prediction]（decoder 不出结果 → None）。
-  - 强制识别由 EpochProcessor 管理，pipeline 不接收 forced 参数。
-
-只依赖 numpy；纯 numpy 环境用独立 runner 可跑。
-"""
+"""Contract tests for ProcessingPipeline filter and decoder composition."""
 from __future__ import annotations
 
 from typing import Optional
@@ -79,19 +69,5 @@ class TestPipelineWithFilters:
         pipe = ProcessingPipeline(decoder=dec, filters=[f], sample_rate=512)
         pipe.run(np.ones((2, 2)), event_id=42)
         assert f.seen_ctx.sample_rate == 512
-        assert f.seen_ctx.forced is False
         assert f.seen_ctx.event_id == 42
-
-
-if __name__ == "__main__":  # pragma: no cover
-    import traceback
-    passed = failed = 0
-    for cls in (TestPipelineNoFilters, TestPipelineWithFilters):
-        inst = cls()
-        for name in sorted(n for n in dir(inst) if n.startswith("test_")):
-            try:
-                getattr(inst, name)(); passed += 1; print(f"PASS {cls.__name__}.{name}")
-            except Exception:
-                failed += 1; print(f"FAIL {cls.__name__}.{name}"); traceback.print_exc()
-    print(f"\n{passed} passed, {failed} failed")
-    raise SystemExit(1 if failed else 0)
+        assert f.seen_ctx.baseline is None

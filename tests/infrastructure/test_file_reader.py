@@ -1,22 +1,4 @@
-"""
-Characterization tests — Acquisition 限界上下文.
-
-锁定采集上下文当前的两个稳定接缝：
-
-  1. 插件注册机制（register_plugin 装饰器 + ObjectFactory）：FileReader 以
-     plugin_type='file_reader' 注册进 SignalSource 的注册表，调用方读
-     settings 中的 ACQUISITION.signal_source 后由工厂解析出具体实现。这是
-     采集层 "换设备只改配置" 能力的根基，重构时绝不能破坏。
-     （P0-3：原 Registerable 元类自注册已改为显式装饰器，注册表与工厂
-     迁至 infrastructure/plugins；工厂签名从 config_key 改为 target_id。）
-
-  2. SignalSource 端口生命周期：FileReader 的 connect → start_stream →
-     read_chunk（文件指针按 chunk_size 步进）→ stop_stream 的可观察行为。
-     用 fake adapter 注入，避免依赖真实 .cnt 文件与 mne。
-
-说明：read_chunk 等为协程，这里用 asyncio.run 驱动，避免引入
-pytest-asyncio 依赖。
-"""
+"""Unit tests for FileReader lifecycle and acquisition plugin registration."""
 from __future__ import annotations
 
 import asyncio
@@ -51,7 +33,7 @@ class _FakeAdapter:
     async def close(self):
         self.closed = True
 
-    def get_name(self):
+    def get_metadata(self):
         return "fake-device"
 
 
@@ -74,7 +56,8 @@ class TestDataSourceRegistry:
         assert ObjectFactory.create(SignalSource, "does_not_exist") is None
 
     def test_factory_returns_none_for_missing_target(self):
-        # 配置读取上移后，"缺配置" 在工厂侧表现为 target_id=None
+        # Configuration is resolved upstream, so missing config reaches the
+        # factory as target_id=None.
         assert ObjectFactory.create(SignalSource, None) is None
 
 
@@ -159,7 +142,7 @@ class TestFileReaderLifecycle:
         _run(r.disconnect())
         assert r.reader_adapter.closed is True
 
-    def test_get_metadata_returns_device_name(self):
+    def test_get_metadata_returns_adapter_metadata(self):
         r = self._reader()
         assert _run(r.get_metadata()) == "fake-device"
 
