@@ -13,6 +13,7 @@ from omnibci.application.commands.acquisition_commands import (
 from omnibci.application.events import AcquisitionSnapshot
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 from omnibci.shared.events import Event, EventType
+from omnibci.application.services.acquisition_service import AcquisitionAppService
 
 
 @pytest.fixture(autouse=True)
@@ -22,6 +23,11 @@ def _running_engine(engine_service):
     engine_service._accepting_commands = True
     engine_service._engine_thread = MagicMock()
     engine_service._engine_thread.is_alive.return_value = True
+
+
+def test_command_executor_is_required():
+    with pytest.raises(TypeError):
+        AcquisitionAppService()
 
 
 class TestAcquisitionConnect:

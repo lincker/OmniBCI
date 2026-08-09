@@ -313,6 +313,11 @@ class StimulationProcessManager:
             self._state = ChildProcessState.FAILED
 
     @property
+    def auto_spawn(self) -> bool:
+        """Whether this manager owns the stimulation subprocess lifecycle."""
+        return self._auto_spawn
+
+    @property
     def is_alive(self) -> bool:
         with self._lifecycle_lock:
             self._refresh_state_locked()

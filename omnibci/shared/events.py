@@ -14,13 +14,13 @@ class EventType(IntEnum):
     StopStream = 112
     AcquisitionState = 121  # worker -> API: authoritative device-state snapshot
                             # payload: application.events.AcquisitionSnapshot
-    # neuro engine（历史遗留值 33/9：数值是 IPC wire 契约的一部分，
-    # 重新编号需要 bump contracts.PROTOCOL_VERSION，故仅整理注释不改值）
+    CommandResult = 601      # command consumer -> API: application.events.CommandResult
+    # Legacy numeric values are part of the versioned IPC wire contract.
     CloseAllNeuroEngineProcessSystem = 33
     # stimulation
     StartStimTrial = 311
     StimulationAck = 312   # stim → engine: ack/result of a stimulation command
-    MessageFromStimulation = 9   # 历史遗留值，同上
+    MessageFromStimulation = 9
     StartStimulation = 301
     StopStimulation = 302
     # actuation (external-device control; the actuation subsystem loads
@@ -39,9 +39,9 @@ class EventType(IntEnum):
 
 
 class Event:
-    """EventBus 信封：type 标识事件种类，data 携带载荷。
+    """EventBus envelope containing an event type and its payload.
 
-    载荷契约（P2-8，权威表）——各 EventType 对应的 data 类型：
+    Payload contracts:
 
       TrialCompleted   application.events.TrialOutcome
       SessionEnded     application.events.SessionSummary
@@ -51,12 +51,10 @@ class Event:
       StartStimulation str|None (paradigm)
       StartStimTrial   dict {"n_trials": int, "trial_params": list|None}
       AcquisitionState application.events.AcquisitionSnapshot
-      StimulationAck   dict (make_stimulation_ack 构造，跨 socket 为 JSON)
-      Actuation*       dict (设备命令/反馈，跨 socket 为 JSON)
-      其余命令类事件    None
-
-    消费方对富载荷做显式 isinstance 检查；旧的 bare-Classification /
-    bare-int 兼容形状已于 P2-8 移除。
+      CommandResult    application.events.CommandResult
+      StimulationAck   dict produced by make_stimulation_ack
+      Actuation*       dict containing device commands or feedback
+      Other commands   None
     """
 
     __slots__ = ("type", "data")
@@ -67,10 +65,3 @@ class Event:
 
     def __repr__(self) -> str:
         return f"Event({self.type!r}, data={type(self.data).__name__})"
-
-    # NOTE: create_from_json was removed — it called cls(**event_json) with key
-    # 'type' against parameter 'event_type' (TypeError on any use), and wire
-    # decoding is owned by infrastructure/ipc/contracts.body_to_event.
-    # NOTE: to_json was removed (P2-8) — dead code; wire encoding is owned by
-    # infrastructure/ipc/contracts.event_to_body.
-

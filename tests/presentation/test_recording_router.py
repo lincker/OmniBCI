@@ -9,6 +9,11 @@ from omnibci.application.services.recording_service import (
     RecordingConflictError,
     RecordingService,
 )
+from omnibci.application.events import CommandResult
+from omnibci.application.services.command_result_service import (
+    CommandRejectedError,
+    CommandTimeoutError,
+)
 
 
 @pytest.fixture()
@@ -80,6 +85,21 @@ class TestStartRecording:
             "detail": None,
         }
 
+    def test_start_reports_worker_rejection(self, api_client, recording_service):
+        recording_service.start.side_effect = CommandRejectedError(CommandResult(
+            command_id="stream-command",
+            command="StartStream",
+            ok=False,
+            message="source is disconnected",
+            error_code="DATA_SOURCE_NOT_CONNECTED",
+        ))
+
+        response = api_client.post("/api/v1/recording/start")
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "COMMAND_REJECTED"
+        assert response.json()["detail"]["error_code"] == "DATA_SOURCE_NOT_CONNECTED"
+
 
 class TestStopRecording:
     def test_stop_returns_ended_session(self, api_client, recording_service):
@@ -113,3 +133,13 @@ class TestStopRecording:
             "message": "No active recording to stop.",
             "detail": None,
         }
+
+    def test_stop_reports_command_timeout(self, api_client, recording_service):
+        recording_service.stop.side_effect = CommandTimeoutError(
+            "stop-command", "StopStream", 0.5
+        )
+
+        response = api_client.post("/api/v1/recording/stop")
+
+        assert response.status_code == 504
+        assert response.json()["code"] == "COMMAND_TIMEOUT"

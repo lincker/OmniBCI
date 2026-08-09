@@ -4,13 +4,21 @@ from __future__ import annotations
 import asyncio
 
 import numpy as np
+import pytest
 
 from omnibci.infrastructure.acquisition.acquisition import (
     Acquisition,
     AcquisitionCommand,
+    AcquisitionCommandRejected,
     AcquisitionState,
 )
+from omnibci.application.events import (
+    CommandFailureKind,
+    CommandRequest,
+    CommandResult,
+)
 from omnibci.domain.signal import SignalChunk
+from omnibci.shared.events import EventType
 
 
 def _run(coro):
@@ -132,6 +140,29 @@ class TestAcquisitionCommandDispatch:
         assert a.data_source.calls == ["connect", "disconnect"]
         assert a.status is AcquisitionState.stop
 
+    def test_disconnect_stops_stream_and_joins_fetch_task_before_success(self):
+        async def scenario():
+            source = _FakeDataSource(fail_after=0)
+            a = _acq(data_source=source)
+            await a.execute(AcquisitionCommand.connect)
+            await a.execute(AcquisitionCommand.start_stream)
+            task = a.fetch_task
+
+            await a.execute(AcquisitionCommand.disconnect)
+
+            assert source.calls == [
+                "connect",
+                "start_stream",
+                "stop_stream",
+                "disconnect",
+            ]
+            assert task.done()
+            assert a.fetch_task is None
+            assert source.is_connected is False
+            assert source.is_streaming is False
+
+        _run(scenario())
+
     def test_start_stream_when_running_starts_source_and_creates_fetch_task(self):
         async def scenario():
             a = _acq(data_source=_FakeDataSource(fail_after=0))
@@ -143,15 +174,78 @@ class TestAcquisitionCommandDispatch:
         _run(scenario())
 
     def test_start_stream_while_not_running_is_ignored(self):
-        # LOCKED QUIRK: start_stream is gated on status == running. When the
-        # source was never connected the command falls through every branch
-        # and is silently dropped (logged as "Unknown"): no start_stream call,
-        # no fetch task, status unchanged.
         a = _acq()
         _run(a.execute(AcquisitionCommand.start_stream))
         assert a.data_source.calls == []
         assert a.fetch_task is None
         assert a.status is AcquisitionState.stop
+
+    def test_confirmed_start_stream_rejects_when_not_connected(self):
+        bus = _SpyBus()
+        a = Acquisition(
+            data_source=_FakeDataSource(),
+            command_queue=_FakeQueue(),
+            data_manager=_FakeDataManager(),
+            event_bus=bus,
+        )
+
+        _run(a.execute((
+            AcquisitionCommand.start_stream,
+            CommandRequest(command_id="cmd-1"),
+        )))
+
+        results = [e.data for e in bus.events if e.type == EventType.CommandResult]
+        assert results == [CommandResult(
+            command_id="cmd-1",
+            command="StartStream",
+            ok=False,
+            message="Cannot start stream before the data source is connected",
+            error_code="DATA_SOURCE_NOT_CONNECTED",
+            failure_kind=CommandFailureKind.REJECTED,
+        )]
+
+    def test_confirmed_connect_emits_state_before_success(self):
+        bus = _SpyBus()
+        a = Acquisition(
+            data_source=_FakeDataSource(),
+            command_queue=_FakeQueue(),
+            data_manager=_FakeDataManager(),
+            event_bus=bus,
+        )
+
+        _run(a.execute((
+            AcquisitionCommand.connect,
+            CommandRequest(command_id="cmd-2"),
+        )))
+
+        assert [e.type for e in bus.events] == [
+            EventType.AcquisitionState,
+            EventType.CommandResult,
+        ]
+        assert bus.events[-1].data.ok is True
+
+    def test_confirmed_internal_failure_is_not_reported_as_rejection(self):
+        class _BrokenSource(_FakeDataSource):
+            async def connect(self):
+                raise OSError("device unavailable")
+
+        bus = _SpyBus()
+        a = Acquisition(
+            data_source=_BrokenSource(),
+            command_queue=_FakeQueue(),
+            data_manager=_FakeDataManager(),
+            event_bus=bus,
+        )
+
+        _run(a.execute((
+            AcquisitionCommand.connect,
+            CommandRequest(command_id="cmd-failed"),
+        )))
+
+        result = next(e.data for e in bus.events if e.type == EventType.CommandResult)
+        assert result.ok is False
+        assert result.error_code == "OSError"
+        assert result.failure_kind is CommandFailureKind.EXECUTION_FAILED
 
     def test_stop_stream_stops_source_and_cancels_fetch_task(self):
         async def scenario():
@@ -163,6 +257,19 @@ class TestAcquisitionCommandDispatch:
             await asyncio.sleep(0)  # let the cancellation propagate one loop turn
             assert "stop_stream" in a.data_source.calls
             assert task.cancelled() or task.done()
+        _run(scenario())
+
+    def test_stop_stream_joins_orphan_fetch_task_when_source_already_stopped(self):
+        async def scenario():
+            a = _acq()
+            a.fetch_task = asyncio.create_task(asyncio.Event().wait())
+            task = a.fetch_task
+
+            await a.execute(AcquisitionCommand.stop_stream)
+
+            assert task.done()
+            assert a.fetch_task is None
+
         _run(scenario())
 
     def test_stop_acquisition_sets_should_exit(self):
@@ -286,7 +393,8 @@ class TestStateProjectionEmission:
     def test_start_stream_when_not_connected_reports_truth(self):
         source = _FakeDataSource()
         acq, bus = self._make(source)          # never connected, status=stop
-        _run(acq._on_start_stream())
+        with pytest.raises(AcquisitionCommandRejected):
+            _run(acq._on_start_stream())
         assert "start_stream" not in source.calls
         assert self._snaps(bus)[-1] == (False, False)
 

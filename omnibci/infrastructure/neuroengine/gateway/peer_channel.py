@@ -303,6 +303,22 @@ class PeerChannel:
             return False
         return await self._transport.send(event)
 
+    async def send(self, event: Event) -> bool:
+        """Send one allow-listed outbound event immediately.
+
+        Most traffic is forwarded through EventBus subscriptions.  A shutdown
+        handler may need to flush its terminal result before stopping that same
+        bus/channel, so it uses this explicit, still route-checked seam.
+        """
+        if event.type not in self._config.routes.outbound:
+            logger.warning(
+                "PeerChannel '%s': outbound event type %s not in route white-list; dropped",
+                self._config.name,
+                event.type,
+            )
+            return False
+        return await self._forward(event)
+
     def _on_inbound(self, event: Event) -> bool:
         """Inbound: peer → engine. White-list before touching the bus."""
         if event.type in self._config.routes.inbound:

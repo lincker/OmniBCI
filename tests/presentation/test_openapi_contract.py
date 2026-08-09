@@ -93,10 +93,15 @@ class TestOperationSurface:
             "/api/v1/acquisition/stream/stop",
         ],
     )
-    def test_acquisition_commands_are_accepted_asynchronously(self, spec, path):
+    def test_acquisition_commands_return_only_after_execution_confirmation(self, spec, path):
         responses = spec["paths"][path]["post"]["responses"]
-        assert "202" in responses
-        assert "200" not in responses
+        assert "200" in responses
+        assert "202" not in responses
+        assert "504" in responses
+
+    def test_read_only_endpoint_does_not_advertise_command_timeout(self, spec):
+        responses = spec["paths"]["/api/v1/acquisition/status"]["get"]["responses"]
+        assert "504" not in responses
 
 
 # ---------------------------------------------------------------------------
@@ -148,10 +153,12 @@ class TestErrorContract:
         assert set(code["enum"]) == {
             # generic
             "BAD_REQUEST", "UNAUTHORIZED", "FORBIDDEN", "NOT_FOUND", "CONFLICT",
-            "VALIDATION_ERROR", "SERVICE_UNAVAILABLE", "INTERNAL_ERROR", "ERROR",
+            "VALIDATION_ERROR", "SERVICE_UNAVAILABLE", "GATEWAY_TIMEOUT",
+            "INTERNAL_ERROR", "ERROR",
             # domain-specific
             "ENGINE_NOT_READY", "SESSION_NOT_FOUND", "NO_ACTIVE_SESSION", "NO_TRIALS",
             "ALREADY_RECORDING", "NO_ACTIVE_RECORDING",
+            "COMMAND_REJECTED", "COMMAND_EXECUTION_FAILED", "COMMAND_TIMEOUT",
             # layered configuration (stage 4)
             "CONFIG_KEY_NOT_ALLOWED", "CONFIG_PROFILE_NOT_FOUND", "CONFIG_PROFILE_IN_USE",
         }

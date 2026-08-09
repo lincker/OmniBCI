@@ -219,7 +219,13 @@ class TestEventRouting:
         handler = _registered_handlers(eng)[event_type]
         handler(Event(event_type, payload))
 
-        expected = (command, payload) if payload is not None else command
+        carries_payload = payload is not None or event_type in {
+            EventType.ConnectDataProvider,
+            EventType.DisconnectDataProvider,
+            EventType.StartStream,
+            EventType.StopStream,
+        }
+        expected = (command, payload) if carries_payload else command
         target_queue = getattr(eng, queue_name)
         target_queue.put.assert_called_once_with(expected)
 

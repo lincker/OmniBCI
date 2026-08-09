@@ -15,6 +15,7 @@ import asyncio
 from queue import Queue
 
 from omnibci.infrastructure.stimulation.application import Stimulation
+from omnibci.application.events import CommandRequest, CommandResult
 from omnibci.shared.events import Event, EventType
 
 
@@ -103,3 +104,67 @@ def test_ack_error_when_window_closed():
         assert ack.data["status"] == "error"
         assert "window closed" in ack.data["message"]
     asyncio.run(scenario())
+
+
+def test_correlated_result_is_emitted_only_after_trial_enters_renderer():
+    async def scenario():
+        s = _make(_FakeStimulator())
+        request = CommandRequest(
+            command_id="cmd-1",
+            payload={"n_trials": 1, "trial_params": [7]},
+        )
+        s._put_stim_command_queue(Event(EventType.StartStimTrial, request))
+        assert s.event_bus.published == []
+
+        await s.execute_command()
+
+        assert s.stimulator.presented == [7]
+        result_events = [
+            event for event in s.event_bus.published
+            if event.type == EventType.CommandResult
+        ]
+        assert len(result_events) == 1
+        assert result_events[0].data == CommandResult(
+            command_id="cmd-1",
+            command="StartStimTrial",
+            ok=True,
+            message="Stimulation trial started",
+            error_code=None,
+        )
+    asyncio.run(scenario())
+
+
+def test_correlated_result_rejects_closed_window():
+    async def scenario():
+        s = _make(_FakeStimulator(), render_done=True)
+        request = CommandRequest(
+            command_id="cmd-2",
+            payload={"n_trials": 1, "trial_params": [2]},
+        )
+        s._put_stim_command_queue(Event(EventType.StartStimTrial, request))
+
+        await s.execute_command()
+
+        result = next(
+            event.data for event in s.event_bus.published
+            if event.type == EventType.CommandResult
+        )
+        assert result.ok is False
+        assert result.error_code == "STIMULATION_WINDOW_CLOSED"
+    asyncio.run(scenario())
+
+
+def test_correlated_result_rejects_invalid_trial_spec_without_queueing():
+    s = _make(_FakeStimulator())
+    request = CommandRequest(
+        command_id="cmd-3",
+        payload={"n_trials": 2, "trial_params": [1]},
+    )
+
+    s._put_stim_command_queue(Event(EventType.StartStimTrial, request))
+
+    assert s.stim_command_queue.empty()
+    result = s.event_bus.published[0]
+    assert result.type == EventType.CommandResult
+    assert result.data.ok is False
+    assert result.data.error_code == "INVALID_STIMULATION_TRIAL"

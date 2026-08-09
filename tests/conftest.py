@@ -12,6 +12,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+
+class ImmediateCommandExecutor:
+    """Explicit test double: dispatches once and confirms immediately."""
+
+    def __init__(self, engine):
+        self.engine = engine
+        self.requests = []
+
+    def request(self, event_type, payload=None, *, timeout_s=None):
+        from omnibci.application.events import CommandResult
+        from omnibci.shared.events import Event
+
+        self.requests.append((event_type, payload))
+        self.engine.dispatch(Event(event_type, payload))
+        return CommandResult(
+            command_id="test-command",
+            command=event_type.name,
+            ok=True,
+        )
+
 # ---------------------------------------------------------------------------
 # Mock NeuroEngine so importing application services never triggers hardware
 # ---------------------------------------------------------------------------
@@ -45,9 +65,14 @@ def engine_service(mock_engine):
 
 
 @pytest.fixture()
-def acquisition_service(engine_service):
+def command_executor(engine_service):
+    return ImmediateCommandExecutor(engine_service)
+
+
+@pytest.fixture()
+def acquisition_service(engine_service, command_executor):
     from omnibci.application.services.acquisition_service import AcquisitionAppService
-    return AcquisitionAppService(engine_service)
+    return AcquisitionAppService(command_executor)
 
 
 @pytest.fixture()

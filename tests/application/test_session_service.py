@@ -16,7 +16,11 @@ from omnibci.application.queries.session_queries import (
 )
 from omnibci.shared.events import Event, EventType
 from omnibci.domain.classification import Classification
-from omnibci.application.events import SessionSummary, TrialOutcome
+from omnibci.application.events import CommandResult, SessionSummary, TrialOutcome
+from omnibci.application.services.command_result_service import (
+    CommandRejectedError,
+    CommandTimeoutError,
+)
 
 
 def _clf(target_id=3, event_id=101, confidence=0.85):
@@ -95,9 +99,6 @@ class TestGetSession:
 
 
 class TestOnTrialCompleted:
-    """P2-8：载荷契约收紧为 TrialOutcome；bare-Classification legacy 形状
-    及其 active-session fallback 已删除，本组测试相应迁移。"""
-
     def test_trial_appended_by_session_id(self, session_service):
         sid = session_service.handle_create_session(CreateSessionCommand())
         session_service.on_trial_completed(_outcome_event(sid, clf=_clf(target_id=5)))
@@ -114,7 +115,6 @@ class TestOnTrialCompleted:
         assert abs(trials[0].confidence - 0.9) < 1e-6
 
     def test_trial_numbers_recomputed_when_zero(self, session_service):
-        """trial_number=0（投递方未提供）→ 按读模型本地计数补算。"""
         sid = session_service.handle_create_session(CreateSessionCommand())
         for i in range(3):
             session_service.on_trial_completed(
@@ -123,7 +123,6 @@ class TestOnTrialCompleted:
         assert [t.trial_number for t in trials] == [1, 2, 3]
 
     def test_bare_classification_rejected(self, session_service, caplog):
-        """legacy bare-Classification 载荷不再被接受（记错误日志并忽略）。"""
         import logging
         sid = session_service.handle_create_session(CreateSessionCommand())
         bad = Event(event_type=EventType.TrialCompleted, data=_clf())
@@ -167,7 +166,6 @@ class TestOnSessionEnded:
         assert dto.state == SessionStateDTO.ENDED
 
     def test_bare_int_payload_rejected(self, session_service, caplog):
-        """legacy bare-int 载荷不再关闭任何会话（记错误日志并忽略）。"""
         import logging
         sid = session_service.handle_create_session(CreateSessionCommand())
         with caplog.at_level(logging.ERROR):
@@ -263,6 +261,22 @@ class _FakeEnginePort:
         self.dispatched.append(event)
 
 
+class _FakeCommandResults:
+    def __init__(self, error=None):
+        self.requests = []
+        self.error = error
+
+    def request(self, event_type, payload=None):
+        self.requests.append((event_type, payload))
+        if self.error is not None:
+            raise self.error
+        return CommandResult(
+            command_id="confirmed",
+            command=event_type.name,
+            ok=True,
+        )
+
+
 class TestEngineDispatchOnLifecycle:
     def _service(self, ready=True):
         from omnibci.application.services.session_service import SessionAppService
@@ -294,17 +308,77 @@ class TestEngineDispatchOnLifecycle:
         assert svc.handle_list_sessions(ListSessionsQuery()) == []
 
 
+class TestConfirmedEngineLifecycle:
+    def _service(self, results):
+        from omnibci.application.services.session_service import SessionAppService
+        from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
+        return SessionAppService(
+            repository=InMemorySessionRepository(),
+            engine_port=_FakeEnginePort(),
+            command_results=results,
+        )
+
+    def test_create_returns_only_after_start_session_confirmation(self):
+        results = _FakeCommandResults()
+        svc = self._service(results)
+
+        sid = svc.handle_create_session(CreateSessionCommand(paradigm="p"))
+
+        assert results.requests == [(
+            EventType.StartSession,
+            {"session_id": sid, "paradigm": "p"},
+        )]
+
+    def test_create_rejection_rolls_back_projection(self):
+        rejection = CommandRejectedError(CommandResult(
+            command_id="reject-start",
+            command="StartSession",
+            ok=False,
+            message="invalid session",
+            error_code="INVALID_SESSION_COMMAND",
+        ))
+        svc = self._service(_FakeCommandResults(rejection))
+
+        with pytest.raises(CommandRejectedError):
+            svc.handle_create_session(CreateSessionCommand())
+
+        assert svc.handle_list_sessions(ListSessionsQuery()) == []
+
+    def test_create_timeout_preserves_record_for_late_reconciliation(self):
+        timeout = CommandTimeoutError("start-timeout", "StartSession", 0.1)
+        svc = self._service(_FakeCommandResults(timeout))
+
+        with pytest.raises(CommandTimeoutError):
+            svc.handle_create_session(CreateSessionCommand())
+
+        sessions = svc.handle_list_sessions(ListSessionsQuery())
+        assert len(sessions) == 1
+        assert sessions[0].state == SessionStateDTO.RUNNING
+
+    def test_end_rejection_keeps_projection_running(self):
+        results = _FakeCommandResults()
+        svc = self._service(results)
+        sid = svc.handle_create_session(CreateSessionCommand())
+        results.error = CommandRejectedError(CommandResult(
+            command_id="reject-end",
+            command="EndSession",
+            ok=False,
+            message="stale session id",
+            error_code="SESSION_ID_MISMATCH",
+        ))
+
+        with pytest.raises(CommandRejectedError):
+            svc.handle_end_session(EndSessionCommand(sid))
+
+        assert svc.handle_get_session(GetSessionQuery(sid)).state == SessionStateDTO.RUNNING
+
+
 # ---------------------------------------------------------------------------
-# P1-4: EventBus 线程 × HTTP 线程并发一致性（服务级回归）
+# EventBus and HTTP thread consistency
 # ---------------------------------------------------------------------------
 
 class TestConcurrentTrialRecording:
     def test_no_lost_trials_when_callbacks_race(self, session_service):
-        """并发投递 TrialCompleted：读模型不得丢任何 trial。
-
-        旧实现（find → 改副本 → save）在此测试下丢更新；改用
-        repo.upsert 后计数必须精确等于投递总数。
-        """
         import threading
 
         sid = session_service.handle_create_session(CreateSessionCommand())

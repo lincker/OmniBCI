@@ -30,6 +30,7 @@ class TestStatusToCode:
             (422, ErrorCode.VALIDATION_ERROR),
             (500, ErrorCode.INTERNAL_ERROR),
             (503, ErrorCode.SERVICE_UNAVAILABLE),
+            (504, ErrorCode.GATEWAY_TIMEOUT),
             (418, ErrorCode.ERROR),  # unmapped → generic
         ],
     )

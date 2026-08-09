@@ -21,6 +21,7 @@ from omnibci.bootstrap import AppContainer
 from omnibci.application.services.acquisition_service import AcquisitionAppService
 from omnibci.application.services.stimulation_service import StimulationAppService
 from omnibci.application.services.session_service import SessionAppService
+from omnibci.application.services.command_result_service import CommandResultBroker
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
 from omnibci.shared.events import Event, EventType
@@ -53,14 +54,18 @@ class _RecordingEngine(EnginePort):
 def _make_container() -> tuple[AppContainer, _RecordingEngine]:
     engine = _RecordingEngine()
     repo = InMemorySessionRepository()
+    command_results = CommandResultBroker(engine)
     container = AppContainer(
         engine_service=engine,
-        acquisition_service=AcquisitionAppService(engine),
+        acquisition_service=AcquisitionAppService(
+            command_results,
+        ),
         stimulation_service=StimulationAppService(engine),
         stimulation_process_manager=StimulationProcessManager(auto_spawn=False),
         session_repository=repo,
         session_service=SessionAppService(repository=repo),
         recording_service=None,  # not exercised by event-hook wiring tests
+        command_results=command_results,
     )
     return container, engine
 
@@ -81,8 +86,9 @@ def test_lifespan_registers_engine_listeners(monkeypatch):
 
     registered_types = [t for t, _ in engine.subscriptions]
 
-    # 4 read-model (application) + 4 broadcaster (presentation) = 8
-    assert len(engine.subscriptions) == 8
+    # command-result rendezvous + 4 read-model + 4 broadcaster = 9
+    assert len(engine.subscriptions) == 9
+    assert EventType.CommandResult in registered_types
     assert EventType.AcquisitionState in registered_types
     # read-model sync
     assert registered_types.count(EventType.TrialCompleted) == 2   # session + broadcaster

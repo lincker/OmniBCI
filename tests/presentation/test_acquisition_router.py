@@ -4,6 +4,23 @@ Tests for /api/v1/acquisition endpoints.
 import pytest
 from unittest.mock import MagicMock
 
+from omnibci.application.events import CommandFailureKind, CommandResult
+from omnibci.application.services.command_result_service import (
+    CommandExecutionError,
+    CommandRejectedError,
+    CommandTimeoutError,
+)
+
+
+def _rejected(command: str = "StartStream") -> CommandRejectedError:
+    return CommandRejectedError(CommandResult(
+        command_id="cmd-rejected",
+        command=command,
+        ok=False,
+        message="source is disconnected",
+        error_code="DATA_SOURCE_NOT_CONNECTED",
+    ))
+
 
 @pytest.fixture(autouse=True)
 def _running_engine(engine_service):
@@ -14,20 +31,20 @@ def _running_engine(engine_service):
 
 
 class TestAcquisitionConnect:
-    def test_connect_returns_202_accepted(self, api_client, mock_engine):
+    def test_connect_returns_confirmed_success(self, api_client, mock_engine):
         resp = api_client.post("/api/v1/acquisition/connect")
-        assert resp.status_code == 202
+        assert resp.status_code == 200
         assert resp.json()["success"] is True
-        assert resp.json()["message"] == "Data provider connection requested"
+        assert resp.json()["message"] == "Data provider connected"
 
     def test_connect_dispatches_event(self, api_client, mock_engine):
         api_client.post("/api/v1/acquisition/connect")
         mock_engine.event_bus.put_event.assert_called()
 
-    def test_disconnect_returns_202_accepted(self, api_client, mock_engine):
+    def test_disconnect_returns_confirmed_success(self, api_client, mock_engine):
         resp = api_client.post("/api/v1/acquisition/disconnect")
-        assert resp.status_code == 202
-        assert resp.json()["message"] == "Data provider disconnection requested"
+        assert resp.status_code == 200
+        assert resp.json()["message"] == "Data provider disconnected"
 
     def test_connect_without_engine_returns_503(self, api_client, engine_service):
         engine_service._engine = None
@@ -36,21 +53,71 @@ class TestAcquisitionConnect:
 
 
 class TestAcquisitionStream:
-    def test_start_stream_returns_202_accepted(self, api_client, mock_engine):
+    def test_start_stream_returns_confirmed_success(self, api_client, mock_engine):
         resp = api_client.post("/api/v1/acquisition/stream/start")
-        assert resp.status_code == 202
+        assert resp.status_code == 200
         assert resp.json()["success"] is True
-        assert resp.json()["message"] == "Stream start requested"
+        assert resp.json()["message"] == "Stream started"
 
-    def test_stop_stream_returns_202_accepted(self, api_client, mock_engine):
+    def test_stop_stream_returns_confirmed_success(self, api_client, mock_engine):
         resp = api_client.post("/api/v1/acquisition/stream/stop")
-        assert resp.status_code == 202
-        assert resp.json()["message"] == "Stream stop requested"
+        assert resp.status_code == 200
+        assert resp.json()["message"] == "Stream stopped"
 
     def test_start_stream_without_engine_returns_503(self, api_client, engine_service):
         engine_service._engine = None
         resp = api_client.post("/api/v1/acquisition/stream/start")
         assert resp.status_code == 503
+
+    def test_worker_rejection_returns_409_with_command_detail(
+        self, api_client, acquisition_service
+    ):
+        acquisition_service.handle_start_stream = MagicMock(
+            side_effect=_rejected()
+        )
+
+        resp = api_client.post("/api/v1/acquisition/stream/start")
+
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "COMMAND_REJECTED"
+        assert resp.json()["detail"] == {
+            "command_id": "cmd-rejected",
+            "command": "StartStream",
+            "error_code": "DATA_SOURCE_NOT_CONNECTED",
+        }
+
+    def test_missing_terminal_result_returns_504(
+        self, api_client, acquisition_service
+    ):
+        acquisition_service.handle_start_stream = MagicMock(side_effect=
+            CommandTimeoutError("cmd-timeout", "StartStream", 0.25)
+        )
+
+        resp = api_client.post("/api/v1/acquisition/stream/start")
+
+        assert resp.status_code == 504
+        assert resp.json()["code"] == "COMMAND_TIMEOUT"
+        assert resp.json()["detail"]["command_id"] == "cmd-timeout"
+
+    def test_worker_execution_failure_returns_500_not_conflict(
+        self, api_client, acquisition_service
+    ):
+        acquisition_service.handle_start_stream = MagicMock(side_effect=
+            CommandExecutionError(CommandResult(
+                command_id="cmd-failed",
+                command="StartStream",
+                ok=False,
+                message="device unavailable",
+                error_code="OSError",
+                failure_kind=CommandFailureKind.EXECUTION_FAILED,
+            ))
+        )
+
+        resp = api_client.post("/api/v1/acquisition/stream/start")
+
+        assert resp.status_code == 500
+        assert resp.json()["code"] == "COMMAND_EXECUTION_FAILED"
+        assert resp.json()["detail"]["error_code"] == "OSError"
 
 
 class TestAcquisitionStatus:

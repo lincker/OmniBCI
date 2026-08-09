@@ -1,25 +1,4 @@
-"""
-Composition Root — the single place where concrete implementations are bound
-to their abstractions and application services are wired together.
-
-Why a dedicated module
-----------------------
-Before P4, service construction and EventBus listener registration lived inside
-``presentation/main.py``'s FastAPI lifespan.  That mixed two concerns: *defining
-the HTTP app* and *assembling the object graph*.  Pulling assembly out into this
-module means:
-
-  - any entrypoint (HTTP server, CLI, a test harness, a future worker process)
-    can build the exact same wired graph by calling ``build_container()``;
-  - the wiring rules live in one auditable place, driven by ``settings.toml``;
-  - ``main.py`` shrinks to "build the container, expose it over HTTP".
-
-Dependency direction
----------------------
-This is the outermost layer — it is allowed to import application,
-infrastructure and configuration.  Nothing else imports *it* except concrete
-entrypoints (e.g. ``presentation/main.py``).
-"""
+"""Composition root for application services and infrastructure adapters."""
 
 import logging
 from dataclasses import dataclass
@@ -31,6 +10,7 @@ from omnibci.application.services.acquisition_service import AcquisitionAppServi
 from omnibci.application.services.stimulation_service import StimulationAppService
 from omnibci.application.services.session_service import SessionAppService
 from omnibci.application.services.recording_service import RecordingService
+from omnibci.application.services.command_result_service import CommandResultBroker
 from omnibci.domain.repositories import SessionRepository
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
@@ -56,6 +36,9 @@ class AppContainer:
     # Optional so existing test constructions stay valid; the composition
     # root always supplies one (auto_spawn=False when ACTUATION disabled).
     actuation_process_manager: "ActuationProcessManager | None" = None
+    # Shared correlation rendezvous for commands that must report actual worker
+    # execution before REST returns success.
+    command_results: "CommandResultBroker | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -63,17 +46,7 @@ class AppContainer:
 # ---------------------------------------------------------------------------
 
 def _build_session_repository(kind: "str | None") -> SessionRepository:
-    """
-    Pick the SessionRepository implementation for *kind*
-    (settings key: PERSISTENCE.session_repository; None/"in_memory" → 内存实现).
-
-    P2-9：改为接收值而非自行读全局 settings —— 配置读取集中在
-    build_container()。未知实现名 fail-fast（ValueError），不再静默降级。
-
-    Adding a SQLite/Postgres adapter later means registering it here — no
-    application-layer code changes, since everything depends on the
-    SessionRepository port.
-    """
+    """Build the configured repository or fail on an unknown implementation."""
     if kind in (None, "in_memory"):
         return InMemorySessionRepository()
 
@@ -92,24 +65,36 @@ def assemble(
     auto_spawn: bool = True,
     actuation_process_manager: "ActuationProcessManager | None" = None,
 ) -> AppContainer:
-    """
-    Wire application services around an (already-created) engine service and
-    repository.  Acquisition & Stimulation share the *same* engine instance via
-    the EnginePort abstraction.
-
-    P2-9：本函数保持纯净（零 I/O、零全局读取）——settings 与 auto_spawn
-    由调用方（build_container）读取一次后传入；单测可传 None/默认值。
-    """
-    acquisition_service = AcquisitionAppService(engine_service, settings=settings)
-    session_service = SessionAppService(repository=repository,
-                                        engine_port=engine_service)
+    """Wire services around an existing engine and repository without I/O."""
+    command_timeout_s = (
+        float(settings.get("NEUROENGINE.command_timeout_s", 10.0))
+        if settings is not None
+        else 10.0
+    )
+    command_results = CommandResultBroker(
+        engine_service,
+        timeout_s=command_timeout_s,
+    )
+    acquisition_service = AcquisitionAppService(
+        command_results,
+        settings=settings,
+    )
+    session_service = SessionAppService(
+        repository=repository,
+        engine_port=engine_service,
+        command_results=command_results,
+    )
 
     process_manager = StimulationProcessManager(auto_spawn=auto_spawn)
 
     return AppContainer(
         engine_service=engine_service,
         acquisition_service=acquisition_service,
-        stimulation_service=StimulationAppService(engine_service, process_manager),
+        stimulation_service=StimulationAppService(
+            engine_service,
+            process_manager,
+            command_results=command_results,
+        ),
         stimulation_process_manager=process_manager,
         session_repository=repository,
         # engine_port lets create/end push the session id into the worker
@@ -118,6 +103,7 @@ def assemble(
         # Orchestrates session + acquisition for the "record a run" use case.
         recording_service=RecordingService(session_service, acquisition_service),
         actuation_process_manager=actuation_process_manager,
+        command_results=command_results,
     )
 
 
@@ -126,16 +112,7 @@ def assemble(
 # ---------------------------------------------------------------------------
 
 async def build_container() -> AppContainer:
-    """
-    Build the complete object graph.
-
-    Constructs the NeuroEngineService and runs its (non-blocking) startup so the
-    engine object — and its EventBus — exist before listeners are registered.
-
-    P2-9：这里是 API 进程组合期**唯一**的 settings 读取点。配置文件缺失/
-    损坏在 conf import 时即刻炸出（fail-fast），可选键经 get(key, 默认值)
-    显式给默认——组合路径上不再有 except Exception 静默降级。
-    """
+    """Build and start the complete object graph from process-wide settings."""
     from omnibci.conf import settings
 
     repository = _build_session_repository(
@@ -149,9 +126,7 @@ async def build_container() -> AppContainer:
     )
     actuation_manager = ActuationProcessManager(auto_spawn=actuation_auto_spawn)
 
-    # 每次调用构建全新引擎图（restart 语义）；重启时重读 settings，
-    # 使 engine-restart 级配置变更生效 —— 与迁移前 NeuroEngineBuilder()
-    # 在 service 内部的行为一致。
+    # Processes are single-use, so every restart requires a fresh engine graph.
     engine_service = NeuroEngineService(
         engine_factory=lambda: NeuroEngineBuilder().build(),
         actuation_process_manager=actuation_manager,
@@ -187,6 +162,11 @@ def register_engine_listeners(
         return 0
 
     subscriptions: list[Subscription] = [
+        *(
+            ((EventType.CommandResult, container.command_results.on_result),)
+            if container.command_results is not None
+            else ()
+        ),
         (EventType.SessionStarted, container.session_service.on_session_started),
         (EventType.TrialCompleted, container.session_service.on_trial_completed),
         (EventType.SessionEnded, container.session_service.on_session_ended),

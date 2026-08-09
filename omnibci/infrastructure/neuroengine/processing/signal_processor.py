@@ -1,16 +1,4 @@
-"""
-SignalProcessor — 信号流处理状态机上下文。
-
-消费 chunk 流，驱动整个识别循环：等待 epoch 开始 → 收集 epoch → 跑解码 →
-在 BCISession 上记录 trial 并发布领域事件。生命周期跨 epoch 之前/之中/之后，
-故命名落在"流"这一层，而非单个 epoch。
-
-ACL（循环依赖修复）：
-  - SignalProcessor 在 __init__ 中构造 DomainEventPublisher 并暴露给 states，
-    state 模块不再 import 本模块，循环依赖消除。
-
-进程包装 SignalProcessingWorker 已拆到 worker.py。
-"""
+"""Signal-stream state machine for epoch detection and decoding."""
 
 import asyncio
 from enum import Enum
@@ -23,6 +11,8 @@ import numpy as np
 
 from omnibci.domain.session import BCISession
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector
+from omnibci.application.events import CommandRequest, CommandResult
+from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.event_translator import DomainEventPublisher
 from .processing_state import AwaitingEpochState, AssemblingEpochState
 from .epoch.epoch_processor import EpochProcessor
@@ -128,13 +118,7 @@ class SignalProcessor:
         )
 
     async def next_chunk(self, timeout: float = 0.05) -> "SignalChunk | None":
-        """等待下一个数据块（P2-7 事件化取数）。
-
-        在默认 executor 线程内做 mp.Queue 的阻塞 get(timeout)：数据到达
-        即刻返回（原 empty()+sleep(0.01) 轮询带来最多 10ms 的块间延迟），
-        等待窗内无数据返回 None——把控制权还给 serve() 的命令轮询，
-        命令响应延迟上界即本超时（默认 50ms，命令均为人为低频操作）。
-        """
+        """Wait off-loop for a chunk and return control after the timeout."""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.data_manager.get_data, timeout)
 
@@ -179,31 +163,57 @@ class SignalProcessor:
         carry_data routes enqueue the latter (see NeuroEngine._command_routes).
         """
         if isinstance(item, tuple):
-            command, payload = item
+            command, raw_payload = item
         else:
-            command, payload = item, None
+            command, raw_payload = item, None
+        request = CommandRequest.from_value(raw_payload)
+        payload = request.payload if request is not None else raw_payload
 
+        ok = True
+        message = None
+        error_code = None
         if command == SignalProcessorCommand.should_stop:
             self._should_stop = True
             # End the session cleanly so SessionEnded domain event is emitted
             self._end_current_session()
         elif command == SignalProcessorCommand.start_session:
-            self._start_session(payload)
+            ok = self._start_session(payload)
+            if not ok:
+                message = "StartSession payload must contain a non-empty session_id"
+                error_code = "INVALID_SESSION_COMMAND"
         elif command == SignalProcessorCommand.end_session:
-            self._end_session(payload)
+            ok = self._end_session(payload)
+            if not ok:
+                message = (
+                    f"EndSession id {payload!r} does not match the current session "
+                    f"{self.session.session_id!r}"
+                )
+                error_code = "SESSION_ID_MISMATCH"
         else:
             logger.warning("SignalProcessor: unknown command %r", command)
+            ok = False
+            message = f"Unknown signal-processor command: {command!r}"
+            error_code = "UNKNOWN_COMMAND"
+
+        if request is not None:
+            self._emit_command_result(
+                request,
+                command,
+                ok=ok,
+                message=message,
+                error_code=error_code,
+            )
 
     # ------------------------------------------------------------------
     # Session lifecycle (identity pushed down from the API — see
     # docs/session-id-unification.md)
     # ------------------------------------------------------------------
 
-    def _start_session(self, payload) -> None:
+    def _start_session(self, payload) -> bool:
         """Open a session with the API-supplied identity (single-active invariant)."""
         if not isinstance(payload, dict) or not payload.get("session_id"):
             logger.error("start_session: bad payload %r; ignored", payload)
-            return
+            return False
         # Single-active-session invariant: a new start ends the previous one.
         self._end_current_session()
         self.session = BCISession(
@@ -213,15 +223,20 @@ class SignalProcessor:
         self.session.start()
         self.event_publisher.publish_all(self.session.pop_events())
         logger.info("Session started in worker: %s", self.session.session_id)
+        return True
 
-    def _end_session(self, payload) -> None:
+    def _end_session(self, payload) -> bool:
         """End the current session — only if the id matches (stale-command guard)."""
-        session_id = payload if isinstance(payload, str) else None
-        if session_id is not None and session_id != self.session.session_id:
+        session_id = payload if isinstance(payload, str) and payload else None
+        if session_id is None:
+            logger.error("end_session: bad payload %r; ignored", payload)
+            return False
+        if session_id != self.session.session_id:
             logger.warning("end_session for %s ignored (current is %s)",
                            session_id, self.session.session_id)
-            return
+            return False
         self._end_current_session()
+        return True
 
     def _end_current_session(self) -> None:
         """End + publish if RUNNING; silently no-op otherwise."""
@@ -230,3 +245,27 @@ class SignalProcessor:
         except RuntimeError:
             return  # already ended or never started
         self.event_publisher.publish_all(self.session.pop_events())
+
+    def _emit_command_result(
+        self,
+        request: CommandRequest,
+        command,
+        *,
+        ok: bool,
+        message: str | None,
+        error_code: str | None,
+    ) -> None:
+        command_name = {
+            SignalProcessorCommand.start_session: EventType.StartSession.name,
+            SignalProcessorCommand.end_session: EventType.EndSession.name,
+        }.get(command, command.name if isinstance(command, Enum) else str(command))
+        self.event_bus.put_event(Event(
+            EventType.CommandResult,
+            CommandResult(
+                command_id=request.command_id,
+                command=command_name,
+                ok=ok,
+                message=message,
+                error_code=error_code,
+            ),
+        ))

@@ -28,6 +28,7 @@ from typing import Optional
 
 from omnibci.application.services.session_service import SessionAppService
 from omnibci.application.services.acquisition_service import AcquisitionAppService
+from omnibci.application.services.command_result_service import CommandTimeoutError
 from omnibci.application.commands.session_commands import (
     CreateSessionCommand,
     EndSessionCommand,
@@ -87,6 +88,16 @@ class RecordingService:
         # 2. Stream second; on failure roll the session back to avoid an orphan.
         try:
             self._acquisition.handle_start_stream(StartStreamCommand())
+        except CommandTimeoutError:
+            # Unknown outcome: the worker may still start streaming after the
+            # deadline.  Keep the confirmed session active so the caller can
+            # query status and issue a safe stop instead of creating an orphan
+            # stream with an already-ended session.
+            logger.warning(
+                "Stream start result timed out; retaining session %s for reconciliation",
+                session_id,
+            )
+            raise
         except Exception:
             logger.exception("Stream start failed; rolling back session %s", session_id)
             try:

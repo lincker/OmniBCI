@@ -1,20 +1,16 @@
-"""
-Acquisition — 领域逻辑层。
-
-包含：
-  - AcquisitionCommand  采集命令枚举
-  - AcquisitionState    采集状态枚举
-  - Acquisition         领域服务：驱动 SignalSource 读取 EEG 数据
-
-不包含任何 multiprocessing 代码；进程包装在 worker.py。
-"""
+"""Acquisition domain service and worker command contracts."""
 import asyncio
 import logging
 import time
 from enum import Enum
 from typing import Optional, Protocol, runtime_checkable
 
-from omnibci.application.events import AcquisitionSnapshot
+from omnibci.application.events import (
+    AcquisitionSnapshot,
+    CommandFailureKind,
+    CommandRequest,
+    CommandResult,
+)
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.domain.signal import SignalChunk
 from omnibci.shared.events import Event, EventType
@@ -24,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class CommandQueue(Protocol):
-    """采集进程消费的命令队列契约（mp.Queue 的最小可用子集）。"""
+    """Minimal command queue contract consumed by the acquisition worker."""
 
     def empty(self) -> bool: ...
 
@@ -33,7 +29,7 @@ class CommandQueue(Protocol):
 
 @runtime_checkable
 class DataSink(Protocol):
-    """采集数据下游汇聚点契约（共享 DataManager 的最小可用子集）。"""
+    """Minimal downstream sink contract for acquired signal chunks."""
 
     def put_data(self, chunk: SignalChunk) -> None: ...
 
@@ -54,6 +50,22 @@ class AcquisitionState(Enum):
     paused  = 'paused'
 
 
+class AcquisitionCommandRejected(RuntimeError):
+    """A control command was valid but could not be applied in current state."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        super().__init__(message)
+
+
+_COMMAND_RESULT_NAMES = {
+    AcquisitionCommand.connect: EventType.ConnectDataProvider.name,
+    AcquisitionCommand.disconnect: EventType.DisconnectDataProvider.name,
+    AcquisitionCommand.start_stream: EventType.StartStream.name,
+    AcquisitionCommand.stop_stream: EventType.StopStream.name,
+}
+
+
 class Acquisition:
     """
     Domain service: drives a SignalSource to read EEG data and pushes
@@ -69,12 +81,11 @@ class Acquisition:
     ) -> None:
         self.data_source = data_source
         self.command_queue = command_queue
-        # 注意区分：本地 AcquisitionState 枚举是 worker 内部相位（stop/running），
-        # EventType.AcquisitionState 是发往 API 投影的 wire 事件。
+        # Local worker phase; EventType.AcquisitionState is the API projection event.
         self.status = AcquisitionState.stop
         self.fetch_task: Optional[asyncio.Task] = None
         self.data_manager = data_manager
-        self.event_bus = event_bus   # None = 无投影（单测）；只用于 put_event
+        self.event_bus = event_bus  # Optional for projection-free unit tests.
         self.should_exit = False
 
     def run(self) -> None:
@@ -90,9 +101,11 @@ class Acquisition:
 
     async def shutdown(self) -> None:
         logger.info('Acquisition shutting down')
-        if self.data_source.is_connected:
-            await self.data_source.disconnect()
-        self._emit_state()
+        if self.data_source.is_connected or self.data_source.is_streaming:
+            await self._on_disconnect()
+        else:
+            await self._cancel_fetch_task()
+            self._emit_state()
 
     async def main_loop(self) -> None:
         while not self.should_exit:
@@ -100,8 +113,13 @@ class Acquisition:
                 await self.execute(self.command_queue.get())
             await asyncio.sleep(0.01)
 
-    async def execute(self, command: AcquisitionCommand) -> None:
-        """把命令分派到对应处理器；未知命令仅告警，不改变状态。"""
+    async def execute(self, item) -> None:
+        """Execute a command and emit one result for each correlated request."""
+        if isinstance(item, tuple):
+            command, raw_request = item
+        else:
+            command, raw_request = item, None
+        request = CommandRequest.from_value(raw_request)
         logger.debug('Acquisition command: %s', command)
         handler = {
             AcquisitionCommand.connect:          self._on_connect,
@@ -113,16 +131,76 @@ class Acquisition:
         }.get(command)
         if handler is None:
             logger.warning('Unknown acquisition command: %s', command)
+            if request is not None:
+                self._emit_command_result(
+                    request,
+                    command,
+                    ok=False,
+                    message=f"Unknown acquisition command: {command!r}",
+                    error_code="UNKNOWN_COMMAND",
+                    failure_kind=CommandFailureKind.REJECTED,
+                )
             return
-        await handler()
+        try:
+            await handler()
+        except AcquisitionCommandRejected as exc:
+            if request is None:
+                return
+            logger.warning("Acquisition command %s rejected: %s", command, exc)
+            self._emit_command_result(
+                request,
+                command,
+                ok=False,
+                message=str(exc),
+                error_code=exc.code,
+                failure_kind=CommandFailureKind.REJECTED,
+            )
+            return
+        except Exception as exc:
+            if request is None:
+                raise
+            logger.exception("Acquisition command %s execution failed", command)
+            self._emit_command_result(
+                request,
+                command,
+                ok=False,
+                message=str(exc),
+                error_code=type(exc).__name__,
+                failure_kind=CommandFailureKind.EXECUTION_FAILED,
+            )
+            return
+        if request is not None:
+            self._emit_command_result(request, command, ok=True)
 
     async def _on_connect(self) -> None:
+        if self.data_source.is_connected:
+            self.status = AcquisitionState.running
+            self._emit_state()
+            return
         await self.data_source.connect()
+        if not self.data_source.is_connected:
+            raise AcquisitionCommandRejected(
+                "CONNECT_FAILED",
+                "Data source did not enter the connected state",
+            )
         self.status = AcquisitionState.running
         self._emit_state()
 
     async def _on_disconnect(self) -> None:
+        # A successful disconnect means no reader coroutine remains alive.
+        # Some SignalSource implementations (including FileReader) do not
+        # implicitly stop their stream in disconnect(), so enforce the order
+        # here at the worker boundary.
+        if self.data_source.is_streaming:
+            await self._on_stop_stream()
+        else:
+            await self._cancel_fetch_task()
         await self.data_source.disconnect()
+        if self.data_source.is_connected:
+            raise AcquisitionCommandRejected(
+                "DISCONNECT_FAILED",
+                "Data source remained connected after disconnect",
+            )
         self.status = AcquisitionState.stop
         self._emit_state()
 
@@ -130,21 +208,58 @@ class Acquisition:
         # start_stream is only honoured once connected (status == running);
         # otherwise it is dropped — but the truth (not streaming) is still
         # pushed to the projection so the API cannot report a phantom stream.
-        if self.status != AcquisitionState.running:
+        if not self.data_source.is_connected:
             logger.warning('start_stream ignored: not running (status=%s)', self.status)
+            self._emit_state()
+            raise AcquisitionCommandRejected(
+                "DATA_SOURCE_NOT_CONNECTED",
+                "Cannot start stream before the data source is connected",
+            )
+        if self.data_source.is_streaming:
             self._emit_state()
             return
         await self.data_source.start_stream()
+        if not self.data_source.is_streaming:
+            self._emit_state()
+            raise AcquisitionCommandRejected(
+                "STREAM_START_FAILED",
+                "Data source did not enter the streaming state",
+            )
         self.fetch_task = asyncio.create_task(self.fetch())
         logger.info('Fetch task started')
         self._emit_state()
 
     async def _on_stop_stream(self) -> None:
+        if not self.data_source.is_streaming:
+            await self._cancel_fetch_task()
+            self._emit_state()
+            return
         await self.data_source.stop_stream()
+        if self.data_source.is_streaming:
+            self._emit_state()
+            raise AcquisitionCommandRejected(
+                "STREAM_STOP_FAILED",
+                "Data source remained in the streaming state after stop",
+            )
         if self.fetch_task:
-            self.fetch_task.cancel()
+            await self._cancel_fetch_task()
         logger.info('Fetch task stopped')
         self._emit_state()
+
+    async def _cancel_fetch_task(self) -> None:
+        """Cancel and join the reader task before confirming a stop command."""
+        task = self.fetch_task
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if self.fetch_task is task:
+                self.fetch_task = None
 
     async def _on_stop_acquisition(self) -> None:
         self.should_exit = True
@@ -159,8 +274,7 @@ class Acquisition:
             while True:
                 raw_data = await self.data_source.read_chunk()
                 if raw_data is None:
-                    # 数据源正常播完（如文件回放 EOF）：干净收流并把真相
-                    # 推回 API 投影，否则前端会永远显示"读取中"。
+                    # EOF is a clean stream transition and must update the projection.
                     logger.info('Data source end of stream after %d chunks; fetch task finished',
                                 packets_counter)
                     await self._finish_stream()
@@ -174,7 +288,6 @@ class Acquisition:
                 self.data_manager.put_data(chunk)
                 packets_counter += 1
         except asyncio.CancelledError:
-            # 取消来自 _on_stop_stream，那里已 stop_stream 并发射快照。
             logger.info('Fetch task cancelled')
         except Exception as exc:
             logger.error('Error in fetch task: %s', exc)
@@ -206,5 +319,33 @@ class Acquisition:
             AcquisitionSnapshot(
                 connected=self.data_source.is_connected,
                 streaming=self.data_source.is_streaming,
+            ),
+        ))
+
+    def _emit_command_result(
+        self,
+        request: CommandRequest,
+        command,
+        *,
+        ok: bool,
+        message: str | None = None,
+        error_code: str | None = None,
+        failure_kind: CommandFailureKind | None = None,
+    ) -> None:
+        if self.event_bus is None:
+            return
+        command_name = _COMMAND_RESULT_NAMES.get(
+            command,
+            command.name if isinstance(command, Enum) else str(command),
+        )
+        self.event_bus.put_event(Event(
+            EventType.CommandResult,
+            CommandResult(
+                command_id=request.command_id,
+                command=command_name,
+                ok=ok,
+                message=message,
+                error_code=error_code,
+                failure_kind=failure_kind,
             ),
         ))

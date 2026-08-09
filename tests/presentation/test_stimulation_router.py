@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from omnibci.application.queries.plugin_queries import PluginInfo
+from omnibci.application.events import CommandResult
+from omnibci.application.services.command_result_service import CommandRejectedError
 
 _FAKE_PARADIGM = PluginInfo(
     id="classic40SSVEP",
@@ -112,3 +114,22 @@ class TestStimulationTrial:
         trial_calls = [c for c in calls if c[0][0].type == EventType.StartStimTrial]
         assert len(trial_calls) == 1
         assert trial_calls[0][0][0].data == {"n_trials": 1, "trial_params": [2]}
+
+    def test_renderer_rejection_is_not_reported_as_started(
+        self, api_client, stimulation_service
+    ):
+        stimulation_service.handle_start_trial = MagicMock(side_effect=
+            CommandRejectedError(CommandResult(
+                command_id="stim-command",
+                command="StartStimTrial",
+                ok=False,
+                message="stimulation window closed",
+                error_code="STIMULATION_WINDOW_CLOSED",
+            ))
+        )
+
+        resp = api_client.post("/api/v1/stimulation/trial/start")
+
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "COMMAND_REJECTED"
+        assert resp.json()["detail"]["error_code"] == "STIMULATION_WINDOW_CLOSED"

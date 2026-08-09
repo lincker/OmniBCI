@@ -25,6 +25,11 @@ from omnibci.infrastructure.outbound import (
     payload_to_jsonable,
     make_stimulation_ack,
 )
+from omnibci.application.events import (
+    CommandFailureKind,
+    CommandRequest,
+    CommandResult,
+)
 from omnibci.infrastructure.event_translator import DomainEventPublisher
 
 
@@ -56,7 +61,6 @@ class TestEventToWire:
         }
 
     def test_trial_completed_bare_classification_rejected(self):
-        # P2-8: the legacy bare-Classification shape is rejected and logged.
         assert event_to_wire(Event(EventType.TrialCompleted, _clf())) is None
 
     def test_session_started(self):
@@ -68,7 +72,6 @@ class TestEventToWire:
         assert wire == {"event": "SessionEnded", "session_id": "sess-3", "total_trials": 5}
 
     def test_session_ended_bare_int_rejected(self):
-        # P2-8: the legacy bare-int shape is rejected and logged.
         assert event_to_wire(Event(EventType.SessionEnded, 5)) is None
 
     def test_stimulation_ack_from_dict(self):
@@ -97,13 +100,37 @@ class TestEventToWire:
 # ---------------------------------------------------------------------------
 
 class TestPayloadToJsonable:
+    def test_command_request_is_flattened_recursively(self):
+        out = payload_to_jsonable(CommandRequest(
+            command_id="cmd-1",
+            payload={"n_trials": 1, "trial_params": [7]},
+        ))
+        assert out == {
+            "command_id": "cmd-1",
+            "payload": {"n_trials": 1, "trial_params": [7]},
+        }
+        json.dumps(out)
+
+    def test_command_result_is_flattened(self):
+        out = payload_to_jsonable(CommandResult(
+            command_id="cmd-1",
+            command="StartStimTrial",
+            ok=False,
+            message="renderer busy",
+            error_code="STIMULATION_PRESENT_FAILED",
+            failure_kind=CommandFailureKind.EXECUTION_FAILED,
+        ))
+        assert out["command_id"] == "cmd-1"
+        assert out["ok"] is False
+        assert out["failure_kind"] == "execution_failed"
+        json.dumps(out)
+
     def test_trial_outcome_flattened_and_serialisable(self):
         out = payload_to_jsonable(TrialOutcome("s", 2, _clf(target_id=9)))
         assert out["session_id"] == "s" and out["trial_number"] == 2 and out["target_id"] == 9
         json.dumps(out)  # must not raise
 
     def test_bare_classification_passthrough(self):
-        # P2-8: Classification is no longer a standalone event payload.
         # Unknown values pass through so the socket encoder exposes the issue.
         clf = _clf(target_id=4)
         assert payload_to_jsonable(clf) is clf

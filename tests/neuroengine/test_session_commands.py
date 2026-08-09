@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from omnibci.application.events import CommandRequest, CommandResult
 from omnibci.domain.session import SessionState
+from omnibci.shared.events import EventType
 from omnibci.infrastructure.neuroengine.processing.signal_processor import (
     SignalProcessor,
     SignalProcessorCommand,
@@ -73,6 +75,37 @@ class TestCommandProtocol:
         p._execute((SignalProcessorCommand.start_session, {"session_id": "s2"}))
         p._execute((SignalProcessorCommand.end_session, "s1"))  # stale
         assert p.session.state == SessionState.RUNNING
+
+    def test_confirmed_start_session_emits_success_result(self):
+        p = _processor(auto_start=False)
+        p._execute((
+            SignalProcessorCommand.start_session,
+            CommandRequest("cmd-start", {"session_id": "s1"}),
+        ))
+
+        results = [
+            call.args[0]
+            for call in p.event_bus.put_event.call_args_list
+            if call.args[0].type == EventType.CommandResult
+        ]
+        assert results[-1].data == CommandResult(
+            command_id="cmd-start",
+            command="StartSession",
+            ok=True,
+        )
+
+    def test_confirmed_stale_end_session_emits_rejection(self):
+        p = _processor(auto_start=False)
+        p._execute((SignalProcessorCommand.start_session, {"session_id": "s2"}))
+        p._execute((
+            SignalProcessorCommand.end_session,
+            CommandRequest("cmd-end", "stale"),
+        ))
+
+        result_event = p.event_bus.put_event.call_args_list[-1].args[0]
+        assert result_event.type == EventType.CommandResult
+        assert result_event.data.ok is False
+        assert result_event.data.error_code == "SESSION_ID_MISMATCH"
 
 
 class TestStandbyMode:

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from omnibci.infrastructure.stimulation.application import Stimulation
+from omnibci.application.events import CommandRequest, CommandResult
 from omnibci.shared.events import Event, EventType
 
 
@@ -19,6 +20,33 @@ def test_stop_event_handler_accepts_event_bus_argument() -> None:
         app._stop_stimulation_system(Event(EventType.StopStimulation))
     )
 
+    assert app.should_stop is True
+
+
+def test_confirmed_stop_flushes_result_before_marking_process_stopped() -> None:
+    app = Stimulation.__new__(Stimulation)
+    app.should_stop = False
+    app.peer_channel = MagicMock()
+
+    async def send(event):
+        assert app.should_stop is False
+        assert event.type == EventType.CommandResult
+        assert event.data == CommandResult(
+            command_id="stop-1",
+            command="StopStimulation",
+            ok=True,
+            message="Stimulation stop accepted",
+            error_code=None,
+        )
+        return True
+
+    app.peer_channel.send = AsyncMock(side_effect=send)
+    asyncio.run(app._stop_stimulation_system(Event(
+        EventType.StopStimulation,
+        CommandRequest(command_id="stop-1"),
+    )))
+
+    app.peer_channel.send.assert_awaited_once()
     assert app.should_stop is True
 
 

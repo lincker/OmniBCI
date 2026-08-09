@@ -22,6 +22,7 @@ from omnibci.bootstrap import (
 from omnibci.application.ports.engine_port import EnginePort
 from omnibci.application.services.acquisition_service import AcquisitionAppService
 from omnibci.application.services.stimulation_service import StimulationAppService
+from omnibci.application.services.command_result_service import CommandResultBroker
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 from omnibci.shared.events import Event, EventType
 
@@ -66,14 +67,18 @@ class _FakeSessionService:
 
 def _container(engine, session_service=None) -> AppContainer:
     from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
+    command_results = CommandResultBroker(engine)
     return AppContainer(
         engine_service=engine,
-        acquisition_service=AcquisitionAppService(engine),
+        acquisition_service=AcquisitionAppService(
+            command_results,
+        ),
         stimulation_service=StimulationAppService(engine),
         stimulation_process_manager=StimulationProcessManager(auto_spawn=False),
         session_repository=InMemorySessionRepository(),
         session_service=session_service or _FakeSessionService(),
         recording_service=None,  # not exercised by these wiring tests
+        command_results=command_results,
     )
 
 
@@ -86,8 +91,9 @@ class TestAssemble:
         engine = FakeEngine()
         repo = InMemorySessionRepository()
         c = assemble(engine, repo)
-        assert c.acquisition_service._engine is engine
+        assert c.acquisition_service._command_executor is c.command_results
         assert c.stimulation_service._engine is engine
+        assert c.stimulation_service._command_results is c.command_results
         assert c.engine_service is engine
 
     def test_session_service_uses_given_repository(self):
@@ -115,9 +121,10 @@ class TestRegisterListeners:
         extra = [(EventType.SessionStarted, broadcaster_handler)]
         count = register_engine_listeners(container, extra)
 
-        assert count == 5
+        assert count == 6
         registered_types = [t for t, _ in engine.subscriptions]
         assert registered_types == [
+            EventType.CommandResult,
             EventType.SessionStarted,
             EventType.TrialCompleted,
             EventType.SessionEnded,
@@ -125,17 +132,17 @@ class TestRegisterListeners:
             EventType.SessionStarted,
         ]
         # read-model handlers come from the session / acquisition services
-        assert engine.subscriptions[0][1] == sess.on_session_started
-        assert engine.subscriptions[1][1] == sess.on_trial_completed
-        assert engine.subscriptions[2][1] == sess.on_session_ended
-        assert engine.subscriptions[3][1] == container.acquisition_service.on_acquisition_state
+        assert engine.subscriptions[1][1] == sess.on_session_started
+        assert engine.subscriptions[2][1] == sess.on_trial_completed
+        assert engine.subscriptions[3][1] == sess.on_session_ended
+        assert engine.subscriptions[4][1] == container.acquisition_service.on_acquisition_state
         # extra handler preserved
-        assert engine.subscriptions[4][1] is broadcaster_handler
+        assert engine.subscriptions[5][1] is broadcaster_handler
 
     def test_default_subscriptions_without_extra(self):
         engine = FakeEngine(initialized=True, ready=False)
         count = register_engine_listeners(_container(engine))
-        assert count == 4
+        assert count == 5
 
     def test_noop_when_engine_not_initialized(self):
         engine = FakeEngine(initialized=False)
@@ -158,7 +165,6 @@ def test_build_session_repository_in_memory_explicit():
 
 
 def test_build_session_repository_unknown_kind_fails_fast():
-    """P2-9：未知实现名必须 fail-fast，不得静默降级到内存实现。"""
     import pytest
     with pytest.raises(ValueError, match="sqlite"):
         _build_session_repository("sqlite")

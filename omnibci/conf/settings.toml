@@ -38,6 +38,8 @@ filters = []
 [NEUROENGINE]
 # Max items in each mp.Queue between engine and workers.
 queue_size = 100
+# Maximum time a REST control request waits for the subprocess execution result.
+command_timeout_s = 10.0
 message_server_ip = '127.0.0.1'
 message_server_port = 8765   # must differ from uvicorn HTTP port (8000)
 

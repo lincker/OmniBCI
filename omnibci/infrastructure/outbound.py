@@ -1,30 +1,17 @@
-"""
-Unified outbound event contract.
-
-Both outbound transports — the WebSocket broadcaster (presentation) and the
-stimulation socket (infrastructure/ipc) — carry the *same* domain events
-(TrialCompleted / SessionStarted / SessionEnded).  Before this, each built its
-own wire representation: the WS broadcaster constructed pydantic messages with
-hardcoded ``session_id="current"`` / ``trial_number=0`` (the EventBus payload
-had dropped that context), and the socket tried to ``json.dumps`` a raw
-Classification VO (not JSON-serialisable) — so both were subtly broken.
-
-This module is the single place that maps an infrastructure ``Event`` to a
-JSON-safe outbound dict.  Both transports import it, so the shape can never
-drift between them.
-
-Layer note: lives in ``infrastructure/`` (not ``shared/``) because it references
-the domain ``Classification`` VO; ``shared/`` must stay dependency-free.
-"""
+"""Map EventBus events to the shared JSON-safe outbound wire contract."""
 
 import logging
 from typing import Any, Optional
 
 from omnibci.shared.events import Event, EventType
 from omnibci.domain.classification import Classification
-# P2-8：载荷类型迁至 application 层（application 服务需对其做显式类型
-# 检查）；此处 re-export 以保持既有导入路径可用。
-from omnibci.application.events import SessionSummary, TrialOutcome
+# Re-export payloads to preserve the established import path.
+from omnibci.application.events import (
+    CommandRequest,
+    CommandResult,
+    SessionSummary,
+    TrialOutcome,
+)
 
 __all__ = ["TrialOutcome", "SessionSummary", "event_to_wire",
            "make_stimulation_ack", "payload_to_jsonable"]
@@ -54,8 +41,6 @@ def event_to_wire(event: Event) -> Optional[dict]:
     data = event.data
 
     if etype == EventType.TrialCompleted:
-        # P2-8：TrialCompleted 载荷从此只有 TrialOutcome 一种形状；
-        # bare-Classification 兼容分支已删（发布端全部走 DomainEventPublisher）。
         if not isinstance(data, TrialOutcome):
             logger.error("event_to_wire: TrialCompleted payload is %s, not TrialOutcome",
                          type(data).__name__)
@@ -142,4 +127,18 @@ def payload_to_jsonable(data: Any) -> Any:
                 **_classification_fields(data.classification)}
     if isinstance(data, SessionSummary):
         return {"session_id": data.session_id, "total_trials": data.total_trials}
+    if isinstance(data, CommandRequest):
+        return {
+            "command_id": data.command_id,
+            "payload": payload_to_jsonable(data.payload),
+        }
+    if isinstance(data, CommandResult):
+        return {
+            "command_id": data.command_id,
+            "command": data.command,
+            "ok": data.ok,
+            "message": data.message,
+            "error_code": data.error_code,
+            "failure_kind": data.failure_kind,
+        }
     return data

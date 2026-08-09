@@ -14,6 +14,9 @@ from omnibci.application.services.recording_service import (
     RecordingConflictError,
     NoActiveRecordingError,
 )
+from omnibci.application.events import CommandResult
+from omnibci.application.services.command_result_service import CommandRejectedError
+from omnibci.application.services.command_result_service import CommandTimeoutError
 
 
 class _FakeSessions:
@@ -86,6 +89,41 @@ class TestStart:
         assert sessions.ended == ["sess-1"]     # orphan session cleaned up
         assert sessions.active is None
         assert acq.events == []
+
+    def test_rolls_back_session_when_worker_rejects_stream_start(self):
+        rec, sessions, acq = _svc()
+        rejection = CommandRejectedError(CommandResult(
+            command_id="stream-start",
+            command="StartStream",
+            ok=False,
+            message="source disconnected",
+            error_code="DATA_SOURCE_NOT_CONNECTED",
+        ))
+
+        def reject_stream_start(_cmd):
+            raise rejection
+
+        acq.handle_start_stream = reject_stream_start
+
+        with pytest.raises(CommandRejectedError):
+            rec.start()
+
+        assert sessions.ended == ["sess-1"]
+        assert sessions.active is None
+
+    def test_timeout_keeps_session_for_unknown_stream_outcome(self):
+        rec, sessions, acq = _svc()
+
+        def time_out(_cmd):
+            raise CommandTimeoutError("stream-start", "StartStream", 0.1)
+
+        acq.handle_start_stream = time_out
+
+        with pytest.raises(CommandTimeoutError):
+            rec.start()
+
+        assert sessions.ended == []
+        assert sessions.active == "sess-1"
 
 
 class TestStop:

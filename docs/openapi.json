@@ -254,10 +254,10 @@
         "tags": [
           "Acquisition"
         ],
-        "summary": "Request data-source connection",
+        "summary": "Connect data source and wait for execution",
         "operationId": "connect_api_v1_acquisition_connect_post",
         "responses": {
-          "202": {
+          "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -319,6 +319,16 @@
           },
           "503": {
             "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Command execution timeout",
             "content": {
               "application/json": {
                 "schema": {
@@ -335,10 +345,10 @@
         "tags": [
           "Acquisition"
         ],
-        "summary": "Request data-source disconnection",
+        "summary": "Disconnect data source and wait for execution",
         "operationId": "disconnect_api_v1_acquisition_disconnect_post",
         "responses": {
-          "202": {
+          "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -400,6 +410,16 @@
           },
           "503": {
             "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Command execution timeout",
             "content": {
               "application/json": {
                 "schema": {
@@ -416,10 +436,10 @@
         "tags": [
           "Acquisition"
         ],
-        "summary": "Request EEG data-stream start",
+        "summary": "Start EEG data stream and wait for execution",
         "operationId": "start_stream_api_v1_acquisition_stream_start_post",
         "responses": {
-          "202": {
+          "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -481,6 +501,16 @@
           },
           "503": {
             "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Command execution timeout",
             "content": {
               "application/json": {
                 "schema": {
@@ -497,10 +527,10 @@
         "tags": [
           "Acquisition"
         ],
-        "summary": "Request EEG data-stream stop",
+        "summary": "Stop EEG data stream and wait for execution",
         "operationId": "stop_stream_api_v1_acquisition_stream_stop_post",
         "responses": {
-          "202": {
+          "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -562,6 +592,16 @@
           },
           "503": {
             "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Command execution timeout",
             "content": {
               "application/json": {
                 "schema": {
@@ -984,6 +1024,16 @@
                 }
               }
             }
+          },
+          "504": {
+            "description": "Command execution timeout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -1070,6 +1120,16 @@
           },
           "503": {
             "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Command execution timeout",
             "content": {
               "application/json": {
                 "schema": {
@@ -1240,6 +1300,16 @@
           },
           "503": {
             "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Command execution timeout",
             "content": {
               "application/json": {
                 "schema": {
@@ -1503,6 +1573,16 @@
           },
           "503": {
             "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Command execution timeout",
             "content": {
               "application/json": {
                 "schema": {
@@ -1785,6 +1865,16 @@
                 }
               }
             }
+          },
+          "504": {
+            "description": "Command execution timeout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -1859,6 +1949,16 @@
           },
           "503": {
             "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Command execution timeout",
             "content": {
               "application/json": {
                 "schema": {
@@ -3235,6 +3335,7 @@
           "CONFLICT",
           "VALIDATION_ERROR",
           "SERVICE_UNAVAILABLE",
+          "GATEWAY_TIMEOUT",
           "INTERNAL_ERROR",
           "ERROR",
           "ENGINE_NOT_READY",
@@ -3243,6 +3344,9 @@
           "NO_TRIALS",
           "ALREADY_RECORDING",
           "NO_ACTIVE_RECORDING",
+          "COMMAND_REJECTED",
+          "COMMAND_EXECUTION_FAILED",
+          "COMMAND_TIMEOUT",
           "CONFIG_KEY_NOT_ALLOWED",
           "CONFIG_PROFILE_NOT_FOUND",
           "CONFIG_PROFILE_IN_USE"

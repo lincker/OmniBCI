@@ -14,7 +14,11 @@ from typing import List
 from fastapi import APIRouter, Depends, status
 
 from omnibci.presentation.dependencies import get_session_service
-from omnibci.presentation.errors import ApiError
+from omnibci.presentation.errors import (
+    ApiError,
+    COMMAND_EXECUTION_RESPONSES,
+    command_error_to_api_error,
+)
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.session import (
     CreateSessionRequest,
@@ -35,6 +39,11 @@ from omnibci.application.queries.session_queries import (
     TrialDTO,
 )
 from omnibci.application.services.session_service import SessionAppService
+from omnibci.application.services.command_result_service import (
+    CommandExecutionError,
+    CommandRejectedError,
+    CommandTimeoutError,
+)
 
 router = APIRouter(prefix="/sessions", tags=["Session"])
 
@@ -61,6 +70,7 @@ def _trial_dto_to_response(t: TrialDTO) -> TrialResponse:
 @router.post(
     "",
     response_model=ApiResponse[SessionResponse],
+    responses=COMMAND_EXECUTION_RESPONSES,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new BCI session",
 )
@@ -68,7 +78,16 @@ def create_session(
     body: CreateSessionRequest = CreateSessionRequest(),
     svc: SessionAppService = Depends(get_session_service),
 ):
-    session_id = svc.handle_create_session(CreateSessionCommand(paradigm=body.paradigm))
+    try:
+        session_id = svc.handle_create_session(CreateSessionCommand(paradigm=body.paradigm))
+    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as exc:
+        raise command_error_to_api_error(exc)
+    except RuntimeError as exc:
+        raise ApiError(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            ErrorCode.ENGINE_NOT_READY,
+            str(exc),
+        )
     dto = svc.handle_get_session(GetSessionQuery(session_id))
     return ApiResponse(
         message="Session created",
@@ -154,6 +173,7 @@ def get_session(
 @router.delete(
     "/{session_id}",
     response_model=ApiResponse,
+    responses=COMMAND_EXECUTION_RESPONSES,
     summary="End a session",
 )
 def end_session(
@@ -164,6 +184,14 @@ def end_session(
         svc.handle_end_session(EndSessionCommand(session_id=session_id))
     except KeyError:
         raise ApiError(status.HTTP_404_NOT_FOUND, ErrorCode.SESSION_NOT_FOUND, f"Session '{session_id}' not found")
+    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as exc:
+        raise command_error_to_api_error(exc)
+    except RuntimeError as exc:
+        raise ApiError(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            ErrorCode.ENGINE_NOT_READY,
+            str(exc),
+        )
     return ApiResponse(message="Session ended")
 
 

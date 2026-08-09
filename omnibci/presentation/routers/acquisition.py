@@ -4,7 +4,11 @@
 from fastapi import APIRouter, Depends, status
 
 from omnibci.presentation.dependencies import get_acquisition_service
-from omnibci.presentation.errors import ApiError
+from omnibci.presentation.errors import (
+    ApiError,
+    COMMAND_EXECUTION_RESPONSES,
+    command_error_to_api_error,
+)
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.acquisition import AcquisitionStatusResponse
 from omnibci.application.commands.acquisition_commands import (
@@ -15,6 +19,11 @@ from omnibci.application.commands.acquisition_commands import (
 )
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 from omnibci.application.services.acquisition_service import AcquisitionAppService
+from omnibci.application.services.command_result_service import (
+    CommandExecutionError,
+    CommandRejectedError,
+    CommandTimeoutError,
+)
 
 router = APIRouter(prefix="/acquisition", tags=["Acquisition"])
 
@@ -22,13 +31,15 @@ router = APIRouter(prefix="/acquisition", tags=["Acquisition"])
 @router.post(
     "/connect",
     response_model=ApiResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Request data-source connection",
+    responses=COMMAND_EXECUTION_RESPONSES,
+    summary="Connect data source and wait for execution",
 )
 def connect(svc: AcquisitionAppService = Depends(get_acquisition_service)):
     try:
         svc.handle_connect(ConnectDataProviderCommand())
-        return ApiResponse(message="Data provider connection requested")
+        return ApiResponse(message="Data provider connected")
+    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
+        raise command_error_to_api_error(e)
     except RuntimeError as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
@@ -36,13 +47,15 @@ def connect(svc: AcquisitionAppService = Depends(get_acquisition_service)):
 @router.post(
     "/disconnect",
     response_model=ApiResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Request data-source disconnection",
+    responses=COMMAND_EXECUTION_RESPONSES,
+    summary="Disconnect data source and wait for execution",
 )
 def disconnect(svc: AcquisitionAppService = Depends(get_acquisition_service)):
     try:
         svc.handle_disconnect(DisconnectDataProviderCommand())
-        return ApiResponse(message="Data provider disconnection requested")
+        return ApiResponse(message="Data provider disconnected")
+    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
+        raise command_error_to_api_error(e)
     except RuntimeError as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
@@ -50,13 +63,15 @@ def disconnect(svc: AcquisitionAppService = Depends(get_acquisition_service)):
 @router.post(
     "/stream/start",
     response_model=ApiResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Request EEG data-stream start",
+    responses=COMMAND_EXECUTION_RESPONSES,
+    summary="Start EEG data stream and wait for execution",
 )
 def start_stream(svc: AcquisitionAppService = Depends(get_acquisition_service)):
     try:
         svc.handle_start_stream(StartStreamCommand())
-        return ApiResponse(message="Stream start requested")
+        return ApiResponse(message="Stream started")
+    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
+        raise command_error_to_api_error(e)
     except RuntimeError as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
@@ -64,13 +79,15 @@ def start_stream(svc: AcquisitionAppService = Depends(get_acquisition_service)):
 @router.post(
     "/stream/stop",
     response_model=ApiResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Request EEG data-stream stop",
+    responses=COMMAND_EXECUTION_RESPONSES,
+    summary="Stop EEG data stream and wait for execution",
 )
 def stop_stream(svc: AcquisitionAppService = Depends(get_acquisition_service)):
     try:
         svc.handle_stop_stream(StopStreamCommand())
-        return ApiResponse(message="Stream stop requested")
+        return ApiResponse(message="Stream stopped")
+    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
+        raise command_error_to_api_error(e)
     except RuntimeError as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 

@@ -15,8 +15,11 @@ from omnibci.application.commands.stimulation_commands import (
     StartStimTrialCommand,
 )
 from omnibci.application.ports.engine_port import EnginePort
+from omnibci.application.ports.engine_port import STIMULATION_PEER
+from omnibci.application.services.command_result_service import CommandTimeoutError
 
 if TYPE_CHECKING:
+    from omnibci.application.services.command_result_service import CommandResultBroker
     from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
 
 logger = logging.getLogger(__name__)
@@ -35,9 +38,11 @@ class StimulationAppService:
         self,
         engine: EnginePort,
         process_manager: "StimulationProcessManager | None" = None,
+        command_results: "CommandResultBroker | None" = None,
     ) -> None:
         self._engine          = engine
         self._process_manager = process_manager
+        self._command_results = command_results
         self._active          = False
 
     def handle_start_stimulation(self, cmd: StartStimulationCommand) -> None:
@@ -49,6 +54,16 @@ class StimulationAppService:
                 # has reported READY.  External mode remains an immediate no-op.
                 self._process_manager.start(paradigm=cmd.paradigm)
                 process_ready = True
+                if not self._process_manager.auto_spawn:
+                    if cmd.paradigm is not None:
+                        raise RuntimeError(
+                            "Cannot change paradigm of an externally managed "
+                            "stimulation process"
+                        )
+                    if not self._engine.is_peer_connected(STIMULATION_PEER):
+                        raise RuntimeError(
+                            "External stimulation process is not connected"
+                        )
             self._put_event(EventType.StartStimulation, data=cmd.paradigm)
         except BaseException:
             # Process spawn and engine dispatch form one application-level
@@ -69,7 +84,23 @@ class StimulationAppService:
 
     def handle_stop_stimulation(self, cmd: StopStimulationCommand) -> None:
         try:
-            self._put_event(EventType.StopStimulation)
+            if (
+                self._command_results is not None
+                and (
+                    self._process_manager is None
+                    or not self._process_manager.auto_spawn
+                )
+            ):
+                # An externally-managed process cannot be joined locally, so
+                # require its own correlated receipt before reporting success.
+                self._command_results.request(EventType.StopStimulation)
+            else:
+                self._put_event(EventType.StopStimulation)
+        except CommandTimeoutError:
+            # The external renderer may have received the stop and disconnected
+            # before its result reached us.  Preserve the last known active
+            # projection; /status exposes the independent peer connection.
+            raise
         except BaseException:
             # The engine may already be down, but the locally-owned renderer
             # still has to stop.  Never replace the dispatch error with a
@@ -97,7 +128,12 @@ class StimulationAppService:
         # body_to_event reconstructs only plain JSON (no dataclass), so the
         # stimulation side reads this dict directly.
         payload = {"n_trials": cmd.n_trials, "trial_params": cmd.trial_params}
-        self._put_event(EventType.StartStimTrial, data=payload)
+        if self._command_results is not None:
+            # The stimulation consumer answers only when the first requested
+            # trial has actually entered present_trial(), not when it is queued.
+            self._command_results.request(EventType.StartStimTrial, payload)
+        else:
+            self._put_event(EventType.StartStimTrial, data=payload)
         logger.info("StartStimTrial event dispatched (n_trials=%s)", cmd.n_trials)
 
     @property

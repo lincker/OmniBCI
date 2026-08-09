@@ -2,17 +2,17 @@
 Tests for /api/v1/sessions endpoints.
 """
 from datetime import datetime, timezone
+from unittest.mock import MagicMock
 
 import pytest
 
 from omnibci.shared.events import Event, EventType
-from omnibci.application.events import TrialOutcome
+from omnibci.application.events import CommandResult, TrialOutcome
+from omnibci.application.services.command_result_service import CommandRejectedError
 from omnibci.domain.classification import Classification
 
 
 def _outcome(sid, clf):
-    """P2-8：TrialCompleted 载荷契约为 TrialOutcome（bare Classification 已拒收）。
-    trial_number=0 → 读模型按本地计数补算。"""
     return Event(EventType.TrialCompleted,
                  TrialOutcome(session_id=sid, trial_number=0, classification=clf))
 
@@ -46,6 +46,24 @@ class TestCreateSession:
     def test_trial_count_starts_at_zero(self, api_client):
         resp = api_client.post("/api/v1/sessions")
         assert resp.json()["data"]["trial_count"] == 0
+
+    def test_worker_rejection_is_not_reported_as_created(
+        self, api_client, session_service
+    ):
+        session_service.handle_create_session = MagicMock(side_effect=
+            CommandRejectedError(CommandResult(
+                command_id="session-command",
+                command="StartSession",
+                ok=False,
+                message="invalid session command",
+                error_code="INVALID_SESSION_COMMAND",
+            ))
+        )
+
+        resp = api_client.post("/api/v1/sessions")
+
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "COMMAND_REJECTED"
 
 
 class TestListSessions:

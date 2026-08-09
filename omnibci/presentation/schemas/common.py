@@ -27,6 +27,7 @@ class ErrorCode(str, Enum):
     CONFLICT = "CONFLICT"
     VALIDATION_ERROR = "VALIDATION_ERROR"
     SERVICE_UNAVAILABLE = "SERVICE_UNAVAILABLE"
+    GATEWAY_TIMEOUT = "GATEWAY_TIMEOUT"
     INTERNAL_ERROR = "INTERNAL_ERROR"
     ERROR = "ERROR"  # generic fallback
 
@@ -38,6 +39,9 @@ class ErrorCode(str, Enum):
     NO_TRIALS = "NO_TRIALS"                      # last-trial query before any trial
     ALREADY_RECORDING = "ALREADY_RECORDING"      # /recording/start while one is active
     NO_ACTIVE_RECORDING = "NO_ACTIVE_RECORDING"  # /recording/stop with none active
+    COMMAND_REJECTED = "COMMAND_REJECTED"        # state/input precondition rejected
+    COMMAND_EXECUTION_FAILED = "COMMAND_EXECUTION_FAILED"  # device/plugin/internal fault
+    COMMAND_TIMEOUT = "COMMAND_TIMEOUT"          # no terminal consumer result in time
 
     # Layered configuration (stage 4): defaults + named profiles
     CONFIG_KEY_NOT_ALLOWED = "CONFIG_KEY_NOT_ALLOWED"      # key outside the whitelist

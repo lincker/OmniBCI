@@ -51,6 +51,7 @@ def stimulation_peer_config(host: str, port: int) -> PeerConfig:
                 EventType.StopStimulation,
             }),
             inbound=frozenset({
+                EventType.CommandResult,
                 EventType.StimulationAck,
                 EventType.MessageFromStimulation,
             }),

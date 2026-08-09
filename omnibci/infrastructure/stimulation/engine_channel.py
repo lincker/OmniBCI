@@ -22,6 +22,7 @@ def engine_peer_config(host: str, port: int) -> PeerConfig:
         transport=ConnectTransport(host=host, port=port),
         routes=RouteSpec(
             outbound=frozenset({
+                EventType.CommandResult,
                 EventType.StimulationAck,
                 EventType.MessageFromStimulation,
             }),

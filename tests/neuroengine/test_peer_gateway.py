@@ -601,6 +601,7 @@ class TestStimulationConfig:
             EventType.TrialCompleted, EventType.StartStimTrial, EventType.StopStimulation,
         })
         assert EventType.StimulationAck in cfg.routes.inbound
+        assert EventType.CommandResult in cfg.routes.inbound
 
 
 async def _start(channel) -> None:

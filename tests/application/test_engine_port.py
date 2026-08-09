@@ -1,16 +1,4 @@
-"""
-P0 regression tests — EnginePort decoupling.
-
-These lock in the result of the P0 refactor:
-  - Acquisition / Stimulation app services depend only on the EnginePort
-    abstraction; they no longer reach into engine internals (event_bus) or a
-    sibling service's private `_engine`.
-  - NeuroEngineService satisfies EnginePort.
-
-A pure FakeEnginePort (which has NO `event_bus` attribute) proves the穿透 is
-gone: if any service still did `engine.event_bus.put_event(...)`, these tests
-would raise AttributeError.
-"""
+"""Regression tests for EnginePort boundary enforcement."""
 from __future__ import annotations
 
 import pytest
@@ -18,6 +6,7 @@ import pytest
 from omnibci.application.ports.engine_port import EnginePort
 from omnibci.shared.events import Event, EventType
 from omnibci.application.services.acquisition_service import AcquisitionAppService
+from omnibci.application.events import CommandResult
 from omnibci.application.services.stimulation_service import StimulationAppService
 from omnibci.application.commands.acquisition_commands import (
     ConnectDataProviderCommand,
@@ -62,6 +51,23 @@ class RaisingEnginePort(EnginePort):
         raise RuntimeError("engine not running")
 
 
+class _PortCommandExecutor:
+    def __init__(self, port: EnginePort) -> None:
+        self._port = port
+
+    def request(self, event_type, payload=None, *, timeout_s=None):
+        self._port.dispatch(Event(event_type, payload))
+        return CommandResult(
+            command_id="test-command",
+            command=event_type.name,
+            ok=True,
+        )
+
+
+def _acquisition_service(port: EnginePort) -> AcquisitionAppService:
+    return AcquisitionAppService(_PortCommandExecutor(port))
+
+
 # ---------------------------------------------------------------------------
 # Port contract
 # ---------------------------------------------------------------------------
@@ -79,30 +85,29 @@ def test_neuro_engine_service_is_engine_port():
 
 
 # ---------------------------------------------------------------------------
-# Acquisition no longer touches engine internals
+# Acquisition reaches EnginePort only through its confirmed command executor
 # ---------------------------------------------------------------------------
 
 class TestAcquisitionUsesPort:
     def test_connect_dispatches_via_port_only(self):
         port = FakeEnginePort()
-        svc = AcquisitionAppService(port)
+        svc = _acquisition_service(port)
         svc.handle_connect(ConnectDataProviderCommand())
         assert len(port.dispatched) == 1
         assert port.dispatched[0].type == EventType.ConnectDataProvider
 
     def test_start_stream_dispatches_via_port(self):
         port = FakeEnginePort()
-        svc = AcquisitionAppService(port)
+        svc = _acquisition_service(port)
         svc.handle_start_stream(StartStreamCommand())
         assert port.dispatched[0].type == EventType.StartStream
 
     def test_no_private_engine_svc_attribute_remains(self):
-        svc = AcquisitionAppService(FakeEnginePort())
-        # the old穿透 seam is gone
+        svc = _acquisition_service(FakeEnginePort())
         assert not hasattr(svc, "_engine_svc")
 
     def test_propagates_engine_not_ready(self):
-        svc = AcquisitionAppService(RaisingEnginePort())
+        svc = _acquisition_service(RaisingEnginePort())
         with pytest.raises(RuntimeError):
             svc.handle_connect(ConnectDataProviderCommand())
 

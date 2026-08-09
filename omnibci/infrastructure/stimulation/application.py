@@ -6,8 +6,11 @@
 import logging
 import multiprocessing as mp
 import asyncio
+from dataclasses import dataclass
 from queue import Queue
+from typing import Any
 
+from omnibci.application.events import CommandRequest, CommandResult
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.outbound import make_stimulation_ack
@@ -17,6 +20,14 @@ from omnibci.infrastructure.stimulation.engine_channel import engine_peer_config
 from omnibci.infrastructure.stimulation.stimulator import Stimulator
 
 _MANAGED_CONNECT_TIMEOUT_S = 5.0
+
+
+@dataclass(frozen=True)
+class _QueuedStimTrial:
+    """Process-local trial item retaining REST correlation until presentation."""
+
+    params: Any
+    request: CommandRequest | None = None
 
 
 class Stimulation:
@@ -40,7 +51,7 @@ class Stimulation:
         self.stim_command_queue = Queue()
         self.result_command_queue = Queue()
         self.stimulator = Stimulator()
-        self._render_task = None   # GLFW 渲染窗口任务;关窗后为 done,但进程/连接保持
+        self._render_task = None  # The IPC process survives a closed render window.
 
     def run(self):
         print('---StimulationMain run---')
@@ -201,26 +212,55 @@ class Stimulation:
                 # PeerChannel's outbound subscription picks up StimulationAck from
                 # the bus and forwards it to the engine automatically.
                 # `data` is one trial's opaque paradigm parameter (may be None).
-                params = stim_command.data
+                queued = stim_command.data
+                if isinstance(queued, _QueuedStimTrial):
+                    params = queued.params
+                    request = queued.request
+                else:
+                    params = queued
+                    request = None
                 target = params if isinstance(params, int) else None
                 if self._render_task is None or self._render_task.done():
-                    # 渲染窗口已关闭:连接仍保持,但无法显示刺激 → 明确回执错误,
-                    # 避免在无窗口时静默卡住(范式状态机不会再推进)。
+                    # Report a closed window instead of stalling the paradigm.
                     ack = make_stimulation_ack(
                         "StartStimTrial", status="error", target_index=target,
                         message="stimulation window closed",
                     )
+                    if request is not None:
+                        self._emit_command_result(
+                            request,
+                            EventType.StartStimTrial,
+                            ok=False,
+                            message="stimulation window closed",
+                            error_code="STIMULATION_WINDOW_CLOSED",
+                        )
                 else:
                     try:
                         self.stimulator.present_trial(params)
                         ack = make_stimulation_ack(
                             "StartStimTrial", status="ok", target_index=target
                         )
+                        if request is not None:
+                            self._emit_command_result(
+                                request,
+                                EventType.StartStimTrial,
+                                ok=True,
+                                message="Stimulation trial started",
+                                error_code=None,
+                            )
                     except Exception as exc:
                         ack = make_stimulation_ack(
                             "StartStimTrial", status="error",
                             target_index=target, message=str(exc),
                         )
+                        if request is not None:
+                            self._emit_command_result(
+                                request,
+                                EventType.StartStimTrial,
+                                ok=False,
+                                message=str(exc),
+                                error_code="STIMULATION_PRESENT_FAILED",
+                            )
                 self.event_bus.put_event(Event(EventType.StimulationAck, ack))
 
         if not self.result_command_queue.empty():
@@ -255,21 +295,84 @@ class Stimulation:
         # No event_id / target knowledge lives here.
         if command.type != EventType.StartStimTrial:
             return
-        spec = command.data or {}
-        n_trials = int(spec.get("n_trials", 1))
-        params = spec.get("trial_params")
-        if params is None:
-            params = [None] * n_trials      # default: empty per-trial param → paradigm default
-        for per_trial in params:
+        request = CommandRequest.from_value(command.data)
+        spec = request.payload if request is not None else command.data
+        try:
+            if not isinstance(spec, dict):
+                raise ValueError("trial specification must be an object")
+            n_trials = int(spec.get("n_trials", 1))
+            if n_trials <= 0:
+                raise ValueError("n_trials must be greater than zero")
+            params = spec.get("trial_params")
+            if params is None:
+                params = [None] * n_trials
+            elif not isinstance(params, (list, tuple)) or len(params) != n_trials:
+                raise ValueError("trial_params length must equal n_trials")
+        except (TypeError, ValueError) as exc:
+            if request is not None:
+                self._emit_command_result(
+                    request,
+                    EventType.StartStimTrial,
+                    ok=False,
+                    message=str(exc),
+                    error_code="INVALID_STIMULATION_TRIAL",
+                )
+            else:
+                logging.warning("StartStimTrial ignored (bad payload %r): %s", spec, exc)
+            return
+
+        for index, per_trial in enumerate(params):
             # One queue item == one trial, carrying that trial's opaque params.
-            self.stim_command_queue.put(Event(EventType.StartStimTrial, per_trial))
+            self.stim_command_queue.put(Event(
+                EventType.StartStimTrial,
+                _QueuedStimTrial(
+                    params=per_trial,
+                    request=request if index == 0 else None,
+                ),
+            ))
 
     def _put_sys_command_queue(self, command: Event):
         if command.type == EventType.TrialCompleted:
             self.result_command_queue.put(command)
 
-    async def _stop_stimulation_system(self, _event=None):
+    async def _stop_stimulation_system(self, event=None):
+        request = CommandRequest.from_value(
+            event.data if isinstance(event, Event) else None
+        )
+        if request is not None:
+            result = Event(
+                EventType.CommandResult,
+                CommandResult(
+                    command_id=request.command_id,
+                    command=EventType.StopStimulation.name,
+                    ok=True,
+                    message="Stimulation stop accepted",
+                ),
+            )
+            # Flush the terminal receipt over IPC before this process tears its
+            # EventBus and peer channel down.
+            await self.peer_channel.send(result)
         self.should_stop = True
+
+    def _emit_command_result(
+        self,
+        request: CommandRequest,
+        command: EventType,
+        *,
+        ok: bool,
+        message: str | None,
+        error_code: str | None,
+    ) -> None:
+        self.event_bus.put_event(Event(
+            EventType.CommandResult,
+            CommandResult(
+                command_id=request.command_id,
+                command=command.name,
+                ok=ok,
+                message=message,
+                error_code=error_code,
+            ),
+        ))
 
     def _stop_requested(self) -> bool:
         if self.should_stop:

@@ -1,9 +1,8 @@
 """
 AcquisitionAppService — Application Service.
 
-Translates acquisition commands/queries into EventBus events that the
-NeuroEngine already understands.  Keeps acquisition routing logic out of
-the routers.
+Translates acquisition commands/queries into confirmed engine commands.
+Keeps acquisition routing and result-waiting logic out of the routers.
 """
 
 import logging
@@ -21,7 +20,7 @@ from omnibci.application.queries.acquisition_queries import (
     AcquisitionStatusResult,
 )
 from omnibci.application.events import AcquisitionSnapshot
-from omnibci.application.ports.engine_port import EnginePort
+from omnibci.application.services.command_result_service import CommandExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -30,16 +29,18 @@ class AcquisitionAppService:
     """
     Application service for the Acquisition bounded context.
 
-    Depends on the EnginePort abstraction to dispatch events; it does NOT
-    reach into the engine's internals (event_bus) any more.
+    Depends on the narrower CommandExecutor port; every write returns only
+    after a terminal worker result. It never reaches into engine internals.
     """
 
-    def __init__(self, engine: EnginePort, settings=None) -> None:
-        """*settings*: OmniBCISettings，仅用于 status 查询里的设备元数据
-        展示。由组合根注入（P2-9，取代方法内延迟 import 全局单例）；
-        None = 元数据不可用（单测默认），status 相应字段为 None。"""
-        self._engine = engine
+    def __init__(
+        self,
+        command_executor: CommandExecutor,
+        settings=None,
+    ) -> None:
+        """Use injected settings only for optional device status metadata."""
         self._settings = settings
+        self._command_executor = command_executor
         # Projection of worker-reported device state (AcquisitionState events);
         # command handlers no longer guess — see on_acquisition_state().
         self._connected = False
@@ -112,9 +113,6 @@ class AcquisitionAppService:
         id, sample rate, channel count).  Returns (None, None, None) when no
         settings were injected — preserving the prior null behaviour.
 
-        P2-9：settings 改为构造注入；配置键缺失经 get(key, None) 显式给
-        默认，不再用 except Exception 吞掉所有异常（文件损坏等真故障
-        在组合根 import 时即已 fail-fast）。
         """
         if self._settings is None:
             return None, None, None
@@ -132,4 +130,4 @@ class AcquisitionAppService:
     # ------------------------------------------------------------------
 
     def _put_event(self, event_type: EventType, data=None) -> None:
-        self._engine.dispatch(Event(event_type, data))
+        self._command_executor.request(event_type, data)

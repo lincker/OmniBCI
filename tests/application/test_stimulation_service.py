@@ -11,6 +11,7 @@ from omnibci.application.commands.stimulation_commands import (
     StartStimTrialCommand,
 )
 from omnibci.shared.events import EventType
+from omnibci.application.services.command_result_service import CommandTimeoutError
 
 
 @pytest.fixture(autouse=True)
@@ -71,6 +72,22 @@ class TestStimulationStart:
         manager.stop.assert_not_called()
         assert stimulation_service.is_active is False
 
+    def test_external_process_rejects_unfulfillable_paradigm_change(
+        self, stimulation_service, engine_service
+    ):
+        manager = MagicMock()
+        manager.auto_spawn = False
+        stimulation_service._process_manager = manager
+        engine_service.is_peer_connected = MagicMock(return_value=True)
+
+        with pytest.raises(RuntimeError, match="Cannot change paradigm"):
+            stimulation_service.handle_start_stimulation(
+                StartStimulationCommand(paradigm="classic40SSVEP")
+            )
+
+        manager.stop.assert_called_once_with()
+        assert stimulation_service.is_active is False
+
 
 class TestStimulationStop:
     def test_stop_dispatches_event(self, stimulation_service, mock_engine):
@@ -99,6 +116,25 @@ class TestStimulationStop:
         manager.stop.assert_called_once_with()
         assert stimulation_service.is_active is False
 
+    def test_external_stop_timeout_preserves_unknown_active_state(
+        self, stimulation_service
+    ):
+        manager = MagicMock()
+        manager.auto_spawn = False
+        broker = MagicMock()
+        broker.request.side_effect = CommandTimeoutError(
+            "stim-stop", "StopStimulation", 0.1
+        )
+        stimulation_service._process_manager = manager
+        stimulation_service._command_results = broker
+        stimulation_service._active = True
+
+        with pytest.raises(CommandTimeoutError):
+            stimulation_service.handle_stop_stimulation(StopStimulationCommand())
+
+        manager.stop.assert_not_called()
+        assert stimulation_service.is_active is True
+
 
 class TestStimulationTrial:
     def test_trial_dispatches_event(self, stimulation_service, mock_engine):
@@ -111,3 +147,18 @@ class TestStimulationTrial:
             StartStimTrialCommand(n_trials=1, trial_params=[5]))
         event = mock_engine.event_bus.put_event.call_args[0][0]
         assert event.data == {"n_trials": 1, "trial_params": [5]}
+
+    def test_trial_waits_for_correlated_execution_result(
+        self, stimulation_service
+    ):
+        broker = MagicMock()
+        stimulation_service._command_results = broker
+
+        stimulation_service.handle_start_trial(
+            StartStimTrialCommand(n_trials=1, trial_params=[5])
+        )
+
+        broker.request.assert_called_once_with(
+            EventType.StartStimTrial,
+            {"n_trials": 1, "trial_params": [5]},
+        )

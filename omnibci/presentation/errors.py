@@ -22,8 +22,20 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from omnibci.presentation.schemas.common import ErrorCode, ErrorResponse
+from omnibci.application.services.command_result_service import (
+    CommandExecutionError,
+    CommandRejectedError,
+    CommandTimeoutError,
+)
 
 logger = logging.getLogger(__name__)
+
+# Attach only to routes that actually wait for a correlated worker result.
+# Keeping it out of the app-wide response table avoids claiming that read-only
+# GET endpoints can fail with a command timeout.
+COMMAND_EXECUTION_RESPONSES = {
+    504: {"model": ErrorResponse, "description": "Command execution timeout"},
+}
 
 
 # Map HTTP status → semantic ErrorCode (used when an HTTPException carries no
@@ -37,6 +49,7 @@ _STATUS_TO_CODE = {
     422: ErrorCode.VALIDATION_ERROR,
     500: ErrorCode.INTERNAL_ERROR,
     503: ErrorCode.SERVICE_UNAVAILABLE,
+    504: ErrorCode.GATEWAY_TIMEOUT,
 }
 
 
@@ -64,6 +77,46 @@ class ApiError(Exception):
         self.code = code
         self.message = message
         self.detail = detail
+
+
+def command_error_to_api_error(exc: Exception) -> ApiError:
+    """Translate correlated command failures into stable HTTP semantics."""
+    if isinstance(exc, CommandRejectedError):
+        result = exc.result
+        return ApiError(
+            409,
+            ErrorCode.COMMAND_REJECTED,
+            str(exc),
+            detail={
+                "command_id": result.command_id,
+                "command": result.command,
+                "error_code": result.error_code,
+            },
+        )
+    if isinstance(exc, CommandTimeoutError):
+        return ApiError(
+            504,
+            ErrorCode.COMMAND_TIMEOUT,
+            str(exc),
+            detail={
+                "command_id": exc.command_id,
+                "command": exc.command,
+                "timeout_seconds": exc.timeout_s,
+            },
+        )
+    if isinstance(exc, CommandExecutionError):
+        result = exc.result
+        return ApiError(
+            500,
+            ErrorCode.COMMAND_EXECUTION_FAILED,
+            "Command execution failed",
+            detail={
+                "command_id": result.command_id,
+                "command": result.command,
+                "error_code": result.error_code,
+            },
+        )
+    raise exc
 
 
 def _json_error(status_code: int, code: ErrorCode, message: str, detail=None) -> JSONResponse:

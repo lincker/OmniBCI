@@ -64,7 +64,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Request data-source connection */
+        /** Connect data source and wait for execution */
         post: operations["connect_api_v1_acquisition_connect_post"];
         delete?: never;
         options?: never;
@@ -81,7 +81,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Request data-source disconnection */
+        /** Disconnect data source and wait for execution */
         post: operations["disconnect_api_v1_acquisition_disconnect_post"];
         delete?: never;
         options?: never;
@@ -98,7 +98,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Request EEG data-stream start */
+        /** Start EEG data stream and wait for execution */
         post: operations["start_stream_api_v1_acquisition_stream_start_post"];
         delete?: never;
         options?: never;
@@ -115,7 +115,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Request EEG data-stream stop */
+        /** Stop EEG data stream and wait for execution */
         post: operations["stop_stream_api_v1_acquisition_stream_stop_post"];
         delete?: never;
         options?: never;
@@ -755,7 +755,7 @@ export interface components {
          *     guessing from the HTTP status.  The string value is the wire format.
          * @enum {string}
          */
-        ErrorCode: "BAD_REQUEST" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "VALIDATION_ERROR" | "SERVICE_UNAVAILABLE" | "INTERNAL_ERROR" | "ERROR" | "ENGINE_NOT_READY" | "SESSION_NOT_FOUND" | "NO_ACTIVE_SESSION" | "NO_TRIALS" | "ALREADY_RECORDING" | "NO_ACTIVE_RECORDING" | "CONFIG_KEY_NOT_ALLOWED" | "CONFIG_PROFILE_NOT_FOUND" | "CONFIG_PROFILE_IN_USE";
+        ErrorCode: "BAD_REQUEST" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "VALIDATION_ERROR" | "SERVICE_UNAVAILABLE" | "GATEWAY_TIMEOUT" | "INTERNAL_ERROR" | "ERROR" | "ENGINE_NOT_READY" | "SESSION_NOT_FOUND" | "NO_ACTIVE_SESSION" | "NO_TRIALS" | "ALREADY_RECORDING" | "NO_ACTIVE_RECORDING" | "COMMAND_REJECTED" | "COMMAND_EXECUTION_FAILED" | "COMMAND_TIMEOUT" | "CONFIG_KEY_NOT_ALLOWED" | "CONFIG_PROFILE_NOT_FOUND" | "CONFIG_PROFILE_IN_USE";
         /**
          * ErrorResponse
          * @description Unified error envelope — mirrors ApiResponse so clients see one consistent
@@ -1243,7 +1243,7 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            202: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1298,6 +1298,15 @@ export interface operations {
             };
             /** @description Service unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1317,7 +1326,7 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            202: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1372,6 +1381,15 @@ export interface operations {
             };
             /** @description Service unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1391,7 +1409,7 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            202: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1446,6 +1464,15 @@ export interface operations {
             };
             /** @description Service unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1465,7 +1492,7 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            202: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1520,6 +1547,15 @@ export interface operations {
             };
             /** @description Service unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1901,6 +1937,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Command execution timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     start_trial_api_v1_stimulation_trial_start_post: {
@@ -1972,6 +2017,15 @@ export interface operations {
             };
             /** @description Service unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2124,6 +2178,15 @@ export interface operations {
             };
             /** @description Service unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2350,6 +2413,15 @@ export interface operations {
             };
             /** @description Service unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2587,6 +2659,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Command execution timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     stop_recording_api_v1_recording_stop_post: {
@@ -2654,6 +2735,15 @@ export interface operations {
             };
             /** @description Service unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
                 headers: {
                     [name: string]: unknown;
                 };
