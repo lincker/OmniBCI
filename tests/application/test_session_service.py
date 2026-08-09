@@ -177,6 +177,21 @@ class TestOnSessionEnded:
         dto = session_service.handle_get_session(GetSessionQuery(sid))
         assert dto.state == SessionStateDTO.RUNNING
 
+    def test_unknown_session_is_logged_and_ignored(self, session_service, caplog):
+        """An out-of-order SessionEnded must not crash or close another session."""
+        import logging
+
+        active_id = session_service.handle_create_session(CreateSessionCommand())
+        with caplog.at_level(logging.WARNING):
+            session_service.on_session_ended(Event(
+                event_type=EventType.SessionEnded,
+                data=SessionSummary(session_id="missing-session", total_trials=0),
+            ))
+
+        assert "SessionEnded for unknown session missing-session" in caplog.text
+        active = session_service.handle_get_session(GetSessionQuery(active_id))
+        assert active.state == SessionStateDTO.RUNNING
+
 
 # ---------------------------------------------------------------------------
 # Session-id unification (docs/session-id-unification.md)

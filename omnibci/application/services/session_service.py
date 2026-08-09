@@ -265,7 +265,10 @@ class SessionAppService:
         # 原子化（P1-4）；mark_ended 幂等。
         record = self._repo.update(payload.session_id, lambda r: r.mark_ended())
         if record is None:
-            logger.warning("SessionEnded for unknown session %s; ignoring", session_id)
+            logger.warning(
+                "SessionEnded for unknown session %s; ignoring",
+                payload.session_id,
+            )
             return
         logger.info("Session ended (projected): %s (%d trials)",
                     record.session_id, record.trial_count)
