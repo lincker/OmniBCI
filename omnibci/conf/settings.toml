@@ -17,7 +17,8 @@ sample_rate = 1000
 
 file_reader_chunk_size = 100
 file_reader_play_speed = 1.0
-data_file_path = "/Users/lincker/workspace/OmniBCI/tests/acquisition/../fixture/train.cnt"
+# Relative paths use platform-neutral "/" separators and the project root.
+data_file_path = "tests/fixture/train.cnt"
 
 DATA_PROVIDER_IP = '192.168.0.3'
 DATA_PROVIDER_PORT = 4000
