@@ -265,7 +265,7 @@ function AcquisitionSessionCard({
   );
 }
 
-function StimulationCard({ sessionActive }: { sessionActive: boolean }) {
+function StimulationCard() {
   const { t } = useI18n();
   const [controlValues, setControlValues] = useState<Record<string, string>>({});
   const [paradigm, setParadigm] = useState<string>("");
@@ -380,8 +380,8 @@ function StimulationCard({ sessionActive }: { sessionActive: boolean }) {
           </label>
         ))}
         <button
-          disabled={!sessionActive || trial.pending}
-          title={sessionActive ? "" : t("stimulation.sessionRequired")}
+          disabled={!status?.active || trial.pending}
+          title={status?.active ? "" : t("stimulation.startRequired")}
           onClick={triggerTrial}
         >
           {t("stimulation.triggerTrial")}
@@ -519,7 +519,6 @@ export default function App() {
   const engineRunning = engineStatus?.running ?? false;
   // A running engine implies the configuration was already loaded before a page refresh.
   const effectiveConfigLoaded = configLoaded || engineRunning;
-  const sessionActive = session != null && session.state === "running";
 
   return (
     <div className="layout">
@@ -600,7 +599,7 @@ export default function App() {
           session={session}
           trialCount={trials.length}
         />
-        <StimulationCard sessionActive={sessionActive} />
+        <StimulationCard />
         <EffectorCard />
 
         <section className="card card-wide">
