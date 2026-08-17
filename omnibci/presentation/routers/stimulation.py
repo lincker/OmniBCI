@@ -71,7 +71,7 @@ def start_stimulation(
     try:
         svc.handle_start_stimulation(StartStimulationCommand(paradigm=body.paradigm))
         return ApiResponse(message="Stimulation started")
-    except RuntimeError as e:
+    except (RuntimeError, TimeoutError) as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
 

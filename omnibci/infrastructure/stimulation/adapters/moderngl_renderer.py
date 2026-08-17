@@ -164,13 +164,23 @@ class ModernGLRenderer:
 
     # ── Texture management ──────────────────────────────────────────────────
 
-    def upload_texture(self, rgba: np.ndarray) -> TextureHandle:
-        """Upload H×W×4 uint8 RGBA array; return an opaque handle."""
-        assert rgba.ndim == 3 and rgba.shape[2] == 4, \
-            f"Expected (H, W, 4) uint8 array, got shape {rgba.shape}"
-        h, w = rgba.shape[:2]
-        tex = self._ctx.texture((w, h), 4, rgba.tobytes())
+    def upload_texture(self, image: np.ndarray) -> TextureHandle:
+        """Upload an H×W luminance, RGB, or RGBA image."""
+        if not isinstance(image, np.ndarray):
+            raise TypeError("Texture image must be a numpy.ndarray")
+        if image.dtype != np.uint8:
+            raise TypeError(f"Texture image dtype must be uint8, got {image.dtype}")
+        if image.ndim != 3 or image.shape[2] not in (1, 3, 4):
+            raise ValueError(
+                "Texture image shape must be (H, W, C) with C in (1, 3, 4), "
+                f"got {image.shape}"
+            )
+        image = np.ascontiguousarray(image)
+        h, w, components = image.shape
+        tex = self._ctx.texture((w, h), components, image.tobytes())
         tex.filter = (mgl.NEAREST, mgl.NEAREST)
+        if components == 1:
+            tex.swizzle = "RRR1"
         handle = TextureHandle(id=self._next_id)
         self._textures[self._next_id] = tex
         self._next_id += 1

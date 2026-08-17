@@ -89,13 +89,14 @@ class Renderer(Protocol):
 
     # -- Texture management --------------------------------------------------
 
-    def upload_texture(self, rgba: np.ndarray) -> TextureHandle:
-        """Upload an RGBA image to GPU memory and return a handle.
+    def upload_texture(self, image: np.ndarray) -> TextureHandle:
+        """Upload a full-frame image to GPU memory and return a handle.
 
         Parameters
         ----------
-        rgba:
-            Numpy array of shape (H, W, 4) with dtype uint8, values 0-255.
+        image:
+            Numpy array of shape (H, W, C) with dtype uint8, values 0-255.
+            Supported channel counts are 1 (luminance), 3 (RGB), and 4 (RGBA).
 
         Returns
         -------

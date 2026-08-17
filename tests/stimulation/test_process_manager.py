@@ -56,6 +56,12 @@ def test_no_spawn_mode_is_a_noop() -> None:
     assert manager.state is ChildProcessState.STOPPED
 
 
+def test_default_timeout_allows_cold_renderer_startup() -> None:
+    manager = StimulationProcessManager()
+
+    assert manager._startup_timeout_s >= 30.0
+
+
 @patch("omnibci.infrastructure.stimulation.process_manager.mp.Event")
 @patch("omnibci.infrastructure.stimulation.process_manager.mp.Process")
 def test_start_passes_cooperative_stop_event(

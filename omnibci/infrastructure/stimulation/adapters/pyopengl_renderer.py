@@ -20,9 +20,13 @@ import numpy as np
 from OpenGL.GL import (
     GL_ARRAY_BUFFER, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT,
     GL_ELEMENT_ARRAY_BUFFER, GL_FLOAT, GL_FALSE,
-    GL_NEAREST, GL_RGBA, GL_STATIC_DRAW,
+    GL_NEAREST, GL_ONE, GL_R8, GL_RED, GL_RGB, GL_RGB8, GL_RGBA, GL_RGBA8,
+    GL_STATIC_DRAW,
     GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_TEXTURE_MIN_FILTER,
+    GL_TEXTURE_SWIZZLE_A, GL_TEXTURE_SWIZZLE_B,
+    GL_TEXTURE_SWIZZLE_G, GL_TEXTURE_SWIZZLE_R,
     GL_TRIANGLES, GL_UNSIGNED_BYTE, GL_UNSIGNED_INT,
+    GL_UNPACK_ALIGNMENT,
     GL_CLAMP_TO_EDGE, GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T,
     GL_VERTEX_SHADER, GL_FRAGMENT_SHADER,
     glBindBuffer, glBindTexture, glBindVertexArray,
@@ -30,7 +34,7 @@ from OpenGL.GL import (
     glDeleteBuffers, glDeleteTextures, glDeleteVertexArrays,
     glDrawElements, glEnableVertexAttribArray,
     glGenBuffers, glGenTextures, glGenVertexArrays,
-    glTexImage2D, glTexParameteri,
+    glPixelStorei, glTexImage2D, glTexParameteri,
     glUseProgram, glVertexAttribPointer,
     glUniform4f, glGetUniformLocation,
 )
@@ -121,11 +125,25 @@ class PyOpenGLRenderer:
 
     # -- Texture management --------------------------------------------------
 
-    def upload_texture(self, rgba: np.ndarray) -> TextureHandle:
-        """Upload H×W×4 uint8 RGBA array; return an opaque handle."""
-        assert rgba.ndim == 3 and rgba.shape[2] == 4, \
-            f"Expected (H, W, 4) uint8 array, got shape {rgba.shape}"
-        h, w = rgba.shape[:2]
+    def upload_texture(self, image: np.ndarray) -> TextureHandle:
+        """Upload an H×W luminance, RGB, or RGBA image."""
+        if not isinstance(image, np.ndarray):
+            raise TypeError("Texture image must be a numpy.ndarray")
+        if image.dtype != np.uint8:
+            raise TypeError(f"Texture image dtype must be uint8, got {image.dtype}")
+        if image.ndim != 3 or image.shape[2] not in (1, 3, 4):
+            raise ValueError(
+                "Texture image shape must be (H, W, C) with C in (1, 3, 4), "
+                f"got {image.shape}"
+            )
+        image = np.ascontiguousarray(image)
+        h, w, components = image.shape
+        formats = {
+            1: (GL_R8, GL_RED),
+            3: (GL_RGB8, GL_RGB),
+            4: (GL_RGBA8, GL_RGBA),
+        }
+        internal_format, pixel_format = formats[components]
 
         tex = glGenTextures(1)
         glBindTexture(GL_TEXTURE_2D, tex)
@@ -133,8 +151,16 @@ class PyOpenGLRenderer:
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,     GL_CLAMP_TO_EDGE)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0,
-                     GL_RGBA, GL_UNSIGNED_BYTE, rgba)
+        if components == 1:
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_RED)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_RED)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_RED)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_ONE)
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+        glTexImage2D(
+            GL_TEXTURE_2D, 0, internal_format, w, h, 0,
+            pixel_format, GL_UNSIGNED_BYTE, image,
+        )
         glBindTexture(GL_TEXTURE_2D, 0)
 
         handle = TextureHandle(id=self._next_id)

@@ -80,6 +80,21 @@ class TestStimulationStart:
         resp = api_client.post("/api/v1/stimulation/start")
         assert resp.status_code == 503
 
+    def test_startup_timeout_returns_engine_not_ready(
+        self, api_client, stimulation_service
+    ):
+        stimulation_service.handle_start_stimulation = MagicMock(
+            side_effect=TimeoutError(
+                "Stimulation subprocess did not become ready within 30s"
+            )
+        )
+
+        resp = api_client.post("/api/v1/stimulation/start")
+
+        assert resp.status_code == 503
+        assert resp.json()["code"] == "ENGINE_NOT_READY"
+        assert "within 30s" in resp.json()["message"]
+
 
 class TestStimulationStop:
     def test_stop_returns_200(self, api_client, mock_engine):

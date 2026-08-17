@@ -80,7 +80,7 @@ class StimulationProcessManager:
     _GRACEFUL_TIMEOUT_S = 3.0
     _TERMINATE_TIMEOUT_S = 3.0
     _KILL_TIMEOUT_S = 3.0
-    _STARTUP_TIMEOUT_S = 10.0
+    _STARTUP_TIMEOUT_S = 30.0
 
     def __init__(
         self,
