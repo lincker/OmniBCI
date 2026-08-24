@@ -1,0 +1,12 @@
+# OmniBCI Plugin Manifest — schema version 1
+
+[package]
+id           = "neuroscan_scan45_reader"
+version      = "0.1.0"
+kind         = "acquisition"
+api_version  = "1"
+plugin_type  = "neuroscan_scan45_reader"
+display_name = "Neuroscan Scan45"
+description  = "Neuroscan Scan 45 EEG 放大器"
+author       = "OmniBCI"
+source       = "builtin"
