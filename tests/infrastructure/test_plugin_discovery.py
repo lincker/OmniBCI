@@ -83,11 +83,14 @@ def test_builtin_logger_descriptor_is_directly_loadable(monkeypatch, tmp_path):
     assert instance.plugin_type == "logger"
 
 
-def test_discovery_does_not_execute_plugin_and_source_comes_from_root(tmp_path):
+@pytest.mark.parametrize("directory", ["external", "vendor/series/external"])
+def test_discovery_does_not_execute_plugin_and_source_comes_from_root(
+    tmp_path, directory,
+):
     root = tmp_path / "effectors"
     package_dir = _write_effector_manifest(
         root,
-        "external",
+        directory,
         plugin_id="external",
         plugin_type="external",
         claimed_source="builtin",
@@ -105,11 +108,115 @@ def test_discovery_does_not_execute_plugin_and_source_comes_from_root(tmp_path):
     assert not marker.exists()
 
 
-def test_user_plugin_shadows_builtin_by_plugin_type(monkeypatch, tmp_path):
+def test_discovery_orders_mixed_depth_packages_and_skips_dunder_groups(tmp_path):
+    root = tmp_path / "effectors"
+    directories = ["flat", "vendor/reader", "vendor/series/deep"]
+    for index, directory in enumerate(reversed(directories)):
+        _write_effector_manifest(
+            root, directory, plugin_id=str(index), plugin_type=str(index)
+        )
+    _write_effector_manifest(
+        root, "vendor/__cache__/hidden", plugin_id="hidden", plugin_type="hidden"
+    )
+
+    descriptors = _catalog_for(PluginRoot(root, "builtin", 100)).scan("effector")
+
+    assert [item.location.relative_to(root).as_posix() for item in descriptors] == (
+        directories
+    )
+    assert all(item.source == "builtin" for item in descriptors)
+    assert all(item.precedence == 100 for item in descriptors)
+
+
+@pytest.mark.parametrize(
+    "manifest_kind", ["valid", "malformed", "directory", "symlink", "broken-symlink"]
+)
+def test_discovery_stops_at_package_boundary(tmp_path, caplog, manifest_kind):
+    root = tmp_path / "effectors"
+    package_dir = _write_effector_manifest(
+        root, "vendor/package", plugin_id="parent", plugin_type="parent"
+    )
+    _write_effector_manifest(
+        package_dir, "examples/child", plugin_id="child", plugin_type="child"
+    )
+    manifest = package_dir / "manifest.toml"
+    if manifest_kind == "malformed":
+        manifest.write_text("[package", encoding="utf-8")
+    elif manifest_kind == "directory":
+        manifest.unlink()
+        manifest.mkdir()
+    elif manifest_kind in ("symlink", "broken-symlink"):
+        target = tmp_path / "outside.toml"
+        if manifest_kind == "symlink":
+            target.write_text(manifest.read_text(encoding="utf-8"), encoding="utf-8")
+        manifest.unlink()
+        try:
+            manifest.symlink_to(target)
+        except OSError as exc:
+            pytest.skip(f"symlinks unavailable: {exc}")
+
+    descriptors = _catalog_for(PluginRoot(root, "user", 0)).scan("effector")
+
+    if manifest_kind == "valid":
+        assert [item.plugin_type for item in descriptors] == ["parent"]
+    else:
+        assert descriptors == ()
+        assert "Skipping invalid plugin" in caplog.text
+        assert str(manifest) in caplog.text
+
+
+def test_discovery_does_not_follow_symlinked_groups_or_cycles(tmp_path, caplog):
+    root = tmp_path / "effectors"
+    _write_effector_manifest(
+        root, "working", plugin_id="working", plugin_type="working"
+    )
+    outside = tmp_path / "outside"
+    _write_effector_manifest(
+        outside, "driver", plugin_id="outside", plugin_type="outside"
+    )
+    group = root / "group"
+    group.mkdir()
+    try:
+        (group / "linked-vendor").symlink_to(outside, target_is_directory=True)
+        (group / "cycle").symlink_to(root, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    descriptors = _catalog_for(PluginRoot(root, "user", 0)).scan("effector")
+
+    assert [item.plugin_type for item in descriptors] == ["working"]
+    assert "Skipping symlink" in caplog.text
+
+
+def test_unreadable_group_does_not_hide_other_plugins(tmp_path, monkeypatch, caplog):
+    root = tmp_path / "effectors"
+    blocked = root / "blocked"
+    blocked.mkdir(parents=True)
+    _write_effector_manifest(
+        root, "vendor/working", plugin_id="working", plugin_type="working"
+    )
+    original_iterdir = Path.iterdir
+
+    def iterdir(path):
+        if path == blocked:
+            raise PermissionError("Access denied")
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+
+    descriptors = _catalog_for(PluginRoot(root, "user", 0)).scan("effector")
+
+    assert [item.plugin_type for item in descriptors] == ["working"]
+    assert str(blocked) in caplog.text
+    assert "Access denied" in caplog.text
+
+
+@pytest.mark.parametrize("directory", ["custom-logger", "vendor/custom-logger"])
+def test_user_plugin_shadows_builtin_by_plugin_type(monkeypatch, tmp_path, directory):
     user_plugins = tmp_path / "plugins"
     package_dir = _write_effector_manifest(
         user_plugins / "effectors",
-        "custom-logger",
+        directory,
         plugin_id="custom-logger",
         plugin_type="logger",
         publisher="alice",
@@ -123,11 +230,14 @@ def test_user_plugin_shadows_builtin_by_plugin_type(monkeypatch, tmp_path):
     assert descriptor.source == "user"
 
 
-def test_missing_user_entrypoint_does_not_fall_back_to_builtin(monkeypatch, tmp_path):
+@pytest.mark.parametrize("directory", ["broken-override", "vendor/broken-override"])
+def test_missing_user_entrypoint_does_not_fall_back_to_builtin(
+    monkeypatch, tmp_path, directory,
+):
     user_plugins = tmp_path / "plugins"
     _write_effector_manifest(
         user_plugins / "effectors",
-        "broken-override",
+        directory,
         plugin_id="broken-override",
         plugin_type="logger",
         entrypoint=None,
@@ -138,11 +248,14 @@ def test_missing_user_entrypoint_does_not_fall_back_to_builtin(monkeypatch, tmp_
         PluginCatalog().resolve("effector", "logger")
 
 
-def test_invalid_user_override_does_not_fall_back_to_builtin(monkeypatch, tmp_path):
+@pytest.mark.parametrize("directory", ["invalid-override", "vendor/invalid-override"])
+def test_invalid_user_override_does_not_fall_back_to_builtin(
+    monkeypatch, tmp_path, directory,
+):
     user_plugins = tmp_path / "plugins"
     _write_effector_manifest(
         user_plugins / "effectors",
-        "invalid-override",
+        directory,
         plugin_id="invalid-override",
         plugin_type="logger",
         entrypoint="../driver:TestEffector",
@@ -153,13 +266,14 @@ def test_invalid_user_override_does_not_fall_back_to_builtin(monkeypatch, tmp_pa
         PluginCatalog().resolve("effector", "logger")
 
 
-def test_same_precedence_duplicate_plugin_type_is_ambiguous(tmp_path):
+@pytest.mark.parametrize("directory", ["two", "vendor/two"])
+def test_same_precedence_duplicate_plugin_type_is_ambiguous(tmp_path, directory):
     root = tmp_path / "effectors"
     _write_effector_manifest(
         root, "one", plugin_id="one", plugin_type="duplicate"
     )
     _write_effector_manifest(
-        root, "two", plugin_id="two", plugin_type="duplicate"
+        root, directory, plugin_id="two", plugin_type="duplicate"
     )
 
     with pytest.raises(AmbiguousPluginError, match="Ambiguous effector"):
@@ -168,7 +282,8 @@ def test_same_precedence_duplicate_plugin_type_is_ambiguous(tmp_path):
         )
 
 
-def test_same_identifier_cannot_declare_different_plugin_types(tmp_path):
+@pytest.mark.parametrize("directory", ["two", "vendor/two"])
+def test_same_identifier_cannot_declare_different_plugin_types(tmp_path, directory):
     root = tmp_path / "effectors"
     _write_effector_manifest(
         root,
@@ -179,7 +294,7 @@ def test_same_identifier_cannot_declare_different_plugin_types(tmp_path):
     )
     _write_effector_manifest(
         root,
-        "two",
+        directory,
         plugin_id="shared-id",
         plugin_type="second",
         publisher="alice",
@@ -281,12 +396,17 @@ def test_non_actuation_v1_manifest_remains_visible_without_entrypoint(tmp_path):
     assert descriptors[0].entrypoint is None
 
 
+@pytest.mark.parametrize("directory", ["relative", "vendor/series/relative"])
 def test_selected_entrypoint_supports_relative_imports_without_sys_path_pollution(
-    tmp_path,
+    tmp_path, directory,
 ):
     root = tmp_path / "effectors"
     package_dir = _write_effector_manifest(
-        root, "relative", plugin_id="relative", plugin_type="relative"
+        root, directory, plugin_id="relative", plugin_type="relative"
+    )
+    (package_dir.parent / "__init__.py").write_text(
+        "raise AssertionError('Grouping directory must not be imported')\n",
+        encoding="utf-8",
     )
     (package_dir / "helpers.py").write_text("ORIGIN = 'user-relative'\n", encoding="utf-8")
     package_init_marker = tmp_path / "package-init-executed"

@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from omnibci.domain.ports.acquisition import SignalSource
-from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8 import (
+from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8.curry8 import (
     BlockType,
     ClientRequest,
     ControlCode,

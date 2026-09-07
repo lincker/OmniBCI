@@ -1,0 +1,14 @@
+# OmniBCI Plugin Manifest — schema version 1
+
+[package]
+id           = "neuroscan_curry8_reader"
+publisher    = "OmniBCI"
+version      = "0.1.0"
+kind         = "acquisition"
+api_version  = "1"
+plugin_type  = "neuroscan_curry8_reader"
+entrypoint   = "curry8:Curry8DataReader"
+display_name = "Neuroscan CURRY 8"
+description  = "Neuroscan CURRY 8 NetStreaming EEG acquisition driver."
+author       = "OmniBCI"
+source       = "builtin"

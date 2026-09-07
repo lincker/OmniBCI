@@ -141,8 +141,8 @@ class Scan45DataReader(SignalSource):
     plugin_type = 'neuroscan_scan45_reader'
     def __init__(self) -> None:
         super().__init__()
-        self.data_provider_ip = settings.ACQUISITION.DATA_PROVIDER_IP
-        self.data_provider_port = settings.ACQUISITION.DATA_PROVIDER_PORT
+        self.data_provider_ip = settings.get("ACQUISITION.DATA_PROVIDER_IP")
+        self.data_provider_port = settings.get("ACQUISITION.DATA_PROVIDER_PORT")
         # self.n_channels = config.get('n_channels', 9) # refactor later
         # self.record_srate = config.get('record_srate', 1000)
         # self.srate # TODO: refactor later
