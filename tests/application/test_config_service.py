@@ -22,6 +22,7 @@ def svc(tmp_path):
         "[ACQUISITION]\n"
         "signal_source = \"file_reader\"\n"
         "sample_rate = 1000\n"
+        "parallel_port_address = \"0x3100\"\n"
         "[ALGORITHM]\n"
         "window_duration = 3.0\n"
         "filters = []\n"
@@ -57,6 +58,12 @@ class TestListEntries:
 
 
 class TestApplyValidation:
+    @pytest.mark.parametrize("value", [0x3100, True, None, 1.5])
+    def test_parallel_port_address_requires_hexadecimal_text(self, svc, value):
+        with pytest.raises(ConfigValidationError) as exc:
+            svc.apply({"ACQUISITION.parallel_port_address": value})
+        assert "ACQUISITION.parallel_port_address" in exc.value.bad_keys
+
     def test_unknown_key_rejected(self, svc):
         with pytest.raises(ConfigKeyNotAllowedError) as exc:
             svc.apply({"LOGGING.level": "DEBUG"})
@@ -104,6 +111,27 @@ class TestApplyValidation:
 
 
 class TestApplyScopes:
+    @pytest.mark.parametrize("scope", ["default", "hardware"])
+    def test_parallel_port_address_is_editable_and_survives_reload(
+        self, svc, tmp_path, scope,
+    ):
+        key = "ACQUISITION.parallel_port_address"
+
+        applied, restart = svc.apply({key: "0x378"}, scope=scope)
+        if scope != "default":
+            svc.activate(scope)
+        settings = OmniBCISettings(tmp_path / "settings.toml")
+        entries, _ = ConfigService(settings).list_entries()
+        entry = next(item for item in entries if item["key"] == key)
+
+        assert applied == [key]
+        assert restart is True
+        assert settings.get(key) == "0x378"
+        assert entry["type"] == "str"
+        assert entry["effective_value"] == "0x378"
+        if scope != "default":
+            assert entry["default_value"] == "0x3100"
+
     def test_default_scope_persists(self, svc, tmp_path):
         applied, restart = svc.apply({"ACQUISITION.sample_rate": 2000})
         assert applied == ["ACQUISITION.sample_rate"]

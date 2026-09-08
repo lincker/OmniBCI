@@ -39,6 +39,11 @@ CONFIG_WHITELIST: Dict[str, ConfigPolicy] = {
     "ACQUISITION.file_reader_play_speed": ConfigPolicy("float", "engine-restart", "回放速度倍率"),
     "ACQUISITION.sample_rate": ConfigPolicy("int", "engine-restart", "采样率 (Hz)"),
     "ACQUISITION.channel_number": ConfigPolicy("int", "engine-restart", "通道数"),
+    "ACQUISITION.parallel_port_address": ConfigPolicy(
+        "str", "engine-restart",
+        "Trigger parallel-port I/O base address in hex (e.g. 0x3100); "
+        "restart stimulation to apply",
+    ),
     "ALGORITHM.decoder": ConfigPolicy("str", "engine-restart", "解码器插件 id"),
     "ALGORITHM.window_duration": ConfigPolicy("float", "engine-restart", "解码窗长 (s)"),
     "ALGORITHM.offset_time": ConfigPolicy("float", "engine-restart", "触发偏移 (s)"),
