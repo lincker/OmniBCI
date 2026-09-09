@@ -113,12 +113,16 @@ pip-selfcheck.json
 
 # plugin implementations — vendor/user plugin packages are not committed
 # until reviewed. Framework files directly under plugins/ (registry, factory,
-# loader, plugin_catalog, dirs) ARE tracked. The first-party file-reader
-# acquisition plugin is reviewed; keep other acquisition plugins ignored.
+# loader, plugin_catalog, dirs) ARE tracked. The first-party file-reader and
+# Neuroscan acquisition plugins are tracked; keep other acquisition plugins ignored.
 /omnibci/infrastructure/plugins/acquisition/*
 !/omnibci/infrastructure/plugins/acquisition/file/
 !/omnibci/infrastructure/plugins/acquisition/file/**
 /omnibci/infrastructure/plugins/acquisition/file/__pycache__/
+!/omnibci/infrastructure/plugins/acquisition/neuroscan/
+/omnibci/infrastructure/plugins/acquisition/neuroscan/*
+!/omnibci/infrastructure/plugins/acquisition/neuroscan/scan45/
+!/omnibci/infrastructure/plugins/acquisition/neuroscan/curry8/
 /omnibci/infrastructure/plugins/algorithms/*
 !/omnibci/infrastructure/plugins/algorithms/decoders/
 !/omnibci/infrastructure/plugins/algorithms/decoders/**

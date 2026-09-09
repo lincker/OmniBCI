@@ -141,8 +141,8 @@ class Scan45DataReader(SignalSource):
     plugin_type = 'neuroscan_scan45_reader'
     def __init__(self) -> None:
         super().__init__()
-        self.data_provider_ip = settings.ACQUISITION.DATA_PROVIDER_IP
-        self.data_provider_port = settings.ACQUISITION.DATA_PROVIDER_PORT
+        self.data_provider_ip = settings.get("ACQUISITION.DATA_PROVIDER_IP")
+        self.data_provider_port = settings.get("ACQUISITION.DATA_PROVIDER_PORT")
         # self.n_channels = config.get('n_channels', 9) # refactor later
         # self.record_srate = config.get('record_srate', 1000)
         # self.srate # TODO: refactor later
@@ -271,11 +271,13 @@ class Scan45DataReader(SignalSource):
 @register_plugin(TriggerEmitter)
 class Scan45Trigger(TriggerEmitter):
     plugin_type = 'neuroscan_scan45_trigger'
-    def __init__(self, COM='3100'):
-        #TODO: refactor, get com number from settings file.
+    def __init__(self, parallel_port_address:str=None): # parallel_port_address='0x3100'
         super().__init__()
-        self.COM = COM
-        self.address = int(COM, 16)
+        self.parallel_port_address = (
+            parallel_port_address if parallel_port_address is not None
+            else settings.get('ACQUISITION.parallel_port_address')
+        )
+        self.address = int(self.parallel_port_address, 16)
         self.port = self._set_parallel_port(self.address)
         self.clear()
 

@@ -2,11 +2,13 @@
 
 [package]
 id           = "neuroscan_scan45_reader"
+publisher    = "OmniBCI"
 version      = "0.1.0"
 kind         = "acquisition"
 api_version  = "1"
 plugin_type  = "neuroscan_scan45_reader"
+entrypoint   = "scan45:Scan45DataReader"
 display_name = "Neuroscan Scan45"
-description  = "Neuroscan Scan 45 EEG 放大器"
+description  = "Neuroscan Scan 4.5 EEG acquisition driver."
 author       = "OmniBCI"
 source       = "builtin"

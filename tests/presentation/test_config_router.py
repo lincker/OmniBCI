@@ -43,6 +43,20 @@ class TestGetConfig:
 
 
 class TestPatchConfig:
+    def test_parallel_port_address_can_be_updated(self, config_client):
+        key = "ACQUISITION.parallel_port_address"
+        response = config_client.patch("/api/v1/config", json={
+            "updates": {key: "0x378"},
+        })
+
+        assert response.status_code == 200
+        assert response.json()["data"]["engine_restart_required"] is True
+        entries = config_client.get("/api/v1/config").json()["data"]["entries"]
+        entry = next(item for item in entries if item["key"] == key)
+        assert entry["default_value"] == "0x378"
+        assert entry["effective_value"] == "0x378"
+        assert entry["type"] == "str"
+
     def test_patch_default(self, config_client):
         resp = config_client.patch("/api/v1/config", json={
             "updates": {"ACQUISITION.sample_rate": 500}})

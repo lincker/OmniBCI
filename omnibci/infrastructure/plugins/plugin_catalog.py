@@ -405,6 +405,31 @@ def _parse_descriptor(
     )
 
 
+def _iter_plugin_dirs(directory: Path) -> Iterable[Path]:
+    """Discover plugin packages without descending into package contents."""
+    try:
+        children = sorted(directory.iterdir(), key=lambda child: child.name)
+    except OSError as exc:
+        log.warning("Cannot scan plugin directory %s: %s", directory, exc)
+        return
+
+    for child in children:
+        if child.name.startswith("__"):
+            continue
+        if child.is_symlink():
+            log.warning("Skipping symlink in plugin search tree: %s", child)
+            continue
+        if not child.is_dir():
+            continue
+
+        manifest_path = child / MANIFEST_NAME
+        if manifest_path.is_symlink() or manifest_path.exists():
+            yield child
+            continue
+
+        yield from _iter_plugin_dirs(child)
+
+
 class PluginCatalog:
     """Discover plugins and resolve a configured ``plugin_type``.
 
@@ -463,20 +488,7 @@ class PluginCatalog:
             key=lambda root: (root.precedence, str(root.path)),
         )
         for root in roots:
-            try:
-                entries: Iterable[str] = sorted(os.listdir(root.path))
-            except OSError as exc:
-                log.warning("Cannot scan plugin root %s: %s", root.path, exc)
-                continue
-
-            for entry in entries:
-                package_dir = root.path / entry
-                if (
-                    not package_dir.is_dir()
-                    or entry.startswith("__")
-                    or not (package_dir / MANIFEST_NAME).is_file()
-                ):
-                    continue
+            for package_dir in _iter_plugin_dirs(root.path):
                 try:
                     descriptors.append(_parse_descriptor(category, root, package_dir))
                 except PluginManifestError as exc:
