@@ -156,6 +156,11 @@ The base configuration is stored in `omnibci/conf/settings.toml`. Values in
 the active `omnibci/conf/profiles/<name>.toml` profile override matching base
 settings.
 
+For reusable Scan45, Curry8, or file playback setups, use **Configuration →
+Acquisition profiles** in the console. Save a named profile and select it before
+starting the engine. These profiles live in the backend user's configuration
+directory and override only their acquisition parameters.
+
 For file playback, make sure the following configuration points to an EEG data
 file that exists on the local machine:
 
@@ -181,8 +186,9 @@ Useful endpoints:
 - OpenAPI schema: <http://127.0.0.1:8000/openapi.json>
 
 Append `--reload` during API development if automatic reloads are useful.
-Starting the API process initializes the engine graph but does not start EEG
-acquisition. Start NeuroEngine explicitly through the web console or API.
+Starting the API process initializes services and listeners. Start NeuroEngine
+explicitly through the web console or API to resolve the selected profile and
+build the engine graph.
 
 ### 5. Start the Web Console
 

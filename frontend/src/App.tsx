@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   api,
   ApiError,
@@ -9,6 +9,8 @@ import { usePoll } from "./hooks/usePoll";
 import { useAction } from "./hooks/useAction";
 import { useResultsFeed } from "./hooks/useResultsFeed";
 import { ConfigCard } from "./ConfigCard";
+import { AcquisitionProfiles } from "./AcquisitionProfiles";
+import { ConfigDialog } from "./ConfigDialog";
 import {
   translateControlLabel,
   translatePluginName,
@@ -47,11 +49,13 @@ function EngineCard({
   const [draft, setDraft] = useState<Record<string, string>>({});   // Local pending selections.
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const [acquisitionProfileActive, setAcquisitionProfileActive] = useState(false);
 
   useEffect(() => {
     async function load() {
-      const [cfg, ...pluginResps] = await Promise.all([
+      const [cfg, acquisition, ...pluginResps] = await Promise.all([
         api.getConfig().catch(() => null),
+        api.getAcquisitionConfig().catch(() => null),
         ...PLUGIN_CATEGORIES.map(({ category }) => api.listPlugins(category).catch(() => null)),
       ]);
       const vals: Record<string, string> = {};
@@ -63,6 +67,7 @@ function EngineCard({
       }
       setValues(vals);
       setDraft(vals);
+      setAcquisitionProfileActive(acquisition?.active_profile_id != null);
       const opts: Record<string, ParadigmInfo[]> = {};
       PLUGIN_CATEGORIES.forEach(({ category }, i) => {
         const resp = pluginResps[i];
@@ -133,7 +138,7 @@ function EngineCard({
             <label key={category}>
               <span className="plugin-bar-label">{t(labelKey)}</span>
               <select
-                disabled={running || starting}
+                disabled={running || starting || (category === "acquisition" && acquisitionProfileActive)}
                 value={draft[configKey] ?? ""}
                 onChange={(e) => setDraft((d) => ({ ...d, [configKey]: e.target.value }))}
               >
@@ -156,6 +161,7 @@ function EngineCard({
           </button>
         </div>
       </div>
+      {acquisitionProfileActive && <p className="meta">The active acquisition profile controls the data source. Manage profiles in Configuration.</p>}
       <ActionError messages={[startError, stop.error]} />
     </section>
   );
@@ -509,6 +515,10 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("system");
   const [configLoaded, setConfigLoaded] = useState(false);
   const [dataSourceDirty, setDataSourceDirty] = useState(false);
+  const [moduleConfigDirty, setModuleConfigDirty] = useState(false);
+  const [pendingTab, setPendingTab] = useState<Tab | null>(null);
+  const [configVersion, setConfigVersion] = useState(0);
+  const onModuleConfigChanged = useCallback(() => setConfigVersion((version) => version + 1), []);
   const { connection, session, trials, acks } = useResultsFeed();
   const { data: engineStatus } = usePoll(api.engineStatus);
   const {
@@ -532,7 +542,12 @@ export default function App() {
             <button
               key={navTab}
               className={navTab === tab ? "nav-item active" : "nav-item"}
-              onClick={() => setTab(navTab)}
+              onClick={() => {
+                if (navTab === tab) return;
+                if (tab === "config" && moduleConfigDirty) { setPendingTab(navTab); return; }
+                setModuleConfigDirty(false);
+                setTab(navTab);
+              }}
             >
               {navTab === "system" ? (
                 <svg className="nav-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -572,6 +587,12 @@ export default function App() {
         </span>
       </aside>
 
+      {pendingTab && <ConfigDialog title="Unsaved changes" message="Discard unsaved profile changes?"
+        confirmLabel="Discard changes" onCancel={() => setPendingTab(null)} onConfirm={() => {
+          setModuleConfigDirty(false);
+          setTab(pendingTab);
+          setPendingTab(null);
+        }} />}
       <main className="content">
         <header className="content-head">
           <h1>{tab === "system" ? t("nav.system") : t("nav.config")}</h1>
@@ -579,7 +600,9 @@ export default function App() {
 
         {tab === "config" ? (
           <div className="grid">
-            <ConfigCard />
+            <AcquisitionProfiles engineRunning={engineRunning}
+              onDirtyChange={setModuleConfigDirty} onChanged={onModuleConfigChanged} />
+            <ConfigCard refreshKey={configVersion} engineRunning={engineRunning} />
           </div>
         ) : (
       <>

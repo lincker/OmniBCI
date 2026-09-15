@@ -1,5 +1,6 @@
 
 import multiprocessing as mp
+from copy import deepcopy
 from dataclasses import dataclass
 
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
@@ -34,16 +35,17 @@ class NeuroEngineConfig:
     debug: bool = False                     # asyncio debug mode for the engine loop
 
     @classmethod
-    def from_settings(cls) -> "NeuroEngineConfig":
+    def from_settings(cls, settings_snapshot: dict | None = None) -> "NeuroEngineConfig":
         """Build config from settings.toml, falling back to dataclass defaults.
 
         P2-9：改用 settings.get(key, default)（default 参数已修复）——
         缺键走默认值是显式语义，异常吞噬移除，真故障不再被掩盖。
         """
         from omnibci.conf import settings
+        source = settings if settings_snapshot is None else settings_snapshot
 
         def _get(key, default):
-            value = settings.get(key, default)
+            value = source.get(key, default)
             return default if value is None else value
 
         return cls(
@@ -71,9 +73,11 @@ class NeuroEngineBuilder:
         engine = NeuroEngineBuilder(NeuroEngineConfig(queue_size=50)).build()  # explicit
     """
 
-    def __init__(self, config: NeuroEngineConfig | None = None) -> None:
+    def __init__(self, config: NeuroEngineConfig | None = None,
+                 *, settings_snapshot: dict | None = None) -> None:
         # Default: read every tunable from settings ONCE, here.
-        self._config = config or NeuroEngineConfig.from_settings()
+        self._settings_snapshot = deepcopy(settings_snapshot)
+        self._config = config or NeuroEngineConfig.from_settings(self._settings_snapshot)
 
     def build(self) -> NeuroEngine:
         """
@@ -106,6 +110,7 @@ class NeuroEngineBuilder:
             command_queue=acquisition_command_queue,
             data_manager=data_manager,
             event_bus=event_bus,
+            settings_snapshot=self._settings_snapshot,
         )
         signal_processing_worker = SignalProcessingWorker(
             command_queue=processor_command_queue,
@@ -113,6 +118,7 @@ class NeuroEngineBuilder:
             event_bus=event_bus,
             sample_rate=cfg.sample_rate,
             baseline_duration=cfg.baseline_duration,
+            settings_snapshot=self._settings_snapshot,
         )
 
         # 5. Peer gateway — one routed channel per external peer (host/port

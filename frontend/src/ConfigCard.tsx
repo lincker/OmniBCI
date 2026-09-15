@@ -30,7 +30,7 @@ function show(v: unknown): string {
   return String(v);
 }
 
-export function ConfigCard() {
+export function ConfigCard({ refreshKey = 0, engineRunning = false }: { refreshKey?: number; engineRunning?: boolean }) {
   const { t } = useI18n();
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [profiles, setProfiles] = useState<ProfileList | null>(null);
@@ -41,6 +41,7 @@ export function ConfigCard() {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [moduleOwnedKeys, setModuleOwnedKeys] = useState<string[]>([]);
 
   // Configuration key to plugin category.
   const PLUGIN_CATEGORIES: Record<string, string> = {
@@ -50,15 +51,19 @@ export function ConfigCard() {
   };
 
   const reload = useCallback(async () => {
-    const [cfg, profs, ...pluginResps] = await Promise.all([
+    const [cfg, profs, acquisition, ...pluginResps] = await Promise.all([
       api.getConfig().catch(() => null),
       api.listProfiles().catch(() => null),
+      api.getAcquisitionConfig().catch(() => null),
       ...Object.entries(PLUGIN_CATEGORIES).map(([, cat]) =>
         api.listPlugins(cat).catch(() => null)
       ),
     ]);
     setConfig(cfg);
     setProfiles(profs);
+    const fields = acquisition?.plugins.find((p) => p.plugin_type === acquisition.effective_plugin_type)?.fields ?? [];
+    setModuleOwnedKeys(acquisition?.active_profile_id
+      ? ["ACQUISITION.signal_source", ...fields.map((field) => `ACQUISITION.${field.key}`)] : []);
     const options: Record<string, ParadigmInfo[]> = {};
     Object.keys(PLUGIN_CATEGORIES).forEach((key, i) => {
       const resp = pluginResps[i];
@@ -69,7 +74,7 @@ export function ConfigCard() {
 
   useEffect(() => {
     void reload();
-  }, [reload]);
+  }, [reload, refreshKey]);
 
   const run = async (fn: () => Promise<unknown>, okMsg?: string) => {
     setBusy(true);
@@ -132,7 +137,7 @@ export function ConfigCard() {
         <label className="meta">
           {t("config.active")}
           <select
-            disabled={busy}
+            disabled={busy || engineRunning}
             value={active ?? DEFAULT}
             onChange={(e) =>
               void run(
@@ -187,6 +192,7 @@ export function ConfigCard() {
       </div>
 
       {notice && <p className="meta config-notice">{notice}</p>}
+      {!!moduleOwnedKeys.length && <p className="meta">The active acquisition profile overrides its fields below. Edit those values in Acquisition profiles.</p>}
       {error && <p className="error action-error">{error}</p>}
 
       {/* Datalists for plugin-type configuration keys. */}
@@ -240,6 +246,8 @@ export function ConfigCard() {
                 </td>
                 <td>
                   <input
+                    disabled={busy || ((selected === DEFAULT || selected === active)
+                      && (moduleOwnedKeys.includes(e.key) || (engineRunning && e.key.startsWith("ACQUISITION."))))}
                     className={draft[e.key] !== undefined ? "dirty" : ""}
                     placeholder={show(
                       selected === DEFAULT ? e.default_value : e.profile_value,

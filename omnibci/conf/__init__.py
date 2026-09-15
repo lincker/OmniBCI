@@ -3,18 +3,16 @@
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-04-28 10:39
 """
-Settings with layered profiles.
+Legacy layered settings and in-memory worker snapshots.
 
-    effective = active profile overlay ⊕ default (settings.toml)
-
-Profiles are named key-subsets stored as TOML files under ``profiles/`` next
-to settings.toml.  The active selection persists in ``[PROFILES] active`` of
-settings.toml itself.  Resolution happens *inside* this module, so spawned
-worker processes — which re-import ``omnibci.conf`` and reload from disk —
-see exactly the same effective configuration as the API process.
+Legacy named profiles live next to settings.toml; their active selection
+persists in [PROFILES]. ConfigService overlays an optional module profile
+and supplies a complete snapshot at engine start. Spawned workers install
+that snapshot before loading plugins; this module does not access user storage.
 """
 import logging
 import re
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -48,6 +46,7 @@ class OmniBCISettings:
         self._profiles_dir = self._config_path.parent / "profiles"
         self._data = tomlkit.document()
         self._overlay = tomlkit.document()   # active profile content (or empty)
+        self._runtime_snapshot: dict | None = None
         self.load_config()
 
     # ------------------------------------------------------------------
@@ -103,6 +102,12 @@ class OmniBCISettings:
           get(key)          缺键抛 NameError（原行为，供必填配置 fail-fast）
           get(key, 默认值)  缺键返回默认值，不记错误日志（可选配置）
         """
+        if self._runtime_snapshot is not None:
+            if key in self._runtime_snapshot:
+                return deepcopy(self._runtime_snapshot[key])
+            if default is not self._MISSING:
+                return default
+            raise NameError(f'settings key not found: {key}')
         overlaid = self._raw_get(self._overlay, key)
         if overlaid is not None:
             return overlaid
@@ -250,6 +255,20 @@ class OmniBCISettings:
             else:
                 flat[dotted] = v.unwrap() if hasattr(v, "unwrap") else v
         return flat
+
+    def snapshot(self) -> dict:
+        """Copy effective legacy settings as serializable dotted keys."""
+        if self._runtime_snapshot is not None:
+            return deepcopy(self._runtime_snapshot)
+        return deepcopy({**self._flatten(self._data), **self._flatten(self._overlay)})
+
+    def use_snapshot(self, snapshot: dict) -> None:
+        """Install the parent's resolved configuration before child plugin loading.
+
+        This changes only in-memory reads, never settings.toml or profiles.
+        Existing plugin imports retain their reference to this settings object.
+        """
+        self._runtime_snapshot = deepcopy(snapshot)
 
 
 settings = OmniBCISettings(

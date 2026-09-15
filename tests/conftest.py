@@ -13,6 +13,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+@pytest.fixture(autouse=True)
+def isolated_module_config_directory(monkeypatch, tmp_path):
+    """Never read or write real user profiles in tests, including API lifespan."""
+    monkeypatch.setenv("OMNIBCI_CONFIG_DIR", str(tmp_path / "module-config"))
+
+
 class ImmediateCommandExecutor:
     """Explicit test double: dispatches once and confirms immediately."""
 

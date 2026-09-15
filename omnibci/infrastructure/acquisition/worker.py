@@ -6,6 +6,7 @@ multiprocessing 包装器：在独立子进程中运行 Acquisition 领域服务
 """
 import multiprocessing as mp
 import os
+from copy import deepcopy
 from typing import Optional
 
 import omnibci
@@ -32,6 +33,7 @@ class AcquisitionWorker(mp.Process):
         command_queue: CommandQueue,
         data_manager: Optional[DataSink] = None,
         event_bus=None,
+        settings_snapshot: dict | None = None,
     ) -> None:
         super().__init__()
         self.data_source: SignalSource
@@ -41,8 +43,12 @@ class AcquisitionWorker(mp.Process):
         # EventBus 跨进程时 __getstate__ 剥 handler、只带 mp.Queue —— 子进程
         # 仅能 put_event（与 SignalProcessingWorker 同一机制）。
         self.event_bus = event_bus
+        self.settings_snapshot = deepcopy(settings_snapshot)
 
     def run(self) -> None:
+        if self.settings_snapshot is not None:
+            from omnibci.conf import settings
+            settings.use_snapshot(self.settings_snapshot)
         self._load_data_source()
         self._run()
 

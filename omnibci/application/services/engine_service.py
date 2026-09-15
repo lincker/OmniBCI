@@ -7,10 +7,12 @@ command / query objects.  The API layer never touches NeuroEngine directly.
 
 import asyncio
 import logging
-from threading import Thread
+from contextlib import contextmanager
+from threading import RLock, Thread
 from typing import Optional, TYPE_CHECKING
 
 from omnibci.shared.events import EventType, Event
+from omnibci.application.configuration import ConfigProfileConflictError
 from omnibci.application.ports.engine_port import (
     EngineFactory,
     EngineHandle,
@@ -62,6 +64,7 @@ class NeuroEngineService(EnginePort):
         # process manager — no infrastructure import at runtime.
         self._actuation_manager = actuation_process_manager
         self._engine: Optional[EngineHandle] = None
+        self._initialized = False
         self._engine_thread: Optional[Thread] = None
         self._running = False
         # Runtime command admission is intentionally separate from ownership.
@@ -80,14 +83,16 @@ class NeuroEngineService(EnginePort):
         # full thread/process transition so STARTING cannot be mistaken for an
         # idle service and started a second time.
         self._lifecycle_lock = asyncio.Lock()
+        self._configuration_lock = RLock()
+        self._transitioning = False
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     async def startup(self) -> None:
-        """Build (but do not start) the engine via the injected factory."""
-        self._engine = self._engine_factory()
+        """Allow listener registration; build the graph at the actual start."""
+        self._initialized = True
         logger.info("NeuroEngineService initialised")
 
     async def shutdown(self) -> None:
@@ -103,7 +108,8 @@ class NeuroEngineService(EnginePort):
 
     async def handle_start_engine(self, cmd: StartEngineCommand) -> None:
         async with self._lifecycle_lock:
-            await self._start_engine_locked(cmd)
+            with self._configuration_transition():
+                await self._start_engine_locked(cmd)
 
     async def _start_engine_locked(self, cmd: StartEngineCommand) -> None:
         if self._running:
@@ -114,10 +120,10 @@ class NeuroEngineService(EnginePort):
                 "Previous NeuroEngine graph did not release all resources; "
                 "restart is blocked"
             )
-        if self._engine is None:
+        if not self.is_initialized:
             raise RuntimeError("NeuroEngineService not initialised; call startup() first")
 
-        if self._needs_rebuild:
+        if self._engine is None or self._needs_rebuild:
             # Rebuild the engine graph (fresh workers, queues, bus, gateway),
             # then replay listeners (session read-model + WS broadcaster) onto
             # the new EventBus — they were registered on the discarded one.
@@ -177,7 +183,29 @@ class NeuroEngineService(EnginePort):
 
     async def handle_stop_engine(self, cmd: StopEngineCommand) -> None:
         async with self._lifecycle_lock:
-            await self._stop_engine_locked(cmd)
+            with self._configuration_transition():
+                await self._stop_engine_locked(cmd)
+
+    @contextmanager
+    def _configuration_transition(self):
+        # Mark ownership before snapshot resolution or any await. The short
+        # threading lock also excludes synchronous config API writes.
+        with self._configuration_lock:
+            self._transitioning = True
+        try:
+            yield
+        finally:
+            with self._configuration_lock:
+                self._transitioning = False
+
+    @contextmanager
+    def configuration_change(self, requires_idle: bool):
+        """Keep an effective configuration write atomic with engine admission."""
+        with self._configuration_lock:
+            if requires_idle and (self._transitioning or self._running or self._restart_blocked):
+                raise ConfigProfileConflictError(
+                    "Stop the engine before changing the effective acquisition configuration")
+            yield
 
     async def _stop_engine_locked(self, cmd: StopEngineCommand) -> None:
         # Close the synchronous dispatch gate before the first await.  Resource
@@ -273,8 +301,8 @@ class NeuroEngineService(EnginePort):
 
     @property
     def is_initialized(self) -> bool:
-        """True once the engine graph exists for composition-time wiring."""
-        return self._engine is not None
+        """True once the service can accept composition-time subscriptions."""
+        return self._initialized or self._engine is not None
 
     @property
     def is_engine_ready(self) -> bool:
@@ -310,9 +338,11 @@ class NeuroEngineService(EnginePort):
         Subscriptions are recorded so they survive an engine rebuild after a
         stop (see handle_start_engine).
         """
-        self._require_engine()
+        if not self.is_initialized:
+            raise RuntimeError("NeuroEngineService not initialised")
         self._subscriptions.append((event_type, handler))
-        self._engine.event_bus.register_event_listener(event_type, handler)
+        if self._engine is not None:
+            self._engine.event_bus.register_event_listener(event_type, handler)
 
     # ------------------------------------------------------------------
     # Internal

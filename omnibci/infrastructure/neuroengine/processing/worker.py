@@ -9,6 +9,7 @@ session_id（见 docs/session-id-unification.md）。
 import logging
 import multiprocessing as mp
 import os
+from copy import deepcopy
 from typing import Optional
 
 import omnibci
@@ -27,7 +28,8 @@ class SignalProcessingWorker(mp.Process):
     """
 
     def __init__(self, command_queue, data_manager=None, event_bus=None,
-                 sample_rate: int = 1000, baseline_duration: float = 0.0) -> None:
+                 sample_rate: int = 1000, baseline_duration: float = 0.0,
+                 settings_snapshot: dict | None = None) -> None:
         super().__init__()
         self.data_manager = data_manager
         self.event_bus = event_bus
@@ -35,9 +37,13 @@ class SignalProcessingWorker(mp.Process):
         # Injected in the parent process; pickled into the child on .start().
         self.sample_rate = sample_rate
         self.baseline_duration = baseline_duration
+        self.settings_snapshot = deepcopy(settings_snapshot)
         self.signal_processor: Optional[SignalProcessor] = None
 
     def run(self) -> None:
+        if self.settings_snapshot is not None:
+            from omnibci.conf import settings
+            settings.use_snapshot(self.settings_snapshot)
         decoder, detector, filters = self._load_algorithm()
         self._run_processor(decoder, detector, filters, self.sample_rate)
 

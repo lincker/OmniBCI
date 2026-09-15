@@ -19,6 +19,9 @@ export type PatchConfigResult = S["PatchConfigResponse"];
 export type ProfileList = S["ProfileListResponse"];
 export type ParadigmInfo = S["ParadigmInfo"];
 export type ParadigmsResponse = S["ParadigmsResponse"];
+export type ModuleConfig = S["ModuleConfigResponse"];
+export type ModuleProfile = S["ModuleProfileResponse"];
+export type ModuleConfigField = S["ModuleConfigField"];
 export interface StimulationStatus {
   active: boolean;
   process_alive: boolean;
@@ -131,4 +134,16 @@ export const api = {
   activateProfile: (name: string) =>
     post(`/api/v1/config/profiles/${encodeURIComponent(name)}/activate`),
   deactivateProfile: () => post("/api/v1/config/profiles/deactivate"),
+
+  getAcquisitionConfig: () => get<ModuleConfig>("/api/v1/config/modules/acquisition"),
+  listAcquisitionProfiles: () =>
+    get<S["ModuleProfileListResponse"]>("/api/v1/config/modules/acquisition/profiles"),
+  createAcquisitionProfile: (body: S["CreateModuleProfileRequest"]) =>
+    post<ModuleProfile>("/api/v1/config/modules/acquisition/profiles", body),
+  updateAcquisitionProfile: (id: string, body: S["UpdateModuleProfileRequest"]) =>
+    send<ModuleProfile>("PUT", `/api/v1/config/modules/acquisition/profiles/${encodeURIComponent(id)}`, body),
+  deleteAcquisitionProfile: (id: string) =>
+    del(`/api/v1/config/modules/acquisition/profiles/${encodeURIComponent(id)}`),
+  selectAcquisitionProfile: (profileId: string | null) =>
+    send<ModuleConfig>("PUT", "/api/v1/config/modules/acquisition/active-profile", { profile_id: profileId }),
 };

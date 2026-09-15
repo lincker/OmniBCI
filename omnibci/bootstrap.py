@@ -11,9 +11,12 @@ from omnibci.application.services.stimulation_service import StimulationAppServi
 from omnibci.application.services.session_service import SessionAppService
 from omnibci.application.services.recording_service import RecordingService
 from omnibci.application.services.command_result_service import CommandResultBroker
+from omnibci.application.services.config_service import ConfigService
 from omnibci.domain.repositories import SessionRepository
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
+from omnibci.infrastructure.repositories.config_profile_repository import TomlConfigProfileRepository
+from omnibci.infrastructure.plugins.plugin_catalog import list_plugins
 from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
 from omnibci.infrastructure.actuation.process_manager import ActuationProcessManager
 
@@ -39,6 +42,7 @@ class AppContainer:
     # Shared correlation rendezvous for commands that must report actual worker
     # execution before REST returns success.
     command_results: "CommandResultBroker | None" = None
+    config_service: "ConfigService | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +116,7 @@ def assemble(
 # ---------------------------------------------------------------------------
 
 async def build_container() -> AppContainer:
-    """Build and start the complete object graph from process-wide settings."""
+    """Wire services; resolve configuration and build workers on engine start."""
     from omnibci.conf import settings
 
     repository = _build_session_repository(
@@ -128,13 +132,20 @@ async def build_container() -> AppContainer:
 
     # Processes are single-use, so every restart requires a fresh engine graph.
     engine_service = NeuroEngineService(
-        engine_factory=lambda: NeuroEngineBuilder().build(),
+        engine_factory=lambda: NeuroEngineBuilder(
+            settings_snapshot=config_service.resolve_snapshot()).build(),
         actuation_process_manager=actuation_manager,
     )
+    config_service = ConfigService(
+        settings, plugin_catalog=list_plugins, repository=TomlConfigProfileRepository(),
+        change_guard=engine_service.configuration_change,
+    )
     await engine_service.startup()
-    return assemble(engine_service, repository,
-                    settings=settings, auto_spawn=auto_spawn,
-                    actuation_process_manager=actuation_manager)
+    container = assemble(engine_service, repository,
+                         settings=config_service, auto_spawn=auto_spawn,
+                         actuation_process_manager=actuation_manager)
+    container.config_service = config_service
+    return container
 
 
 # ---------------------------------------------------------------------------
@@ -147,8 +158,8 @@ def register_engine_listeners(
 ) -> int:
     """
     Subscribe read-model and any extra (e.g. presentation) listeners to the
-    engine's EventBus.  The graph must already be initialised, but the engine
-    process need not be running: listener wiring is a composition-time action.
+    engine's EventBus. The service must be initialised; subscriptions are
+    replayed when the graph is built at the actual engine start.
 
     Application-level subscriptions (read-model sync) are owned here; the caller
     supplies presentation-level ones (e.g. WebSocket broadcaster) via

@@ -9,10 +9,18 @@ the stage-4 design discussion.
 """
 import logging
 import threading
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from uuid import uuid4
 
 from omnibci.conf import OmniBCISettings, ProfileNameError, ProfileNotFoundError
+from omnibci.application.configuration import (
+    ACQUISITION_PLUGINS, ConfigProfile, ConfigProfileConflictError,
+    ConfigProfileNotFoundError, ConfigProfileValidationError,
+    acquisition_fields, validate_module, validate_parameters,
+)
+from omnibci.application.ports.config_profile_repository import ConfigProfileRepository
 
 
 @dataclass(frozen=True)
@@ -90,6 +98,9 @@ class ConfigService:
         self,
         settings: OmniBCISettings,
         plugin_catalog: Optional[Callable[[str], List[Any]]] = None,
+        *,
+        repository: ConfigProfileRepository | None = None,
+        change_guard: Callable | None = None,
     ) -> None:
         """*plugin_catalog*: ``category -> [PluginInfo]`` 查询函数，用于对
         plugin_type 类配置键做警告级软校验。由组合侧注入（presentation/main
@@ -97,13 +108,16 @@ class ConfigService:
         P0-1：替代原先在方法内延迟 import infrastructure.plugin_catalog。"""
         self._settings = settings
         self._plugin_catalog = plugin_catalog
-        self._write_lock = threading.Lock()
+        self._repository = repository
+        self._change_guard = change_guard or (lambda requires_idle: nullcontext())
+        self._write_lock = threading.RLock()
 
     # ------------------------------------------------------------------
     # Reads
     # ------------------------------------------------------------------
 
     def list_entries(self) -> Tuple[List[dict], Optional[str]]:
+        snapshot = self.resolve_snapshot()
         entries = []
         for key, pol in CONFIG_WHITELIST.items():
             default = self._settings.get_default(key)
@@ -112,7 +126,7 @@ class ConfigService:
                 "key": key,
                 "default_value": default,
                 "profile_value": override,
-                "effective_value": override if override is not None else default,
+                "effective_value": snapshot.get(key),
                 "type": pol.type,
                 "requires": pol.requires,
                 "description": pol.description,
@@ -175,7 +189,8 @@ class ConfigService:
         """All-or-nothing PATCH. scope='default' → settings.toml;
         scope=<profile name> → that profile file (created if absent)."""
         clean = self._validate(updates)
-        with self._write_lock:
+        with self._write_lock, self._change_guard(self._legacy_affects_acquisition(scope, clean)):
+            self._check_module_ownership(scope, clean)
             if scope == DEFAULT_SCOPE:
                 for k, v in clean.items():
                     self._settings.set(k, v)
@@ -193,7 +208,13 @@ class ConfigService:
         """Create/replace a profile wholesale (PUT semantics)."""
         clean = self._validate(updates)
         with self._write_lock:
-            self._settings.write_profile(name, clean, description, replace=True)
+            affected = clean
+            if self._settings.active_profile == name:
+                # A full replacement can also remove acquisition overrides.
+                affected = {**self._settings.read_profile(name), **clean}
+            with self._change_guard(self._legacy_affects_acquisition(name, affected)):
+                self._check_module_ownership(name, affected)
+                self._settings.write_profile(name, clean, description, replace=True)
         restart = any(
             CONFIG_WHITELIST[k].requires == "engine-restart" for k in clean
         )
@@ -206,9 +227,126 @@ class ConfigService:
             self._settings.delete_profile(name)  # ProfileNotFoundError propagates
 
     def activate(self, name: str) -> None:
-        with self._write_lock:
+        with self._write_lock, self._change_guard(True):
             self._settings.set_active_profile(name)  # ProfileNotFoundError propagates
 
     def deactivate(self) -> None:
-        with self._write_lock:
+        with self._write_lock, self._change_guard(True):
             self._settings.set_active_profile(None)
+
+    def _legacy_affects_acquisition(self, scope: str, updates: dict) -> bool:
+        return (scope in (DEFAULT_SCOPE, self._settings.active_profile)
+                and any(k.startswith("ACQUISITION.") for k in updates))
+
+    def _check_module_ownership(self, scope: str, updates: dict) -> None:
+        if self._legacy_affects_acquisition(scope, updates) and self._repository is not None:
+            active = self._repository.get_active("acquisition")
+            if active is not None:
+                owned = {"ACQUISITION.signal_source"} | {
+                    f"ACQUISITION.{field['key']}"
+                    for field in acquisition_fields(self.module_profile("acquisition", active).plugin_type)
+                }
+                if owned.intersection(updates):
+                    raise ConfigProfileConflictError(
+                        "An acquisition profile owns these fields; edit it or deactivate it first")
+
+    # Module profiles: local persistence is injected; no account or sync concepts.
+
+    def _profiles(self) -> ConfigProfileRepository:
+        if self._repository is None:
+            raise RuntimeError("Module profile repository is not configured")
+        return self._repository
+
+    def get(self, key: str, default=None):
+        """Settings-compatible reads for acquisition status in the API process."""
+        if key.startswith("ACQUISITION."):
+            return self.resolve_snapshot().get(key, default)
+        return self._settings.get(key, default)
+
+    def resolve_snapshot(self) -> dict:
+        """Resolve once at engine start; callers pass this copy to all workers."""
+        with self._write_lock:
+            snapshot = self._settings.snapshot()
+            if self._repository is not None:
+                active = self._repository.get_active("acquisition")
+                if active is not None:
+                    profile = self.module_profile("acquisition", active)
+                    snapshot["ACQUISITION.signal_source"] = profile.plugin_type
+                    snapshot.update({f"ACQUISITION.{k}": v for k, v in profile.parameters.items()})
+            return snapshot
+
+    def list_module_profiles(self, module: str, plugin_type: str | None = None) -> list[ConfigProfile]:
+        validate_module(module)
+        if plugin_type is not None:
+            acquisition_fields(plugin_type)
+        return self._profiles().list(module, plugin_type)
+
+    def module_profile(self, module: str, profile_id: str) -> ConfigProfile:
+        profile = self._profiles().get(module, profile_id)
+        validate_parameters(profile.plugin_type, profile.parameters)
+        return profile
+
+    def module_detail(self, module: str) -> dict:
+        validate_module(module)
+        result = {
+            "module": module, "active_profile_id": None, "effective_plugin_type": None,
+            "effective_parameters": {}, "selection_error": None,
+            "plugins": [{"plugin_type": key, "label": value["label"],
+                         "fields": acquisition_fields(key)}
+                        for key, value in ACQUISITION_PLUGINS.items()],
+        }
+        with self._write_lock:
+            try:
+                result["active_profile_id"] = self._profiles().get_active(module)
+                snapshot = self.resolve_snapshot()
+                plugin_type = snapshot.get("ACQUISITION.signal_source")
+                result["effective_plugin_type"] = plugin_type
+                result["effective_parameters"] = {
+                    f["key"]: snapshot.get(f"ACQUISITION.{f['key']}", f["default"])
+                    for f in acquisition_fields(plugin_type)
+                }
+            except (ConfigProfileValidationError, ConfigProfileNotFoundError, OSError) as exc:
+                # Configuration management stays available to repair or clear a
+                # broken selection, while resolve_snapshot still blocks startup.
+                result["selection_error"] = str(exc)
+        return result
+
+    def _check_name(self, profile: ConfigProfile) -> None:
+        if any(p.profile_id != profile.profile_id and p.name.strip().casefold() == profile.name.casefold()
+               for p in self._profiles().list(profile.module, profile.plugin_type)):
+            raise ConfigProfileConflictError("A profile with this name already exists for the plugin")
+
+    def create_module_profile(self, module: str, plugin_type: str, name: str,
+                              parameters: dict) -> ConfigProfile:
+        profile = ConfigProfile(str(uuid4()), name, module, plugin_type,
+                                validate_parameters(plugin_type, parameters))
+        with self._write_lock:
+            self._check_name(profile)
+            self._profiles().save(profile)
+        return profile
+
+    def update_module_profile(self, module: str, profile_id: str, name: str,
+                              parameters: dict) -> ConfigProfile:
+        with self._write_lock:
+            previous = self._profiles().get(module, profile_id)
+            profile = ConfigProfile(profile_id, name, module, previous.plugin_type,
+                                    validate_parameters(previous.plugin_type, parameters))
+            affects_active = (self._profiles().get_active(module) == profile_id
+                              and previous.parameters != profile.parameters)
+            with self._change_guard(affects_active):
+                self._check_name(profile)
+                self._profiles().save(profile)
+            return profile
+
+    def delete_module_profile(self, module: str, profile_id: str) -> None:
+        with self._write_lock:
+            if self._profiles().get_active(module) == profile_id:
+                raise ConfigProfileConflictError("The profile is active; deactivate or switch first")
+            self._profiles().delete(module, profile_id)
+
+    def select_module_profile(self, module: str, profile_id: str | None) -> None:
+        with self._write_lock, self._change_guard(True):
+            validate_module(module)
+            if profile_id is not None:
+                self.module_profile(module, profile_id)
+            self._profiles().set_active(module, profile_id)

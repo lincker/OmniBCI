@@ -32,10 +32,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
-from omnibci.application.services.config_service import ConfigService
-from omnibci.infrastructure.plugins.plugin_catalog import list_plugins
-from omnibci.conf import settings
 from omnibci.presentation.routers import engine, acquisition, stimulation, session, recording, config, plugins
+from omnibci.presentation.routers import module_config
 from omnibci.presentation.websockets.results import results_broadcaster, results_ws_endpoint
 from omnibci.bootstrap import build_container, register_engine_listeners
 from omnibci.presentation.errors import register_exception_handlers
@@ -78,15 +76,15 @@ async def lifespan(app: FastAPI):
     app.state.session_repository = container.session_repository
     app.state.session_service = container.session_service
     app.state.recording_service = container.recording_service
+    app.state.config_service = container.config_service
 
     results_broadcaster.set_loop(asyncio.get_running_loop())
     # Heartbeat: reaps dead WS connections during idle periods and lets the
     # browser detect a silently dead feed (it cannot see protocol-level pings).
     results_broadcaster.start_heartbeat()
 
-    # Wire EventBus listeners now: the engine (and its bus) already exist after
-    # build_container(), and register_event_listener only appends handlers — it
-    # does not require the bus consumer loop to be running yet.  Presentation
+    # Record EventBus listeners now; the graph is built at engine start.
+    # Presentation
     # subscriptions are injected here so bootstrap stays free of any presentation
     # import.
     broadcaster_subscriptions = [
@@ -126,10 +124,6 @@ def create_app() -> FastAPI:
     # validation / unexpected) — see omnibci.presentation.errors.
     register_exception_handlers(app)
 
-    # Layered configuration (defaults + profiles); reads/writes go through
-    # the ConfigService whitelist, never raw settings.
-    app.state.config_service = ConfigService(settings, plugin_catalog=list_plugins)
-
     prefix = "/api/v1"
     app.include_router(engine.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(acquisition.router, prefix=prefix, responses=ERROR_RESPONSES)
@@ -137,6 +131,7 @@ def create_app() -> FastAPI:
     app.include_router(session.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(recording.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(config.router, prefix=prefix, responses=ERROR_RESPONSES)
+    app.include_router(module_config.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(plugins.router, prefix=prefix, responses=ERROR_RESPONSES)
 
     @app.websocket("/api/v1/ws/results")

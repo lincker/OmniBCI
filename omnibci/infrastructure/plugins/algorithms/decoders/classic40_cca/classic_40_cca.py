@@ -60,7 +60,8 @@ class Classic40CCA(Decoder):
 
     def __init__(self) -> None:
         super().__init__()
-        self.SAMPLE_RATE = settings.get('ssvep.sample_rate', default=1000)
+        self.SAMPLE_RATE = settings.get(
+            'ACQUISITION.sample_rate', default=settings.get('ssvep.sample_rate', default=1000))
         self.SAMPLE_COUNT = int(settings.get('ssvep.duration', default=3) * self.SAMPLE_RATE)
         self.OFFSET_LENGTH = math.floor(settings.get('ssvep.offset_time', default=0.14) * self.SAMPLE_RATE)
         self.template_set = self.Template(sample_rate=self.SAMPLE_RATE,

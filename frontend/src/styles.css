@@ -18,6 +18,44 @@
 
 * { box-sizing: border-box; }
 
+.module-profile-selectors,
+.module-profile-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+.acquisition-profiles label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.acquisition-profiles input,
+.acquisition-profiles select {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.88rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+}
+.acquisition-profiles small { line-height: 1.5; }
+.config-dialog {
+  width: min(460px, calc(100vw - 2rem));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.4rem;
+  box-shadow: var(--shadow);
+}
+.config-dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
+.config-dialog label { display: grid; gap: 0.5rem; }
+.config-dialog input { width: 100%; }
+.config-dialog .actions { margin-top: 1.2rem; justify-content: flex-end; }
+
 body {
   margin: 0;
   -webkit-font-smoothing: antialiased;
