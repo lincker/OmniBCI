@@ -126,6 +126,8 @@ export const api = {
   patchConfig: (updates: Record<string, unknown>, scope = "default", description?: string) =>
     send<PatchConfigResult>("PATCH", "/api/v1/config", { updates, scope, description }),
   listProfiles: () => get<ProfileList>("/api/v1/config/profiles"),
+  getProfile: (name: string) =>
+    get<S["ProfileDetailResponse"]>(`/api/v1/config/profiles/${encodeURIComponent(name)}`),
   putProfile: (name: string, updates: Record<string, unknown>, description?: string) =>
     send<PatchConfigResult>("PUT", `/api/v1/config/profiles/${encodeURIComponent(name)}`,
       { updates, description }),

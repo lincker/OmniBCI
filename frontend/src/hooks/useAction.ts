@@ -8,7 +8,7 @@ import { ApiError } from "../api/client";
  */
 export function useAction<A extends unknown[]>(
   fn: (...args: A) => Promise<unknown>,
-  onDone?: () => void,
+  onDone?: () => void | Promise<void>,
 ) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -19,7 +19,7 @@ export function useAction<A extends unknown[]>(
       setError(null);
       try {
         await fn(...args);
-        onDone?.();
+        await onDone?.();
       } catch (e) {
         setError(e instanceof ApiError ? `[${e.code}] ${e.message}` : String(e));
       } finally {

@@ -27,7 +27,7 @@ export function ConfigDialog({ title, message, confirmLabel, initialValue, onCon
         </label>}
         <div className="actions">
           <button type="button" onClick={onCancel}>Cancel</button>
-          <button type="submit">{confirmLabel}</button>
+          <button type="submit" className="primary">{confirmLabel}</button>
         </div>
       </form>
     </dialog>
