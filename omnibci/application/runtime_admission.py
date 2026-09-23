@@ -60,6 +60,11 @@ class RuntimeAdmission:
     def is_transition_owner(self):
         return self._internal.get()
 
+    @property
+    def recovery_required(self) -> bool:
+        with self._lock:
+            return self._quarantine is not None
+
     def quarantine(self, reason: str):
         with self._lock:
             self._quarantine = reason

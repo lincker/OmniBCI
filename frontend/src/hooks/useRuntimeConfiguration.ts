@@ -59,7 +59,7 @@ export function useRuntimeConfiguration() {
 
   const apply = async () => {
     if (!plan || plan.errors.length || submitting || active(operation) || uncertain
-        || operation?.status === "recovery_required" || !status || error) return;
+        || status?.recovery_required !== false || error) return;
     const pending = submission.current ?? { planId: plan.plan_id, operationId: crypto.randomUUID() };
     submission.current = pending;
     tracked.current = pending.operationId;
@@ -106,9 +106,9 @@ export function useRuntimeConfiguration() {
   };
 
   const inProgress = submitting || uncertain || active(operation);
-  const recoveryRequired = operation?.status === "recovery_required";
+  const recoveryRequired = status?.recovery_required === true;
   return { status, operation, plan, reviewing, submitting, uncertain, error, requestError,
-    inProgress, recoveryRequired, blocked: inProgress || recoveryRequired || !status || !!error,
+    inProgress, recoveryRequired, blocked: inProgress || status?.recovery_required !== false || !!error,
     review, apply, refresh, retryUnconfirmed, dismissPlan: () => setPlan(null) };
 }
 

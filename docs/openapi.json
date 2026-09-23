@@ -7721,6 +7721,10 @@
             "type": "boolean",
             "title": "Running"
           },
+          "recovery_required": {
+            "type": "boolean",
+            "title": "Recovery Required"
+          },
           "accepted_revision": {
             "anyOf": [
               {
@@ -7768,6 +7772,7 @@
         "type": "object",
         "required": [
           "running",
+          "recovery_required",
           "accepted_revision",
           "applied_revision",
           "generation",

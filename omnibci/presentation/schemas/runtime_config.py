@@ -43,6 +43,7 @@ class RuntimeApplyRequest(BaseModel):
 
 class RuntimeConfigurationResponse(BaseModel):
     running: bool
+    recovery_required: bool
     accepted_revision: str | None
     applied_revision: str | None
     generation: str | None

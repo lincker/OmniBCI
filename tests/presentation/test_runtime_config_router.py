@@ -10,7 +10,7 @@ from omnibci.presentation.routers.runtime_config import router
 
 
 def test_status_and_review_plan_contract():
-    status = dict(running=False, accepted_revision="selected", applied_revision=None,
+    status = dict(running=False, recovery_required=False, accepted_revision="selected", applied_revision=None,
                   generation=None, operation=None)
     plan = dict(plan_id="plan", expected_revision="selected", target_revision="new",
                 applied_revision=None, generation=None, running=False, strategy="select_on_start",

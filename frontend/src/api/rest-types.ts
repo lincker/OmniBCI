@@ -1845,6 +1845,8 @@ export interface components {
         RuntimeConfigurationResponse: {
             /** Running */
             running: boolean;
+            /** Recovery Required */
+            recovery_required: boolean;
             /** Accepted Revision */
             accepted_revision: string | null;
             /** Applied Revision */

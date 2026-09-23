@@ -57,6 +57,7 @@ class RuntimeConfigurationService:
         running = self.engine.is_engine_ready
         return {
             "running": running,
+            "recovery_required": getattr(getattr(self.engine, "admission", None), "recovery_required", False) is True,
             "accepted_revision": accepted.revision if accepted else None,
             "applied_revision": self.engine.applied_revision if running else None,
             "generation": self.engine.generation if running else None,
@@ -181,12 +182,12 @@ class RuntimeConfigurationService:
                 if operation["plan_id"] != plan_id:
                     raise ProfileRevisionConflict("Operation ID was already used for a different plan")
                 return deepcopy(operation)
+            if getattr(getattr(self.engine, "admission", None), "recovery_required", False) is True:
+                raise ProfileRevisionConflict("Resolve or stop the uncertain runtime before applying again")
             if self._active_operation is not None:
                 active = self._operations[self._active_operation]
                 if active["status"] in ("queued", "applying"):
                     raise ProfileRevisionConflict("A configuration operation is already in progress")
-                if active["status"] == "recovery_required" and self.engine.is_engine_ready:
-                    raise ProfileRevisionConflict("Resolve or stop the uncertain runtime before applying again")
             stored = self.resolve_plan(plan_id)
             if self.executor is None:
                 raise RuntimeError("Runtime configuration executor is unavailable")
