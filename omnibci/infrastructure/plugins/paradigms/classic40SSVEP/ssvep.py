@@ -17,6 +17,7 @@ from enum import Enum, auto
 from importlib import resources
 
 from omnibci.domain.ports.paradigm import Paradigm
+from omnibci.sdk import PluginContext, PluginParameters
 from omnibci.infrastructure.plugins.registry import register_plugin
 from omnibci.infrastructure.stimulation.ports.renderer import (
     Rect,
@@ -83,7 +84,8 @@ class _State(Enum):
 class Classic40SSVEP_2(Paradigm):
     plugin_type = 'STIMULATION_THUBCI_SSVEP_classic40'
 
-    def __init__(self, trigger):
+    def __init__(self, trigger=None, *, parameters: PluginParameters | None = None,
+                 context: PluginContext | None = None):
         self.trigger = trigger
         self._renderer: Renderer | None = None
 

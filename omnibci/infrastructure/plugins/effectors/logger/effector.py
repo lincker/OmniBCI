@@ -9,12 +9,17 @@ import logging
 from typing import Any, Mapping
 
 from omnibci.domain.ports.effector import Effector
+from omnibci.sdk import PluginContext, PluginParameters
 
 logger = logging.getLogger(__name__)
 
 
 class LogEffector(Effector):
     plugin_type = "logger"
+
+    def __init__(self, *, parameters: PluginParameters | None = None,
+                 context: PluginContext | None = None):
+        self.config_revision = context.config_revision if context is not None else None
 
     def setup(self):
         logger.info("[LogEffector] setup — ready (no hardware)")

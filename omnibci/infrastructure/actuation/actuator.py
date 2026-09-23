@@ -8,6 +8,7 @@ No render loop — the actuator is command-driven.
 """
 
 import logging
+from copy import deepcopy
 from typing import Any, Mapping, Optional
 
 from omnibci.domain.ports.effector import Effector
@@ -23,23 +24,31 @@ class Actuator:
         *,
         plugin_catalog: PluginCatalog | None = None,
         plugin_loader: type[PluginLoader] = PluginLoader,
+        settings_snapshot: dict | None = None,
     ) -> None:
         self.effector: Optional[Effector] = None
         self._plugin_catalog = (
             plugin_catalog if plugin_catalog is not None else PluginCatalog()
         )
         self._plugin_loader = plugin_loader
+        self._settings_snapshot = deepcopy(settings_snapshot)
 
     # ── Manifest-resolved plugin loading ──────────────────────────────────
 
     def _load_effector(self) -> Optional[Effector]:
         from omnibci.conf import settings
 
-        plugin_type = settings.get('ACTUATION.effector')
-        if not plugin_type:
+        from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
+        snapshot = self._settings_snapshot if self._settings_snapshot is not None else settings.snapshot()
+        if "PLUGINS.bindings" not in snapshot and self._settings_snapshot is None:
+            snapshot["ACTUATION.effector"] = settings.get('ACTUATION.effector')
+        if "PLUGINS.bindings" not in snapshot and not snapshot.get("ACTUATION.effector"):
             return None
-        descriptor = self._plugin_catalog.resolve("effector", plugin_type)
-        return self._plugin_loader.instantiate(descriptor, Effector)
+        return load_configured_plugin(
+            snapshot, "actuation.effector", "effector", Effector,
+            legacy_key="ACTUATION.effector", catalog=self._plugin_catalog,
+            loader=self._plugin_loader,
+        )
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 

@@ -5,9 +5,8 @@
 from __future__ import annotations
 
 import importlib
-import os
+from copy import deepcopy
 
-import omnibci
 from omnibci.conf import settings
 from omnibci.domain.ports.acquisition import TriggerEmitter
 from omnibci.domain.ports.paradigm import Paradigm
@@ -47,7 +46,8 @@ def _create_renderer(name: str):
 # ---------------------------------------------------------------------------
 
 class Stimulator:
-    def __init__(self) -> None:
+    def __init__(self, *, settings_snapshot: dict | None = None) -> None:
+        self._snapshot = deepcopy(settings_snapshot) if settings_snapshot is not None else settings.snapshot()
         self.paradigm: Paradigm | None    = None
         self.trigger:  TriggerEmitter | None = None
         self._loop:    RenderLoop | None  = None
@@ -55,30 +55,20 @@ class Stimulator:
     # ── Internal loaders ───────────────────────────────────────────────────
 
     def _load_trigger(self) -> TriggerEmitter:
-        plugin_path = os.path.join(
-            next(iter(omnibci.__path__)), 'infrastructure', 'plugins', 'acquisition'
+        from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
+        return load_configured_plugin(
+            self._snapshot, "stimulation.trigger", "trigger", TriggerEmitter,
+            legacy_key="ACQUISITION.trigger",
         )
-        from omnibci.infrastructure.plugins.loader import PluginLoader
-        from omnibci.infrastructure.plugins.registry import ObjectFactory
-        PluginLoader.load_from_dir(
-            plugin_path,
-            base_package='omnibci.infrastructure.plugins.acquisition',
-        )
-        return ObjectFactory.create(TriggerEmitter, settings.get('ACQUISITION.trigger'))
 
     def _load_paradigm(self, trigger: TriggerEmitter) -> Paradigm:
-        plugin_path = os.path.join(
-            next(iter(omnibci.__path__)), 'infrastructure', 'plugins', 'paradigms'
+        from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
+        paradigm = load_configured_plugin(
+            self._snapshot, "stimulation.paradigm", "paradigm", Paradigm,
+            legacy_key="STIMULATION.paradigm", legacy_kwargs={"trigger": trigger},
         )
-        from omnibci.infrastructure.plugins.loader import PluginLoader
-        from omnibci.infrastructure.plugins.registry import ObjectFactory
-        PluginLoader.load_from_dir(
-            plugin_path,
-            base_package='omnibci.infrastructure.plugins.paradigms',
-        )
-        return ObjectFactory.create(
-            Paradigm, settings.get('STIMULATION.paradigm'), trigger=trigger
-        )
+        paradigm.bind_trigger(trigger)
+        return paradigm
 
     # ── Internal setup ─────────────────────────────────────────────────────
 
@@ -90,7 +80,7 @@ class Stimulator:
         self.trigger  = self._load_trigger()
         self.paradigm = self._load_paradigm(self.trigger)
 
-        renderer_name = settings.get("STIMULATION.renderer", "pyopengl")
+        renderer_name = self._snapshot.get("STIMULATION.renderer", "pyopengl")
         renderer = _create_renderer(renderer_name)
         renderer.initialize(width=1920, height=1080, title="OmniBCI Stimulation")
 

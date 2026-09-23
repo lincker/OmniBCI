@@ -11,9 +11,14 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from omnibci.domain.ports.renderer import Renderer
+from omnibci.domain.ports.acquisition import TriggerEmitter
 
 
 class Paradigm(ABC):
+
+    def bind_trigger(self, trigger: TriggerEmitter) -> None:
+        """Receive the host-selected trigger before renderer setup."""
+        self.trigger = trigger
 
     @abstractmethod
     def setup(self, renderer: Renderer | None = None) -> None:

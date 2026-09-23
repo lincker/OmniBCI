@@ -128,5 +128,8 @@ The class implements its domain port; a registry decorator and `plugin_type`
 attribute are no longer required. The manifest owns its selection identity.
 
 API `1` keeps its existing constructor arguments and alias checks. Constructor
-errors never cause a retry using a different API. Bundled implementations remain
-API `1` until their explicit input migration is complete.
+errors never cause a retry using a different API. All bundled contributions use
+API `2`; direct legacy constructor calls remain compatible during migration.
+Paradigms receive the selected trigger through `bind_trigger()` before setup.
+Acquisition, Processing, Stimulation, and Actuation load only their selected
+entrypoints. A missing pinned selection never falls back to a legacy alias.

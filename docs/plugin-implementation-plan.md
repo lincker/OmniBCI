@@ -15,7 +15,7 @@ Accounts, cloud synchronization, and montage remain outside this implementation.
 | 7 | Recoverable legacy configuration migration | Complete |
 | 8 | Explicit Acquisition loading and parameters | Complete |
 | 9 | Explicit Processing loading and parameters | Complete |
-| 10 | Explicit Stimulation and Actuation loading | Pending |
+| 10 | Explicit Stimulation and Actuation loading | Complete |
 | 11 | One complete configuration snapshot across workers | Pending |
 | 12 | Worker readiness and revision acknowledgement | Pending |
 | 13 | Schema-driven profile editor | Pending |
