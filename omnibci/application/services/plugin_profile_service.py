@@ -30,28 +30,31 @@ class PluginProfileService:
         return definition, validate_parameters(definition.schema, parameters)
 
     def create(self, kind: str, selection: PluginSelection, name: str, parameters: dict):
-        definition, values = self._parameters(kind, selection, parameters)
-        profile = PluginProfile(
-            profile_id=str(uuid4()), name=name, kind=kind, selection=selection,
-            parameters=values, configuration_version=definition.configuration_version,
-        )
-        return self.repository.save_profile(profile, expected_revision=None)
+        with self.change_guard(False):
+            definition, values = self._parameters(kind, selection, parameters)
+            profile = PluginProfile(
+                profile_id=str(uuid4()), name=name, kind=kind, selection=selection,
+                parameters=values, configuration_version=definition.configuration_version,
+            )
+            return self.repository.save_profile(profile, expected_revision=None)
 
     def update(self, profile_id: str, *, name: str, parameters: dict, expected_revision: int):
-        previous = self.repository.get_profile(profile_id)
-        _, values = self._parameters(previous.kind, previous.selection, parameters,
-                                     previous.configuration_version)
-        return self.repository.save_profile(
-            replace(previous, name=name, parameters=values), expected_revision=expected_revision,
-        )
+        with self.change_guard(False):
+            previous = self.repository.get_profile(profile_id)
+            _, values = self._parameters(previous.kind, previous.selection, parameters,
+                                         previous.configuration_version)
+            return self.repository.save_profile(
+                replace(previous, name=name, parameters=values), expected_revision=expected_revision,
+            )
 
     def delete(self, profile_id: str, *, expected_revision: int):
         # Accepted bindings include independent values; retain linked profiles to
         # make the user's active selection identifiable until it is replaced.
-        active = self.repository.get_activation()
-        if active is not None and any(b.profile_id == profile_id for b in active.bindings):
-            raise ProfileRevisionConflict("Profile is selected; replace its binding first")
-        self.repository.delete_profile(profile_id, expected_revision=expected_revision)
+        with self.change_guard(False):
+            active = self.repository.get_activation()
+            if active is not None and any(b.profile_id == profile_id for b in active.bindings):
+                raise ProfileRevisionConflict("Profile is selected; replace its binding first")
+            self.repository.delete_profile(profile_id, expected_revision=expected_revision)
 
     def propose(self, selections: list[dict], *, settings: dict | None = None,
                 refresh_slots: list[str] | None = None) -> ActivationSnapshot:
@@ -103,8 +106,8 @@ class PluginProfileService:
 
     def accept(self, snapshot: ActivationSnapshot, *, expected_revision: str | None):
         """Initially idle-only; the runtime coordinator later commits after ACK."""
-        self.validate(snapshot)
         with self.change_guard(True):
+            self.validate(snapshot)
             return self.repository.save_activation(snapshot, expected_revision=expected_revision)
 
     def resolve_settings(self) -> dict:

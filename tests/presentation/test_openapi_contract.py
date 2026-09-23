@@ -86,6 +86,10 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/config/operations/{operation_id}", "get"),
     ("/api/v1/plugin-packages", "get"),
     ("/api/v1/plugin-packages/install", "post"),
+    ("/api/v1/plugin-packages/{package_id}/{version}/enabled", "put"),
+    ("/api/v1/plugin-packages/{package_id}/{version}", "delete"),
+    ("/api/v1/plugin-packages/profile-version-proposals", "post"),
+    ("/api/v1/plugin-packages/version-profiles", "post"),
 }
 
 

@@ -416,6 +416,16 @@ class NeuroEngineService(EnginePort):
             return deepcopy(self._applied_snapshot)
 
     @property
+    def runtime_package_snapshots(self) -> tuple[dict, ...]:
+        """Retain both acknowledged and attempted graph packages until ownership ends."""
+        with self._configuration_lock:
+            thread = self._engine_thread
+            if not (self._running or self._restart_blocked or thread is not None and thread.is_alive()):
+                return ()
+            return tuple(deepcopy(snapshot) for snapshot in (self._applied_snapshot, self._graph_snapshot)
+                         if snapshot is not None)
+
+    @property
     def applied_revision(self) -> str | None:
         with self._configuration_lock:
             return (

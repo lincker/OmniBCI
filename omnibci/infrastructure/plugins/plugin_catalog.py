@@ -24,6 +24,7 @@ import omnibci
 import tomlkit
 
 from omnibci.application.plugin_schema import validate_schema
+from omnibci.infrastructure.plugins.installed_registry import enabled_package_directories
 
 from omnibci.infrastructure.plugins.descriptors import (
     PluginDescriptor,
@@ -110,6 +111,7 @@ def _plugin_roots(subpath: str) -> list[PluginRoot]:
         up = user / subpath
         if up.is_dir():
             roots.append(PluginRoot(up.resolve(), "user", 0))
+        roots.extend(PluginRoot(path, "user", 0) for path in enabled_package_directories(user))
     vp = vendor_plugins_dir() / subpath
     if vp.is_dir():
         roots.append(PluginRoot(vp.resolve(), "builtin", 100))
