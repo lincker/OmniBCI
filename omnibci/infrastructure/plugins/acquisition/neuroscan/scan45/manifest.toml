@@ -1,14 +1,26 @@
-# OmniBCI Plugin Manifest — schema version 1
+# OmniBCI Plugin Manifest — schema version 2
+
+manifest_version = 2
 
 [package]
-id           = "neuroscan_scan45_reader"
-publisher    = "OmniBCI"
-version      = "0.1.0"
-kind         = "acquisition"
-api_version  = "1"
-plugin_type  = "neuroscan_scan45_reader"
-entrypoint   = "scan45:Scan45DataReader"
+id = "neuroscan_scan45_reader"
+version = "0.1.0"
+api_version = "1"
+publisher = "OmniBCI"
+
+[[contributions]]
+id = "default"
+kind = "acquisition"
+plugin_type = "neuroscan_scan45_reader"
+entrypoint = "scan45:Scan45DataReader"
 display_name = "Neuroscan Scan45"
-description  = "Neuroscan Scan 4.5 EEG acquisition driver."
-author       = "OmniBCI"
-source       = "builtin"
+description = "Neuroscan Scan 4.5 EEG acquisition driver."
+
+[[contributions]]
+id = "trigger"
+kind = "trigger"
+plugin_type = "neuroscan_scan45_trigger"
+entrypoint = "scan45:Scan45Trigger"
+display_name = "Neuroscan Scan45 Parallel Trigger"
+description = "Parallel-port event output on Windows."
+platforms = ["win32"]

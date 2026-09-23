@@ -477,6 +477,7 @@ def _parse_contributions(
         api_version=api_version,
         version=_required_string(package, "version", manifest_path),
         manifest_version=2,
+        platforms=_platforms(package, manifest_path),
         precedence=root.precedence,
     )
     contributions = document.get("contributions")
@@ -526,8 +527,23 @@ def _parse_contributions(
             ),
             params=_table(contribution, "params", manifest_path),
             controls={key: dict(value) for key, value in controls.items()},
+            platforms=_platforms(contribution, manifest_path),
         ))
     return tuple(descriptors)
+
+
+def _platforms(table: Mapping, manifest_path: Path) -> tuple[str, ...]:
+    if "platforms" not in table:
+        return ()
+    value = table["platforms"]
+    if not isinstance(value, list) or not value or any(
+        not isinstance(item, str) or item not in {"darwin", "linux", "win32"}
+        for item in value
+    ) or len(value) != len(set(value)):
+        raise PluginManifestError(
+            f"{manifest_path}: platforms must contain unique darwin, linux or win32 values"
+        )
+    return tuple(value)
 
 
 def _parse_package(
@@ -583,6 +599,10 @@ def _parse_package(
 
 def _iter_plugin_dirs(directory: Path) -> Iterable[Path]:
     """Discover plugin packages without descending into package contents."""
+    manifest = directory / MANIFEST_NAME
+    if manifest.is_symlink() or manifest.exists():
+        yield directory
+        return
     try:
         children = sorted(directory.iterdir(), key=lambda child: child.name)
     except OSError as exc:

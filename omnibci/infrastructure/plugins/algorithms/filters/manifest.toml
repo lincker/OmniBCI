@@ -1,0 +1,16 @@
+# OmniBCI Plugin Manifest — schema version 2
+
+manifest_version = 2
+
+[package]
+id = "baseline_correction"
+publisher = "omnibci"
+version = "0.1.0"
+api_version = "1"
+
+[[contributions]]
+id = "default"
+kind = "filter"
+plugin_type = "BASELINE_CORRECTION"
+entrypoint = "baseline_correction:BaselineCorrection"
+display_name = "Baseline Correction"

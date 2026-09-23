@@ -84,6 +84,7 @@ class PluginPackageDescriptor:
     api_version: str
     version: str | None = None
     manifest_version: int = 1
+    platforms: tuple[str, ...] = ()
     # Catalog metadata: lower values have higher priority.  It is intentionally
     # excluded from equality/repr because it is not plugin identity.
     precedence: int = field(default=0, repr=False, compare=False)
@@ -119,6 +120,13 @@ class PluginDescriptor:
     description: str | None = None
     params: Mapping[str, Any] = field(default_factory=dict)
     controls: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    platforms: tuple[str, ...] = ()
+
+    def supports_platform(self, platform_name: str) -> bool:
+        """Both package and contribution constraints must permit the host."""
+        return (not self.package.platforms or platform_name in self.package.platforms) and (
+            not self.platforms or platform_name in self.platforms
+        )
 
     @property
     def selection(self) -> PluginSelection:

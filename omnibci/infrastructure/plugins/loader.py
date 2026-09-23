@@ -6,7 +6,7 @@ import hashlib
 import importlib
 import logging
 import sys
-from importlib.machinery import ModuleSpec
+from importlib.machinery import ModuleSpec, NamespaceLoader, PathFinder
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import ModuleType
@@ -53,7 +53,9 @@ class PluginLoader:
         package.__file__ = None
         package.__package__ = name
         package.__path__ = [str(location)]
-        package.__spec__ = ModuleSpec(name, loader=None, is_package=True)
+        namespace_loader = NamespaceLoader(name, [str(location)], PathFinder.find_spec)
+        package.__loader__ = namespace_loader
+        package.__spec__ = ModuleSpec(name, loader=namespace_loader, is_package=True)
         package.__spec__.submodule_search_locations = [str(location)]
         sys.modules[name] = package
 
@@ -161,6 +163,11 @@ class PluginLoader:
         intermediate package ``__init__.py`` files are intentionally skipped.
         """
         entrypoint = descriptor.entrypoint
+        if not descriptor.supports_platform(sys.platform):
+            raise PluginLoadError(
+                f"{descriptor.identifier}/{descriptor.contribution_id} is not supported "
+                f"on {sys.platform}"
+            )
         if entrypoint is None:
             raise PluginLoadError(
                 f"{descriptor.manifest_path}: plugin has no entrypoint"

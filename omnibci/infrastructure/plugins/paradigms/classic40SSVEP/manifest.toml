@@ -1,64 +1,45 @@
-# OmniBCI Plugin Manifest — schema version 1
+# OmniBCI Plugin Manifest — schema version 2
 # ─────────────────────────────────────────────────────────────────────────────
 # This file is the single source of truth for plugin identity and metadata.
 # It is read at discovery time (no code execution, no OpenGL import).
 
+manifest_version = 2
+
 [package]
-# Machine identifier — unique per plugin, used as the dict key everywhere.
-# Must match the directory name for builtin plugins.
-id           = "classic40SSVEP"
+id = "classic40SSVEP"
+version = "0.1.0"
+api_version = "1"
+publisher = "OmniBCI"
 
-version      = "0.1.0"
-
-# Plugin category. One of: paradigm | decoder | acquisition | filter
-kind         = "paradigm"
-
-# OmniBCI plugin API version this manifest targets.
-api_version  = "1"
-
-# Registry key used when actually starting the paradigm (StimulationAppService
-# looks this up in the plugin registry).
-plugin_type  = "STIMULATION_THUBCI_SSVEP_classic40"
-
-# Human-readable label shown in the UI.
+[[contributions]]
+id = "default"
+kind = "paradigm"
+plugin_type = "STIMULATION_THUBCI_SSVEP_classic40"
+entrypoint = "ssvep:Classic40SSVEP_2"
 display_name = "Classic 40-target SSVEP"
+description = "40-class steady-state visual evoked potential paradigm (THUBCI)."
 
-description  = "40-class steady-state visual evoked potential paradigm (THUBCI)."
-
-author       = "OmniBCI"
-
-# "builtin" = ships with the application and is tracked by git.
-# "user"    = installed by the user (downloaded or self-written).
-source       = "builtin"
-
-# Plugin-specific parameters, surfaced read-only in the Web UI when this
-# paradigm is selected.  Values mirror SSVEPConfig (the offline frame creator).
-[params]
-targets           = 40
-layout            = "5 × 8"
-resolution        = "1920 × 1080"
-refresh_rate_hz   = 60
-stim_time_s       = 3
-frequency_hz      = "8.0 – 15.8"
+[contributions.params]
+targets = 40
+layout = "5 × 8"
+resolution = "1920 × 1080"
+refresh_rate_hz = 60
+stim_time_s = 4
+frequency_hz = "8.0 – 15.8"
 frequency_step_hz = 0.2
-phase_step        = "0.5 π"
+phase_step = "0.5 π"
 
-# Editable controls — the Web UI renders one input per control (seeded with
-# `default`) and sends their values to the backend when triggering a trial.
-#   field = "n_trials"     → request.n_trials   (how many trials to run)
-#   field = "trial_params" → request.trial_params (per-trial value; replicated
-#                            n_trials times so every trial uses this cue)
-[controls.n_trials]
-label   = "Trial count"
-type    = "int"
+[contributions.controls.n_trials]
+label = "Trial count"
+type = "int"
 default = 1
-min     = 1
-field   = "n_trials"
+min = 1
+field = "n_trials"
 
-[controls.target_cue]
-label   = "Target cue"
-type    = "int"
+[contributions.controls.target_cue]
+label = "Target cue"
+type = "int"
 default = 1
-min     = 0
-max     = 40
-field   = "trial_params"
+min = 0
+max = 40
+field = "trial_params"

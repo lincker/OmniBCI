@@ -50,6 +50,10 @@ display_name = "Example Trigger"
 - Execution fields such as `kind`, `plugin_type`, and `entrypoint` must not
   appear at package level in v2. A malformed contribution invalidates the entire
   package; the catalog does not expose a partially valid package.
+- Optional `platforms` on a package or contribution is a nonempty list drawn
+  from `darwin`, `linux`, and `win32`. Both constraints must allow the host.
+  Omission supports all hosts. Discovery remains static and exposes unavailable
+  capabilities; loading rejects them before importing their implementation.
 
 `source`, filesystem location, and search precedence come from configured roots.
 Declaring a publisher does not verify the package's author or grant it trust.
@@ -60,6 +64,8 @@ All configured category roots are searched for packages. A v2 package can expose
 any supported kind regardless of its containing category directory. For example,
 a package under `acquisition/` can provide both an acquisition reader and a trigger.
 Overlapping roots do not duplicate the same physical package.
+A category root may itself contain a manifest (for example, bundled filters).
+Once a package is found, discovery does not recurse into its internal modules.
 
 The infrastructure catalog provides:
 
@@ -96,5 +102,8 @@ and `list(category)` retain root precedence and alias collision rules. Legacy
 non-Actuation manifests without entrypoints remain visible in the old list;
 exact resolution and `list_contributions` require executable entrypoints.
 
-Built-in manifest conversion, Profile storage, SDK constructors, and runtime
-selection wiring are separate implementation steps.
+Bundled packages now use v2 manifests. Scan45 declares acquisition and Windows
+parallel trigger contributions independently. Epoch detection and baseline
+correction also have explicit entrypoints. Classic40's metadata describes its
+existing 240 stimulus frames at 60 Hz (four seconds); no rendering timing changed.
+Profile storage, SDK constructors, and runtime selection wiring are separate steps.

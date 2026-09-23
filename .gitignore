@@ -131,6 +131,7 @@ pip-selfcheck.json
 !/omnibci/infrastructure/plugins/algorithms/filters/
 /omnibci/infrastructure/plugins/algorithms/filters/*
 !/omnibci/infrastructure/plugins/algorithms/filters/baseline_correction.py
+!/omnibci/infrastructure/plugins/algorithms/filters/manifest.toml
 /omnibci/infrastructure/plugins/algorithms/**/__pycache__/
 # The first-party logger effector is reviewed framework code; keep other
 # effector implementations ignored until they are reviewed individually.
