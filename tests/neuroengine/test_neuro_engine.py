@@ -78,6 +78,12 @@ _COMMAND_ROUTES = [
         None,
     ),
     (
+        EventType.StopAndDrain,
+        "acquisition_command_queue",
+        AcquisitionCommand.stop_and_drain,
+        {"session_id": "session-1"},
+    ),
+    (
         EventType.StartSession,
         "processor_command_queue",
         SignalProcessorCommand.start_session,

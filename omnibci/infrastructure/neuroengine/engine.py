@@ -409,6 +409,7 @@ class NeuroEngine:
             EventType.DisconnectDataProvider:         (acq, AcquisitionCommand.disconnect, True),
             EventType.StartStream:                    (acq, AcquisitionCommand.start_stream, True),
             EventType.StopStream:                     (acq, AcquisitionCommand.stop_stream, True),
+            EventType.StopAndDrain:                   (acq, AcquisitionCommand.stop_and_drain, True),
             # Session lifecycle: REST-created session_id pushed into the worker.
             EventType.StartSession:                   (proc, SignalProcessorCommand.start_session, True),
             EventType.EndSession:                     (proc, SignalProcessorCommand.end_session, True),

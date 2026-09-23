@@ -19,7 +19,7 @@ Accounts, cloud synchronization, and montage remain outside this implementation.
 | 11 | One complete configuration snapshot across workers | Complete |
 | 12 | Worker readiness and revision acknowledgement | Complete |
 | 13 | Schema-driven profile editor | Complete |
-| 14 | Ordered stream draining and safe pause boundaries | Pending |
+| 14 | Ordered stream draining and safe pause boundaries | Complete |
 | 15 | Session continuation and file replay checkpoints | Pending |
 | 16 | Runtime application plan and status API | Pending |
 | 17 | Automatic pause, rebuild, restore, and rollback | Pending |

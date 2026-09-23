@@ -35,6 +35,8 @@ def test_run_constructs_service_with_shared_dependencies():
         command_queue=command_queue,
         data_manager=data_manager,
         event_bus=event_bus,
+        generation=None,
+        config_revision=None,
     )
     acquisition_class.return_value.run.assert_called_once_with()
     assert worker.acquisitor is acquisition_class.return_value

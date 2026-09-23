@@ -1,5 +1,5 @@
 """Pickle-safe EventBus payload contracts owned by the application layer."""
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Any, Mapping
 
@@ -15,6 +15,7 @@ class TrialOutcome:
     session_id: str
     trial_number: int
     classification: Classification
+    config_revision: str | None = None
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,8 @@ class SessionSummary:
     """SessionEnded payload with session identity and final trial count."""
     session_id: str
     total_trials: int
+    config_revision: str | None = None
+    interruption_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,53 @@ class AcquisitionSnapshot:
     """Authoritative device state emitted by the acquisition worker."""
     connected: bool
     streaming: bool
+
+
+@dataclass(frozen=True)
+class StreamBarrier:
+    """In-band marker written by acquisition after its producer has stopped."""
+
+    command_id: str
+    generation: str | None
+    config_revision: str | None
+    last_sequence: int
+    session_id: str | None = None
+
+
+@dataclass(frozen=True)
+class StreamDrainReceipt:
+    """Processing completion evidence; physical outputs are not acknowledged."""
+
+    generation: str | None
+    config_revision: str | None
+    last_sequence: int
+    session_id: str | None
+    completed_trials: int
+    interrupted_epoch: bool
+    outputs_settled: bool = False
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_value(cls, value) -> "StreamDrainReceipt":
+        if not isinstance(value, Mapping) or set(value) != {
+            "generation", "config_revision", "last_sequence", "session_id",
+            "completed_trials", "interrupted_epoch", "outputs_settled",
+        }:
+            raise ValueError("Missing or invalid stream drain receipt")
+        for field in ("generation", "config_revision", "session_id"):
+            if value[field] is not None and (
+                not isinstance(value[field], str) or not value[field]
+            ):
+                raise ValueError(f"Invalid drain receipt {field}")
+        if type(value["last_sequence"]) is not int or value["last_sequence"] < -1:
+            raise ValueError("Invalid drain receipt sequence")
+        if type(value["completed_trials"]) is not int or value["completed_trials"] < 0:
+            raise ValueError("Invalid drain receipt trial count")
+        if type(value["interrupted_epoch"]) is not bool or value["outputs_settled"] is not False:
+            raise ValueError("Invalid drain receipt completion flags")
+        return cls(**value)
 
 
 @dataclass(frozen=True)
@@ -72,6 +122,7 @@ class CommandResult:
     message: str | None = None
     error_code: str | None = None
     failure_kind: CommandFailureKind | None = None
+    data: dict[str, Any] | None = None
 
     @classmethod
     def from_value(cls, value: Any) -> "CommandResult | None":
@@ -93,6 +144,9 @@ class CommandResult:
         message = value.get("message")
         error_code = value.get("error_code")
         raw_failure_kind = value.get("failure_kind")
+        data = value.get("data")
+        if data is not None and not isinstance(data, Mapping):
+            return None
         try:
             failure_kind = (
                 CommandFailureKind(raw_failure_kind)
@@ -108,4 +162,5 @@ class CommandResult:
             message=message if isinstance(message, str) else None,
             error_code=error_code if isinstance(error_code, str) else None,
             failure_kind=failure_kind,
+            data=dict(data) if data is not None else None,
         )

@@ -121,6 +121,8 @@ class SignalProcessingWorker(mp.Process):
             baseline_duration=self.baseline_duration,
             filters=filters,
             auto_start_session=False,
+            generation=(self.settings_snapshot or {}).get("CONFIG.generation"),
+            config_revision=(self.settings_snapshot or {}).get("CONFIG.revision"),
         )
         if self.startup_reporter is not None:
             self.startup_reporter.ready()

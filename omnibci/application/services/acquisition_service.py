@@ -19,7 +19,7 @@ from omnibci.application.queries.acquisition_queries import (
     GetAcquisitionStatusQuery,
     AcquisitionStatusResult,
 )
-from omnibci.application.events import AcquisitionSnapshot
+from omnibci.application.events import AcquisitionSnapshot, StreamDrainReceipt
 from omnibci.application.services.command_result_service import CommandExecutor
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,21 @@ class AcquisitionAppService:
     def handle_stop_stream(self, cmd: StopStreamCommand) -> None:
         self._put_event(EventType.StopStream)
         logger.info("StopStream event dispatched")
+
+    def handle_stop_and_drain(
+        self, *, session_id: str | None = None, timeout_s: float | None = None,
+    ) -> StreamDrainReceipt:
+        """Wait for processing evidence after acquisition joins its producer."""
+        result = self._command_executor.request(
+            EventType.StopAndDrain, {"session_id": session_id}, timeout_s=timeout_s,
+        )
+        try:
+            receipt = StreamDrainReceipt.from_value(result.data)
+        except ValueError as exc:
+            raise RuntimeError("Worker did not provide valid stream drain evidence") from exc
+        if session_id is not None and receipt.session_id != session_id:
+            raise RuntimeError("Stream drain receipt belongs to a different session")
+        return receipt
 
     def reset(self) -> None:
         """Clear the state projection.

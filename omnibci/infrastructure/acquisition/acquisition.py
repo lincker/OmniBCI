@@ -10,6 +10,7 @@ from omnibci.application.events import (
     CommandFailureKind,
     CommandRequest,
     CommandResult,
+    StreamBarrier,
 )
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.domain.signal import SignalChunk
@@ -31,7 +32,7 @@ class CommandQueue(Protocol):
 class DataSink(Protocol):
     """Minimal downstream sink contract for acquired signal chunks."""
 
-    def put_data(self, chunk: SignalChunk) -> None: ...
+    def put_data(self, chunk: SignalChunk | StreamBarrier) -> None: ...
 
 
 class AcquisitionCommand(Enum):
@@ -41,6 +42,7 @@ class AcquisitionCommand(Enum):
     connect           = 'connect'
     start_stream      = 'start stream'
     stop_stream       = 'stop stream'
+    stop_and_drain    = 'stop and drain'
     disconnect        = 'disconnect'
 
 
@@ -63,6 +65,7 @@ _COMMAND_RESULT_NAMES = {
     AcquisitionCommand.disconnect: EventType.DisconnectDataProvider.name,
     AcquisitionCommand.start_stream: EventType.StartStream.name,
     AcquisitionCommand.stop_stream: EventType.StopStream.name,
+    AcquisitionCommand.stop_and_drain: EventType.StopAndDrain.name,
 }
 
 
@@ -78,6 +81,8 @@ class Acquisition:
         command_queue: CommandQueue,
         data_manager: DataSink,
         event_bus=None,
+        generation: str | None = None,
+        config_revision: str | None = None,
     ) -> None:
         self.data_source = data_source
         self.command_queue = command_queue
@@ -87,14 +92,19 @@ class Acquisition:
         self.data_manager = data_manager
         self.event_bus = event_bus  # Optional for projection-free unit tests.
         self.should_exit = False
+        self.generation = generation
+        self.config_revision = config_revision
+        self._last_sequence = -1
 
     def run(self) -> None:
         asyncio.run(self.serve())
 
     async def serve(self) -> None:
-        await self.startup()
-        await self.main_loop()
-        await self.shutdown()
+        try:
+            await self.startup()
+            await self.main_loop()
+        finally:
+            await self.shutdown()
 
     async def startup(self) -> None:
         logger.info('Acquisition started')
@@ -126,6 +136,7 @@ class Acquisition:
             AcquisitionCommand.disconnect:       self._on_disconnect,
             AcquisitionCommand.start_stream:     self._on_start_stream,
             AcquisitionCommand.stop_stream:      self._on_stop_stream,
+            AcquisitionCommand.stop_and_drain:   self._on_stop_stream,
             AcquisitionCommand.stop_acquisition: self._on_stop_acquisition,
             AcquisitionCommand.get_metadata:     self._on_get_metadata,
         }.get(command)
@@ -142,7 +153,27 @@ class Acquisition:
                 )
             return
         try:
+            if command is AcquisitionCommand.stop_and_drain and request is None:
+                raise AcquisitionCommandRejected("CORRELATION_REQUIRED", "StopAndDrain requires a command ID")
             await handler()
+            if command is AcquisitionCommand.stop_and_drain:
+                payload = request.payload
+                session_id = payload.get("session_id") if isinstance(payload, dict) else None
+                if session_id is not None and (not isinstance(session_id, str) or not session_id):
+                    raise AcquisitionCommandRejected("INVALID_SESSION_COMMAND", "Invalid drain session ID")
+                self.data_manager.put_data(StreamBarrier(
+                    request.command_id, self.generation, self.config_revision,
+                    self._last_sequence, session_id,
+                ))
+                # The processor alone can confirm consumption of prior data.
+                return
+        except asyncio.CancelledError:
+            if request is not None:
+                self._emit_command_result(
+                    request, command, ok=False, message="Command interrupted by acquisition shutdown",
+                    error_code="ACQUISITION_CANCELLED", failure_kind=CommandFailureKind.EXECUTION_FAILED,
+                )
+            raise
         except AcquisitionCommandRejected as exc:
             if request is None:
                 return
@@ -234,15 +265,16 @@ class Acquisition:
             await self._cancel_fetch_task()
             self._emit_state()
             return
-        await self.data_source.stop_stream()
+        try:
+            await self.data_source.stop_stream()
+        finally:
+            await self._cancel_fetch_task()
         if self.data_source.is_streaming:
             self._emit_state()
             raise AcquisitionCommandRejected(
                 "STREAM_STOP_FAILED",
                 "Data source remained in the streaming state after stop",
             )
-        if self.fetch_task:
-            await self._cancel_fetch_task()
         logger.info('Fetch task stopped')
         self._emit_state()
 
@@ -256,7 +288,9 @@ class Acquisition:
         try:
             await task
         except asyncio.CancelledError:
-            pass
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
         finally:
             if self.fetch_task is task:
                 self.fetch_task = None
@@ -282,10 +316,11 @@ class Acquisition:
                 chunk = SignalChunk(
                     timestamp=time.time_ns(),
                     raw_data=raw_data,
-                    sequence_id=packets_counter,
+                    sequence_id=self._last_sequence + 1,
                 )
                 chunk = self.preprocess(chunk)
                 self.data_manager.put_data(chunk)
+                self._last_sequence = chunk.sequence_id
                 packets_counter += 1
         except asyncio.CancelledError:
             logger.info('Fetch task cancelled')

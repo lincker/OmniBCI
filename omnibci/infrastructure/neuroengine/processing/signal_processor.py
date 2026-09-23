@@ -9,9 +9,11 @@ from omnibci.domain.signal import SignalChunk
 
 import numpy as np
 
-from omnibci.domain.session import BCISession
+from omnibci.domain.session import BCISession, SessionState
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector
-from omnibci.application.events import CommandRequest, CommandResult
+from omnibci.application.events import (
+    CommandFailureKind, CommandRequest, CommandResult, StreamBarrier, StreamDrainReceipt,
+)
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.event_translator import DomainEventPublisher
 from .processing_state import AwaitingEpochState, AssemblingEpochState
@@ -58,6 +60,8 @@ class SignalProcessor:
         baseline_duration: float = 0.0,
         filters=None,
         auto_start_session: bool = True,
+        generation: str | None = None,
+        config_revision: str | None = None,
     ) -> None:
         self.data_manager = data_manager
         self.event_bus = event_bus
@@ -108,6 +112,10 @@ class SignalProcessor:
         self._current_state = self._awaiting_state
 
         self._should_stop = False
+        self.generation = generation
+        self.config_revision = config_revision
+        self._last_sequence = -1
+        self._drain_failure: str | None = None
 
     def new_epoch_processor(self) -> EpochProcessor:
         """Build a fresh EpochProcessor for a newly opened epoch."""
@@ -120,7 +128,69 @@ class SignalProcessor:
     async def next_chunk(self, timeout: float = 0.05) -> "SignalChunk | None":
         """Wait off-loop for a chunk and return control after the timeout."""
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self.data_manager.get_data, timeout)
+        pending = loop.run_in_executor(None, self.data_manager.get_data, timeout)
+        try:
+            item = await asyncio.shield(pending)
+        except asyncio.CancelledError:
+            # A cancelled await does not cancel a blocking queue get. Join it
+            # before shutdown so an already-consumed barrier is not orphaned.
+            item = await pending
+            if isinstance(item, StreamBarrier):
+                self._emit_drain_result(item, ok=False, error_code="PROCESSOR_CANCELLED",
+                                        message="Processing stopped before completing the drain")
+            raise
+        if isinstance(item, StreamBarrier):
+            self._on_stream_barrier(item)
+            return None
+        if isinstance(item, SignalChunk):
+            self._last_sequence = item.sequence_id
+        return item
+
+    def _on_stream_barrier(self, barrier: StreamBarrier) -> None:
+        """Prior data and its trial events have completed on this producer."""
+        processing_started = False
+        try:
+            if barrier.generation != self.generation or barrier.config_revision != self.config_revision:
+                raise ValueError("Drain barrier belongs to a different runtime generation or revision")
+            if barrier.last_sequence != self._last_sequence:
+                raise ValueError("Drain barrier sequence differs from the last consumed signal chunk")
+            running_session = self.session.session_id if self.session.state is SessionState.RUNNING else None
+            if barrier.session_id is not None and barrier.session_id != running_session:
+                raise ValueError("Drain barrier session differs from the running session")
+            if self._drain_failure is not None:
+                raise RuntimeError(self._drain_failure)
+            processing_started = True
+            interrupted = self.current_epoch is not None
+            if self.current_epoch is not None:
+                complete, classification = self.current_epoch.recognize_if_ready()
+                if complete and classification is not None:
+                    previous_count = self.session.trial_count
+                    self._assembling_state._complete_trial(classification)
+                    if running_session is not None and self.session.trial_count != previous_count + 1:
+                        raise RuntimeError("Completed drain trial could not be recorded")
+                    interrupted = False
+            self.transition_to_awaiting()
+            self.pretrigger.clear()
+            receipt = StreamDrainReceipt(
+                self.generation, self.config_revision, self._last_sequence,
+                running_session, self.session.trial_count, interrupted,
+            )
+            self._emit_drain_result(barrier, ok=True, data=receipt.to_dict())
+        except Exception as exc:
+            if processing_started:
+                # An incremental decoder or trial publisher may already have
+                # mutated state. A retry must not silently discard that failure.
+                self._drain_failure = str(exc)
+            logger.exception("Stream drain failed: %s", exc)
+            self._emit_drain_result(barrier, ok=False, error_code="STREAM_DRAIN_FAILED", message=str(exc))
+
+    def _emit_drain_result(self, barrier: StreamBarrier, *, ok: bool, data=None,
+                           error_code=None, message=None) -> None:
+        self.event_bus.put_event(Event(EventType.CommandResult, CommandResult(
+            command_id=barrier.command_id, command=EventType.StopAndDrain.name,
+            ok=ok, message=message, error_code=error_code, data=data,
+            failure_kind=None if ok else CommandFailureKind.EXECUTION_FAILED,
+        )))
 
     def baseline_from_chunk(self, chunk, start_idx: int) -> np.ndarray:
         """
@@ -152,6 +222,8 @@ class SignalProcessor:
         while not self._should_stop:
             if not self.command_queue.empty():
                 self._execute(self.command_queue.get())
+            if self._should_stop:
+                break
             await self._current_state.run()
 
     def _execute(self, item) -> None:

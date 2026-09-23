@@ -68,6 +68,8 @@ class AcquisitionWorker(mp.Process):
             command_queue=self.command_queue,
             data_manager=self.data_manager,
             event_bus=self.event_bus,
+            generation=(self.settings_snapshot or {}).get("CONFIG.generation"),
+            config_revision=(self.settings_snapshot or {}).get("CONFIG.revision"),
         )
         if self.startup_reporter is not None:
             self.startup_reporter.ready()

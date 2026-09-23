@@ -12,6 +12,7 @@ class EventType(IntEnum):
     DisconnectDataProvider = 102
     StartStream = 111
     StopStream = 112
+    StopAndDrain = 113  # acquisition stop followed by an ordered processing barrier
     AcquisitionState = 121  # worker -> API: authoritative device-state snapshot
                             # payload: application.events.AcquisitionSnapshot
     CommandResult = 601      # command consumer -> API: application.events.CommandResult

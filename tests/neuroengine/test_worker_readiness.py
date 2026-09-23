@@ -36,6 +36,8 @@ def test_worker_reports_ready_after_construction_before_loop(worker_type, servic
             worker._run()
         else:
             worker._run_processor(None, None, [], 250)
+        assert service.call_args.kwargs["generation"] == "g"
+        assert service.call_args.kwargs["config_revision"] == "r"
 
 
 @pytest.mark.parametrize("worker_type,loader,stage", [

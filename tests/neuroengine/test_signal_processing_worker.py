@@ -88,6 +88,8 @@ class TestProcessorWiring:
             baseline_duration=0.3,
             filters=filters,
             auto_start_session=False,
+            generation=None,
+            config_revision=None,
         )
         assert worker.signal_processor is processor
         processor.run.assert_called_once_with()
