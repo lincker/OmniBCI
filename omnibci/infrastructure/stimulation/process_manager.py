@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import multiprocessing as mp
+from copy import deepcopy
 from threading import RLock
 from typing import Any
 
@@ -40,12 +41,13 @@ def _run_stimulation(
     paradigm: str | None = None,
     stop_event: Any = None,
     startup_connection: Any = None,
+    *,
+    settings_snapshot: dict | None = None,
 ) -> None:
     """Stimulation subprocess entry point.  Runs in the spawned child process.
 
-    *paradigm* — when provided, overrides ``STIMULATION.paradigm`` in the
-    subprocess's in-memory settings before the Stimulator loads plugins.
-    The override is subprocess-local: the settings file on disk is unchanged.
+    A supplied snapshot is installed before runtime imports. Without a snapshot,
+    *paradigm* remains a subprocess-local legacy settings override.
     """
     reporter = (
         StartupReporter(startup_connection, component="Stimulation")
@@ -53,7 +55,13 @@ def _run_stimulation(
         else None
     )
     try:
-        if paradigm:
+        if settings_snapshot is not None:
+            from omnibci.conf import settings
+            selected = settings_snapshot.get("STIMULATION.paradigm")
+            if paradigm is not None and paradigm != selected:
+                raise RuntimeError("Apply the paradigm configuration before starting Stimulation")
+            settings.use_snapshot(settings_snapshot)
+        elif paradigm:
             from omnibci.conf import settings
             settings.set("STIMULATION.paradigm", paradigm)
         from omnibci.infrastructure.stimulation.application import Stimulation
@@ -90,7 +98,9 @@ class StimulationProcessManager:
     ) -> None:
         if startup_timeout_s <= 0:
             raise ValueError("startup_timeout_s must be greater than zero")
+        self._default_auto_spawn = auto_spawn
         self._auto_spawn = auto_spawn
+        self._settings_snapshot: dict | None = None
         self._startup_timeout_s = float(startup_timeout_s)
         self._process: mp.Process | None = None
         self._stop_event: Any = None
@@ -105,18 +115,32 @@ class StimulationProcessManager:
 
     # ── Public API ─────────────────────────────────────────────────────────
 
-    def start(self, paradigm: str | None = None) -> None:
+    def start(
+        self, paradigm: str | None = None, *, settings_snapshot: dict | None = None,
+    ) -> None:
         """Spawn the Stimulation subprocess (no-op if auto_spawn=False or already running).
 
-        *paradigm* is forwarded to the subprocess and overrides the
-        ``STIMULATION.paradigm`` config value in-process only.
+        A snapshot pins every setting and determines the selected paradigm and
+        managed mode. A differing legacy override requires a configuration apply.
         """
         with self._lifecycle_lock:
-            if not self._auto_spawn:
+            snapshot = deepcopy(settings_snapshot)
+            if snapshot is not None:
+                selected = snapshot.get("STIMULATION.paradigm")
+                if paradigm is not None and paradigm != selected:
+                    raise RuntimeError("Apply the paradigm configuration before starting Stimulation")
+                paradigm = selected
+                auto_spawn = bool(snapshot.get("STIMULATION.auto_spawn", self._default_auto_spawn))
+            else:
+                auto_spawn = self._default_auto_spawn
+            if not auto_spawn:
+                self._stop_locked()
+                self._auto_spawn = False
                 logger.debug(
                     "auto_spawn=False — Stimulation process must be started manually"
                 )
                 return
+            self._auto_spawn = True
             self._refresh_state_locked()
             if self._process is not None:
                 process_alive = self._process.is_alive()
@@ -124,6 +148,7 @@ class StimulationProcessManager:
                     process_alive
                     and self._state is ChildProcessState.READY
                     and paradigm == self._paradigm
+                    and snapshot == self._settings_snapshot
                 ):
                     logger.debug(
                         "Stimulation process already running requested paradigm "
@@ -149,11 +174,16 @@ class StimulationProcessManager:
 
             stop_event = mp.Event()
             startup_receiver, startup_sender = mp.Pipe(duplex=False)
+            process_kwargs = (
+                {"kwargs": {"settings_snapshot": deepcopy(snapshot)}}
+                if snapshot is not None else {}
+            )
             process = mp.Process(
                 target=_run_stimulation,
                 args=(paradigm, stop_event, startup_sender),
                 name="StimulationProcess",
                 daemon=True,
+                **process_kwargs,
             )
             self._state = ChildProcessState.STARTING
             try:
@@ -177,6 +207,7 @@ class StimulationProcessManager:
             self._stop_event = stop_event
             self._startup_receiver = startup_receiver
             self._paradigm = paradigm
+            self._settings_snapshot = snapshot
             try:
                 startup_sender.close()
             except OSError as exc:
@@ -224,9 +255,6 @@ class StimulationProcessManager:
         *,
         final_state: ChildProcessState = ChildProcessState.STOPPED,
     ) -> None:
-        if not self._auto_spawn:
-            self._state = ChildProcessState.STOPPED
-            return
         process = self._process
         if process is None:
             self._close_startup_receiver()
@@ -289,6 +317,7 @@ class StimulationProcessManager:
         self._stop_event = None
         self._close_startup_receiver()
         self._paradigm = None
+        self._settings_snapshot = None
         self._state = final_state
 
     def _close_startup_receiver(self) -> None:

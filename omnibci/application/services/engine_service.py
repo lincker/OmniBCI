@@ -8,8 +8,10 @@ command / query objects.  The API layer never touches NeuroEngine directly.
 import asyncio
 import logging
 from contextlib import contextmanager
+from copy import deepcopy
 from threading import RLock, Thread
-from typing import Optional, TYPE_CHECKING
+from typing import Callable, Optional, TYPE_CHECKING
+from uuid import uuid4
 
 from omnibci.shared.events import EventType, Event
 from omnibci.application.configuration import ConfigProfileConflictError
@@ -53,10 +55,15 @@ class NeuroEngineService(EnginePort):
         self,
         engine_factory: EngineFactory,
         actuation_process_manager: "ActuationProcessManager | None" = None,
+        *,
+        snapshot_provider: Callable[[], dict] | None = None,
     ) -> None:
-        # 引擎的构建方式由组合根（bootstrap）注入 —— application 层不再
-        # import NeuroEngineBuilder（P0-1）。每次调用工厂得到一张全新引擎图。
+        # The composition root supplies a fresh graph factory and, for managed
+        # configuration, the snapshot to pin before constructing any worker.
         self._engine_factory = engine_factory
+        self._snapshot_provider = snapshot_provider
+        self._graph_snapshot: dict | None = None
+        self._applied_snapshot: dict | None = None
         # Actuation has no user command (stimulation spawns on
         # handle_start_stimulation); its natural lifecycle hook is the
         # engine's. Injected by the composition root; None / auto_spawn=False
@@ -111,7 +118,9 @@ class NeuroEngineService(EnginePort):
             with self._configuration_transition():
                 await self._start_engine_locked(cmd)
 
-    async def _start_engine_locked(self, cmd: StartEngineCommand) -> None:
+    async def _start_engine_locked(
+        self, cmd: StartEngineCommand, *, settings_snapshot: dict | None = None,
+    ) -> None:
         if self._running:
             logger.warning("Engine already running — ignoring StartEngineCommand")
             return
@@ -127,7 +136,21 @@ class NeuroEngineService(EnginePort):
             # Rebuild the engine graph (fresh workers, queues, bus, gateway),
             # then replay listeners (session read-model + WS broadcaster) onto
             # the new EventBus — they were registered on the discarded one.
-            self._engine = self._engine_factory()
+            snapshot = settings_snapshot
+            if snapshot is None and self._snapshot_provider is not None:
+                snapshot = self._snapshot_provider()
+            if snapshot is None:
+                if self._snapshot_provider is not None:
+                    raise ValueError("snapshot_provider must return a configuration dictionary")
+                self._engine = self._engine_factory()
+                self._graph_snapshot = None
+            else:
+                if not isinstance(snapshot, dict):
+                    raise ValueError("settings_snapshot must be a configuration dictionary")
+                snapshot = deepcopy(snapshot)
+                snapshot["CONFIG.generation"] = str(uuid4())
+                self._engine = self._engine_factory(deepcopy(snapshot))
+                self._graph_snapshot = snapshot
             for event_type, handler in self._subscriptions:
                 self._engine.event_bus.register_event_listener(event_type, handler)
             self._needs_rebuild = False
@@ -173,12 +196,20 @@ class NeuroEngineService(EnginePort):
                 # Listening sockets are now bound.  Managed mode returns only
                 # after the child has connected and its Effector setup succeeds;
                 # external/disabled mode remains an immediate no-op.
-                await asyncio.to_thread(self._actuation_manager.start)
+                if self._graph_snapshot is None:
+                    await asyncio.to_thread(self._actuation_manager.start)
+                else:
+                    await asyncio.to_thread(
+                        self._actuation_manager.start,
+                        settings_snapshot=deepcopy(self._graph_snapshot),
+                    )
             except BaseException:
                 logger.exception("Actuation process failed to start; stopping engine")
                 await self._stop_engine_locked(StopEngineCommand())
                 raise
-        self._accepting_commands = True
+        with self._configuration_lock:
+            self._applied_snapshot = deepcopy(self._graph_snapshot)
+            self._accepting_commands = True
         logger.info("NeuroEngine started")
 
     async def handle_stop_engine(self, cmd: StopEngineCommand) -> None:
@@ -315,6 +346,28 @@ class NeuroEngineService(EnginePort):
             and thread is not None
             and thread.is_alive()
         )
+
+    @property
+    def applied_snapshot(self) -> dict | None:
+        """Return a detached copy; saved edits cannot mutate a running graph."""
+        with self._configuration_lock:
+            return deepcopy(self._applied_snapshot)
+
+    @property
+    def applied_revision(self) -> str | None:
+        with self._configuration_lock:
+            return (
+                self._applied_snapshot.get("CONFIG.revision")
+                if self._applied_snapshot is not None else None
+            )
+
+    @property
+    def generation(self) -> str | None:
+        with self._configuration_lock:
+            return (
+                self._applied_snapshot.get("CONFIG.generation")
+                if self._applied_snapshot is not None else None
+            )
 
     def is_peer_connected(self, peer_name: str) -> bool:
         """True when the named peer's transport has an active connection.

@@ -23,7 +23,7 @@ class EngineHandle(Protocol):
 
 
 # Each call returns a fresh graph because multiprocessing workers are single-use.
-EngineFactory = Callable[[], EngineHandle]
+EngineFactory = Callable[[dict], EngineHandle] | Callable[[], EngineHandle]
 
 
 class EnginePort(ABC):
@@ -58,3 +58,8 @@ class EnginePort(ABC):
         overrides this for stimulation/actuation status and admission checks.
         """
         return False
+
+    @property
+    def applied_snapshot(self) -> dict | None:
+        """A copy of the last successfully started graph's pinned configuration."""
+        return None
