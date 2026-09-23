@@ -18,6 +18,7 @@ from omnibci.application.services.runtime_configuration_service import RuntimeCo
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.plugin_installation_service import PluginInstallationService
 from omnibci.application.services.plugin_package_service import PluginPackageService
+from omnibci.application.services.plugin_market_service import PluginMarketService
 from omnibci.application.plugin_packages import package_references_from_settings
 from omnibci.application.plugin_profiles import PluginProfileValidationError
 from omnibci.domain.repositories import SessionRepository
@@ -28,6 +29,7 @@ from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPl
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.plugin_catalog import list_plugins
 from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugins.market_adapter import configured_market_service
 from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
 from omnibci.infrastructure.actuation.process_manager import ActuationProcessManager
 
@@ -58,6 +60,7 @@ class AppContainer:
     runtime_configuration: "RuntimeConfigurationService | None" = None
     plugin_installation_service: "PluginInstallationService | None" = None
     plugin_package_service: "PluginPackageService | None" = None
+    plugin_market_service: "PluginMarketService | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +217,9 @@ async def build_container() -> AppContainer:
     )
     container.plugin_installation_service = packages
     container.plugin_package_service = packages
+    container.plugin_market_service = configured_market_service(
+        packages.store, admission_guard=engine_service.admission.transition,
+    )
     return container
 
 

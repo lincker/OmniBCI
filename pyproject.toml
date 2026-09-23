@@ -27,6 +27,7 @@ dependencies = [
     # 配置
     "tomlkit==0.14.0",
     "platformdirs>=4.0",
+    "cryptography>=46.0.0",
     # API
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",

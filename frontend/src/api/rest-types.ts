@@ -747,6 +747,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/market/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Catalog */
+        get: operations["catalog_api_v1_market_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/market/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Install */
+        post: operations["install_api_v1_market_install_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/plugins/{category}": {
         parameters: {
             query?: never;
@@ -1182,6 +1216,21 @@ export interface components {
             message: string;
             data?: components["schemas"]["TrialResponse"] | null;
         };
+        /** ApiResponse[list[MarketPackageResponse]] */
+        ApiResponse_list_MarketPackageResponse__: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            /** Data */
+            data?: components["schemas"]["MarketPackageResponse"][] | null;
+        };
         /** ApiResponse[list[PackageVersionResponse]] */
         ApiResponse_list_PackageVersionResponse__: {
             /**
@@ -1356,6 +1405,54 @@ export interface components {
             message: string;
             /** Detail */
             detail?: unknown | null;
+        };
+        /** InstallMarketPackageRequest */
+        InstallMarketPackageRequest: {
+            /** Package Id */
+            package_id: string;
+            /** Version */
+            version: string;
+        };
+        /** MarketContributionResponse */
+        MarketContributionResponse: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector";
+            selection: components["schemas"]["PluginSelectionResponse"];
+        };
+        /** MarketPackageResponse */
+        MarketPackageResponse: {
+            /** Repository Id */
+            repository_id: string;
+            /** Package Id */
+            package_id: string;
+            /** Version */
+            version: string;
+            /** Display Name */
+            display_name: string;
+            /** Description */
+            description: string;
+            /** Download Url */
+            download_url: string;
+            /** Sha256 */
+            sha256: string;
+            /** Size */
+            size: number;
+            /** Contributions */
+            contributions: components["schemas"]["MarketContributionResponse"][];
+            /** Api Version */
+            api_version: string | null;
+            /** Platforms */
+            platforms: string[];
+            /** Host Version */
+            host_version: string | null;
+            /** Requires */
+            requires: [
+                string,
+                string
+            ][];
         };
         /** ModuleConfigField */
         ModuleConfigField: {
@@ -6207,6 +6304,158 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_PluginProfileResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    catalog_api_v1_market_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_MarketPackageResponse__"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    install_api_v1_market_install_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstallMarketPackageRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PackageInstallationResponse_"];
                 };
             };
             /** @description Bad request */

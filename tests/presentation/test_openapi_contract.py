@@ -90,6 +90,8 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/plugin-packages/{package_id}/{version}", "delete"),
     ("/api/v1/plugin-packages/profile-version-proposals", "post"),
     ("/api/v1/plugin-packages/version-profiles", "post"),
+    ("/api/v1/market/catalog", "get"),
+    ("/api/v1/market/install", "post"),
 }
 
 
