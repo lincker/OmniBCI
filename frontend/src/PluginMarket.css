@@ -1,0 +1,52 @@
+.plugin-market .market-body { padding: 0 32px 32px; overflow: auto; min-height: 0; }
+.plugin-market .market-toolbar { display: flex; gap: 12px; margin-bottom: 12px; }
+.plugin-market .market-search { display: flex; align-items: center; gap: 8px; flex: 1; border: 1px solid var(--border); background: var(--control-bg); padding-left: 9px; }
+.plugin-market .market-search input { width: 100%; border: 0; }
+.plugin-market .market-search .workbench-icon { width: 15px; color: var(--muted); }
+.plugin-market .market-banner { border-left: 2px solid var(--accent); background: var(--accent-soft); padding: 10px 12px; font-size: 12px; }
+.plugin-market .market-list { border-top: 1px solid var(--border-soft); margin-top: 20px; }
+.plugin-market .market-package { display: flex; gap: 18px; padding: 24px 0; border-bottom: 1px solid var(--border-soft); }
+.plugin-market .market-package-icon { width: 46px; height: 46px; flex: none; display: grid; place-items: center; background: var(--sidebar-bg); color: var(--accent); border: 1px solid var(--border-soft); border-radius: 5px; }
+.plugin-market .market-package-icon .workbench-icon { width: 26px; height: 26px; }
+.plugin-market .market-package-detail { flex: 1; min-width: 0; }
+.plugin-market .market-package-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 4px; }
+.plugin-market .market-package-heading h2 { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
+.plugin-market .market-package p { margin: 6px 0; line-height: 1.6; font-size: 12px; overflow-wrap: anywhere; }
+.plugin-market .market-identity, .plugin-market .market-version { color: var(--muted); font-size: 11px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.plugin-market .market-state { font-size: 11px; color: var(--muted); margin-left: auto; }
+.plugin-market .market-state.enabled { color: var(--ok); }
+.plugin-market .market-capabilities { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
+.plugin-market .market-capabilities span { font-size: 10px; border: 1px solid var(--border-soft); padding: 2px 6px; color: var(--muted); border-radius: 3px; }
+.plugin-market .market-package .actions { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px; }
+.plugin-market .market-package button { font-size: 12px; }
+.plugin-market .market-references { font-size: 12px; margin: 12px 0; }
+.plugin-market .market-references summary { cursor: pointer; color: var(--muted); }
+.plugin-market .market-references ul { padding-left: 20px; line-height: 1.8; overflow-wrap: anywhere; }
+.plugin-market .market-references strong { font-weight: 500; text-transform: capitalize; }
+.plugin-market .market-empty { padding: 28px 8px; color: var(--muted); line-height: 1.8; font-size: 12px; }
+.plugin-market .market-empty h2 { margin-bottom: 8px; }
+.plugin-market .market-version-editor { border: 1px solid var(--border); background: var(--sidebar-bg); padding: 20px; margin-top: 20px; }
+.plugin-market .market-section-heading { display: flex; align-items: flex-start; gap: 12px; justify-content: space-between; margin-bottom: 18px; }
+.plugin-market .market-section-heading h2 { margin-bottom: 5px; }
+.plugin-market .market-version-editor > label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; margin: 12px 0; }
+.plugin-market .market-version-editor textarea { width: 100%; resize: vertical; border: 1px solid var(--border); background: var(--control-bg); color: var(--text); padding: 10px; font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.plugin-market .market-version-editor > .market-checkbox { flex-direction: row; align-items: center; gap: 8px; }
+.plugin-market .market-checkbox input { margin: 0; }
+.plugin-market .market-version-preview { border-top: 1px solid var(--border-soft); margin-top: 20px; padding-top: 20px; }
+.plugin-market .market-version-preview h3 { font-size: 13px; font-weight: 500; }
+.plugin-market .market-version-preview pre { padding: 12px; overflow: auto; max-height: 260px; background: var(--control-bg); font-size: 12px; }
+.plugin-market .market-version-preview > p { font-size: 12px; line-height: 1.6; }
+@media (max-width: 800px) {
+  .plugin-market .explorer { width: 170px; }
+  .plugin-market .market-body { padding: 0 18px 24px; }
+  .plugin-market .editor-heading { padding: 22px 18px; flex-wrap: wrap; gap: 14px; }
+  .plugin-market .market-package-icon { display: none; }
+}
+@media (max-width: 560px) {
+  .plugin-market { flex-direction: column; }
+  .plugin-market .explorer { width: 100%; overflow: visible; border-right: 0; }
+  .plugin-market .explorer-heading, .plugin-market .explorer-footer { display: none; }
+  .plugin-market .workspace-navigation { display: flex; padding: 0; }
+  .plugin-market .market-toolbar { flex-wrap: wrap; }
+  .plugin-market .market-search { min-width: 180px; }
+}

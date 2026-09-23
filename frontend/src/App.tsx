@@ -6,6 +6,7 @@ import { useRuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
 import { RuntimeConfigurationStatus, RuntimeConfigurationReview } from "./RuntimeConfiguration";
 import { ConfigCard } from "./ConfigCard";
 import { PluginProfiles } from "./PluginProfiles";
+import { PluginMarket } from "./PluginMarket";
 import { ConfigDialog } from "./ConfigDialog";
 import { RunConsole } from "./RunConsole";
 import { SessionSummary, TrialResults } from "./TrialResults";
@@ -20,12 +21,12 @@ const setupPages = [
 const settingsPages = [["general", "General", "settings"], ["advanced", "Advanced", "profile"]] as const;
 type SetupPage = typeof setupPages[number][0];
 type SettingsPage = typeof settingsPages[number][0];
-type View = SetupPage | SettingsPage | "run" | "results";
+type View = SetupPage | SettingsPage | "run" | "results" | "extensions";
 type Appearance = "system" | "light" | "dark";
 
 function initialView(): View {
   const hash = window.location.hash.slice(1);
-  if ([...setupPages, ...settingsPages].some(([page]) => page === hash) || hash === "run" || hash === "results") return hash as View;
+  if ([...setupPages, ...settingsPages].some(([page]) => page === hash) || hash === "run" || hash === "results" || hash === "extensions") return hash as View;
   if (["engine-panel", "acquisition-panel", "stimulation-panel", "acks-panel"].includes(hash)) return "run";
   if (hash === "results-panel") return "results";
   return "acquisition";
@@ -51,7 +52,7 @@ export default function App() {
   const engineLocked = engine.data === null || engine.error !== null || engineRunning;
   const isSetup = setupPages.some(([page]) => page === view);
   const isSettings = view === "general" || view === "advanced";
-  const space = isSetup ? "Setup" : isSettings ? "Settings" : view === "run" ? "Run" : "Results";
+  const space = isSetup ? "Setup" : isSettings ? "Settings" : view === "run" ? "Run" : view === "extensions" ? "Extensions" : "Results";
 
   useEffect(() => {
     document.documentElement.style.colorScheme = appearance === "system" ? "light dark" : appearance;
@@ -112,7 +113,7 @@ export default function App() {
     </header>
     <div className="workbench-body">
       <nav className="activity-bar" aria-label="Main workspaces">
-        {([[lastSetup, "Setup", "settings"], ["run", "Run", "play"], ["results", "Results", "results"]] as const).map(([page, label, icon]) =>
+        {([[lastSetup, "Setup", "settings"], ["run", "Run", "play"], ["results", "Results", "results"], ["extensions", "Extensions", "plug"]] as const).map(([page, label, icon]) =>
           <button key={label} className={`activity-item ${space === label ? "selected" : ""}`} aria-label={label} title={label}
             aria-current={space === label ? "page" : undefined} disabled={busy} onClick={() => navigate(page)}><Icon name={icon} /></button>)}
         <div className="activity-bottom"><button className={`activity-item ${isSettings ? "selected" : ""}`}
@@ -124,6 +125,8 @@ export default function App() {
         <div className="editor-viewport">
           {isSetup ? <PluginProfiles key={view} module={view as SetupPage} engineRunning={engineRunning} engineAvailable={engine.data !== null && engine.error === null} navigation={navigation}
             runtime={runtime} onDirtyChange={setDirty} onBusyChange={setBusy} />
+            : view === "extensions" ? <PluginMarket runtimeBusy={runtime.blocked}
+              onBusyChange={setBusy} onDirtyChange={setDirty} onOpenSetup={() => navigate(lastSetup)} />
             : view === "run" ? <RunConsole engine={engine} acquisition={acquisition} feed={feed}
               runtime={runtime} onBusyChange={setBusy} onEditSetup={() => navigate(lastSetup)} onResults={() => navigate("results")} />
             : view === "results" ? <div className="runtime-content">

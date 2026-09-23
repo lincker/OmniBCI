@@ -29,7 +29,7 @@ Accounts, cloud synchronization, and montage remain outside this implementation.
 | 21 | Offline package installation | Complete |
 | 22 | Enable, upgrade, rollback, and uninstall lifecycle | Complete |
 | 23 | Static online repository and verified download | Complete |
-| 24 | Market UI and end-to-end installation flow | Pending |
+| 24 | Market UI and end-to-end installation flow | Complete |
 
 ## Invariants
 
