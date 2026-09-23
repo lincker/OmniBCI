@@ -128,6 +128,9 @@ pip-selfcheck.json
 !/omnibci/infrastructure/plugins/algorithms/decoders/**
 !/omnibci/infrastructure/plugins/algorithms/epoch/
 !/omnibci/infrastructure/plugins/algorithms/epoch/**
+!/omnibci/infrastructure/plugins/algorithms/filters/
+/omnibci/infrastructure/plugins/algorithms/filters/*
+!/omnibci/infrastructure/plugins/algorithms/filters/baseline_correction.py
 /omnibci/infrastructure/plugins/algorithms/**/__pycache__/
 # The first-party logger effector is reviewed framework code; keep other
 # effector implementations ignored until they are reviewed individually.
@@ -135,7 +138,19 @@ pip-selfcheck.json
 !/omnibci/infrastructure/plugins/effectors/logger/
 !/omnibci/infrastructure/plugins/effectors/logger/**
 /omnibci/infrastructure/plugins/effectors/logger/__pycache__/
-/omnibci/infrastructure/plugins/paradigms/
+# Track only the reviewed Classic40SSVEP runtime and its compiled frame pack.
+/omnibci/infrastructure/plugins/paradigms/*
+!/omnibci/infrastructure/plugins/paradigms/__init__.py
+!/omnibci/infrastructure/plugins/paradigms/classic40SSVEP/
+/omnibci/infrastructure/plugins/paradigms/classic40SSVEP/*
+!/omnibci/infrastructure/plugins/paradigms/classic40SSVEP/__init__.py
+!/omnibci/infrastructure/plugins/paradigms/classic40SSVEP/feedback_display.py
+!/omnibci/infrastructure/plugins/paradigms/classic40SSVEP/frame_pack.py
+!/omnibci/infrastructure/plugins/paradigms/classic40SSVEP/manifest.toml
+!/omnibci/infrastructure/plugins/paradigms/classic40SSVEP/ssvep.py
+!/omnibci/infrastructure/plugins/paradigms/classic40SSVEP/resource/
+/omnibci/infrastructure/plugins/paradigms/classic40SSVEP/resource/*
+!/omnibci/infrastructure/plugins/paradigms/classic40SSVEP/resource/classic40_ssvep.ofp
 
 # user config profiles — machine-specific, never committed
 /omnibci/conf/profiles/

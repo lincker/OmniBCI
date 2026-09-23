@@ -54,9 +54,9 @@ dev = [
 include = ["omnibci*"]
 
 [tool.setuptools.package-data]
-# 包内非 .py 资产。editable 安装不受影响；为将来打 wheel 预留正确性。
+# Include non-Python runtime assets in source and wheel distributions.
 omnibci = ["conf/*.toml", "conf/profiles/*.toml"]
-"omnibci.infrastructure.plugins" = ["**/manifest.toml", "**/resource/**/*.png"]
+"omnibci.infrastructure.plugins" = ["**/manifest.toml", "**/resource/**/*.png", "**/resource/*.ofp"]
 
 # ============================================================================
 # pytest

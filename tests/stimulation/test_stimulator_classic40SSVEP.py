@@ -2,14 +2,14 @@
 Unit tests for Classic40SSVEP_2 — state machine, texture lifecycle, feedback parsing.
 
 All OpenGL / filesystem dependencies are mocked:
-  - _load_rgba   : returns a fixed 10×10 RGBA array
-  - os.listdir   : returns deterministic file lists
+  - FramePack   : yields deterministic grayscale and RGB frames
+  - pack path   : provides a path without accessing package resources
   - renderer     : MagicMock with upload_texture → unique TextureHandle
   - trigger      : MagicMock
 """
 from __future__ import annotations
 
-import os
+from contextlib import nullcontext
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -24,17 +24,22 @@ from omnibci.infrastructure.plugins.paradigms.classic40SSVEP.ssvep import (
 from omnibci.infrastructure.stimulation.ports.renderer import TextureHandle
 
 # ---------------------------------------------------------------------------
-# Constants matching the fake filesystem
+# Constants matching the fake frame pack
 # ---------------------------------------------------------------------------
 _N_STIM_FRAMES = 5
 _N_CUE_FRAMES  = 3
 # total uploads: 1 init + _N_STIM_FRAMES stim + _N_CUE_FRAMES cue + 1 text
 _TOTAL_UPLOADS = 1 + _N_STIM_FRAMES + _N_CUE_FRAMES + 1
 
-_FAKE_RGBA = np.zeros((10, 10, 4), dtype=np.uint8)
-
-_SSVEP_FILES = ["initial_frame.png"] + [f"{i}.png" for i in range(_N_STIM_FRAMES)]
-_CUE_FILES   = [f"{i}.png" for i in range(_N_CUE_FRAMES)]
+_IDLE_FRAME = np.zeros((10, 10, 1), dtype=np.uint8)
+_STIM_FRAMES = [
+    np.full((10, 10, 1), i + 1, dtype=np.uint8)
+    for i in range(_N_STIM_FRAMES)
+]
+_CUE_FRAME_DATA = [
+    np.full((10, 10, 3), i + 1, dtype=np.uint8)
+    for i in range(_N_CUE_FRAMES)
+]
 
 
 # ---------------------------------------------------------------------------
@@ -60,16 +65,21 @@ def paradigm(trigger):
 
 
 @pytest.fixture(autouse=True)
-def _mock_fs():
-    """Patch filesystem + image loading so setup() needs no real files."""
-    def _listdir(path):
-        return _CUE_FILES if "ssvep_cue" in path else _SSVEP_FILES
-
+def _mock_frame_pack():
+    """Provide small frames without opening the bundled frame pack."""
     with patch(
-        "omnibci.infrastructure.plugins.paradigms.classic40SSVEP.ssvep._load_rgba",
-        return_value=_FAKE_RGBA,
-    ), patch("os.listdir", side_effect=_listdir):
-        yield
+        "omnibci.infrastructure.plugins.paradigms.classic40SSVEP.ssvep._frame_pack_path",
+        side_effect=lambda: nullcontext("classic40_ssvep.ofp"),
+    ), patch(
+        "omnibci.infrastructure.plugins.paradigms.classic40SSVEP.ssvep.FramePack",
+        autospec=True,
+    ) as frame_pack:
+        pack = frame_pack.return_value
+        pack.__enter__.return_value = pack
+        pack.idle_frame = _IDLE_FRAME
+        pack.iter_stimulation_frames.side_effect = lambda: iter(_STIM_FRAMES)
+        pack.iter_cue_frames.side_effect = lambda: iter(_CUE_FRAME_DATA)
+        yield pack
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +94,26 @@ class TestSetup:
     def test_uploads_expected_texture_count(self, paradigm, renderer):
         paradigm.setup(renderer)
         assert renderer.upload_texture.call_count == _TOTAL_UPLOADS
+
+    def test_uploads_frame_pack_in_order(self, paradigm, renderer):
+        paradigm.setup(renderer)
+        frames = [_IDLE_FRAME, *_STIM_FRAMES, *_CUE_FRAME_DATA]
+        for upload, frame in zip(renderer.upload_texture.call_args_list, frames):
+            assert upload.args[0] is frame
+
+    def test_closes_frame_pack_after_upload(self, paradigm, renderer, _mock_frame_pack):
+        paradigm.setup(renderer)
+        _mock_frame_pack.__exit__.assert_called_once_with(None, None, None)
+
+    def test_closes_frame_pack_when_upload_fails(self, paradigm, renderer, _mock_frame_pack):
+        error = RuntimeError("Texture upload failed")
+        renderer.upload_texture.side_effect = error
+
+        with pytest.raises(RuntimeError, match="Texture upload failed"):
+            paradigm.setup(renderer)
+
+        _mock_frame_pack.__exit__.assert_called_once()
+        assert _mock_frame_pack.__exit__.call_args.args[:2] == (RuntimeError, error)
 
     def test_initial_state_is_idle(self, paradigm, renderer):
         paradigm.setup(renderer)
