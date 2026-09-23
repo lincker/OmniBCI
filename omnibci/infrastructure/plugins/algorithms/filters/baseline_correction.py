@@ -24,11 +24,18 @@ from numpy import typing as npt
 
 from omnibci.domain.ports.algorithm import Filter, FilterContext
 from omnibci.infrastructure.plugins.registry import register_plugin
+from omnibci.sdk import PluginContext, PluginParameters
 
 
 @register_plugin(Filter)
 class BaselineCorrection(Filter):
     plugin_type = "BASELINE_CORRECTION"
+
+    def __init__(
+        self, *, parameters: PluginParameters | None = None,
+        context: PluginContext | None = None,
+    ):
+        pass
 
     def apply(self, data: npt.NDArray, ctx: FilterContext) -> npt.NDArray:
         baseline = ctx.baseline

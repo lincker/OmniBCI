@@ -6,7 +6,7 @@ manifest_version = 2
 id = "default_epoch_detector"
 publisher = "omnibci"
 version = "0.1.0"
-api_version = "1"
+api_version = "2"
 
 [[contributions]]
 id = "default"

@@ -12,6 +12,7 @@ from scipy.signal import cheby1, filtfilt
 from omnibci.domain.ports.algorithm import Decoder, Prediction
 from omnibci.infrastructure.plugins.registry import register_plugin
 from omnibci.conf import settings
+from omnibci.sdk import PluginContext, PluginParameters
 
 
 @register_plugin(Decoder)
@@ -45,24 +46,39 @@ class Classic40FBCCA(Decoder):
     #             template_set.append(cos_sin_set)
     #         return template_set
 
-    def __init__(self) -> None:
+    def __init__(
+        self, *, parameters: PluginParameters | None = None,
+        context: PluginContext | None = None,
+    ) -> None:
         super().__init__()
         self.FREQUENCY_SET = [8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
                               8.2, 9.2, 10.2, 11.2, 12.2, 13.2, 14.2, 15.2,
                               8.4, 9.4, 10.4, 11.4, 12.4, 13.4, 14.4, 15.4,
                               8.6, 9.6, 10.6, 11.6, 12.6, 13.6, 14.6, 15.6,
                               8.8, 9.8, 10.8, 11.8, 12.8, 13.8, 14.8, 15.8]
-        self.SAMPLE_RATE = settings.get('ACQUISITION.sample_rate', default=1000)
-        self.SAMPLE_COUNT = int(settings.get('ALGORITHM.window_duration', default=3) * self.SAMPLE_RATE)
-        self.OFFSET_LENGTH = math.floor(settings.get('ALGORITHM.offset_time', default=0.14) * self.SAMPLE_RATE)
+        if parameters is None and context is None:
+            self.SAMPLE_RATE = settings.get('ACQUISITION.sample_rate', default=1000)
+            window_duration = settings.get('ALGORITHM.window_duration', default=3)
+            offset_time = settings.get('ALGORITHM.offset_time', default=0.14)
+        else:
+            if context is None or context.sample_rate is None:
+                raise ValueError("Classic40FBCCA requires context.sample_rate")
+            parameters = parameters if parameters is not None else {}
+            self.SAMPLE_RATE = context.sample_rate
+            window_duration = parameters.get('window_duration', 3.0)
+            offset_time = parameters.get('offset_time', 0.14)
+        self.SAMPLE_COUNT = int(window_duration * self.SAMPLE_RATE)
+        if self.SAMPLE_COUNT < 2:
+            raise ValueError("Decode window must contain at least two samples")
+        self.OFFSET_LENGTH = math.floor(offset_time * self.SAMPLE_RATE)
         # self.template_set = self.Template(sample_rate=self.SAMPLE_RATE,
         #                                   sample_count=self.SAMPLE_COUNT).generate_template()
         self.num_harmonics = 5
         self.num_bands = 3
-        # FBCCA 权重系数: w_n = n^(-a) + b, 论文常用值 a=1.25, b=0.25
+        # FBCCA weights: w_n = n^(-a) + b, with a=1.25 and b=0.25.
         a = 1.25
         b = 0.25
-        # 预计算权重
+        # Precompute the filter-bank weights.
         self.weights = np.array([(n + 1) ** (-a) + b for n in range(self.num_bands)])
 
     def get_reference_signals(self, data_len, target_freq):

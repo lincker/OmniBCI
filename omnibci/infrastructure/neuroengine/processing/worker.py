@@ -1,18 +1,14 @@
 """
-SignalProcessingWorker — multiprocessing 包装器。
+SignalProcessingWorker loads the selected pipeline in a dedicated process.
 
-在独立子进程中运行 SignalProcessor：加载算法插件（decoder + epoch detector）。
-会话身份不再由本进程自建——以待命态启动，等待 API 经 StartSession 事件下推的
-session_id（见 docs/session-id-unification.md）。
+It starts in standby and receives session identity through StartSession.
 """
 
 import logging
 import multiprocessing as mp
-import os
 from copy import deepcopy
 from typing import Optional
 
-import omnibci
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter
 from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessor
 
@@ -47,57 +43,49 @@ class SignalProcessingWorker(mp.Process):
         decoder, detector, filters = self._load_algorithm()
         self._run_processor(decoder, detector, filters, self.sample_rate)
 
+    def _snapshot(self):
+        if self.settings_snapshot is not None:
+            return deepcopy(self.settings_snapshot)
+        from omnibci.conf import settings
+        return settings.snapshot()
+
+    def _context(self, snapshot):
+        from omnibci.sdk import PluginContext
+        return PluginContext(sample_rate=self.sample_rate,
+                             channel_names=tuple(snapshot.get("ACQUISITION.channel_names", ())),
+                             config_revision=snapshot.get("CONFIG.revision"))
+
     def _load_algorithm(self):
-        algorithm_plugin_path = os.path.join(
-            next(iter(omnibci.__path__)), 'infrastructure', 'plugins', 'algorithms'
+        from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
+        snapshot = self._snapshot()
+        context = self._context(snapshot)
+        decoder = load_configured_plugin(
+            snapshot, "processing.decoder", "decoder", Decoder,
+            legacy_key="ALGORITHM.decoder", context=context,
         )
-        from omnibci.conf import settings
-        from omnibci.infrastructure.plugins.loader import PluginLoader
-        from omnibci.infrastructure.plugins.registry import ObjectFactory
-
-        PluginLoader.load_from_dir(
-            algorithm_plugin_path,
-            base_package='omnibci.infrastructure.plugins.algorithms',
+        detector = load_configured_plugin(
+            snapshot, "processing.epoch_detector", "epoch_detector", EpochDetector,
+            legacy_key="ALGORITHM.epoch_detector", context=context,
         )
-        # 配置读取上移到调用方；工厂只按 plugin_type 查注册表并实例化。
-        decoder = ObjectFactory.create(Decoder, settings.get('ALGORITHM.decoder'))
-        detector = ObjectFactory.create(EpochDetector, settings.get('ALGORITHM.epoch_detector'))
-        filters = self._load_filters()
+        return decoder, detector, self._load_filters(snapshot)
 
-        # sample_rate is injected at construction (self.sample_rate), no settings read here.
-        return decoder, detector, filters
-
-    def _load_filters(self):
-        """
-        Build the ordered preprocessing Filter chain from ``ALGORITHM.filters``
-        (a list of plugin_type ids, applied in order, e.g.
-        ``["BASELINE_CORRECTION"]``). Missing/empty config → no filters, so the
-        pipeline behaves exactly as ``decoder.decode(window)``.
-
-        Filters are stateless pure transforms (no ``for_new_epoch``), so a single
-        instance per type is shared across all epochs.
-        """
-        from omnibci.conf import settings
-
-        try:
-            names = settings.get('ALGORITHM.filters')
-        except Exception:
-            names = None
-        if not names:
-            return []
-
-        from omnibci.infrastructure.plugins.registry import registry_for
-        registry = registry_for(Filter)
-        filters = []
-        for name in names:
-            cls = registry.get(name)
-            if cls is None:
-                logger.error("[Filter] Unknown filter '%s'. Available: %s",
-                             name, list(registry.keys()))
-                continue
-            filters.append(cls())
-            logger.info("[Filter] Loaded '%s'", name)
-        return filters
+    def _load_filters(self, snapshot=None):
+        """Every ordered slot constructs a separate selected filter instance."""
+        from omnibci.infrastructure.plugins.runtime_configuration import (
+            configured_bindings, load_configured_plugin,
+        )
+        snapshot = self._snapshot() if snapshot is None else snapshot
+        context = self._context(snapshot)
+        bindings = configured_bindings(snapshot)
+        if bindings is not None:
+            return [load_configured_plugin(snapshot, binding.slot, "filter", Filter, context=context)
+                    for binding in bindings if binding.kind == "filter"]
+        names = snapshot.get("ALGORITHM.filters", [])
+        if not isinstance(names, list) or any(not isinstance(name, str) or not name for name in names):
+            raise ValueError("ALGORITHM.filters must be an ordered list of plugin aliases")
+        return [load_configured_plugin(snapshot, f"processing.filter.{index}", "filter", Filter,
+                                       legacy_alias=name, context=context)
+                for index, name in enumerate(names)]
 
     def _run_processor(self, decoder, detector, filters, sample_rate: int) -> None:
         # No self-created session id: the worker starts in "standby" and waits
