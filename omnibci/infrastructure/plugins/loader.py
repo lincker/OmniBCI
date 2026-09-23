@@ -31,6 +31,8 @@ class PluginLoader:
         identity = "\0".join((
             descriptor.category,
             descriptor.identifier,
+            descriptor.contribution_id,
+            descriptor.version or "",
             str(descriptor.location.resolve()),
         ))
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]

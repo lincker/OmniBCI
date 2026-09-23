@@ -8,7 +8,9 @@ from omnibci.application.queries.plugin_queries import PluginInfo
 
 
 _PATCH_TARGET = "omnibci.presentation.routers.plugins.list_plugins"
-_VALID_CATEGORIES = ("paradigm", "decoder", "acquisition", "effector")
+_VALID_CATEGORIES = (
+    "paradigm", "decoder", "acquisition", "effector", "trigger", "filter", "epoch_detector",
+)
 
 
 @pytest.mark.parametrize("category", _VALID_CATEGORIES)

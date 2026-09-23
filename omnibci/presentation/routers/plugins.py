@@ -3,7 +3,7 @@
 
 GET /api/v1/plugins/{category}
     List available plugins for a given category.
-    category ∈ {paradigm, decoder, acquisition, effector}
+    category ∈ {paradigm, decoder, acquisition, effector, trigger, filter, epoch_detector}
 """
 from fastapi import APIRouter
 
@@ -26,7 +26,8 @@ router = APIRouter(prefix="/plugins", tags=["Plugins"])
 def list_plugins_by_category(category: str):
     """Return discovered plugins for *category*.
 
-    Valid categories: ``paradigm``, ``decoder``, ``acquisition``, ``effector``.
+    Valid categories: ``paradigm``, ``decoder``, ``acquisition``, ``effector``,
+    ``trigger``, ``filter``, ``epoch_detector``.
     """
     if category not in VALID_CATEGORIES:
         raise ApiError(

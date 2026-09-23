@@ -3393,7 +3393,7 @@
           "Plugins"
         ],
         "summary": "List plugins by category",
-        "description": "Return discovered plugins for *category*.\n\nValid categories: ``paradigm``, ``decoder``, ``acquisition``, ``effector``.",
+        "description": "Return discovered plugins for *category*.\n\nValid categories: ``paradigm``, ``decoder``, ``acquisition``, ``effector``,\n``trigger``, ``filter``, ``epoch_detector``.",
         "operationId": "list_plugins_by_category_api_v1_plugins__category__get",
         "parameters": [
           {

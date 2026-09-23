@@ -516,7 +516,8 @@ export interface paths {
          * List plugins by category
          * @description Return discovered plugins for *category*.
          *
-         *     Valid categories: ``paradigm``, ``decoder``, ``acquisition``, ``effector``.
+         *     Valid categories: ``paradigm``, ``decoder``, ``acquisition``, ``effector``,
+         *     ``trigger``, ``filter``, ``epoch_detector``.
          */
         get: operations["list_plugins_by_category_api_v1_plugins__category__get"];
         put?: never;

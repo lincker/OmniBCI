@@ -1,0 +1,100 @@
+# Plugin packages and contributions
+
+The catalog reads manifests without importing plugin Python. A package is an
+installation unit; each contribution is an independently selectable capability
+within that package. Loading executes only the selected contribution's entrypoint.
+
+## Manifest version 2
+
+```toml
+manifest_version = 2
+
+[package]
+id = "device-kit"
+publisher = "example"
+version = "1.0.0"
+api_version = "1"
+
+[[contributions]]
+id = "reader"
+kind = "acquisition"
+entrypoint = "driver:Reader"
+plugin_type = "example_reader"
+display_name = "Example Reader"
+
+[[contributions]]
+id = "trigger"
+kind = "trigger"
+entrypoint = "driver:Trigger"
+display_name = "Example Trigger"
+```
+
+- `manifest_version` is the manifest format, separate from the package's code
+  `version` and plugin `api_version`. The currently supported API version is `1`.
+- Package `id`, `publisher`, `version`, and `api_version` are required strings.
+  Publisher and package ID form the case-sensitive identity `publisher.id`.
+- Package and contribution IDs, and publishers, begin with an ASCII letter or
+  digit and contain only ASCII letters, digits, underscores, and hyphens.
+- Contributions require `id`, `kind`, and `entrypoint`. Contribution IDs are
+  unique throughout the package, including across different kinds.
+- Supported kinds are `acquisition`, `decoder`, `epoch_detector`, `filter`,
+  `paradigm`, `trigger`, and `effector`.
+- `plugin_type` is an optional legacy registry alias, defaulting to the
+  contribution ID. With API `1`, the entrypoint class must expose that same
+  `plugin_type` and implement the expected domain port.
+- `entrypoint` names a Python class relative to the package directory, in
+  `module:Class` form. Absolute paths and parent-directory traversal are invalid.
+- Optional `display_name`, `description`, `params`, and `controls` belong to
+  each contribution. `params` remains read-only display metadata; `controls`
+  retains the existing trial-control convention. Neither is a Profile schema.
+- Execution fields such as `kind`, `plugin_type`, and `entrypoint` must not
+  appear at package level in v2. A malformed contribution invalidates the entire
+  package; the catalog does not expose a partially valid package.
+
+`source`, filesystem location, and search precedence come from configured roots.
+Declaring a publisher does not verify the package's author or grant it trust.
+
+## Discovery and exact selection
+
+All configured category roots are searched for packages. A v2 package can expose
+any supported kind regardless of its containing category directory. For example,
+a package under `acquisition/` can provide both an acquisition reader and a trigger.
+Overlapping roots do not duplicate the same physical package.
+
+The infrastructure catalog provides:
+
+```python
+selection = PluginSelection(
+    package_id="example.device-kit",
+    contribution_id="reader",
+    version="1.0.0",
+)
+descriptor = catalog.resolve_selection("acquisition", selection)
+available = catalog.list_contributions("acquisition")
+```
+
+Exact selection never resolves through a registry alias or chooses another
+version. Different publishers, contributions, and versions can coexist. Multiple
+physical packages with the same identity and version are ambiguous, even if one
+root has higher precedence. An invalid copy with that identity/version prevents
+fallback to another copy. An invalid version field conservatively blocks that
+package identity because the catalog cannot establish which version is broken.
+
+These APIs establish the selection contract. Existing runtime settings and HTTP
+lists continue to use the legacy alias interface until their migration steps.
+This change does not install packages or select an active version automatically.
+
+## Legacy compatibility
+
+An omitted `manifest_version`, or `manifest_version = 1`, uses the existing
+single-entry format. Its contribution ID is `default`. Existing publisher/author
+fallbacks, IDs, optional versions, and legacy directory-category checks remain.
+`version=None` selects an unversioned legacy package only; it never means latest.
+
+`resolve(category, plugin_type)` delegates to `resolve_legacy`. Legacy resolution
+and `list(category)` retain root precedence and alias collision rules. Legacy
+non-Actuation manifests without entrypoints remain visible in the old list;
+exact resolution and `list_contributions` require executable entrypoints.
+
+Built-in manifest conversion, Profile storage, SDK constructors, and runtime
+selection wiring are separate implementation steps.
