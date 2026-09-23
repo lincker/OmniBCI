@@ -13,7 +13,7 @@ Accounts, cloud synchronization, and montage remain outside this implementation.
 | 5 | Plugin-owned schemas, defaults, and validation | Complete |
 | 6 | Versioned profiles, ordered bindings, and activation snapshots | Complete |
 | 7 | Recoverable legacy configuration migration | Complete |
-| 8 | Explicit Acquisition loading and parameters | Pending |
+| 8 | Explicit Acquisition loading and parameters | Complete |
 | 9 | Explicit Processing loading and parameters | Pending |
 | 10 | Explicit Stimulation and Actuation loading | Pending |
 | 11 | One complete configuration snapshot across workers | Pending |

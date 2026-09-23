@@ -40,27 +40,26 @@ def test_run_constructs_service_with_shared_dependencies():
     assert worker.acquisitor is acquisition_class.return_value
 
 
-def test_load_data_source_uses_configured_plugin_type():
-    worker = AcquisitionWorker(command_queue=MagicMock())
-    data_source = MagicMock(spec=SignalSource)
+def test_load_data_source_uses_pinned_parameters_without_registry_or_global_settings(monkeypatch):
+    from omnibci.application.plugin_profiles import ProfileBinding
+    from omnibci.conf import settings
+    from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+    from omnibci.infrastructure.plugins.loader import PluginLoader
 
-    with patch(
-        "omnibci.infrastructure.plugins.loader.PluginLoader.load_from_dir"
-    ) as load_from_dir, patch(
-        "omnibci.conf.settings.get", return_value="file_reader"
-    ) as settings_get, patch(
-        "omnibci.infrastructure.plugins.registry.ObjectFactory.create",
-        return_value=data_source,
-    ) as create:
-        worker._load_data_source()
-
-    load_from_dir.assert_called_once()
-    assert load_from_dir.call_args.kwargs == {
-        "base_package": "omnibci.infrastructure.plugins.acquisition"
-    }
-    assert load_from_dir.call_args.args[0].endswith(
-        "omnibci/infrastructure/plugins/acquisition"
+    descriptor = PluginCatalog().resolve_legacy("acquisition", "file_reader")
+    binding = ProfileBinding(
+        slot="acquisition.source", kind="acquisition", profile_id=None,
+        selection=descriptor.selection,
+        parameters={"data_file_path": "selected.cnt", "file_reader_chunk_size": 37,
+                    "sample_rate": 250, "channel_number": 10},
     )
-    settings_get.assert_called_once_with("ACQUISITION.signal_source")
-    create.assert_called_once_with(SignalSource, "file_reader")
-    assert worker.data_source is data_source
+    worker = AcquisitionWorker(command_queue=MagicMock(), settings_snapshot={
+        "PLUGINS.bindings": [binding.to_dict()], "ACQUISITION.sample_rate": 250,
+        "ACQUISITION.signal_source": "must_not_be_used",
+    })
+    monkeypatch.setattr(settings, "get", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("global settings read")))
+    monkeypatch.setattr(PluginLoader, "load_from_dir", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("recursive scan")))
+    worker._load_data_source()
+
+    assert worker.data_source._chunk_size == 37
+    assert worker.data_source.file_path.endswith("selected.cnt")

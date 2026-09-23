@@ -13,6 +13,7 @@ import numpy as np
 from omnibci.domain.ports.acquisition import SignalSource, TriggerEmitter
 from omnibci.infrastructure.plugins.registry import register_plugin
 from omnibci.conf import settings
+from omnibci.sdk import PluginContext, PluginParameters
 
 
 class Scan45Message:
@@ -139,10 +140,18 @@ scan45_message_manager = Scan45Message()
 @register_plugin(SignalSource)
 class Scan45DataReader(SignalSource):
     plugin_type = 'neuroscan_scan45_reader'
-    def __init__(self) -> None:
+    def __init__(
+        self, *, parameters: PluginParameters | None = None,
+        context: PluginContext | None = None,
+    ) -> None:
         super().__init__()
-        self.data_provider_ip = settings.get("ACQUISITION.DATA_PROVIDER_IP")
-        self.data_provider_port = settings.get("ACQUISITION.DATA_PROVIDER_PORT")
+        if parameters is None and context is None:
+            self.data_provider_ip = settings.get("ACQUISITION.DATA_PROVIDER_IP")
+            self.data_provider_port = settings.get("ACQUISITION.DATA_PROVIDER_PORT")
+        else:
+            parameters = parameters if parameters is not None else {}
+            self.data_provider_ip = parameters.get("DATA_PROVIDER_IP", "127.0.0.1")
+            self.data_provider_port = parameters.get("DATA_PROVIDER_PORT", 4000)
         # self.n_channels = config.get('n_channels', 9) # refactor later
         # self.record_srate = config.get('record_srate', 1000)
         # self.srate # TODO: refactor later
@@ -271,12 +280,19 @@ class Scan45DataReader(SignalSource):
 @register_plugin(TriggerEmitter)
 class Scan45Trigger(TriggerEmitter):
     plugin_type = 'neuroscan_scan45_trigger'
-    def __init__(self, parallel_port_address:str=None): # parallel_port_address='0x3100'
+    def __init__(
+        self, parallel_port_address: str | None = None, *,
+        parameters: PluginParameters | None = None,
+        context: PluginContext | None = None,
+    ):
         super().__init__()
-        self.parallel_port_address = (
-            parallel_port_address if parallel_port_address is not None
-            else settings.get('ACQUISITION.parallel_port_address')
-        )
+        if parallel_port_address is not None:
+            self.parallel_port_address = parallel_port_address
+        elif parameters is None and context is None:
+            self.parallel_port_address = settings.get('ACQUISITION.parallel_port_address')
+        else:
+            parameters = parameters if parameters is not None else {}
+            self.parallel_port_address = parameters.get('parallel_port_address', '0x3100')
         self.address = int(self.parallel_port_address, 16)
         self.port = self._set_parallel_port(self.address)
         self.clear()

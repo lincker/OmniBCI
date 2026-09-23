@@ -10,22 +10,31 @@ from omnibci.conf import settings
 from omnibci.conf.paths import resolve_config_path
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.infrastructure.plugins.registry import register_plugin
+from omnibci.sdk import PluginContext, PluginParameters
 
 
 @register_plugin(SignalSource)
 class FileReader(SignalSource):
     plugin_type = 'file_reader'
 
-    def __init__(self):
+    def __init__(
+        self, *, parameters: PluginParameters | None = None,
+        context: PluginContext | None = None,
+    ):
         super().__init__()
         self.reader_adapter = None
         self.file_pointer = 0
         self._data_length = 0
-        self._chunk_size = settings.get('ACQUISITION.file_reader_chunk_size')
-        self.speed = settings.get('ACQUISITION.file_reader_play_speed')
-        self.file_path = str(
-            resolve_config_path(settings.get('ACQUISITION.data_file_path'))
-        )
+        if parameters is None and context is None:
+            self._chunk_size = settings.get('ACQUISITION.file_reader_chunk_size')
+            self.speed = settings.get('ACQUISITION.file_reader_play_speed')
+            file_path = settings.get('ACQUISITION.data_file_path')
+        else:
+            parameters = parameters if parameters is not None else {}
+            self._chunk_size = parameters.get('file_reader_chunk_size', 100)
+            self.speed = 1.0
+            file_path = parameters.get('data_file_path', 'tests/fixture/train.cnt')
+        self.file_path = str(resolve_config_path(file_path))
         self.data = None
 
     def set_file_path(self, file_path: str | Path):

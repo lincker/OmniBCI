@@ -5,7 +5,7 @@ manifest_version = 2
 [package]
 id = "neuroscan_scan45_reader"
 version = "0.1.0"
-api_version = "1"
+api_version = "2"
 publisher = "OmniBCI"
 
 [[contributions]]

@@ -10,6 +10,7 @@ import pytest
 from omnibci.conf import OmniBCISettings
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.infrastructure.plugins.loader import PluginLoader
+from omnibci.sdk import PluginContext
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, list_plugins
 
 
@@ -25,7 +26,7 @@ def test_neuroscan_driver_is_discoverable_and_loadable(
 
     plugins = {plugin.plugin_type: plugin for plugin in list_plugins("acquisition")}
     descriptor = PluginCatalog().resolve("acquisition", plugin_type)
-    instance = PluginLoader.instantiate(descriptor, SignalSource)
+    instance = PluginLoader.instantiate(descriptor, SignalSource, parameters={}, context=PluginContext())
 
     assert plugins[plugin_type].source == "builtin"
     assert descriptor.location.parts[-2:] == ("neuroscan", driver)
