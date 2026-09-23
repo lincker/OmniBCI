@@ -281,14 +281,24 @@ class RuntimeApplyCoordinator:
         if self.stimulation.is_active or self.stimulation.process_alive:
             await asyncio.to_thread(self.stimulation.handle_stop_stimulation, StopStimulationCommand())
 
-    async def _restore_ready(self, snapshot, state, previous_session_id, checkpoint):
+    async def _restore_ready(self, snapshot, state, previous_session_id, checkpoint,
+                             *, require_live_resume=False):
         await self.engine.start_for_configuration(snapshot)
         running = self.engine.applied_snapshot
         resumed_checkpoint = False
         if state.connected:
             await asyncio.to_thread(self.acquisition.handle_connect, ConnectDataProviderCommand())
-            if checkpoint is not None:
+            if checkpoint is not None or require_live_resume:
                 current = await self._request(EventType.GetSourceCheckpoint, self._identity(running))
+                self._receipt(current, running)
+                if current.get("config_revision") != running.get("CONFIG.revision"):
+                    raise RuntimeError("Source resume receipt belongs to a different configuration")
+                if (type(current.get("supported")) is not bool or
+                        (current["supported"] and not isinstance(current.get("checkpoint"), dict))):
+                    raise RuntimeError("Replacement source returned an invalid checkpoint capability")
+                if require_live_resume and current.get("resume_without_checkpoint_safe") is not True:
+                    raise RuntimeError("Replacement source did not confirm safe live resumption")
+            if checkpoint is not None:
                 self._receipt(current, running, "supported")
                 selected = checkpoint_for_restore(checkpoint, current.get("checkpoint"))
                 if selected is not None:
@@ -342,6 +352,7 @@ class RuntimeApplyCoordinator:
                            and old_source.selection.contribution_id == new_source.selection.contribution_id)
             continuation, replay_resumed = await self._restore_ready(
                 target, state, state.session_id, state.checkpoint if same_source else None,
+                require_live_resume=state.streaming and same_source and state.checkpoint is None,
             )
             progress("persisting")
             self.profiles.repository.save_activation(candidate, expected_revision=plan.expected_revision)
@@ -387,7 +398,10 @@ class RuntimeApplyCoordinator:
                 accepted = self.profiles.repository.get_activation()
                 if accepted is None or accepted.revision != previous.revision:
                     raise RuntimeError("Selected configuration was changed by another writer")
-                await self._restore_ready(before, state, previous_session_id, state.checkpoint)
+                await self._restore_ready(
+                    before, state, previous_session_id, state.checkpoint,
+                    require_live_resume=state.streaming and state.checkpoint is None,
+                )
                 await self._resume_stream(state)
             except BaseException as recovery:
                 raise RuntimeApplyFailure(f"Apply failed: {exc}; recovery failed: {recovery}",

@@ -336,6 +336,91 @@ async def test_declared_live_source_resumes_without_replay_checkpoint(narrow, re
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [
+    {"resume_without_checkpoint_safe": False}, {"resume_without_checkpoint_safe": None},
+    {"generation": "another-generation"}, {"config_revision": "another-revision"},
+    {"supported": True, "checkpoint": None},
+])
+async def test_same_source_replacement_must_reconfirm_live_resume_before_start(rebuild_harness, monkeypatch, invalid):
+    h = rebuild_harness()
+    request = h.commands.request
+    inspected = []
+
+    def receipt(event_type, payload=None, **kwargs):
+        if event_type is EventType.GetSourceCheckpoint:
+            revision = h.engine.applied_revision
+            inspected.append(revision)
+            data = {"generation": h.engine.generation, "config_revision": revision,
+                    "supported": False, "checkpoint": None, "resume_without_checkpoint_safe": True}
+            if revision == h.plan.target_revision:
+                data.update(invalid)
+            return CommandResult("checkpoint", event_type.name, True, data=data)
+        return request(event_type, payload, **kwargs)
+
+    monkeypatch.setattr(h.commands, "request", receipt)
+    operation = await apply(h)
+    assert operation["status"] == "failed" and operation["rolled_back"]
+    assert inspected == [h.previous.revision, h.plan.target_revision, h.previous.revision]
+    assert h.commands.restores == []
+    assert [revision for revision, _ in h.acquisition.starts] == [h.previous.revision]
+    assert h.engine.applied_revision == h.profiles.repository.get_activation().revision == h.previous.revision
+
+
+@pytest.mark.asyncio
+async def test_live_rollback_also_requires_recreated_source_capability(rebuild_harness, monkeypatch):
+    h = rebuild_harness()
+    request = h.commands.request
+
+    def receipt(event_type, payload=None, **kwargs):
+        if event_type is EventType.GetSourceCheckpoint:
+            return CommandResult("checkpoint", event_type.name, True, data={
+                "generation": h.engine.generation, "config_revision": h.engine.applied_revision,
+                "supported": False, "checkpoint": None,
+                "resume_without_checkpoint_safe": not h.engine.starts,
+            })
+        return request(event_type, payload, **kwargs)
+
+    monkeypatch.setattr(h.commands, "request", receipt)
+    operation = await apply(h)
+    assert operation["status"] == "recovery_required"
+    assert not operation["rolled_back"]
+    assert h.acquisition.starts == []
+    assert h.engine.starts == [h.plan.target_revision, h.previous.revision]
+    assert_quarantined(h)
+
+
+@pytest.mark.asyncio
+async def test_explicit_different_source_can_start_fresh_after_live_source(rebuild_harness, monkeypatch):
+    h = rebuild_harness()
+    selected = h.profiles.create("acquisition", h.profiles.catalog.legacy(
+        "acquisition", "neuroscan_scan45_reader",
+    ).selection, "Different source", {})
+    bindings = [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in h.previous.bindings]
+    bindings[0] = {"slot": "acquisition.source", "profile_id": selected.profile_id}
+    h.plan = h.runtime.plan(bindings, expected_revision=h.previous.revision)
+    assert h.plan.strategy == "rebuild" and not h.plan.errors
+    request = h.commands.request
+    inspected = []
+
+    def receipt(event_type, payload=None, **kwargs):
+        if event_type is EventType.GetSourceCheckpoint:
+            inspected.append(h.engine.applied_revision)
+            return CommandResult("checkpoint", event_type.name, True, data={
+                "generation": h.engine.generation, "config_revision": h.engine.applied_revision,
+                "supported": False, "checkpoint": None,
+                "resume_without_checkpoint_safe": h.engine.applied_revision == h.previous.revision,
+            })
+        return request(event_type, payload, **kwargs)
+
+    monkeypatch.setattr(h.commands, "request", receipt)
+    operation = await apply(h)
+    assert operation["status"] == "succeeded"
+    assert inspected == [h.previous.revision]
+    assert h.acquisition.starts == [(h.plan.target_revision, 0)]
+    assert h.commands.restores == []
+
+
+@pytest.mark.asyncio
 async def test_nonstreaming_source_without_checkpoint_can_update_outputs_without_start(narrow, monkeypatch):
     h = narrow("module")
     h.acquisition.streaming = False
