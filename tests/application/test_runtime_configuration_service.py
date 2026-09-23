@@ -133,3 +133,61 @@ def test_filter_order_is_a_real_trial_boundary_change(runtime):
     plan = service.plan(reordered, expected_revision=selected.revision)
     assert plan.strategy == "trial_boundary"
     assert plan.target_revision != selected.revision
+
+
+@pytest.mark.asyncio
+async def test_operation_idempotency_owns_one_execution_and_pins_plan(runtime):
+    import asyncio
+    from unittest.mock import AsyncMock
+    service, selections, before = runtime
+    entered, release = asyncio.Event(), asyncio.Event()
+    async def execute(stored, progress):
+        entered.set()
+        progress("starting")
+        await release.wait()
+        return {"outcome": "applied"}
+    executor = SimpleNamespace(supported_strategies={"no_change"}, execute=AsyncMock(side_effect=execute))
+    service.executor = executor
+    plan = service.plan(selections, expected_revision=before.revision)
+    operation_id = str(uuid4())
+    queued = service.submit(plan.plan_id, operation_id)
+    assert queued["status"] == "queued"
+    await entered.wait()
+    assert service.submit(plan.plan_id, operation_id)["status"] == "applying"
+    with pytest.raises(ProfileRevisionConflict, match="already"):
+        service.submit("different-plan", operation_id)
+    with pytest.raises(ProfileRevisionConflict, match="progress"):
+        service.submit(plan.plan_id, str(uuid4()))
+    release.set()
+    await service.wait_for_idle()
+    assert service.operation(operation_id)["status"] == "succeeded"
+    assert service.submit(plan.plan_id, operation_id)["status"] == "succeeded"
+    assert executor.execute.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_operation_keeps_recovery_state_and_rejects_new_apply(runtime):
+    from unittest.mock import AsyncMock
+    from omnibci.application.services.runtime_apply_service import RuntimeApplyFailure
+    from omnibci.application.runtime_admission import RuntimeAdmission
+    service, selections, before = runtime
+    service.engine.admission = RuntimeAdmission()
+    service.executor = SimpleNamespace(supported_strategies={"no_change"},
+        execute=AsyncMock(side_effect=RuntimeApplyFailure("Device outcome unknown", recovery_required=True)))
+    plan = service.plan(selections, expected_revision=before.revision)
+    operation_id = str(uuid4())
+    service.submit(plan.plan_id, operation_id)
+    await service.wait_for_idle()
+    operation = service.operation(operation_id)
+    assert operation["status"] == "recovery_required"
+    assert operation["error"] == "Device outcome unknown"
+    assert service.status()["operation"] == operation
+    with pytest.raises(ProfileRevisionConflict, match="uncertain"):
+        service.submit(plan.plan_id, str(uuid4()))
+
+
+def test_nonfilter_binding_reorder_never_claims_no_change_for_a_different_revision(runtime):
+    service, selections, before = runtime
+    plan = service.plan(list(reversed(selections)), expected_revision=before.revision)
+    assert plan.target_revision != before.revision
+    assert plan.strategy == "rebuild"

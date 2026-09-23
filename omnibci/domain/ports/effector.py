@@ -16,6 +16,15 @@ from typing import Any, Mapping
 class Effector(ABC):
     """Pluggable output-device driver (see module docstring)."""
 
+    def quiesce(self) -> None:
+        """Confirm prior outputs finished or were safely cancelled before restart.
+
+        Return only when no device action can continue after this call. Drivers
+        unable to establish that state must raise; a returned play() call alone
+        does not prove physical completion. The host never replays old intents.
+        """
+        raise NotImplementedError("This effector cannot confirm output quiescence")
+
     @abstractmethod
     def setup(self):
         """Acquire and initialise the device before any command is issued."""

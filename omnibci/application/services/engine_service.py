@@ -7,11 +7,13 @@ command / query objects.  The API layer never touches NeuroEngine directly.
 
 import asyncio
 import logging
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from copy import deepcopy
 from threading import RLock, Thread
 from typing import Callable, Optional, TYPE_CHECKING
 from uuid import uuid4
+
+from omnibci.application.runtime_admission import RuntimeAdmission, admitted
 
 from omnibci.shared.events import EventType, Event
 from omnibci.application.configuration import ConfigProfileConflictError
@@ -57,10 +59,13 @@ class NeuroEngineService(EnginePort):
         actuation_process_manager: "ActuationProcessManager | None" = None,
         *,
         snapshot_provider: Callable[[], dict] | None = None,
+        admission: RuntimeAdmission | None = None,
+        stimulation_process_manager=None,
     ) -> None:
         # The composition root supplies a fresh graph factory and, for managed
         # configuration, the snapshot to pin before constructing any worker.
         self._engine_factory = engine_factory
+        self._admission = admission or RuntimeAdmission()
         self._snapshot_provider = snapshot_provider
         self._graph_snapshot: dict | None = None
         self._applied_snapshot: dict | None = None
@@ -70,6 +75,7 @@ class NeuroEngineService(EnginePort):
         # make both hooks no-ops. Duck-typed like StimulationAppService's
         # process manager — no infrastructure import at runtime.
         self._actuation_manager = actuation_process_manager
+        self._stimulation_manager = stimulation_process_manager
         self._engine: Optional[EngineHandle] = None
         self._initialized = False
         self._engine_thread: Optional[Thread] = None
@@ -113,6 +119,7 @@ class NeuroEngineService(EnginePort):
     # Command handlers
     # ------------------------------------------------------------------
 
+    @admitted
     async def handle_start_engine(self, cmd: StartEngineCommand) -> None:
         async with self._lifecycle_lock:
             with self._configuration_transition():
@@ -164,7 +171,7 @@ class NeuroEngineService(EnginePort):
         # explicit barrier so parent-loop IPC/listener bind failures reach this
         # caller.  The managed Actuation child has its own READY/FAILED barrier
         # below because plugin/device setup happens in that subprocess.
-        self._engine_thread = Thread(target=self._engine.run, daemon=True, name="neuro-engine")
+        self._engine_thread = Thread(target=self._run_engine, daemon=True, name="neuro-engine")
         self._engine_thread.start()
         try:
             await asyncio.to_thread(
@@ -212,10 +219,12 @@ class NeuroEngineService(EnginePort):
             self._accepting_commands = True
         logger.info("NeuroEngine started")
 
+    @admitted(recovery=True)
     async def handle_stop_engine(self, cmd: StopEngineCommand) -> None:
         async with self._lifecycle_lock:
             with self._configuration_transition():
                 await self._stop_engine_locked(cmd)
+                self._admission.clear_quarantine()
 
     @contextmanager
     def _configuration_transition(self):
@@ -232,7 +241,7 @@ class NeuroEngineService(EnginePort):
     @contextmanager
     def configuration_change(self, requires_idle: bool):
         """Keep an effective configuration write atomic with engine admission."""
-        with self._configuration_lock:
+        with self._admission.command(), self._configuration_lock:
             if requires_idle and (self._transitioning or self._running or self._restart_blocked):
                 raise ConfigProfileConflictError(
                     "Stop the engine before changing the effective acquisition configuration")
@@ -251,6 +260,12 @@ class NeuroEngineService(EnginePort):
         ):
             return
         manager_error = None
+        if self._stimulation_manager is not None:
+            try:
+                await asyncio.to_thread(self._stimulation_manager.stop)
+            except Exception as exc:
+                manager_error = exc
+                logger.exception("Stimulation process failed to stop")
         if self._actuation_manager is not None:
             try:
                 # Stop the dial-out controller while the engine socket and bus
@@ -285,7 +300,8 @@ class NeuroEngineService(EnginePort):
         self._restart_blocked = False
         logger.info("NeuroEngine stopped")
         if manager_error is not None:
-            raise RuntimeError("Actuation process failed to stop") from manager_error
+            self._restart_blocked = True
+            raise RuntimeError("Managed output process failed to stop") from manager_error
 
     # ------------------------------------------------------------------
     # Query handlers
@@ -325,10 +341,45 @@ class NeuroEngineService(EnginePort):
         This is the single seam other bounded-context services use instead of
         reaching into ``_engine.event_bus`` directly.
         """
-        self._require_engine()
-        if not self.is_engine_ready:
-            raise RuntimeError("NeuroEngine is not running")
-        self._engine.event_bus.put_event(event)
+        with self._admission.command():
+            self._require_engine()
+            if not self.is_engine_ready:
+                raise RuntimeError("NeuroEngine is not running")
+            self._engine.event_bus.put_event(event)
+
+    @property
+    def admission(self):
+        return self._admission
+
+    @property
+    def restart_blocked(self) -> bool:
+        return self._restart_blocked
+
+    @asynccontextmanager
+    async def runtime_transition(self):
+        with self._admission.transition():
+            async with self._lifecycle_lock:
+                with self._configuration_transition():
+                    yield
+
+    async def stop_for_configuration(self):
+        if not self._admission.is_transition_owner:
+            raise RuntimeError("A runtime configuration transition must own this operation")
+        await self._stop_engine_locked(StopEngineCommand())
+
+    async def start_for_configuration(self, snapshot: dict):
+        if not self._admission.is_transition_owner:
+            raise RuntimeError("A runtime configuration transition must own this operation")
+        await self._start_engine_locked(StartEngineCommand(), settings_snapshot=snapshot)
+
+    def acknowledge_configuration(self, snapshot: dict):
+        if not self._admission.is_transition_owner or not self.is_engine_ready:
+            raise RuntimeError("A running configuration transition must own this operation")
+        with self._configuration_lock:
+            snapshot = deepcopy(snapshot)
+            snapshot["CONFIG.generation"] = self.generation
+            self._applied_snapshot = snapshot
+            self._graph_snapshot = deepcopy(snapshot)
 
     @property
     def is_initialized(self) -> bool:
@@ -404,6 +455,16 @@ class NeuroEngineService(EnginePort):
     def _require_engine(self) -> None:
         if self._engine is None:
             raise RuntimeError("NeuroEngineService not initialised")
+
+    def _run_engine(self):
+        try:
+            self._engine.run()
+        except BaseException:
+            # Startup failures also cross the explicit readiness barrier. Keep
+            # the thread exception contained so recovery owns the failed graph.
+            logger.exception("NeuroEngine execution failed")
+        finally:
+            self._accepting_commands = False
 
     def _engine_shutdown_complete(self) -> bool:
         """Read the optional concrete lifecycle signal without trusting mocks."""

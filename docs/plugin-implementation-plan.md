@@ -22,7 +22,7 @@ Accounts, cloud synchronization, and montage remain outside this implementation.
 | 14 | Ordered stream draining and safe pause boundaries | Complete |
 | 15 | Session continuation and file replay checkpoints | Complete |
 | 16 | Runtime application plan and status API | Complete |
-| 17 | Automatic pause, rebuild, restore, and rollback | Pending |
+| 17 | Automatic pause, rebuild, restore, and rollback | Complete |
 | 18 | Trial-boundary and module-local configuration updates | Pending |
 | 19 | Running-system Save/Apply UI | Pending |
 | 20 | Cross-platform and end-to-end validation | Pending |

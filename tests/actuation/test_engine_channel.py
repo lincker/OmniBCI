@@ -22,7 +22,8 @@ class TestRouteMirror:
 
     def test_command_inbound_feedback_outbound(self):
         cfg = engine_peer_config("127.0.0.1", 8001)
-        assert cfg.routes.inbound == frozenset({EventType.ActuationCommand})
+        assert cfg.routes.inbound == frozenset({EventType.ActuationCommand, EventType.SettleActuation})
         assert cfg.routes.outbound == frozenset({
             EventType.ActuationAck, EventType.ActuationState, EventType.ActuationFault,
+            EventType.CommandResult,
         })

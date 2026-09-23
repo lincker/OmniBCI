@@ -190,7 +190,10 @@ class AssemblingEpochState(ProcessingState):
 
         # Delegate to aggregate root — enforces business rules
         try:
-            session.record_trial(epoch, classification)
+            session.record_trial(
+                epoch, classification,
+                config_revision=getattr(self.context.current_epoch, "config_revision", None),
+            )
         except (RuntimeError, ValueError) as exc:
             logger.error("BCISession.record_trial() rejected: %s", exc)
             return

@@ -1,9 +1,11 @@
 """Plan configuration changes against pinned, acknowledged runtime state."""
 from collections import OrderedDict
+import asyncio
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from threading import RLock
 from time import monotonic
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from omnibci.application.plugin_profiles import ActivationSnapshot, ProfileRevisionConflict
 from omnibci.application.plugin_schema import PluginSchemaError
@@ -40,10 +42,14 @@ class RuntimeConfigurationService:
     _PLAN_TTL_S = 300
     _MAX_PLANS = 32
 
-    def __init__(self, profiles, engine):
+    def __init__(self, profiles, engine, *, executor=None):
         self.profiles = profiles
         self.engine = engine
+        self.executor = executor
         self._plans: OrderedDict[str, PlannedConfiguration] = OrderedDict()
+        self._operations: OrderedDict[str, dict] = OrderedDict()
+        self._active_operation: str | None = None
+        self._task: asyncio.Task | None = None
         self._lock = RLock()
 
     def status(self) -> dict:
@@ -54,7 +60,7 @@ class RuntimeConfigurationService:
             "accepted_revision": accepted.revision if accepted else None,
             "applied_revision": self.engine.applied_revision if running else None,
             "generation": self.engine.generation if running else None,
-            "operation": None,
+            "operation": self.operation(self._active_operation) if self._active_operation else None,
         }
 
     def plan(self, bindings: list[dict], *, expected_revision: str | None,
@@ -95,6 +101,10 @@ class RuntimeConfigurationService:
         settings = tuple(sorted(key for key in old_settings.keys() | snapshot.settings.keys()
                                 if old_settings.get(key) != snapshot.settings.get(key)))
         strategy = self._strategy(slots, settings, old, new)
+        if strategy == "no_change" and current is not None and snapshot.revision != current.revision:
+            strategy = "rebuild"
+        if self.executor is not None and strategy not in self.executor.supported_strategies:
+            strategy = "rebuild"
         if not running:
             strategy = "select_on_start"
         elif current is None or self.engine.applied_revision != current.revision:
@@ -108,6 +118,8 @@ class RuntimeConfigurationService:
                     ("STIMULATION", strategy == "rebuild" or any(s.startswith("stimulation.") for s in slots)),
                     ("ACTUATION", strategy == "rebuild" or any(s.startswith("actuation.") for s in slots)),
                 ):
+                    if not affected:
+                        continue
                     enabled = module != "ACTUATION" or before.get("ACTUATION.enabled", False)
                     target_enabled = module != "ACTUATION" or snapshot.settings.get("ACTUATION.enabled", False)
                     if ((enabled and not before.get(f"{module}.auto_spawn", True)) or
@@ -145,6 +157,70 @@ class RuntimeConfigurationService:
         # Recheck availability; installed packages may have changed since review.
         self.profiles.validate(stored.snapshot, require_available=True)
         return stored
+
+    def operation(self, operation_id: str):
+        with self._lock:
+            if operation_id not in self._operations:
+                raise KeyError(operation_id)
+            return deepcopy(self._operations[operation_id])
+
+    def submit(self, plan_id: str, operation_id: str):
+        try:
+            if str(UUID(operation_id)) != operation_id:
+                raise ValueError
+        except (ValueError, AttributeError) as exc:
+            raise PluginSchemaError("operation_id must be a canonical UUID") from exc
+        with self._lock:
+            if operation_id in self._operations:
+                operation = self._operations[operation_id]
+                if operation["plan_id"] != plan_id:
+                    raise ProfileRevisionConflict("Operation ID was already used for a different plan")
+                return deepcopy(operation)
+            if self._active_operation is not None:
+                active = self._operations[self._active_operation]
+                if active["status"] in ("queued", "applying"):
+                    raise ProfileRevisionConflict("A configuration operation is already in progress")
+                if active["status"] == "recovery_required" and self.engine.is_engine_ready:
+                    raise ProfileRevisionConflict("Resolve or stop the uncertain runtime before applying again")
+            stored = self.resolve_plan(plan_id)
+            if self.executor is None:
+                raise RuntimeError("Runtime configuration executor is unavailable")
+            operation = dict(operation_id=operation_id, plan_id=plan_id,
+                             target_revision=stored.plan.target_revision, status="queued", stage="queued",
+                             error=None, rolled_back=False, result=None)
+            self._operations[operation_id] = operation
+            self._active_operation = operation_id
+            while len(self._operations) > 32:
+                self._operations.popitem(last=False)
+            self._task = asyncio.create_task(self._execute(operation_id, stored))
+            return deepcopy(operation)
+
+    async def _execute(self, operation_id, stored):
+        operation = self._operations[operation_id]
+
+        def progress(stage):
+            with self._lock:
+                operation.update(status="applying", stage=stage)
+
+        try:
+            progress("validating")
+            result = await self.executor.execute(stored, progress)
+        except BaseException as exc:
+            if getattr(exc, "recovery_required", False):
+                self.engine.admission.quarantine(str(exc))
+            with self._lock:
+                operation.update(
+                    status="recovery_required" if getattr(exc, "recovery_required", False) else "failed",
+                    error=str(exc), rolled_back=getattr(exc, "rolled_back", False),
+                )
+        else:
+            with self._lock:
+                operation.update(status="succeeded", stage="complete", result=result)
+
+    async def wait_for_idle(self):
+        """Shutdown waits for the owned operation; HTTP disconnect never cancels it."""
+        if self._task is not None:
+            await asyncio.shield(self._task)
 
     @staticmethod
     def _binding_values(binding):

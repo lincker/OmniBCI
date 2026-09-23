@@ -599,6 +599,7 @@ class TestStimulationConfig:
         assert cfg.name == STIMULATION
         assert cfg.routes.outbound == frozenset({
             EventType.TrialCompleted, EventType.StartStimTrial, EventType.StopStimulation,
+            EventType.PauseStimulation,
         })
         assert EventType.StimulationAck in cfg.routes.inbound
         assert EventType.CommandResult in cfg.routes.inbound

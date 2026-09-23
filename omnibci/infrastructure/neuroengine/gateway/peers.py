@@ -49,6 +49,7 @@ def stimulation_peer_config(host: str, port: int) -> PeerConfig:
                 EventType.TrialCompleted,
                 EventType.StartStimTrial,
                 EventType.StopStimulation,
+                EventType.PauseStimulation,
             }),
             inbound=frozenset({
                 EventType.CommandResult,
@@ -96,11 +97,13 @@ def actuation_peer_config(host: str, port: int,
         routes=RouteSpec(
             outbound=frozenset({
                 EventType.ActuationCommand,
+                EventType.SettleActuation,
             }),
             inbound=frozenset({
                 EventType.ActuationAck,
                 EventType.ActuationState,
                 EventType.ActuationFault,
+                EventType.CommandResult,
             }),
         ),
         failsafe=_actuation_failsafe,

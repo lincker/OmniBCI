@@ -72,6 +72,18 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/config/modules/{module}/profiles/{profile_id}", "put"),
     ("/api/v1/config/modules/{module}/profiles/{profile_id}", "delete"),
     ("/api/v1/config/modules/{module}/active-profile", "put"),
+    ("/api/v1/config/plugin-catalog/{kind}", "get"),
+    ("/api/v1/config/plugin-profiles", "get"),
+    ("/api/v1/config/plugin-profiles", "post"),
+    ("/api/v1/config/plugin-profiles/{profile_id}", "get"),
+    ("/api/v1/config/plugin-profiles/{profile_id}", "put"),
+    ("/api/v1/config/plugin-profiles/{profile_id}", "delete"),
+    ("/api/v1/config/activation", "get"),
+    ("/api/v1/config/activation", "put"),
+    ("/api/v1/config/runtime", "get"),
+    ("/api/v1/config/apply-plan", "post"),
+    ("/api/v1/config/apply", "post"),
+    ("/api/v1/config/operations/{operation_id}", "get"),
 }
 
 
@@ -127,12 +139,14 @@ class TestResponseDtos:
         props = _schema(spec, "SessionResponse")["properties"]
         assert set(props) == {
             "session_id", "paradigm", "state", "trial_count", "started_at", "ended_at",
+            "continuation_of", "config_revision", "interruption_reason",
         }
 
     def test_trial_response_fields(self, spec):
         props = _schema(spec, "TrialResponse")["properties"]
         assert set(props) == {
             "trial_number", "target_id", "event_id", "confidence", "forced", "produced_at",
+            "config_revision",
         }
 
     def test_engine_status_fields(self, spec):

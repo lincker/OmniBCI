@@ -108,7 +108,7 @@ def test_legacy_full_replacement_cannot_remove_acquisition_parameters_while_runn
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_shares_profile_selection_between_status_and_engine(module_service, monkeypatch):
+async def test_bootstrap_shares_pinned_plugin_selection_between_status_and_engine(module_service, monkeypatch):
     import omnibci.conf as conf
     from omnibci import bootstrap
 
@@ -117,7 +117,18 @@ async def test_bootstrap_shares_profile_selection_between_status_and_engine(modu
         container = await bootstrap.build_container()
         builder.assert_not_called()
         profile = create_scan(container.config_service)
-        container.config_service.select_module_profile("acquisition", profile.profile_id)
+        profiles = container.plugin_profile_service
+        selected = profiles.create("acquisition", profiles.catalog.legacy(
+            "acquisition", "neuroscan_scan45_reader").selection, profile.name, profile.parameters)
+        bindings = [{"slot": "acquisition.source", "profile_id": selected.profile_id}]
+        for slot, kind, alias in (
+            ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA"),
+            ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR"),
+            ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40"),
+        ):
+            selected = profiles.create(kind, profiles.catalog.legacy(kind, alias).selection, alias, {})
+            bindings.append({"slot": slot, "profile_id": selected.profile_id})
+        profiles.accept(profiles.propose(bindings), expected_revision=None)
         assert container.acquisition_service._device_metadata() == ("neuroscan_scan45_reader", 500, 10)
         with patch("omnibci.application.services.engine_service.Thread"):
             await container.engine_service.handle_start_engine(StartEngineCommand())

@@ -11,6 +11,7 @@ GET    /sessions/{id}/trials/last  Most recent classification result
 """
 from typing import List
 
+from omnibci.application.plugin_profiles import ProfileRevisionConflict
 from fastapi import APIRouter, Depends, status
 
 from omnibci.presentation.dependencies import get_session_service
@@ -83,6 +84,8 @@ def create_session(
         session_id = svc.handle_create_session(CreateSessionCommand(paradigm=body.paradigm))
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as exc:
         raise command_error_to_api_error(exc)
+    except ProfileRevisionConflict:
+        raise
     except RuntimeError as exc:
         raise ApiError(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -199,6 +202,8 @@ def end_session(
         raise ApiError(status.HTTP_404_NOT_FOUND, ErrorCode.SESSION_NOT_FOUND, f"Session '{session_id}' not found")
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as exc:
         raise command_error_to_api_error(exc)
+    except ProfileRevisionConflict:
+        raise
     except RuntimeError as exc:
         raise ApiError(
             status.HTTP_503_SERVICE_UNAVAILABLE,

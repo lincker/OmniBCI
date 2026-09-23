@@ -90,6 +90,7 @@ class TestProcessorWiring:
             auto_start_session=False,
             generation=None,
             config_revision=None,
+            settings_snapshot=worker._snapshot(),
         )
         assert worker.signal_processor is processor
         processor.run.assert_called_once_with()

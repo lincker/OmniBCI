@@ -22,6 +22,7 @@ continuous stream); RecordingService is the convenience path for the common
 """
 
 import logging
+from omnibci.application.runtime_admission import admitted
 from typing import Optional
 
 from omnibci.application.services.session_service import SessionAppService
@@ -58,10 +59,13 @@ class RecordingService:
         self,
         session_service: SessionAppService,
         acquisition_service: AcquisitionAppService,
+        admission=None,
     ) -> None:
+        self._admission = admission
         self._sessions = session_service
         self._acquisition = acquisition_service
 
+    @admitted
     def start(self, paradigm: Optional[str] = None) -> str:
         """
         Begin a recording: create + start a session, then start the stream.
@@ -105,6 +109,7 @@ class RecordingService:
         logger.info("Recording started: session=%s paradigm=%s", session_id, paradigm)
         return session_id
 
+    @admitted(recovery=True)
     def stop(self) -> str:
         """
         End the active recording: stop the stream, drain, then end the session.

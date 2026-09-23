@@ -116,6 +116,10 @@ class FileReader(SignalSource):
             "format_version": 1,
             "source": self.plugin_type,
             "file": deepcopy(self._file_identity),
+            "source_identity": {
+                "resource_id": self._file_identity["path"],
+                "revision": f'{self._file_identity["size"]}:{self._file_identity["mtime_ns"]}',
+            },
             "next_sample": self.file_pointer,
         }
 

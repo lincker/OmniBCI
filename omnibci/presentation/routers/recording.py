@@ -5,6 +5,7 @@ Convenience over the primitives: start = create+start session then start stream;
 stop = stop stream, drain, then end session. The primitive endpoints
 (/sessions, /acquisition/stream/*) remain for advanced flows.
 """
+from omnibci.application.plugin_profiles import ProfileRevisionConflict
 from fastapi import APIRouter, Depends, status
 
 from omnibci.presentation.dependencies import get_recording_service
@@ -49,6 +50,8 @@ def start_recording(
         raise ApiError(status.HTTP_409_CONFLICT, ErrorCode.ALREADY_RECORDING, str(e))
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
         raise command_error_to_api_error(e)
+    except ProfileRevisionConflict:
+        raise
     except RuntimeError as e:
         # engine not ready (session rolled back inside the service)
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))

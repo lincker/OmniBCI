@@ -7,10 +7,10 @@ import logging
 import multiprocessing as mp
 import asyncio
 from dataclasses import dataclass
-from queue import Queue
+from queue import Empty, Queue
 from typing import Any
 
-from omnibci.application.events import CommandRequest, CommandResult
+from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.outbound import make_stimulation_ack
@@ -41,6 +41,7 @@ class Stimulation:
         self.event_bus = EventBus(self._event_queue)
 
         from omnibci.conf import settings
+        self._runtime_snapshot = settings.snapshot()
         host = settings.get("NEUROENGINE.message_server_ip", "127.0.0.1")
         port = int(settings.get("NEUROENGINE.message_server_port", 8765))
         self.peer_channel = PeerChannel(engine_peer_config(host, port), self.event_bus)
@@ -52,6 +53,7 @@ class Stimulation:
         self.result_command_queue = Queue()
         self.stimulator = Stimulator()
         self._render_task = None  # The IPC process survives a closed render window.
+        self._paused = False
 
     def run(self):
         print('---StimulationMain run---')
@@ -198,6 +200,8 @@ class Stimulation:
             reporter.failed(stage, error)
 
     async def execute_command(self):
+        if getattr(self, "_paused", False):
+            return
         # Serialize trials: only pull the next StartStimTrial once the paradigm
         # has finished presenting the current one.  Without this gate the whole
         # queue is drained within a few loop iterations (~10 ms each) while a
@@ -288,6 +292,7 @@ class Stimulation:
         self.event_bus.register_event_listener(event_type=EventType.StartStimTrial, handler=self._put_stim_command_queue)
         self.event_bus.register_event_listener(event_type=EventType.TrialCompleted, handler=self._put_sys_command_queue)
         self.event_bus.register_event_listener(event_type=EventType.StopStimulation, handler=self._stop_stimulation_system)
+        self.event_bus.register_event_listener(event_type=EventType.PauseStimulation, handler=self._pause_stimulation)
 
     def _put_stim_command_queue(self, command: Event):
         # Generic expander: knows only the base layer (how many trials) and
@@ -296,6 +301,14 @@ class Stimulation:
         if command.type != EventType.StartStimTrial:
             return
         request = CommandRequest.from_value(command.data)
+        if getattr(self, "_paused", False):
+            if request is not None:
+                self._emit_command_result(
+                    request, EventType.StartStimTrial, ok=False,
+                    message="Stimulation is paused for configuration",
+                    error_code="STIMULATION_PAUSED",
+                )
+            return
         spec = request.payload if request is not None else command.data
         try:
             if not isinstance(spec, dict):
@@ -332,8 +345,63 @@ class Stimulation:
             ))
 
     def _put_sys_command_queue(self, command: Event):
+        if getattr(self, "_paused", False):
+            return
         if command.type == EventType.TrialCompleted:
             self.result_command_queue.put(command)
+
+    async def _pause_stimulation(self, event: Event) -> None:
+        """Acknowledge only after the real rendering task exits and triggers clear."""
+        request = CommandRequest.from_value(event.data)
+        if request is None:
+            return
+        self._paused = True
+        cancelled = 0
+        while True:
+            try:
+                queued = self.stim_command_queue.get_nowait().data
+            except Empty:
+                break
+            cancelled += 1
+            if isinstance(queued, _QueuedStimTrial) and queued.request is not None:
+                self._emit_command_result(
+                    queued.request, EventType.StartStimTrial, ok=False,
+                    message="Queued stimulation cancelled for configuration",
+                    error_code="STIMULATION_PAUSED",
+                )
+        while True:
+            try:
+                self.result_command_queue.get_nowait()
+            except Empty:
+                break
+        try:
+            if self._render_task is None:
+                raise RuntimeError("Stimulation renderer was not started")
+            self.stimulator.stop()
+            try:
+                await asyncio.shield(self._render_task)
+            finally:
+                # A teardown error still means no more rendering is possible.
+                # Clear the trigger on that path too, without claiming success.
+                if self._render_task.done():
+                    self.stimulator.clear_trigger()
+            snapshot = getattr(self, "_runtime_snapshot", {})
+            result = CommandResult(
+                request.command_id, EventType.PauseStimulation.name, ok=True,
+                data={
+                    "paused": True, "renderer_stopped": True,
+                    "cancelled_trials": cancelled,
+                    "generation": snapshot.get("CONFIG.generation"),
+                    "config_revision": snapshot.get("CONFIG.revision"),
+                },
+            )
+        except Exception as exc:
+            result = CommandResult(
+                request.command_id, EventType.PauseStimulation.name, ok=False,
+                error_code="STIMULATION_PAUSE_FAILED", message=str(exc),
+                failure_kind=CommandFailureKind.EXECUTION_FAILED,
+            )
+        self.event_bus.put_event(Event(EventType.CommandResult, result))
 
     async def _stop_stimulation_system(self, event=None):
         request = CommandRequest.from_value(

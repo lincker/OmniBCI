@@ -1,7 +1,7 @@
 """Reviewable runtime configuration plans and observed status."""
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from omnibci.presentation.schemas.plugin_config import AcceptActivationRequest
 
@@ -24,9 +24,26 @@ class RuntimePlanResponse(BaseModel):
     errors: list[str]
 
 
+class RuntimeOperationResponse(BaseModel):
+    operation_id: str
+    plan_id: str
+    target_revision: str
+    status: Literal["queued", "applying", "succeeded", "failed", "recovery_required"]
+    stage: str
+    error: str | None
+    rolled_back: bool
+    result: dict[str, Any] | None
+
+
+class RuntimeApplyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    plan_id: str
+    operation_id: str
+
+
 class RuntimeConfigurationResponse(BaseModel):
     running: bool
     accepted_revision: str | None
     applied_revision: str | None
     generation: str | None
-    operation: dict[str, Any] | None
+    operation: RuntimeOperationResponse | None

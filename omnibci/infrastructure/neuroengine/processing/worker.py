@@ -9,7 +9,7 @@ import multiprocessing as mp
 from copy import deepcopy
 from typing import Optional
 
-from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter
+from omnibci.domain.ports.algorithm import Decoder, EpochDetector
 from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessor
 from omnibci.infrastructure.process_lifecycle import StartupReporter
 
@@ -88,21 +88,9 @@ class SignalProcessingWorker(mp.Process):
 
     def _load_filters(self, snapshot=None):
         """Every ordered slot constructs a separate selected filter instance."""
-        from omnibci.infrastructure.plugins.runtime_configuration import (
-            configured_bindings, load_configured_plugin,
-        )
+        from .pipeline_configuration import load_filters
         snapshot = self._snapshot() if snapshot is None else snapshot
-        context = self._context(snapshot)
-        bindings = configured_bindings(snapshot)
-        if bindings is not None:
-            return [load_configured_plugin(snapshot, binding.slot, "filter", Filter, context=context)
-                    for binding in bindings if binding.kind == "filter"]
-        names = snapshot.get("ALGORITHM.filters", [])
-        if not isinstance(names, list) or any(not isinstance(name, str) or not name for name in names):
-            raise ValueError("ALGORITHM.filters must be an ordered list of plugin aliases")
-        return [load_configured_plugin(snapshot, f"processing.filter.{index}", "filter", Filter,
-                                       legacy_alias=name, context=context)
-                for index, name in enumerate(names)]
+        return load_filters(snapshot, self._context(snapshot))
 
     def _run_processor(self, decoder, detector, filters, sample_rate: int) -> None:
         # No self-created session id: the worker starts in "standby" and waits
@@ -123,6 +111,7 @@ class SignalProcessingWorker(mp.Process):
             auto_start_session=False,
             generation=(self.settings_snapshot or {}).get("CONFIG.generation"),
             config_revision=(self.settings_snapshot or {}).get("CONFIG.revision"),
+            settings_snapshot=self._snapshot(),
         )
         if self.startup_reporter is not None:
             self.startup_reporter.ready()

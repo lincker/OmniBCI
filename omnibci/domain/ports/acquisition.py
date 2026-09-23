@@ -36,7 +36,12 @@ class SignalSource(ABC):
         return False
 
     def checkpoint(self) -> dict[str, Any]:
-        """Capture a stopped source after its acquisition fetch task has joined."""
+        """Capture a stopped source after its acquisition fetch task has joined.
+
+        An optional source_identity envelope has string resource_id and revision
+        fields. It distinguishes a new input from changed content at the same
+        input, while the remaining checkpoint state stays opaque to the host.
+        """
         raise NotImplementedError("This signal source does not support checkpoints")
 
     def restore_checkpoint(self, checkpoint: dict[str, Any]) -> None:

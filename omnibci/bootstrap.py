@@ -15,6 +15,7 @@ from omnibci.application.services.config_service import ConfigService
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.application.services.plugin_config_migration import LegacyPluginConfigMigration
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
+from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.plugin_profiles import PluginProfileValidationError
 from omnibci.domain.repositories import SessionRepository
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
@@ -76,6 +77,8 @@ def assemble(
     settings=None,
     auto_spawn: bool = True,
     actuation_process_manager: "ActuationProcessManager | None" = None,
+    stimulation_process_manager: "StimulationProcessManager | None" = None,
+    admission=None,
 ) -> AppContainer:
     """Wire services around an existing engine and repository without I/O."""
     command_timeout_s = (
@@ -86,18 +89,21 @@ def assemble(
     command_results = CommandResultBroker(
         engine_service,
         timeout_s=command_timeout_s,
+        admission=admission,
     )
     acquisition_service = AcquisitionAppService(
         command_results,
         settings=settings,
+        admission=admission,
     )
     session_service = SessionAppService(
         repository=repository,
         engine_port=engine_service,
         command_results=command_results,
+        admission=admission,
     )
 
-    process_manager = StimulationProcessManager(auto_spawn=auto_spawn)
+    process_manager = stimulation_process_manager or StimulationProcessManager(auto_spawn=auto_spawn)
 
     return AppContainer(
         engine_service=engine_service,
@@ -106,6 +112,7 @@ def assemble(
             engine_service,
             process_manager,
             command_results=command_results,
+            admission=admission,
         ),
         stimulation_process_manager=process_manager,
         session_repository=repository,
@@ -113,7 +120,8 @@ def assemble(
         # (StartSession/EndSession) — see docs/session-id-unification.md.
         session_service=session_service,
         # Orchestrates session + acquisition for the "record a run" use case.
-        recording_service=RecordingService(session_service, acquisition_service),
+        recording_service=RecordingService(session_service, acquisition_service,
+                                            admission=admission),
         actuation_process_manager=actuation_process_manager,
         command_results=command_results,
     )
@@ -137,6 +145,7 @@ async def build_container() -> AppContainer:
         and bool(settings.get("ACTUATION.auto_spawn", True))
     )
     actuation_manager = ActuationProcessManager(auto_spawn=actuation_auto_spawn)
+    stimulation_manager = StimulationProcessManager(auto_spawn=auto_spawn)
 
     # Processes are single-use, so every restart requires a fresh engine graph.
     def startup_snapshot():
@@ -150,6 +159,7 @@ async def build_container() -> AppContainer:
         engine_factory=lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
         snapshot_provider=startup_snapshot,
         actuation_process_manager=actuation_manager,
+        stimulation_process_manager=stimulation_manager,
     )
     legacy_profiles = TomlConfigProfileRepository()
     config_service = ConfigService(
@@ -176,10 +186,17 @@ async def build_container() -> AppContainer:
     await engine_service.startup()
     container = assemble(engine_service, repository,
                          settings=_RuntimeSettings(engine_service, plugin_profiles), auto_spawn=auto_spawn,
-                         actuation_process_manager=actuation_manager)
+                         actuation_process_manager=actuation_manager,
+                         stimulation_process_manager=stimulation_manager,
+                         admission=engine_service.admission)
     container.config_service = config_service
     container.plugin_profile_service = plugin_profiles
-    container.runtime_configuration = RuntimeConfigurationService(plugin_profiles, engine_service)
+    container.runtime_configuration = RuntimeConfigurationService(
+        plugin_profiles, engine_service,
+        executor=RuntimeApplyCoordinator(engine_service, plugin_profiles, container.acquisition_service,
+                                          container.session_service, container.stimulation_service,
+                                          container.command_results),
+    )
     return container
 
 

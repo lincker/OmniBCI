@@ -13,6 +13,7 @@ Dependency graph (follows DIP):
 """
 
 import logging
+from omnibci.application.runtime_admission import admitted
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional, TYPE_CHECKING
@@ -103,7 +104,9 @@ class SessionAppService:
         repository: SessionRepository,
         engine_port=None,
         command_results: "CommandResultBroker | None" = None,
+        admission=None,
     ) -> None:
+        self._admission = admission
         self._repo = repository
         self._engine = engine_port  # EnginePort | None
         self._command_results = command_results
@@ -112,6 +115,7 @@ class SessionAppService:
     # Command handlers
     # ------------------------------------------------------------------
 
+    @admitted
     def handle_create_session(self, cmd: CreateSessionCommand) -> str:
         if cmd.continuation_of is not None:
             previous = self._require(cmd.continuation_of)
@@ -170,6 +174,7 @@ class SessionAppService:
         logger.info("Session created: %s (paradigm=%s)", session_id, cmd.paradigm)
         return session_id
 
+    @admitted
     def create_continuation(
         self, previous_id: str, *, config_revision: Optional[str] = None,
         paradigm: Optional[str] = None,
@@ -182,6 +187,7 @@ class SessionAppService:
             config_revision=config_revision,
         ))
 
+    @admitted(recovery=True)
     def handle_end_session(self, cmd: EndSessionCommand) -> None:
         if self._repo.find_by_id(cmd.session_id) is None:
             raise KeyError(f"Session '{cmd.session_id}' not found")

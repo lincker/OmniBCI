@@ -410,9 +410,14 @@ class NeuroEngine:
             EventType.StartStream:                    (acq, AcquisitionCommand.start_stream, True),
             EventType.StopStream:                     (acq, AcquisitionCommand.stop_stream, True),
             EventType.StopAndDrain:                   (acq, AcquisitionCommand.stop_and_drain, True),
+            EventType.GetSourceCheckpoint:            (acq, AcquisitionCommand.get_checkpoint, True),
+            EventType.RestoreSourceCheckpoint:        (acq, AcquisitionCommand.restore_checkpoint, True),
+            EventType.UpdateAcquisitionRevision:      (acq, AcquisitionCommand.update_revision, True),
             # Session lifecycle: REST-created session_id pushed into the worker.
             EventType.StartSession:                   (proc, SignalProcessorCommand.start_session, True),
             EventType.EndSession:                     (proc, SignalProcessorCommand.end_session, True),
+            EventType.StageProcessingConfiguration:   (proc, SignalProcessorCommand.stage_configuration, True),
+            EventType.CancelProcessingConfiguration:  (proc, SignalProcessorCommand.cancel_configuration, True),
         }
 
     def _register_event_listeners(self) -> None:

@@ -611,6 +611,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/config/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply Configuration */
+        post: operations["apply_configuration_api_v1_config_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/operations/{operation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Configuration Operation */
+        get: operations["configuration_operation_api_v1_config_operations__operation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/plugins/{category}": {
         parameters: {
             query?: never;
@@ -919,6 +953,20 @@ export interface components {
              */
             message: string;
             data?: components["schemas"]["RuntimeConfigurationResponse"] | null;
+        };
+        /** ApiResponse[RuntimeOperationResponse] */
+        ApiResponse_RuntimeOperationResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["RuntimeOperationResponse"] | null;
         };
         /** ApiResponse[RuntimePlanResponse] */
         ApiResponse_RuntimePlanResponse_: {
@@ -1423,6 +1471,13 @@ export interface components {
              */
             session_id: string;
         };
+        /** RuntimeApplyRequest */
+        RuntimeApplyRequest: {
+            /** Plan Id */
+            plan_id: string;
+            /** Operation Id */
+            operation_id: string;
+        };
         /** RuntimeConfigurationResponse */
         RuntimeConfigurationResponse: {
             /** Running */
@@ -1433,8 +1488,29 @@ export interface components {
             applied_revision: string | null;
             /** Generation */
             generation: string | null;
-            /** Operation */
-            operation: {
+            operation: components["schemas"]["RuntimeOperationResponse"] | null;
+        };
+        /** RuntimeOperationResponse */
+        RuntimeOperationResponse: {
+            /** Operation Id */
+            operation_id: string;
+            /** Plan Id */
+            plan_id: string;
+            /** Target Revision */
+            target_revision: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "applying" | "succeeded" | "failed" | "recovery_required";
+            /** Stage */
+            stage: string;
+            /** Error */
+            error: string | null;
+            /** Rolled Back */
+            rolled_back: boolean;
+            /** Result */
+            result: {
                 [key: string]: unknown;
             } | null;
         };
@@ -5239,6 +5315,160 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_RuntimePlanResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    apply_configuration_api_v1_config_apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_RuntimeOperationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    configuration_operation_api_v1_config_operations__operation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_RuntimeOperationResponse_"];
                 };
             };
             /** @description Bad request */

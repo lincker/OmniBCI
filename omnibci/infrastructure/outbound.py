@@ -47,6 +47,7 @@ def event_to_wire(event: Event) -> Optional[dict]:
             return None
         return {"event": "TrialCompleted", "session_id": data.session_id,
                 "trial_number": data.trial_number,
+                **({"config_revision": data.config_revision} if data.config_revision is not None else {}),
                 **_classification_fields(data.classification)}
 
     if etype == EventType.SessionStarted:
@@ -124,6 +125,7 @@ def payload_to_jsonable(data: Any) -> Any:
     """
     if isinstance(data, TrialOutcome):
         return {"session_id": data.session_id, "trial_number": data.trial_number,
+                **({"config_revision": data.config_revision} if data.config_revision is not None else {}),
                 **_classification_fields(data.classification)}
     if isinstance(data, SessionSummary):
         return {"session_id": data.session_id, "total_trials": data.total_trials}
@@ -140,5 +142,6 @@ def payload_to_jsonable(data: Any) -> Any:
             "message": data.message,
             "error_code": data.error_code,
             "failure_kind": data.failure_kind,
+            **({"data": payload_to_jsonable(data.data)} if data.data is not None else {}),
         }
     return data

@@ -130,6 +130,11 @@ def _json_error(status_code: int, code: ErrorCode, message: str, detail=None) ->
 
 def register_exception_handlers(app: FastAPI) -> None:
     """Install handlers that render every error as a unified ErrorResponse."""
+    from omnibci.application.plugin_profiles import ProfileRevisionConflict
+
+    @app.exception_handler(ProfileRevisionConflict)
+    async def runtime_conflict_handler(request, exc):
+        return _json_error(409, ErrorCode.CONFLICT, str(exc))
 
     @app.exception_handler(ConfigProfileValidationError)
     async def _handle_config_validation(_: Request, exc: ConfigProfileValidationError):

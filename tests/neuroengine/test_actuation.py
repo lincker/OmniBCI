@@ -133,9 +133,10 @@ class TestActuationPeerConfig:
         assert cfg.name == ACTUATION
         assert isinstance(cfg.transport, ListenTransport)
         assert cfg.transport._server.max_clients == 1
-        assert cfg.routes.outbound == frozenset({EventType.ActuationCommand})
+        assert cfg.routes.outbound == frozenset({EventType.ActuationCommand, EventType.SettleActuation})
         assert cfg.routes.inbound == frozenset({
             EventType.ActuationAck, EventType.ActuationState, EventType.ActuationFault,
+            EventType.CommandResult,
         })
 
 

@@ -30,6 +30,7 @@ def engine_peer_config(host: str, port: int) -> PeerConfig:
                 EventType.TrialCompleted,
                 EventType.StartStimTrial,
                 EventType.StopStimulation,
+                EventType.PauseStimulation,
             }),
         ),
     )

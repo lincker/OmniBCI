@@ -1,6 +1,7 @@
 """
 /api/v1/engine — NeuroEngine lifecycle endpoints.
 """
+from omnibci.application.plugin_profiles import ProfileRevisionConflict
 from fastapi import APIRouter, Depends, status
 
 from omnibci.presentation.dependencies import get_engine_service, get_acquisition_service
@@ -23,6 +24,8 @@ async def start_engine(svc: NeuroEngineService = Depends(get_engine_service)):
     try:
         await svc.handle_start_engine(StartEngineCommand())
         return ApiResponse(message="NeuroEngine started")
+    except ProfileRevisionConflict:
+        raise
     except RuntimeError as e:
         raise ApiError(status.HTTP_409_CONFLICT, ErrorCode.ENGINE_NOT_READY, str(e))
 

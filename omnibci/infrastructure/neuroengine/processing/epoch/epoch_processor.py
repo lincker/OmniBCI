@@ -46,9 +46,11 @@ class EpochProcessor:
         decoder: Decoder,
         sample_rate: int = 1000,
         filters: Optional[List[Filter]] = None,
+        config_revision: str | None = None,
     ) -> None:
         self.decoder = decoder
         self.sample_rate = sample_rate
+        self.config_revision = config_revision
         # Ordered preprocessing + terminal decoder. No filters configured yet,
         # so the pipeline is behaviourally identical to calling decoder.analyse.
         self.pipeline = ProcessingPipeline(

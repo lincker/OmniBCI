@@ -26,9 +26,11 @@ def engine_peer_config(host: str, port: int) -> PeerConfig:
                 EventType.ActuationAck,
                 EventType.ActuationState,
                 EventType.ActuationFault,
+                EventType.CommandResult,
             }),
             inbound=frozenset({
                 EventType.ActuationCommand,
+                EventType.SettleActuation,
             }),
         ),
     )

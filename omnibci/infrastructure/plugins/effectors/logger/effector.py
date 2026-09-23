@@ -27,6 +27,10 @@ class LogEffector(Effector):
     def teardown(self):
         logger.info("[LogEffector] teardown")
 
+    def quiesce(self) -> None:
+        """Logging is synchronous and has no continuing physical output."""
+        return None
+
     def play(self, command: Mapping[str, Any]) -> None:
         logger.info("[LogEffector] play: target_id=%s event_id=%s confidence=%s",
                     command.get("target_id"), command.get("event_id"),

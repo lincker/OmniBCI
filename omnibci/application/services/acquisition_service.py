@@ -6,6 +6,7 @@ Keeps acquisition routing and result-waiting logic out of the routers.
 """
 
 import logging
+from omnibci.application.runtime_admission import admitted
 from typing import Optional
 
 from omnibci.shared.events import EventType, Event
@@ -37,7 +38,9 @@ class AcquisitionAppService:
         self,
         command_executor: CommandExecutor,
         settings=None,
+        admission=None,
     ) -> None:
+        self._admission = admission
         """Use injected settings only for optional device status metadata."""
         self._settings = settings
         self._command_executor = command_executor
@@ -50,22 +53,27 @@ class AcquisitionAppService:
     # Command handlers
     # ------------------------------------------------------------------
 
+    @admitted
     def handle_connect(self, cmd: ConnectDataProviderCommand) -> None:
         self._put_event(EventType.ConnectDataProvider)
         logger.info("ConnectDataProvider event dispatched")
 
+    @admitted(recovery=True)
     def handle_disconnect(self, cmd: DisconnectDataProviderCommand) -> None:
         self._put_event(EventType.DisconnectDataProvider)
         logger.info("DisconnectDataProvider event dispatched")
 
+    @admitted
     def handle_start_stream(self, cmd: StartStreamCommand) -> None:
         self._put_event(EventType.StartStream)
         logger.info("StartStream event dispatched")
 
+    @admitted(recovery=True)
     def handle_stop_stream(self, cmd: StopStreamCommand) -> None:
         self._put_event(EventType.StopStream)
         logger.info("StopStream event dispatched")
 
+    @admitted(recovery=True)
     def handle_stop_and_drain(
         self, *, session_id: str | None = None, timeout_s: float | None = None,
     ) -> StreamDrainReceipt:

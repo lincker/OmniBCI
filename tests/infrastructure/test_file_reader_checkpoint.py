@@ -135,6 +135,34 @@ def test_checkpoint_rejects_different_file(reader_factory, tmp_path):
     asyncio.run(scenario())
 
 
+def test_identity_survives_path_alias_and_chunk_size_change(reader_factory):
+    from pathlib import Path
+
+    from omnibci.application.source_checkpoint import checkpoint_for_restore
+
+    async def scenario():
+        reader = reader_factory()
+        await reader.connect()
+        await reader.start_stream()
+        delivered = await reader.read_chunk()
+        await reader.stop_stream()
+        previous = reader.checkpoint()
+        path = Path(reader.file_path)
+        alias = str(path.parent / ".." / path.parent.name / path.name)
+        resumed = reader_factory(alias)
+        resumed._chunk_size = 2
+        await resumed.connect()
+        restored = checkpoint_for_restore(previous, resumed.checkpoint())
+        assert restored is not None
+        resumed.restore_checkpoint(restored)
+        await resumed.start_stream()
+        next_chunk = await resumed.read_chunk()
+        np.testing.assert_array_equal(delivered, FakeAdapter(None).data[:, :4])
+        np.testing.assert_array_equal(next_chunk, FakeAdapter(None).data[:, 4:6])
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("after_staging", [False, True])
 def test_checkpoint_rejects_changed_file(reader_factory, after_staging):
     async def scenario():

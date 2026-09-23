@@ -117,6 +117,12 @@ class Stimulator:
         if self.paradigm is not None:
             self.paradigm.trial_stimulus_present(params)
 
+    def clear_trigger(self) -> None:
+        """Clear the final trigger after the rendering task has stopped."""
+        if self.trigger is None:
+            raise RuntimeError("Stimulation trigger has not been initialized")
+        self.trigger.clear()
+
     @property
     def is_presenting(self) -> bool:
         """True while the paradigm is mid-trial (not ready for the next trial).

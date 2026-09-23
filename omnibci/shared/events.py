@@ -10,9 +10,14 @@ class EventType(IntEnum):
     # acquisition
     ConnectDataProvider = 101
     DisconnectDataProvider = 102
+    GetSourceCheckpoint = 105
+    RestoreSourceCheckpoint = 106
+    UpdateAcquisitionRevision = 107
     StartStream = 111
     StopStream = 112
     StopAndDrain = 113  # acquisition stop followed by an ordered processing barrier
+    StageProcessingConfiguration = 211  # stage a pipeline until the next epoch boundary
+    CancelProcessingConfiguration = 212  # reconcile or cancel a staged pipeline
     AcquisitionState = 121  # worker -> API: authoritative device-state snapshot
                             # payload: application.events.AcquisitionSnapshot
     CommandResult = 601      # command consumer -> API: application.events.CommandResult
@@ -24,19 +29,21 @@ class EventType(IntEnum):
     MessageFromStimulation = 9
     StartStimulation = 301
     StopStimulation = 302
+    PauseStimulation = 303  # correlated renderer stop and trigger clear
     # actuation (external-device control; the actuation subsystem loads
     # an Effector plugin to carry out these commands)
     ActuationCommand = 401  # engine → actuation: drive the external device
     ActuationAck = 402      # actuation → engine: command executed receipt
     ActuationState = 403    # actuation → engine: device state / sensor feedback
     ActuationFault = 404    # actuation → engine: device fault (triggers safety)
+    SettleActuation = 405   # correlated mailbox cancellation and device quiescence
     # --- domain events (carry rich domain objects as payload) ---------
     TrialCompleted = 501   # payload: TrialOutcome (session_id + trial_number + Classification)
     SessionStarted = 502   # payload: session_id str
     SessionEnded   = 503   # payload: SessionSummary (session_id + total_trials)
     # --- session lifecycle commands (API → engine → worker) -----------
     StartSession   = 504   # payload: {"session_id": str, "paradigm": str|None}
-    EndSession     = 505   # payload: session_id str
+    EndSession     = 505   # payload: session_id str or {session_id, interruption_reason}
 
 
 class Event:

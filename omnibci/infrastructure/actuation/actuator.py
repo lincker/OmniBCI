@@ -104,3 +104,9 @@ class Actuator:
             except Exception as exc:
                 logger.error("Effector teardown failed: %s", exc)
             self.effector = None
+
+    def quiesce(self) -> None:
+        """Require the driver to confirm prior outputs are finished or cancelled."""
+        if self.effector is None:
+            raise RuntimeError("Actuator.quiesce called before setup()")
+        self.effector.quiesce()

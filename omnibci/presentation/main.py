@@ -99,6 +99,8 @@ async def lifespan(app: FastAPI):
     logger.info("OmniBCI API server started (engine listeners registered: %d)", registered)
     yield
     results_broadcaster.stop_heartbeat()
+    if container.runtime_configuration is not None:
+        await container.runtime_configuration.wait_for_idle()
     container.stimulation_process_manager.stop()
     await container.engine_service.shutdown()
     logger.info("OmniBCI API server stopped")
