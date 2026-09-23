@@ -14,6 +14,7 @@ from omnibci.application.services.command_result_service import CommandResultBro
 from omnibci.application.services.config_service import ConfigService
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.application.services.plugin_config_migration import LegacyPluginConfigMigration
+from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.plugin_profiles import PluginProfileValidationError
 from omnibci.domain.repositories import SessionRepository
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
@@ -49,6 +50,7 @@ class AppContainer:
     command_results: "CommandResultBroker | None" = None
     config_service: "ConfigService | None" = None
     plugin_profile_service: "PluginProfileService | None" = None
+    runtime_configuration: "RuntimeConfigurationService | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +179,7 @@ async def build_container() -> AppContainer:
                          actuation_process_manager=actuation_manager)
     container.config_service = config_service
     container.plugin_profile_service = plugin_profiles
+    container.runtime_configuration = RuntimeConfigurationService(plugin_profiles, engine_service)
     return container
 
 

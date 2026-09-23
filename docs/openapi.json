@@ -4147,6 +4147,178 @@
         }
       }
     },
+    "/api/v1/config/runtime": {
+      "get": {
+        "tags": [
+          "Runtime configuration"
+        ],
+        "summary": "Runtime Status",
+        "operationId": "runtime_status_api_v1_config_runtime_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_RuntimeConfigurationResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/apply-plan": {
+      "post": {
+        "tags": [
+          "Runtime configuration"
+        ],
+        "summary": "Plan Configuration",
+        "operationId": "plan_configuration_api_v1_config_apply_plan_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuntimePlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_RuntimePlanResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/plugins/{category}": {
       "get": {
         "tags": [
@@ -4780,6 +4952,58 @@
         },
         "type": "object",
         "title": "ApiResponse[RecordingResponse]"
+      },
+      "ApiResponse_RuntimeConfigurationResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RuntimeConfigurationResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[RuntimeConfigurationResponse]"
+      },
+      "ApiResponse_RuntimePlanResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RuntimePlanResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[RuntimePlanResponse]"
       },
       "ApiResponse_SessionListResponse_": {
         "properties": {
@@ -5902,6 +6126,219 @@
           "session_id"
         ],
         "title": "RecordingResponse"
+      },
+      "RuntimeConfigurationResponse": {
+        "properties": {
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "accepted_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted Revision"
+          },
+          "applied_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Revision"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "operation": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "running",
+          "accepted_revision",
+          "applied_revision",
+          "generation",
+          "operation"
+        ],
+        "title": "RuntimeConfigurationResponse"
+      },
+      "RuntimePlanRequest": {
+        "properties": {
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/SelectProfileBindingRequest"
+            },
+            "type": "array",
+            "title": "Bindings"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          },
+          "refresh_slots": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Slots"
+          },
+          "include_host_settings": {
+            "type": "boolean",
+            "title": "Include Host Settings",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "bindings"
+        ],
+        "title": "RuntimePlanRequest"
+      },
+      "RuntimePlanResponse": {
+        "properties": {
+          "plan_id": {
+            "type": "string",
+            "title": "Plan Id"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          },
+          "target_revision": {
+            "type": "string",
+            "title": "Target Revision"
+          },
+          "applied_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Revision"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "strategy": {
+            "type": "string",
+            "enum": [
+              "select_on_start",
+              "no_change",
+              "trial_boundary",
+              "module",
+              "rebuild"
+            ],
+            "title": "Strategy"
+          },
+          "changed_slots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Changed Slots"
+          },
+          "changed_settings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Changed Settings"
+          },
+          "session_effect": {
+            "type": "string",
+            "enum": [
+              "preserve",
+              "continuation"
+            ],
+            "title": "Session Effect"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Errors"
+          }
+        },
+        "type": "object",
+        "required": [
+          "plan_id",
+          "expected_revision",
+          "target_revision",
+          "applied_revision",
+          "generation",
+          "running",
+          "strategy",
+          "changed_slots",
+          "changed_settings",
+          "session_effect",
+          "errors"
+        ],
+        "title": "RuntimePlanResponse"
       },
       "SelectModuleProfileRequest": {
         "properties": {

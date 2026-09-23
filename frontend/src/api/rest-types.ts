@@ -577,6 +577,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/config/runtime": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Runtime Status */
+        get: operations["runtime_status_api_v1_config_runtime_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/apply-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Plan Configuration */
+        post: operations["plan_configuration_api_v1_config_apply_plan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/plugins/{category}": {
         parameters: {
             query?: never;
@@ -871,6 +905,34 @@ export interface components {
              */
             message: string;
             data?: components["schemas"]["RecordingResponse"] | null;
+        };
+        /** ApiResponse[RuntimeConfigurationResponse] */
+        ApiResponse_RuntimeConfigurationResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["RuntimeConfigurationResponse"] | null;
+        };
+        /** ApiResponse[RuntimePlanResponse] */
+        ApiResponse_RuntimePlanResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["RuntimePlanResponse"] | null;
         };
         /** ApiResponse[SessionListResponse] */
         ApiResponse_SessionListResponse_: {
@@ -1360,6 +1422,66 @@ export interface components {
              * @description The session created/ended for this recording
              */
             session_id: string;
+        };
+        /** RuntimeConfigurationResponse */
+        RuntimeConfigurationResponse: {
+            /** Running */
+            running: boolean;
+            /** Accepted Revision */
+            accepted_revision: string | null;
+            /** Applied Revision */
+            applied_revision: string | null;
+            /** Generation */
+            generation: string | null;
+            /** Operation */
+            operation: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** RuntimePlanRequest */
+        RuntimePlanRequest: {
+            /** Bindings */
+            bindings: components["schemas"]["SelectProfileBindingRequest"][];
+            /** Expected Revision */
+            expected_revision?: string | null;
+            /** Refresh Slots */
+            refresh_slots?: string[] | null;
+            /**
+             * Include Host Settings
+             * @default false
+             */
+            include_host_settings: boolean;
+        };
+        /** RuntimePlanResponse */
+        RuntimePlanResponse: {
+            /** Plan Id */
+            plan_id: string;
+            /** Expected Revision */
+            expected_revision: string | null;
+            /** Target Revision */
+            target_revision: string;
+            /** Applied Revision */
+            applied_revision: string | null;
+            /** Generation */
+            generation: string | null;
+            /** Running */
+            running: boolean;
+            /**
+             * Strategy
+             * @enum {string}
+             */
+            strategy: "select_on_start" | "no_change" | "trial_boundary" | "module" | "rebuild";
+            /** Changed Slots */
+            changed_slots: string[];
+            /** Changed Settings */
+            changed_settings: string[];
+            /**
+             * Session Effect
+             * @enum {string}
+             */
+            session_effect: "preserve" | "continuation";
+            /** Errors */
+            errors: string[];
         };
         /** SelectModuleProfileRequest */
         SelectModuleProfileRequest: {
@@ -4965,6 +5087,158 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_ActivationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    runtime_status_api_v1_config_runtime_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_RuntimeConfigurationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    plan_configuration_api_v1_config_apply_plan_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimePlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_RuntimePlanResponse_"];
                 };
             };
             /** @description Bad request */
