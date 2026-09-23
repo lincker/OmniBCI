@@ -9,7 +9,7 @@ Accounts, cloud synchronization, and montage remain outside this implementation.
 | 1 | Reproducible bundled plugin baseline | Complete: `6a7e48f` |
 | 2 | Package/contribution identity and exact selection | Complete: `0f99740` |
 | 3 | Complete built-in manifests and capability compatibility | Complete |
-| 4 | Minimal SDK and explicit construction inputs | Pending |
+| 4 | Minimal SDK and explicit construction inputs | Complete |
 | 5 | Plugin-owned schemas, defaults, and validation | Pending |
 | 6 | Versioned profiles, ordered bindings, and activation snapshots | Pending |
 | 7 | Recoverable legacy configuration migration | Pending |

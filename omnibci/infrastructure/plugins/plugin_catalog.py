@@ -145,7 +145,7 @@ MANIFEST_NAME = "manifest.toml"
 VALID_CATEGORIES = frozenset({
     "paradigm", "decoder", "acquisition", "effector", "trigger", "filter", "epoch_detector",
 })
-SUPPORTED_API_VERSIONS = frozenset({"1"})
+SUPPORTED_API_VERSIONS = frozenset({"1", "2"})
 
 RootProvider = Callable[[], list[PluginRoot]]
 

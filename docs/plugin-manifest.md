@@ -30,7 +30,7 @@ display_name = "Example Trigger"
 ```
 
 - `manifest_version` is the manifest format, separate from the package's code
-  `version` and plugin `api_version`. The currently supported API version is `1`.
+  `version` and plugin `api_version`. Supported API versions are `1` and `2`.
 - Package `id`, `publisher`, `version`, and `api_version` are required strings.
   Publisher and package ID form the case-sensitive identity `publisher.id`.
 - Package and contribution IDs, and publishers, begin with an ASCII letter or
@@ -106,4 +106,18 @@ Bundled packages now use v2 manifests. Scan45 declares acquisition and Windows
 parallel trigger contributions independently. Epoch detection and baseline
 correction also have explicit entrypoints. Classic40's metadata describes its
 existing 240 stimulus frames at 60 Hz (four seconds); no rendering timing changed.
-Profile storage, SDK constructors, and runtime selection wiring are separate steps.
+Profile storage and runtime selection wiring are separate steps.
+
+## SDK and construction API
+
+API `2` implementations import their ports from `omnibci.sdk` and accept exactly
+the keyword inputs `parameters` and `context`. The host copies parameters and
+supplies a frozen, pickle-safe `PluginContext` containing sample rate, channel
+names, configuration revision, and the selected package's resource directory.
+Context contains metadata, not global settings or live service objects.
+The class implements its domain port; a registry decorator and `plugin_type`
+attribute are no longer required. The manifest owns its selection identity.
+
+API `1` keeps its existing constructor arguments and alias checks. Constructor
+errors never cause a retry using a different API. Bundled implementations remain
+API `1` until their explicit input migration is complete.
