@@ -645,6 +645,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/plugin-packages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Packages */
+        get: operations["list_packages_api_v1_plugin_packages_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plugin-packages/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Install Package */
+        post: operations["install_package_api_v1_plugin_packages_install_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/plugins/{category}": {
         parameters: {
             query?: never;
@@ -856,6 +890,20 @@ export interface components {
             message: string;
             data?: components["schemas"]["ModuleProfileResponse"] | null;
         };
+        /** ApiResponse[PackageInstallationResponse] */
+        ApiResponse_PackageInstallationResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["PackageInstallationResponse"] | null;
+        };
         /** ApiResponse[ParadigmsResponse] */
         ApiResponse_ParadigmsResponse_: {
             /**
@@ -1037,6 +1085,21 @@ export interface components {
              */
             message: string;
             data?: components["schemas"]["TrialResponse"] | null;
+        };
+        /** ApiResponse[list[PackageVersionResponse]] */
+        ApiResponse_list_PackageVersionResponse__: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            /** Data */
+            data?: components["schemas"]["PackageVersionResponse"][] | null;
         };
         /** ApiResponse[list[PluginConfigurationResponse]] */
         ApiResponse_list_PluginConfigurationResponse__: {
@@ -1254,6 +1317,56 @@ export interface components {
             parameters: {
                 [key: string]: unknown;
             };
+        };
+        /** PackageContributionResponse */
+        PackageContributionResponse: {
+            selection: components["schemas"]["PluginSelectionResponse"];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector";
+            /** Label */
+            label: string;
+            /** Available */
+            available: boolean;
+        };
+        /** PackageInstallationResponse */
+        PackageInstallationResponse: {
+            package: components["schemas"]["PackageVersionResponse"];
+            /** Already Installed */
+            already_installed: boolean;
+        };
+        /** PackageReferenceResponse */
+        PackageReferenceResponse: {
+            /** Scope */
+            scope: string;
+            /** Identifier */
+            identifier: string;
+            selection: components["schemas"]["PluginSelectionResponse"];
+        };
+        /** PackageVersionResponse */
+        PackageVersionResponse: {
+            /** Package Id */
+            package_id: string;
+            /** Version */
+            version: string;
+            /** Label */
+            label: string;
+            /** Description */
+            description: string | null;
+            /** Sha256 */
+            sha256: string | null;
+            /** Contributions */
+            contributions: components["schemas"]["PackageContributionResponse"][];
+            /** Enabled */
+            enabled: boolean;
+            /** Available */
+            available: boolean;
+            /** Error */
+            error: string | null;
+            /** References */
+            references?: components["schemas"]["PackageReferenceResponse"][];
         };
         /**
          * ParadigmInfo
@@ -5475,6 +5588,159 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_RuntimeOperationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_packages_api_v1_plugin_packages_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_PackageVersionResponse__"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    install_package_api_v1_plugin_packages_install_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/zip": string;
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PackageInstallationResponse_"];
                 };
             };
             /** @description Bad request */

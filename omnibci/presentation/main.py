@@ -33,7 +33,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from omnibci.presentation.routers import engine, acquisition, stimulation, session, recording, config, plugins
-from omnibci.presentation.routers import module_config, plugin_config, runtime_config
+from omnibci.presentation.routers import module_config, plugin_config, runtime_config, plugin_packages
 from omnibci.presentation.websockets.results import results_broadcaster, results_ws_endpoint
 from omnibci.bootstrap import build_container, register_engine_listeners
 from omnibci.presentation.errors import register_exception_handlers
@@ -77,6 +77,7 @@ async def lifespan(app: FastAPI):
     app.state.session_service = container.session_service
     app.state.recording_service = container.recording_service
     app.state.config_service = container.config_service
+    app.state.plugin_installation_service = container.plugin_installation_service
 
     results_broadcaster.set_loop(asyncio.get_running_loop())
     # Heartbeat: reaps dead WS connections during idle periods and lets the
@@ -136,6 +137,7 @@ def create_app() -> FastAPI:
     app.include_router(module_config.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(plugin_config.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(runtime_config.router, prefix=prefix, responses=ERROR_RESPONSES)
+    app.include_router(plugin_packages.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(plugins.router, prefix=prefix, responses=ERROR_RESPONSES)
 
     @app.websocket("/api/v1/ws/results")

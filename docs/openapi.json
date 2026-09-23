@@ -4502,6 +4502,185 @@
         }
       }
     },
+    "/api/v1/plugin-packages": {
+      "get": {
+        "tags": [
+          "Plugin packages"
+        ],
+        "summary": "List Packages",
+        "operationId": "list_packages_api_v1_plugin_packages_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_PackageVersionResponse__"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugin-packages/install": {
+      "post": {
+        "tags": [
+          "Plugin packages"
+        ],
+        "summary": "Install Package",
+        "operationId": "install_package_api_v1_plugin_packages_install_post",
+        "requestBody": {
+          "content": {
+            "application/zip": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PackageInstallationResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/plugins/{category}": {
       "get": {
         "tags": [
@@ -4980,6 +5159,32 @@
         "type": "object",
         "title": "ApiResponse[ModuleProfileResponse]"
       },
+      "ApiResponse_PackageInstallationResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PackageInstallationResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[PackageInstallationResponse]"
+      },
       "ApiResponse_ParadigmsResponse_": {
         "properties": {
           "success": {
@@ -5317,6 +5522,36 @@
         },
         "type": "object",
         "title": "ApiResponse[TrialResponse]"
+      },
+      "ApiResponse_list_PackageVersionResponse__": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PackageVersionResponse"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[PackageVersionResponse]]"
       },
       "ApiResponse_list_PluginConfigurationResponse__": {
         "properties": {
@@ -5831,6 +6066,165 @@
           "parameters"
         ],
         "title": "ModuleProfileResponse"
+      },
+      "PackageContributionResponse": {
+        "properties": {
+          "selection": {
+            "$ref": "#/components/schemas/PluginSelectionResponse"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "acquisition",
+              "decoder",
+              "epoch_detector",
+              "filter",
+              "paradigm",
+              "trigger",
+              "effector"
+            ],
+            "title": "Kind"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          }
+        },
+        "type": "object",
+        "required": [
+          "selection",
+          "kind",
+          "label",
+          "available"
+        ],
+        "title": "PackageContributionResponse"
+      },
+      "PackageInstallationResponse": {
+        "properties": {
+          "package": {
+            "$ref": "#/components/schemas/PackageVersionResponse"
+          },
+          "already_installed": {
+            "type": "boolean",
+            "title": "Already Installed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "package",
+          "already_installed"
+        ],
+        "title": "PackageInstallationResponse"
+      },
+      "PackageReferenceResponse": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "title": "Scope"
+          },
+          "identifier": {
+            "type": "string",
+            "title": "Identifier"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/PluginSelectionResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope",
+          "identifier",
+          "selection"
+        ],
+        "title": "PackageReferenceResponse"
+      },
+      "PackageVersionResponse": {
+        "properties": {
+          "package_id": {
+            "type": "string",
+            "title": "Package Id"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "contributions": {
+            "items": {
+              "$ref": "#/components/schemas/PackageContributionResponse"
+            },
+            "type": "array",
+            "title": "Contributions"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/components/schemas/PackageReferenceResponse"
+            },
+            "type": "array",
+            "title": "References"
+          }
+        },
+        "type": "object",
+        "required": [
+          "package_id",
+          "version",
+          "label",
+          "description",
+          "sha256",
+          "contributions",
+          "enabled",
+          "available",
+          "error"
+        ],
+        "title": "PackageVersionResponse"
       },
       "ParadigmInfo": {
         "properties": {

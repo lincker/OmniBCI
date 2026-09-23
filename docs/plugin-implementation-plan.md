@@ -26,7 +26,7 @@ Accounts, cloud synchronization, and montage remain outside this implementation.
 | 18 | Trial-boundary and module-local configuration updates | Complete |
 | 19 | Running-system Save/Apply UI | Complete |
 | 20 | Cross-platform and end-to-end validation | Complete |
-| 21 | Offline package installation | Pending |
+| 21 | Offline package installation | Complete |
 | 22 | Enable, upgrade, rollback, and uninstall lifecycle | Pending |
 | 23 | Static online repository and verified download | Pending |
 | 24 | Market UI and end-to-end installation flow | Pending |

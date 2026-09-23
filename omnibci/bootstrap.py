@@ -16,6 +16,7 @@ from omnibci.application.services.plugin_profile_service import PluginProfileSer
 from omnibci.application.services.plugin_config_migration import LegacyPluginConfigMigration
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
+from omnibci.application.services.plugin_installation_service import PluginInstallationService
 from omnibci.application.plugin_profiles import PluginProfileValidationError
 from omnibci.domain.repositories import SessionRepository
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
@@ -24,6 +25,7 @@ from omnibci.infrastructure.repositories.config_profile_repository import TomlCo
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.plugin_catalog import list_plugins
+from omnibci.infrastructure.plugins.package_store import DirectoryPluginPackageStore
 from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
 from omnibci.infrastructure.actuation.process_manager import ActuationProcessManager
 
@@ -52,6 +54,7 @@ class AppContainer:
     config_service: "ConfigService | None" = None
     plugin_profile_service: "PluginProfileService | None" = None
     runtime_configuration: "RuntimeConfigurationService | None" = None
+    plugin_installation_service: "PluginInstallationService | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +199,9 @@ async def build_container() -> AppContainer:
         executor=RuntimeApplyCoordinator(engine_service, plugin_profiles, container.acquisition_service,
                                           container.session_service, container.stimulation_service,
                                           container.command_results),
+    )
+    container.plugin_installation_service = PluginInstallationService(
+        DirectoryPluginPackageStore(), admission_guard=engine_service.admission.transition,
     )
     return container
 
