@@ -14,6 +14,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Type, TypeVar
 
+from omnibci.application.plugin_schema import validate_parameters
 from omnibci.infrastructure.plugins.descriptors import PluginDescriptor
 from omnibci.infrastructure.plugins.registry import isolated_registry
 from omnibci.sdk import PluginContext
@@ -247,6 +248,10 @@ class PluginLoader:
                     raise ValueError("context must be a PluginContext")
                 # JSON roundtrip prevents plugin mutations from reaching host state
                 # and rejects non-finite or non-serializable constructor values.
+                if descriptor.configuration_schema is not None:
+                    kwargs["parameters"] = validate_parameters(
+                        dict(descriptor.configuration_schema), kwargs["parameters"],
+                    )
                 kwargs = {
                     "parameters": json.loads(json.dumps(kwargs["parameters"], allow_nan=False)),
                     "context": replace(kwargs["context"], resource_root=str(descriptor.location)),

@@ -11,6 +11,7 @@ Executable loading remains isolated in :mod:`plugins.loader`.
 from __future__ import annotations
 
 import logging
+import json
 import os
 import re
 from collections import defaultdict
@@ -21,6 +22,8 @@ from typing import TYPE_CHECKING, Callable, Iterable, Literal, Optional
 
 import omnibci
 import tomlkit
+
+from omnibci.application.plugin_schema import validate_schema
 
 from omnibci.infrastructure.plugins.descriptors import (
     PluginDescriptor,
@@ -511,6 +514,7 @@ def _parse_contributions(
         controls = _table(contribution, "controls", manifest_path)
         if any(not isinstance(value, Mapping) for value in controls.values()):
             raise PluginManifestError(f"{manifest_path}: contribution controls must be TOML tables")
+        configuration_schema, configuration_version = _configuration(contribution, package_dir)
         descriptors.append(PluginDescriptor(
             package=metadata,
             contribution_id=identifier,
@@ -528,8 +532,44 @@ def _parse_contributions(
             params=_table(contribution, "params", manifest_path),
             controls={key: dict(value) for key, value in controls.items()},
             platforms=_platforms(contribution, manifest_path),
+            configuration_schema=configuration_schema,
+            configuration_version=configuration_version,
         ))
     return tuple(descriptors)
+
+
+def _configuration(contribution: Mapping, package_dir: Path) -> tuple[dict | None, int | None]:
+    declaration = contribution.get("configuration")
+    if declaration is None:
+        return None, None
+    try:
+        if not isinstance(declaration, Mapping) or set(declaration) != {"schema", "schema_version"}:
+            raise ValueError("configuration requires schema and schema_version")
+        version = declaration["schema_version"]
+        if type(version) is not int or version < 1:
+            raise ValueError("configuration.schema_version must be a positive integer")
+        name = declaration["schema"]
+        if (not isinstance(name, str) or not name or "\\" in name
+                or ":" in name or Path(name).is_absolute() or ".." in Path(name).parts):
+            raise ValueError("configuration.schema must be a relative package path")
+        path = package_dir / name
+        if path.resolve() != path or not path.resolve().is_relative_to(package_dir.resolve()):
+            raise ValueError("configuration.schema must not traverse symlinks")
+        if path.stat().st_size > 1024 * 1024:
+            raise ValueError("configuration schema exceeds 1 MiB")
+        schema = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_json_object)
+        return validate_schema(schema), version
+    except (OSError, ValueError, RecursionError) as exc:
+        raise PluginManifestError(f"{package_dir / MANIFEST_NAME}: invalid configuration: {exc}") from exc
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate JSON key: {key}")
+        result[key] = value
+    return result
 
 
 def _platforms(table: Mapping, manifest_path: Path) -> tuple[str, ...]:

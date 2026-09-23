@@ -1,0 +1,26 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "window_duration": {
+      "type": "number",
+      "title": "Decode window (seconds)",
+      "default": 3.0,
+      "x-scope": "portable",
+      "x-apply": "trial",
+      "minimum": 0.001
+    },
+    "offset_time": {
+      "type": "number",
+      "title": "Trigger offset (seconds)",
+      "default": 0.14,
+      "x-scope": "portable",
+      "x-apply": "trial",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "window_duration",
+    "offset_time"
+  ]
+}

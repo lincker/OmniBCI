@@ -15,3 +15,7 @@ plugin_type = "logger"
 entrypoint = "effector:LogEffector"
 display_name = "Log Effector"
 description = "Hardware-free effector that logs each actuation command — end-to-end smoke testing without a device."
+
+[contributions.configuration]
+schema = "default.schema.json"
+schema_version = 1

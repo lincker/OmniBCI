@@ -14,3 +14,7 @@ kind = "filter"
 plugin_type = "BASELINE_CORRECTION"
 entrypoint = "baseline_correction:BaselineCorrection"
 display_name = "Baseline Correction"
+
+[contributions.configuration]
+schema = "default.schema.json"
+schema_version = 1

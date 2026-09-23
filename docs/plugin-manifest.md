@@ -47,6 +47,15 @@ display_name = "Example Trigger"
 - Optional `display_name`, `description`, `params`, and `controls` belong to
   each contribution. `params` remains read-only display metadata; `controls`
   retains the existing trial-control convention. Neither is a Profile schema.
+- `configuration = {schema = "default.schema.json", schema_version = 1}`
+  references plugin-owned configuration data. The file must stay inside the
+  package, cannot traverse symlinks, and is limited to 1 MiB. Its positive
+  schema version is separate from the package and manifest versions.
+  Discovery validates the [supported Schema subset](plugin-configuration-schema.md)
+  and defaults without importing Python or resolving external references.
+  API 2 construction validates parameters and inserts declared defaults before
+  executing the selected plugin. A missing schema means no editable profile
+  contract; legacy packages can still be discovered.
 - Execution fields such as `kind`, `plugin_type`, and `entrypoint` must not
   appear at package level in v2. A malformed contribution invalidates the entire
   package; the catalog does not expose a partially valid package.

@@ -43,3 +43,7 @@ default = 1
 min = 0
 max = 40
 field = "trial_params"
+
+[contributions.configuration]
+schema = "default.schema.json"
+schema_version = 1

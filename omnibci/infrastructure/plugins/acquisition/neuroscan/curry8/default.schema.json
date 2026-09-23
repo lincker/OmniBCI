@@ -1,0 +1,45 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "DATA_PROVIDER_IP": {
+      "type": "string",
+      "title": "Device host",
+      "default": "127.0.0.1",
+      "x-scope": "machine",
+      "x-apply": "module",
+      "minLength": 1
+    },
+    "DATA_PROVIDER_PORT": {
+      "type": "integer",
+      "title": "TCP port",
+      "default": 4455,
+      "x-scope": "machine",
+      "x-apply": "module",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "sample_rate": {
+      "type": "integer",
+      "title": "Sample rate (Hz)",
+      "default": 1000,
+      "x-scope": "portable",
+      "x-apply": "module",
+      "minimum": 1
+    },
+    "channel_number": {
+      "type": "integer",
+      "title": "Output channels including event row",
+      "default": 10,
+      "x-scope": "portable",
+      "x-apply": "module",
+      "minimum": 2
+    }
+  },
+  "required": [
+    "DATA_PROVIDER_IP",
+    "DATA_PROVIDER_PORT",
+    "sample_rate",
+    "channel_number"
+  ]
+}

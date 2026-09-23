@@ -14,3 +14,7 @@ kind = "epoch_detector"
 plugin_type = "DEFAULT_EPOCH_DETECTOR"
 entrypoint = "detector:DefaultEpochDetector"
 display_name = "Default Epoch Detector"
+
+[contributions.configuration]
+schema = "default.schema.json"
+schema_version = 1

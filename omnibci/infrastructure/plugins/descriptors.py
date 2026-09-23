@@ -122,6 +122,9 @@ class PluginDescriptor:
     controls: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     platforms: tuple[str, ...] = ()
 
+    configuration_schema: Mapping[str, Any] | None = None
+    configuration_version: int | None = None
+
     def supports_platform(self, platform_name: str) -> bool:
         """Both package and contribution constraints must permit the host."""
         return (not self.package.platforms or platform_name in self.package.platforms) and (
