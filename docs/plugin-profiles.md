@@ -5,6 +5,30 @@ Profiles use format version 2 and identify an exact package, contribution, and
 version. Each saved edit increments the profile revision. A stale revision is a
 conflict and cannot overwrite a newer edit.
 
+## Web console
+
+In Setup, choose the module role, then **Plugin and version**, then **Profile**.
+The profile selector and sidebar show only profiles for that exact contribution
+and version. Installed managed packages must be enabled in Extensions before
+they appear; bundled plugins are available directly.
+
+**New profile** starts with the selected plugin's defaults. **Duplicate profile**
+saves an independent named copy of the displayed parameters. Browsing another
+plugin or profile does not select it for execution, and **Save profile** only
+persists its values. Use **Review and apply profile** to change the selected
+configuration. The module summary distinguishes the configuration selected for
+the next start from a running configuration whose revision has been acknowledged.
+
+Processing separates Decoder, Epoch detector, and the ordered Filter chain. Each
+filter instance selects its own plugin and profile. Browsing or saving another
+profile preserves pending filter order; applying the chain is a separate action.
+
+For Scan45, `channel_number` is the total number of channels in each incoming
+sample, including the final event channel. The default is 10 (9 EEG + 1 event),
+and any integer of at least 2 is accepted. For 32 EEG channels and one event
+channel, enter 33. This value must match the device's stream; the driver does not
+automatically discover its channel layout.
+
 ## Local storage
 
 Storage shares the existing configuration root: `OMNIBCI_CONFIG_DIR` when set,
@@ -22,9 +46,9 @@ The operating-system lock is released if a writer process exits. Legacy
 
 Bindings copy the selected profile's version, parameters, and schema version.
 Editing a selected profile does not mutate the accepted copy. A new selection
-must be explicitly accepted, with the previous activation revision. The initial
-service permits acceptance only while the engine is idle; the runtime application
-coordinator will later commit acceptance after workers acknowledge the change.
+must be explicitly accepted, with the previous activation revision. While the
+engine runs, the runtime application coordinator commits acceptance after workers
+acknowledge the change.
 
 Fixed slots are `acquisition.source`, `processing.decoder`,
 `processing.epoch_detector`, `stimulation.paradigm`, `stimulation.trigger`, and

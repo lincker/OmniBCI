@@ -1,4 +1,8 @@
 .plugin-profiles { min-height: 0; }
+.plugin-profiles .profile-tools { padding: 8px 14px 14px; flex-wrap: wrap; }
+.plugin-profiles .binding-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 28px; font-size: 12px; border-bottom: 1px solid var(--border-soft); }
+.plugin-profiles .binding-summary button { font-size: 12px; }
+.plugin-profiles .filter-chain .setting-label { display: block; margin: 8px 0 4px; }
 .plugin-profiles .schema-group { border: 1px solid var(--border-soft); border-radius: 3px; margin: 0 0 16px; padding: 12px; min-width: 0; }
 .plugin-profiles .schema-group legend { color: var(--heading); font-size: 13px; padding: 0 5px; }
 .plugin-profiles .schema-group > .setting-description { font-size: 12px; }
