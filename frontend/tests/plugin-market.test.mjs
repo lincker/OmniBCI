@@ -15,11 +15,11 @@ globalThis.window = { location: { hash: "#extensions" }, localStorage: { getItem
 Object.defineProperty(globalThis, "localStorage", { configurable: true, value: window.localStorage });
 const render = (component, props) => renderToStaticMarkup(React.createElement(component, props));
 
-test("Extensions hash opens the library and retains the global configuration status", () => {
+test("Extensions hash opens the library without a routine configuration status bar", () => {
   const html = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(App)));
   assert.match(html, /aria-label="Extensions"[^>]*aria-current="page"/);
   assert.match(html, /<h1>Installed plugins<\/h1>/);
-  assert.match(html, /aria-label="Configuration status"/);
+  assert.doesNotMatch(html, /aria-label="Configuration status"|Configuration details/);
   assert.match(html, /aria-label="Plugin library"/);
   assert.match(html, /Open Setup/);
   assert.doesNotMatch(html, /<h1>New profile<\/h1>/);

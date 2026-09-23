@@ -9,22 +9,14 @@ const strategies = {
   module: "Pause and restart affected modules",
   rebuild: "Pause and rebuild the engine",
 };
-const labels = { queued: "Waiting", applying: "Applying", succeeded: "Applied",
-  failed: "Failed", recovery_required: "Recovery required" };
 const revision = (value: string | null | undefined) => value ? value.slice(0, 12) : "None";
 
 export function RuntimeConfigurationStatus({ runtime }: { runtime: RuntimeConfiguration }) {
   const operation = runtime.operation;
-  const operationLabel = operation?.status === "succeeded" && operation.result?.outcome === "selected"
-    ? "Selected for next start" : operation ? labels[operation.status] : "";
+  if (!operation?.error && !runtime.recoveryRequired && !runtime.error
+      && !runtime.requestError && !runtime.uncertain) return null;
   return <section className="configuration-status" aria-label="Configuration status" aria-live="polite">
-    <div className="configuration-revisions">
-      <span>Selected <code title={runtime.status?.accepted_revision ?? ""}>{revision(runtime.status?.accepted_revision)}</code></span>
-      <span>Applied <code title={runtime.status?.applied_revision ?? ""}>{revision(runtime.status?.applied_revision)}</code></span>
-      {operation && <strong>{operationLabel} · {operation.stage.replace(/_/g, " ")}</strong>}
-      {!runtime.status && <span>Checking configuration…</span>}
-      {runtime.uncertain && <strong>Confirming operation result…</strong>}
-    </div>
+    {runtime.uncertain && <p>Confirming operation result…</p>}
     {operation?.error && <p role="alert">{operation.error}{operation.rolled_back && " Previous configuration restored."}</p>}
     {runtime.recoveryRequired && <p role="alert">Recovery is required. Only stop controls are available; inspect the reported failure before restarting.</p>}
     {(runtime.error || runtime.requestError) && <p role="alert">{runtime.requestError ?? runtime.error}</p>}

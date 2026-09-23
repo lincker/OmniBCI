@@ -50,29 +50,41 @@ for (const [field, value] of [["accepted_revision", "changed"], ["applied_revisi
   });
 }
 
-test("operation status distinguishes selected and applied revisions and reports recovery", () => {
+test("configuration feedback retains errors and recovery without revision details", () => {
   const runtime = { ...baseRuntime, recoveryRequired: true,
     status: { ...status, accepted_revision: "selected-new", applied_revision: "applied-old" },
     operation: { status: "recovery_required", stage: "rollback", error: "Module acknowledgement is missing", rolled_back: false } };
   const html = render(RuntimeConfigurationStatus, { runtime });
-  assert.match(html, /Selected <code title="selected-new"/);
-  assert.match(html, /Applied <code title="applied-old"/);
+  assert.doesNotMatch(html, /selected-new|applied-old|Configuration details|<details/);
   assert.match(html, /Only stop controls are available/);
   assert.match(html, /Module acknowledgement is missing/);
   const uncertain = render(RuntimeConfigurationStatus, { runtime: { ...baseRuntime, uncertain: true } });
+  assert.match(uncertain, /Confirming operation result…/);
   assert.match(uncertain, /Check or retry the same operation/);
+  const failed = render(RuntimeConfigurationStatus, { runtime: { ...baseRuntime,
+    operation: { status: "failed", stage: "rolling_back", error: "Update failed.", rolled_back: true } } });
+  assert.match(failed, /Update failed\. Previous configuration restored\./);
+  const unavailable = render(RuntimeConfigurationStatus, { runtime: { ...baseRuntime, error: "Connection lost" } });
+  assert.match(unavailable, /Connection lost/);
+  assert.equal(buttonDisabled(unavailable, "Refresh status"), false);
+  const rejected = render(RuntimeConfigurationStatus, { runtime: { ...baseRuntime, requestError: "Review again" } });
+  assert.match(rejected, /Review again/);
 });
 
-test("select-on-start success is distinguished from an applied runtime change", () => {
-  const operation = { status: "succeeded", stage: "complete", result: { outcome: "selected" } };
-  const selected = render(RuntimeConfigurationStatus, { runtime: { ...baseRuntime,
-    status: { ...status, running: false, applied_revision: null }, operation } });
-  assert.match(selected, /Selected for next start · complete/);
-  assert.match(selected, /Applied <code title="">None/);
-  assert.doesNotMatch(selected, /<strong>Applied · complete/);
-  const applied = render(RuntimeConfigurationStatus, { runtime: { ...baseRuntime,
-    operation: { ...operation, result: { outcome: "applied" } } } });
-  assert.match(applied, /<strong>Applied · complete/);
+test("routine configuration states render no status bar or revision details", () => {
+  for (const overrides of [
+    {},
+    { status: null },
+    { status: { ...status, running: false, applied_revision: null } },
+    { status: { ...status, applied_revision: "older-configuration" } },
+    { status: { ...status, running: false, accepted_revision: null, applied_revision: null } },
+    { operation: { status: "queued", stage: "queued" } },
+    { operation: { status: "applying", stage: "waiting_for_trial_boundary" } },
+    { operation: { status: "succeeded", stage: "complete", result: { outcome: "selected" } } },
+    { operation: { status: "succeeded", stage: "complete", result: { outcome: "applied" } } },
+  ]) {
+    assert.equal(render(RuntimeConfigurationStatus, { runtime: { ...baseRuntime, ...overrides } }), "");
+  }
 });
 
 test("Run preserves system progress and permits stop controls only after an operation settles", () => {

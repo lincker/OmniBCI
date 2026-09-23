@@ -1,6 +1,4 @@
 .configuration-status { flex: none; padding: 9px 24px; border-bottom: 1px solid var(--border-soft); background: var(--sidebar-bg); font-size: 12px; }
-.configuration-revisions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 22px; }
-.configuration-revisions code { margin-left: 5px; color: var(--muted); }
 .configuration-status p { margin: 7px 0; line-height: 1.5; }
 .configuration-status [role="alert"] { color: var(--err); }
 .configuration-review { width: min(620px, calc(100vw - 32px)); }
