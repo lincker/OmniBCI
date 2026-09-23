@@ -11,7 +11,7 @@ Accounts, cloud synchronization, and montage remain outside this implementation.
 | 3 | Complete built-in manifests and capability compatibility | Complete |
 | 4 | Minimal SDK and explicit construction inputs | Complete |
 | 5 | Plugin-owned schemas, defaults, and validation | Complete |
-| 6 | Versioned profiles, ordered bindings, and activation snapshots | Pending |
+| 6 | Versioned profiles, ordered bindings, and activation snapshots | Complete |
 | 7 | Recoverable legacy configuration migration | Pending |
 | 8 | Explicit Acquisition loading and parameters | Pending |
 | 9 | Explicit Processing loading and parameters | Pending |

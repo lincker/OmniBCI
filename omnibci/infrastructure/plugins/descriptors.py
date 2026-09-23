@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from omnibci.application.plugin_profiles import PluginSelection
+
 
 @dataclass(frozen=True, slots=True)
 class PluginEntrypoint:
@@ -46,26 +48,6 @@ class PluginEntrypoint:
 
     def __str__(self) -> str:
         return f"{self.module}:{self.attribute}"
-
-
-@dataclass(frozen=True, slots=True)
-class PluginSelection:
-    """An exact capability selection; None means an unversioned legacy package.
-
-    A missing version never means "latest" or permits another version.
-    """
-
-    package_id: str
-    contribution_id: str
-    version: str | None
-
-    def __post_init__(self) -> None:
-        for name in ("package_id", "contribution_id", "version"):
-            value = getattr(self, name)
-            if name == "version" and value is None:
-                continue
-            if not isinstance(value, str) or not value or value != value.strip():
-                raise ValueError(f"{name} must be a non-empty, trimmed string")
 
 
 @dataclass(frozen=True, slots=True)
