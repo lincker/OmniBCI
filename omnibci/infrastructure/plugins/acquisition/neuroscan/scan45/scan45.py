@@ -158,6 +158,7 @@ class Scan45DataReader(SignalSource):
         # self.info = None
         self.reader = None
         self.writer = None
+        self._pending_header = None
         self._previous_event = 0 # the integer events position
         self._packets_counter = 0
 
@@ -176,6 +177,7 @@ class Scan45DataReader(SignalSource):
     # TODO: refactor the return values
     async def _connect(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         print("connect to ", self.data_provider_ip, self.data_provider_port)
+        self._pending_header = None
         self.reader, self.writer = await asyncio.open_connection(self.data_provider_ip, self.data_provider_port)
         print("connected")
         return self.reader, self.writer
@@ -190,7 +192,8 @@ class Scan45DataReader(SignalSource):
         return True
 
     async def _disconnect(self):
-        self.writer.disconnect()
+        self._pending_header = None
+        self.writer.close()
         await self.writer.wait_closed()
 
     async def get_metadata(self):
@@ -234,12 +237,19 @@ class Scan45DataReader(SignalSource):
             raise Exception('header indicates body does not contain data, not implemented')
 
     async def _load_package(self):
-        header_bytes = await self.reader.readexactly(scan45_message_manager.Header.HEADER_SIZE)
-        # header = np.frombuffer(header, dtype=np.uint8)
-        header = scan45_message_manager.Header.create_from_bytes(header_bytes=header_bytes)
+        reader = self.reader
+        if self._pending_header is None or self._pending_header[0] is not reader:
+            self._pending_header = None
+            header_bytes = await reader.readexactly(scan45_message_manager.Header.HEADER_SIZE)
+            header = scan45_message_manager.Header.create_from_bytes(header_bytes=header_bytes)
+            # readexactly retains a partial body if cancellation pauses the stream.
+            self._pending_header = (reader, header)
+        else:
+            header = self._pending_header[1]
         if header.size_body == 0:
             print("body size is 0")
-        body = await self.reader.readexactly(header.size_body)
+        body = await reader.readexactly(header.size_body)
+        self._pending_header = None
         # TODO； check body data type
         return header, body
 

@@ -217,6 +217,7 @@ class Curry8DataReader(SignalSource):
         self.timeout = timeout
         self.reader: asyncio.StreamReader | None = None
         self.writer: asyncio.StreamWriter | None = None
+        self._pending_header: tuple[asyncio.StreamReader, Curry8Header] | None = None
         self._protocol_version: int | None = None
         self._metadata: Curry8Metadata | None = None
         self._pending_events: list[Curry8Event] = []
@@ -232,6 +233,7 @@ class Curry8DataReader(SignalSource):
             return True
         self._protocol_version = None
         self._metadata = None
+        self._pending_header = None
         try:
             self.reader, self.writer = await asyncio.wait_for(
                 asyncio.open_connection(
@@ -414,15 +416,23 @@ class Curry8DataReader(SignalSource):
         await self.writer.drain()
 
     async def _read_packet(self) -> tuple[Curry8Header, bytes]:
-        if self.reader is None:
+        reader = self.reader
+        if reader is None:
             raise ConnectionError("CURRY NetStreaming socket is not connected")
-        raw_header = await self.reader.readexactly(Curry8Header.SIZE)
-        header = Curry8Header.from_bytes(raw_header)
-        if header.body_size > self.MAX_BODY_SIZE:
-            raise Curry8ProtocolError(
-                f"CURRY packet body is too large: {header.body_size} bytes"
-            )
-        body = await self.reader.readexactly(header.body_size)
+        if self._pending_header is None or self._pending_header[0] is not reader:
+            self._pending_header = None
+            raw_header = await reader.readexactly(Curry8Header.SIZE)
+            header = Curry8Header.from_bytes(raw_header)
+            if header.body_size > self.MAX_BODY_SIZE:
+                raise Curry8ProtocolError(
+                    f"CURRY packet body is too large: {header.body_size} bytes"
+                )
+            # Retain framing until readexactly finishes, including cancellation.
+            self._pending_header = (reader, header)
+        else:
+            header = self._pending_header[1]
+        body = await reader.readexactly(header.body_size)
+        self._pending_header = None
         return header, body
 
     def _handle_control(self, header: Curry8Header) -> None:
@@ -531,6 +541,7 @@ class Curry8DataReader(SignalSource):
 
     async def _close_writer(self) -> None:
         writer = self.writer
+        self._pending_header = None
         self.reader = None
         self.writer = None
         if writer is None:
