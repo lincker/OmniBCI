@@ -224,7 +224,8 @@ class NeuroEngineService(EnginePort):
         async with self._lifecycle_lock:
             with self._configuration_transition():
                 await self._stop_engine_locked(cmd)
-                self._admission.clear_quarantine()
+                if not self._restart_blocked:
+                    self._admission.clear_quarantine()
 
     @contextmanager
     def _configuration_transition(self):
@@ -255,7 +256,7 @@ class NeuroEngineService(EnginePort):
         self._accepting_commands = False
         if self._engine is None:
             return
-        if not self._running and (
+        if not self._running and not self._restart_blocked and (
             self._engine_thread is None or not self._engine_thread.is_alive()
         ):
             return
@@ -380,6 +381,16 @@ class NeuroEngineService(EnginePort):
             snapshot["CONFIG.generation"] = self.generation
             self._applied_snapshot = snapshot
             self._graph_snapshot = deepcopy(snapshot)
+
+    async def restart_actuation_for_configuration(self, snapshot: dict):
+        if not self._admission.is_transition_owner:
+            raise RuntimeError("A runtime transition must own output replacement")
+        if self._actuation_manager is None:
+            if snapshot.get("ACTUATION.enabled", False):
+                raise RuntimeError("No managed Actuation process is available")
+            return
+        await asyncio.to_thread(self._actuation_manager.stop)
+        await asyncio.to_thread(self._actuation_manager.start, settings_snapshot=deepcopy(snapshot))
 
     @property
     def is_initialized(self) -> bool:

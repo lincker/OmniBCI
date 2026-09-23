@@ -35,6 +35,16 @@ class SignalSource(ABC):
         """Whether a stopped source can resume its next undelivered sample."""
         return False
 
+    @property
+    def resume_without_checkpoint_safe(self) -> bool:
+        """Whether start after stop/reconnect never replays delivered samples.
+
+        Live sources may opt in when their protocol starts current acquisition
+        without a seek or replay operation. A pause may still lose live samples;
+        this capability does not promise gap-free acquisition.
+        """
+        return False
+
     def checkpoint(self) -> dict[str, Any]:
         """Capture a stopped source after its acquisition fetch task has joined.
 

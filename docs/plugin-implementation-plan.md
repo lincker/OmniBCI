@@ -23,7 +23,7 @@ Accounts, cloud synchronization, and montage remain outside this implementation.
 | 15 | Session continuation and file replay checkpoints | Complete |
 | 16 | Runtime application plan and status API | Complete |
 | 17 | Automatic pause, rebuild, restore, and rollback | Complete |
-| 18 | Trial-boundary and module-local configuration updates | Pending |
+| 18 | Trial-boundary and module-local configuration updates | Complete |
 | 19 | Running-system Save/Apply UI | Pending |
 | 20 | Cross-platform and end-to-end validation | Pending |
 | 21 | Offline package installation | Pending |

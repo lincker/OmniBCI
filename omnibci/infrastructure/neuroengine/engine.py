@@ -418,6 +418,7 @@ class NeuroEngine:
             EventType.EndSession:                     (proc, SignalProcessorCommand.end_session, True),
             EventType.StageProcessingConfiguration:   (proc, SignalProcessorCommand.stage_configuration, True),
             EventType.CancelProcessingConfiguration:  (proc, SignalProcessorCommand.cancel_configuration, True),
+            EventType.UpdateProcessingContext:        (proc, SignalProcessorCommand.update_context, True),
         }
 
     def _register_event_listeners(self) -> None:

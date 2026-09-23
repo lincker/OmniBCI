@@ -18,6 +18,7 @@ class EventType(IntEnum):
     StopAndDrain = 113  # acquisition stop followed by an ordered processing barrier
     StageProcessingConfiguration = 211  # stage a pipeline until the next epoch boundary
     CancelProcessingConfiguration = 212  # reconcile or cancel a staged pipeline
+    UpdateProcessingContext = 213  # acknowledge output metadata after an ordered drain
     AcquisitionState = 121  # worker -> API: authoritative device-state snapshot
                             # payload: application.events.AcquisitionSnapshot
     CommandResult = 601      # command consumer -> API: application.events.CommandResult

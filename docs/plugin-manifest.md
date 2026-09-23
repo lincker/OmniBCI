@@ -133,3 +133,30 @@ API `2`; direct legacy constructor calls remain compatible during migration.
 Paradigms receive the selected trigger through `bind_trigger()` before setup.
 Acquisition, Processing, Stimulation, and Actuation load only their selected
 entrypoints. A missing pinned selection never falls back to a legacy alias.
+
+### Signal-source resumption
+
+`SignalSource` exposes two optional capabilities, both disabled by default:
+
+- `supports_checkpoint`: `checkpoint()` captures the next undelivered sample
+  after acquisition has stopped and its fetch task has joined.
+  `restore_checkpoint(checkpoint)` stages that position for the next start.
+  Checkpoints are opaque dictionaries; an optional `source_identity` containing
+  string `resource_id` and `revision` fields distinguishes a different recording
+  from changed content at the same path. FileReader implements this contract.
+- `resume_without_checkpoint_safe`: a live driver explicitly guarantees that
+  starting after stop or reconnect never seeks back or replays samples already
+  delivered. Scan45 and Curry8 declare this capability because their start
+  commands request live network delivery. It does not promise gap-free samples,
+  uninterrupted trigger timing, or continuity across network failures.
+
+Automatic module restart or graph rebuild requires a valid checkpoint or the
+explicit live-source guarantee before it can resume an existing stream. An
+unknown source remains paused with its old session open, and requires an explicit
+engine stop before retrying the change. Decoder/filter trial-boundary changes do
+not stop the source and do not need these resumption capabilities.
+
+Headless tests cover capability receipts, command ordering, replay checkpoints,
+and conservative rejection of unknown sources. Real amplifier/network pause and
+reconnect behavior, including cancellation during partial packet reads, still
+requires hardware validation before relying on timing or sample continuity.

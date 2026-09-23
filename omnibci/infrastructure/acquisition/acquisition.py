@@ -236,7 +236,10 @@ class Acquisition:
                 if command is AcquisitionCommand.get_checkpoint:
                     supported = self.data_source.supports_checkpoint
                     data = {"supported": supported,
-                            "checkpoint": self.data_source.checkpoint() if supported else None}
+                            "checkpoint": self.data_source.checkpoint() if supported else None,
+                            "resume_without_checkpoint_safe": getattr(
+                                self.data_source, "resume_without_checkpoint_safe", False,
+                            ) is True}
                 else:
                     if not self.data_source.supports_checkpoint:
                         raise ValueError("The source does not support replay checkpoints")

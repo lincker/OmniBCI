@@ -222,6 +222,11 @@ class Curry8DataReader(SignalSource):
         self._pending_events: list[Curry8Event] = []
         self._buffered_eeg: tuple[int, np.ndarray] | None = None
 
+    @property
+    def resume_without_checkpoint_safe(self) -> bool:
+        """NetStreaming starts live EEG delivery without a replay request."""
+        return True
+
     async def connect(self) -> bool:
         if self._is_connected:
             return True

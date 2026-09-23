@@ -141,6 +141,37 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         checkpoints = [json.loads(line) for line in (tmp_path / 'restored.jsonl').read_text().splitlines()]
         assert checkpoints[0]['cursor'] > 0
 
+        # A dormant output selection still updates the pinned runtime context;
+        # acquisition/processing processes and the recording identity survive.
+        generation = engine.generation
+        worker_ids = (engine._engine.acquisition_worker.pid, engine._engine.signal_processing_worker.pid)
+        effector = profiles.create('effector', profiles.catalog.legacy('effector', 'logger').selection, 'Logger', {})
+        bindings.append({'slot':'actuation.effector', 'profile_id':effector.profile_id})
+        plan = runtime.plan(bindings, expected_revision=engine.applied_revision)
+        assert plan.strategy == 'module'
+        operation = runtime.submit(plan.plan_id, str(uuid4()))
+        await runtime.wait_for_idle()
+        result = runtime.operation(operation['operation_id'])
+        assert result['status'] == 'succeeded', result
+        assert result['result']['session_preserved'] is True
+        assert engine.generation == generation
+        assert container.session_service.active_session_id == continuation
+        assert (engine._engine.acquisition_worker.pid, engine._engine.signal_processing_worker.pid) == worker_ids
+
+        decoder = profiles.repository.get_profile(bindings[1]['profile_id'])
+        profiles.update(decoder.profile_id, name=decoder.name,
+                        parameters={**decoder.parameters, 'window_duration':2.5}, expected_revision=decoder.revision)
+        plan = runtime.plan(bindings, expected_revision=engine.applied_revision)
+        assert plan.strategy == 'trial_boundary'
+        operation = runtime.submit(plan.plan_id, str(uuid4()))
+        await runtime.wait_for_idle()
+        result = runtime.operation(operation['operation_id'])
+        assert result['status'] == 'succeeded', result
+        assert result['result']['boundary'] == 'trial'
+        assert engine.generation == generation
+        assert container.session_service.active_session_id == continuation
+        assert (engine._engine.acquisition_worker.pid, engine._engine.signal_processing_worker.pid) == worker_ids
+
         # Candidate plugin constructor fails after old data is safely drained.
         # Recovery starts a fresh graph from the old accepted inputs and cursor.
         await asyncio.sleep(.05)

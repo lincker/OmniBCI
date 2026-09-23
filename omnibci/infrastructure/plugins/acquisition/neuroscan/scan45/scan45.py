@@ -161,6 +161,11 @@ class Scan45DataReader(SignalSource):
         self._previous_event = 0 # the integer events position
         self._packets_counter = 0
 
+    @property
+    def resume_without_checkpoint_safe(self) -> bool:
+        """Scan45 starts live network delivery without seeking recorded data."""
+        return True
+
     async def connect(self) -> bool:
         # TODO: if any connections to scan4.5, disconnect it
         if not self._is_connected:

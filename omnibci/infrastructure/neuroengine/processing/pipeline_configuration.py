@@ -38,6 +38,25 @@ def _binding_content(binding):
             binding.configuration_version, binding.parameters)
 
 
+def validate_output_context(current: dict, candidate: dict) -> dict:
+    """Update output-module metadata after a drain without replacing the pipeline."""
+    before = configured_bindings(current)
+    after = configured_bindings(candidate)
+    if before is None or after is None:
+        raise ValueError("Runtime context requires pinned bindings")
+    output_kinds = {"paradigm", "trigger", "effector"}
+    if ([_binding_content(b) for b in before if b.kind not in output_kinds]
+            != [_binding_content(b) for b in after if b.kind not in output_kinds]):
+        raise ValueError("Processing or source changes require a pipeline update")
+    mirrors = {"PLUGINS.bindings", "CONFIG.revision", "STIMULATION.paradigm", "ACQUISITION.trigger", "ACTUATION.effector"}
+    if ({k: v for k, v in current.items() if k not in mirrors}
+            != {k: v for k, v in candidate.items() if k not in mirrors}):
+        raise ValueError("Host context changes require a runtime rebuild")
+    if not isinstance(candidate.get("CONFIG.revision"), str) or not candidate["CONFIG.revision"]:
+        raise ValueError("Runtime context requires a pinned revision")
+    return deepcopy(candidate)
+
+
 def _require_trial_changes(schema, before, after, inherited=None):
     if before == after:
         return

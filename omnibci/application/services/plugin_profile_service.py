@@ -89,14 +89,16 @@ class PluginProfileService:
             ))
         return ActivationSnapshot(bindings=tuple(bindings), settings=base)
 
-    def validate(self, snapshot: ActivationSnapshot, *, require_available: bool = False) -> None:
+    def validate(self, snapshot: ActivationSnapshot, *, require_available: bool = False,
+                 active_kinds: set[str] | None = None) -> None:
         for binding in snapshot.bindings:
             definition, parameters = self._parameters(
                 binding.kind, binding.selection, binding.parameters, binding.configuration_version,
             )
             if parameters != binding.parameters:
                 raise PluginSchemaError(f"{binding.slot}: snapshot must include resolved defaults")
-            if require_available and not definition.available:
+            if (require_available and (active_kinds is None or binding.kind in active_kinds)
+                    and not definition.available):
                 raise PluginSchemaError(f"{binding.slot}: unavailable on this platform")
 
     def accept(self, snapshot: ActivationSnapshot, *, expected_revision: str | None):

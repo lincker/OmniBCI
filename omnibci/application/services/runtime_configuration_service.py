@@ -77,7 +77,7 @@ class RuntimeConfigurationService:
         running = self.engine.is_engine_ready
         errors = []
         try:
-            self.profiles.validate(snapshot, require_available=True)
+            self._validate_runtime(snapshot)
         except (ValueError, KeyError) as exc:
             errors.append(str(exc))
         required = {"acquisition.source", "processing.decoder", "processing.epoch_detector",
@@ -115,8 +115,8 @@ class RuntimeConfigurationService:
             # Reject before pausing or ending the active session.
             if strategy in ("rebuild", "module"):
                 for module, affected in (
-                    ("STIMULATION", strategy == "rebuild" or any(s.startswith("stimulation.") for s in slots)),
-                    ("ACTUATION", strategy == "rebuild" or any(s.startswith("actuation.") for s in slots)),
+                    ("STIMULATION", strategy in ("rebuild", "module")),
+                    ("ACTUATION", strategy in ("rebuild", "module")),
                 ):
                     if not affected:
                         continue
@@ -155,8 +155,13 @@ class RuntimeConfigurationService:
                                  or self.engine.applied_revision != plan.applied_revision))):
             raise ProfileRevisionConflict("Runtime or selected configuration changed; create a new plan")
         # Recheck availability; installed packages may have changed since review.
-        self.profiles.validate(stored.snapshot, require_available=True)
+        self._validate_runtime(stored.snapshot)
         return stored
+
+    def _validate_runtime(self, snapshot):
+        usage = getattr(self.executor, "active_kinds", None)
+        self.profiles.validate(snapshot, require_available=True,
+                              active_kinds=usage(snapshot) if callable(usage) else None)
 
     def operation(self, operation_id: str):
         with self._lock:

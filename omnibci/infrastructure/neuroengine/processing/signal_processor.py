@@ -34,6 +34,7 @@ class SignalProcessorCommand(Enum):
     end_session = 'end_session'       # payload: session_id str
     stage_configuration = 'stage_processing_configuration'
     cancel_configuration = 'cancel_processing_configuration'
+    update_context = 'update_processing_context'
 
 
 class SignalProcessor:
@@ -263,6 +264,10 @@ class SignalProcessor:
             command, raw_payload = item, None
         request = CommandRequest.from_value(raw_payload)
         payload = request.payload if request is not None else raw_payload
+        if command == SignalProcessorCommand.update_context:
+            if request is not None:
+                self._update_output_context(request)
+            return
         if command in (SignalProcessorCommand.stage_configuration, SignalProcessorCommand.cancel_configuration):
             if request is None:
                 logger.warning("Processing configuration command requires a correlation envelope")
@@ -373,6 +378,26 @@ class SignalProcessor:
     def _configuration_receipt(self, command_id, status):
         return {"status": status, "command_id": command_id,
                 "applied_revision": self.config_revision, "generation": self.generation}
+
+    def _update_output_context(self, request):
+        from .pipeline_configuration import validate_output_context
+        try:
+            payload = request.payload
+            if (not isinstance(payload, dict) or payload.get("generation") != self.generation
+                    or payload.get("expected_revision") != self.config_revision):
+                raise ValueError("Runtime context command is stale")
+            if self.current_epoch is not None or self._pending_configuration is not None:
+                raise ValueError("Drain processing before updating output context")
+            snapshot = validate_output_context(self._settings_snapshot, payload.get("settings_snapshot"))
+            self._settings_snapshot = snapshot
+            self.config_revision = snapshot["CONFIG.revision"]
+            result = CommandResult(request.command_id, EventType.UpdateProcessingContext.name, ok=True,
+                                   data=self._configuration_receipt(request.command_id, "applied"))
+        except Exception as exc:
+            result = CommandResult(request.command_id, EventType.UpdateProcessingContext.name, ok=False,
+                                   message=str(exc), error_code="PROCESSING_CONTEXT_FAILED",
+                                   failure_kind=CommandFailureKind.REJECTED)
+        self._publish_configuration_result(result)
 
     def _publish_configuration_result(self, result):
         self.event_bus.put_event(Event(EventType.CommandResult, result))

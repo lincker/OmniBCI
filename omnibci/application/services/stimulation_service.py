@@ -49,14 +49,14 @@ class StimulationAppService:
         self._active          = False
 
     @admitted
-    def handle_start_stimulation(self, cmd: StartStimulationCommand) -> None:
+    def handle_start_stimulation(self, cmd: StartStimulationCommand, *, settings_snapshot=None) -> None:
         process_ready = False
         self._active = False
         try:
             if self._process_manager is not None:
                 # Managed mode blocks here until IPC + renderer/paradigm setup
                 # has reported READY.  External mode remains an immediate no-op.
-                snapshot = self._engine.applied_snapshot
+                snapshot = self._engine.applied_snapshot if settings_snapshot is None else settings_snapshot
                 if isinstance(snapshot, dict):
                     self._process_manager.start(
                         paradigm=cmd.paradigm, settings_snapshot=snapshot,
