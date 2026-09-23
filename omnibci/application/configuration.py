@@ -75,8 +75,8 @@ ACQUISITION_PLUGINS = {
     "neuroscan_scan45_reader": {
         "label": "Neuroscan Scan 4.5",
         "fields": [_HOST, _PORT, _RATE,
-                   {**_CHANNELS, "minimum": 10, "maximum": 10,
-                    "description": "Fixed protocol: 9 EEG channels + 1 event channel."}],
+                   {**_CHANNELS, "minimum": 2,
+                    "description": "Total channels sent by the device, including the final event channel."}],
     },
     "neuroscan_curry8_reader": {
         "label": "Neuroscan Curry 8",

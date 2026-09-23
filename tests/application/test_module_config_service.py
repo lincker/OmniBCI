@@ -75,7 +75,7 @@ def test_names_are_unique_within_a_plugin(module_service):
 
 
 @pytest.mark.parametrize("updates", [
-    {"channel_number": 9}, {"sample_rate": 0}, {"sample_rate": True},
+    {"channel_number": 1}, {"channel_number": True}, {"sample_rate": 0}, {"sample_rate": True},
     {"DATA_PROVIDER_PORT": 65536}, {"DATA_PROVIDER_PORT": "4000"},
     {"DATA_PROVIDER_IP": ""}, {"signal_source": "file_reader"}, {"speed": 2},
 ])
@@ -83,6 +83,13 @@ def test_invalid_parameters_leave_no_file(module_service, updates):
     with pytest.raises(ConfigProfileValidationError):
         create_scan(module_service, **updates)
     assert module_service.list_module_profiles("acquisition") == []
+
+
+@pytest.mark.parametrize("channels", [2, 9, 10, 33, 65])
+def test_scan45_profiles_allow_device_channel_count(module_service, channels):
+    profile = create_scan(module_service, channel_number=channels)
+    module_service.select_module_profile("acquisition", profile.profile_id)
+    assert module_service.resolve_snapshot()["ACQUISITION.channel_number"] == channels
 
 
 def test_missing_parameters_and_unknown_plugins_rejected(module_service):

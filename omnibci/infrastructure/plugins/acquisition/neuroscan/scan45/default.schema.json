@@ -30,11 +30,11 @@
     "channel_number": {
       "type": "integer",
       "title": "Output channels including event row",
+      "description": "Total channels sent by the device, including the final event channel. Must match the Scan45 stream.",
       "default": 10,
       "x-scope": "portable",
       "x-apply": "module",
-      "minimum": 10,
-      "maximum": 10
+      "minimum": 2
     }
   },
   "required": [

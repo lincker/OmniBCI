@@ -73,6 +73,24 @@ def test_profile_parameters_are_validated_by_the_selected_package(service):
         create_source(service, invented=42)
 
 
+@pytest.mark.parametrize("channels", [2, 9, 10, 33, 65])
+def test_scan45_profile_resolves_its_configured_channel_count(service, channels):
+    plugin = service.catalog.legacy("acquisition", "neuroscan_scan45_reader")
+    profile = service.create("acquisition", plugin.selection, "Device", {"channel_number": channels})
+    candidate = service.propose([{"slot": "acquisition.source", "profile_id": profile.profile_id}])
+    service.accept(candidate, expected_revision=None)
+
+    assert service.repository.get_profile(profile.profile_id).parameters["channel_number"] == channels
+    assert service.resolve_settings()["ACQUISITION.channel_number"] == channels
+
+
+@pytest.mark.parametrize("channels", [True, 0, 1, 3.5, "33"])
+def test_scan45_profile_rejects_invalid_channel_count(service, channels):
+    plugin = service.catalog.legacy("acquisition", "neuroscan_scan45_reader")
+    with pytest.raises(PluginSchemaError, match="channel_number"):
+        service.create("acquisition", plugin.selection, "Invalid", {"channel_number": channels})
+
+
 def test_running_guard_blocks_accept_but_allows_saving(service):
     @contextmanager
     def running_guard(requires_idle):
