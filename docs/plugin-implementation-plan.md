@@ -12,7 +12,7 @@ Accounts, cloud synchronization, and montage remain outside this implementation.
 | 4 | Minimal SDK and explicit construction inputs | Complete |
 | 5 | Plugin-owned schemas, defaults, and validation | Complete |
 | 6 | Versioned profiles, ordered bindings, and activation snapshots | Complete |
-| 7 | Recoverable legacy configuration migration | Pending |
+| 7 | Recoverable legacy configuration migration | Complete |
 | 8 | Explicit Acquisition loading and parameters | Pending |
 | 9 | Explicit Processing loading and parameters | Pending |
 | 10 | Explicit Stimulation and Actuation loading | Pending |
