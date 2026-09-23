@@ -24,10 +24,30 @@ the committed document. Import-linter checks the architecture dependency rules.
 
 ## What these checks establish
 
+Local verification on 2026-09-24: 1,927 headless/backend tests passed, including
+real-process integration. The final source-capability change was then rechecked
+with 49 relevant coordinator, failure, and process tests. All 18 frontend tests,
+the production build, generated REST type check, and five import contracts passed.
+A clean temporary wheel verified 10 configured contributions and 281 stimulus
+frames without importing the source checkout.
+
 Local results only establish behavior on the machine that ran them. Adding a CI
 matrix does not establish that Windows or Linux jobs have passed: inspect the
 actual workflow results for each commit. The current development environment is
 macOS; other OS results require their corresponding runners.
+
+The local console check used isolated configuration and plugin directories. It
+verified profile editing, saving without activation, Apply review and completion,
+the Run module-progress view, ZIP upload, explicit enablement, and the disabled
+repository state. Frontend tests additionally cover uncertain Apply responses,
+recovery after a confirmed stop, exact package identities, and version-profile
+creation without automatic activation. Signed repository installation is tested
+through a controlled HTTP repository and the application's real lifespan.
+
+Final review regressions cover cancellation after a live network packet header,
+safe resumption after source-version replacement, and clearing runtime quarantine
+without erasing historical failed operations. Timing and sample continuity still
+require the hardware checks below.
 
 Headless tests do not validate physical EEG connectivity, parallel-port trigger
 timing, display refresh/VSync behavior, or safe stopping of a physical actuator.

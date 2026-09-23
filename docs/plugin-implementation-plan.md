@@ -8,28 +8,28 @@ Accounts, cloud synchronization, and montage remain outside this implementation.
 | --- | --- | --- |
 | 1 | Reproducible bundled plugin baseline | Complete: `6a7e48f` |
 | 2 | Package/contribution identity and exact selection | Complete: `0f99740` |
-| 3 | Complete built-in manifests and capability compatibility | Complete |
-| 4 | Minimal SDK and explicit construction inputs | Complete |
-| 5 | Plugin-owned schemas, defaults, and validation | Complete |
-| 6 | Versioned profiles, ordered bindings, and activation snapshots | Complete |
-| 7 | Recoverable legacy configuration migration | Complete |
-| 8 | Explicit Acquisition loading and parameters | Complete |
-| 9 | Explicit Processing loading and parameters | Complete |
-| 10 | Explicit Stimulation and Actuation loading | Complete |
-| 11 | One complete configuration snapshot across workers | Complete |
-| 12 | Worker readiness and revision acknowledgement | Complete |
-| 13 | Schema-driven profile editor | Complete |
-| 14 | Ordered stream draining and safe pause boundaries | Complete |
-| 15 | Session continuation and file replay checkpoints | Complete |
-| 16 | Runtime application plan and status API | Complete |
-| 17 | Automatic pause, rebuild, restore, and rollback | Complete |
-| 18 | Trial-boundary and module-local configuration updates | Complete |
-| 19 | Running-system Save/Apply UI | Complete |
-| 20 | Cross-platform and end-to-end validation | Complete |
-| 21 | Offline package installation | Complete |
-| 22 | Enable, upgrade, rollback, and uninstall lifecycle | Complete |
-| 23 | Static online repository and verified download | Complete |
-| 24 | Market UI and end-to-end installation flow | Complete |
+| 3 | Complete built-in manifests and capability compatibility | Complete: `70d25ef` |
+| 4 | Minimal SDK and explicit construction inputs | Complete: `6a5bdaa` |
+| 5 | Plugin-owned schemas, defaults, and validation | Complete: `ebbc5a8` |
+| 6 | Versioned profiles, ordered bindings, and activation snapshots | Complete: `da4406a` |
+| 7 | Recoverable legacy configuration migration | Complete: `280672f` |
+| 8 | Explicit Acquisition loading and parameters | Complete: `0b4bd5b` |
+| 9 | Explicit Processing loading and parameters | Complete: `d92615b` |
+| 10 | Explicit Stimulation and Actuation loading | Complete: `61635d8` |
+| 11 | One complete configuration snapshot across workers | Complete: `99309e6` |
+| 12 | Worker readiness and revision acknowledgement | Complete: `7ad4e8d` |
+| 13 | Schema-driven profile editor | Complete: `1812183` |
+| 14 | Ordered stream draining and safe pause boundaries | Complete: `90fc63b` |
+| 15 | Session continuation and file replay checkpoints | Complete: `c88e405` |
+| 16 | Runtime application plan and status API | Complete: `0d388f1` |
+| 17 | Automatic pause, rebuild, restore, and rollback | Complete: `9edb5e2` |
+| 18 | Trial-boundary and module-local configuration updates | Complete: `a453e8d` |
+| 19 | Running-system Save/Apply UI | Complete: `0ef0852` |
+| 20 | Cross-platform and end-to-end validation | Complete: `6af23be` |
+| 21 | Offline package installation | Complete: `e72bccb` |
+| 22 | Enable, upgrade, rollback, and uninstall lifecycle | Complete: `c11b05b` |
+| 23 | Static online repository and verified download | Complete: `9d29f29` |
+| 24 | Market UI and end-to-end installation flow | Complete: `ee92163` |
 
 ## Invariants
 

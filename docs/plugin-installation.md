@@ -76,6 +76,11 @@ same admission system so they cannot race a reference check and removal. The
 runtime provider should include both applied and pending transition snapshots;
 `package_references_from_settings` adapts pinned `PLUGINS.bindings`.
 
+Use one backend owner for each configuration/plugin directory. The filesystem
+lock serializes package-state writes, but live process references and command
+admission belong to that backend. Separate backend instances must use separate
+directories; this implementation does not coordinate their runtime ownership.
+
 Mount `plugin_packages.router`, and set `app.state.plugin_installation_service`.
 For lifecycle operations, also mount `plugin_package_lifecycle.router`, set
 `app.state.plugin_package_service`, and use that full service for inventory.
