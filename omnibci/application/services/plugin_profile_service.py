@@ -53,16 +53,30 @@ class PluginProfileService:
             raise ProfileRevisionConflict("Profile is selected; replace its binding first")
         self.repository.delete_profile(profile_id, expected_revision=expected_revision)
 
-    def propose(self, selections: list[dict], *, settings: dict | None = None) -> ActivationSnapshot:
+    def propose(self, selections: list[dict], *, settings: dict | None = None,
+                refresh_slots: list[str] | None = None) -> ActivationSnapshot:
         """Resolve an ordered set of slot/profile references into pinned copies."""
         current = self.repository.get_activation()
         base = deepcopy(current.settings if current is not None else self.settings_source())
         if settings is not None:
             base = deepcopy(settings)
+        if refresh_slots is not None and (
+            not isinstance(refresh_slots, list) or any(not isinstance(slot, str) for slot in refresh_slots)
+            or len(set(refresh_slots)) != len(refresh_slots)
+            or any(slot not in {item.get("slot") for item in selections if isinstance(item, dict)}
+                   for slot in refresh_slots)
+        ):
+            raise PluginSchemaError("refresh_slots must name unique selected slots")
+        previous = {binding.slot: binding for binding in current.bindings} if current else {}
         bindings = []
         for item in selections:
             if not isinstance(item, dict) or set(item) != {"slot", "profile_id"}:
                 raise PluginSchemaError("Each binding requires slot and profile_id")
+            retained = previous.get(item["slot"])
+            if (refresh_slots is not None and item["slot"] not in refresh_slots
+                    and retained is not None and retained.profile_id == item["profile_id"]):
+                bindings.append(retained)
+                continue
             profile = self.repository.get_profile(item["profile_id"])
             definition, parameters = self._parameters(
                 profile.kind, profile.selection, profile.parameters, profile.configuration_version,

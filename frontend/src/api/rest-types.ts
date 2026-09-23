@@ -505,6 +505,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/config/plugin-catalog/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Plugin Catalog */
+        get: operations["plugin_catalog_api_v1_config_plugin_catalog__kind__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/plugin-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Profiles */
+        get: operations["list_profiles_api_v1_config_plugin_profiles_get"];
+        put?: never;
+        /** Create Profile */
+        post: operations["create_profile_api_v1_config_plugin_profiles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/plugin-profiles/{profile_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Profile */
+        get: operations["get_profile_api_v1_config_plugin_profiles__profile_id__get"];
+        /** Update Profile */
+        put: operations["update_profile_api_v1_config_plugin_profiles__profile_id__put"];
+        post?: never;
+        /** Delete Profile */
+        delete: operations["delete_profile_api_v1_config_plugin_profiles__profile_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/activation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Activation */
+        get: operations["get_activation_api_v1_config_activation_get"];
+        /** Accept Activation */
+        put: operations["accept_activation_api_v1_config_activation_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/plugins/{category}": {
         parameters: {
             query?: never;
@@ -549,6 +621,15 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AcceptActivationRequest */
+        AcceptActivationRequest: {
+            /** Bindings */
+            bindings: components["schemas"]["SelectProfileBindingRequest"][];
+            /** Expected Revision */
+            expected_revision?: string | null;
+            /** Refresh Slots */
+            refresh_slots?: string[] | null;
+        };
         /** AcquisitionStatusResponse */
         AcquisitionStatusResponse: {
             /** Connected */
@@ -561,6 +642,23 @@ export interface components {
             sample_rate?: number | null;
             /** Channel Count */
             channel_count?: number | null;
+        };
+        /** ActivationResponse */
+        ActivationResponse: {
+            /**
+             * Format Version
+             * @default 2
+             * @constant
+             */
+            format_version: 2;
+            /** Revision */
+            revision: string;
+            /** Settings */
+            settings: {
+                [key: string]: unknown;
+            };
+            /** Bindings */
+            bindings: components["schemas"]["ProfileBindingResponse"][];
         };
         /** ApiResponse */
         ApiResponse: {
@@ -590,6 +688,20 @@ export interface components {
              */
             message: string;
             data?: components["schemas"]["AcquisitionStatusResponse"] | null;
+        };
+        /** ApiResponse[ActivationResponse] */
+        ApiResponse_ActivationResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["ActivationResponse"] | null;
         };
         /** ApiResponse[ConfigResponse] */
         ApiResponse_ConfigResponse_: {
@@ -704,6 +816,20 @@ export interface components {
             message: string;
             data?: components["schemas"]["PatchConfigResponse"] | null;
         };
+        /** ApiResponse[PluginProfileResponse] */
+        ApiResponse_PluginProfileResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["PluginProfileResponse"] | null;
+        };
         /** ApiResponse[ProfileDetailResponse] */
         ApiResponse_ProfileDetailResponse_: {
             /**
@@ -802,6 +928,36 @@ export interface components {
             message: string;
             data?: components["schemas"]["TrialResponse"] | null;
         };
+        /** ApiResponse[list[PluginConfigurationResponse]] */
+        ApiResponse_list_PluginConfigurationResponse__: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            /** Data */
+            data?: components["schemas"]["PluginConfigurationResponse"][] | null;
+        };
+        /** ApiResponse[list[PluginProfileResponse]] */
+        ApiResponse_list_PluginProfileResponse__: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            /** Data */
+            data?: components["schemas"]["PluginProfileResponse"][] | null;
+        };
         /** ConfigEntry */
         ConfigEntry: {
             /**
@@ -857,6 +1013,21 @@ export interface components {
             };
             /** Plugin Type */
             plugin_type: string;
+        };
+        /** CreatePluginProfileRequest */
+        CreatePluginProfileRequest: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector";
+            selection: components["schemas"]["PluginSelectionResponse"];
+            /** Name */
+            name: string;
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            };
         };
         /** CreateSessionRequest */
         CreateSessionRequest: {
@@ -1061,6 +1232,86 @@ export interface components {
              */
             engine_restart_required: boolean;
         };
+        /** PluginConfigurationResponse */
+        PluginConfigurationResponse: {
+            selection: components["schemas"]["PluginSelectionResponse"];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector";
+            /** Plugin Type */
+            plugin_type: string;
+            /** Label */
+            label: string;
+            /** Description */
+            description: string | null;
+            /** Schema */
+            schema: {
+                [key: string]: unknown;
+            } | null;
+            /** Configuration Version */
+            configuration_version: number | null;
+            /** Available */
+            available: boolean;
+        };
+        /** PluginProfileResponse */
+        PluginProfileResponse: {
+            /**
+             * Format Version
+             * @default 2
+             * @constant
+             */
+            format_version: 2;
+            /** Profile Id */
+            profile_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector";
+            selection: components["schemas"]["PluginSelectionResponse"];
+            /** Parameters */
+            parameters: {
+                [key: string]: unknown;
+            };
+            /** Configuration Version */
+            configuration_version: number;
+            /** Revision */
+            revision: number;
+        };
+        /** PluginSelectionResponse */
+        PluginSelectionResponse: {
+            /** Package Id */
+            package_id: string;
+            /** Contribution Id */
+            contribution_id: string;
+            /** Version */
+            version?: string | null;
+        };
+        /** ProfileBindingResponse */
+        ProfileBindingResponse: {
+            /** Slot */
+            slot: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector";
+            /** Profile Id */
+            profile_id?: string | null;
+            selection: components["schemas"]["PluginSelectionResponse"];
+            /** Parameters */
+            parameters: {
+                [key: string]: unknown;
+            };
+            /** Configuration Version */
+            configuration_version: number;
+            /** Profile Revision */
+            profile_revision: number;
+        };
         /** ProfileDetailResponse */
         ProfileDetailResponse: {
             /** Name */
@@ -1117,6 +1368,13 @@ export interface components {
              * @description Profile UUID; null restores legacy configuration
              */
             profile_id: string | null;
+        };
+        /** SelectProfileBindingRequest */
+        SelectProfileBindingRequest: {
+            /** Slot */
+            slot: string;
+            /** Profile Id */
+            profile_id: string;
         };
         /** SessionListResponse */
         SessionListResponse: {
@@ -1221,6 +1479,17 @@ export interface components {
             parameters: {
                 [key: string]: unknown;
             };
+        };
+        /** UpdatePluginProfileRequest */
+        UpdatePluginProfileRequest: {
+            /** Name */
+            name: string;
+            /** Parameters */
+            parameters: {
+                [key: string]: unknown;
+            };
+            /** Expected Revision */
+            expected_revision: number;
         };
     };
     responses: never;
@@ -4072,6 +4341,622 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_ModuleConfigResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    plugin_catalog_api_v1_config_plugin_catalog__kind__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: "acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_PluginConfigurationResponse__"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_profiles_api_v1_config_plugin_profiles_get: {
+        parameters: {
+            query?: {
+                kind?: ("acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector") | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_PluginProfileResponse__"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_profile_api_v1_config_plugin_profiles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePluginProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PluginProfileResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_profile_api_v1_config_plugin_profiles__profile_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PluginProfileResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_profile_api_v1_config_plugin_profiles__profile_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdatePluginProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PluginProfileResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_profile_api_v1_config_plugin_profiles__profile_id__delete: {
+        parameters: {
+            query: {
+                expected_revision: number;
+            };
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_activation_api_v1_config_activation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_ActivationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    accept_activation_api_v1_config_activation_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptActivationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_ActivationResponse_"];
                 };
             };
             /** @description Bad request */

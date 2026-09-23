@@ -18,7 +18,7 @@ Accounts, cloud synchronization, and montage remain outside this implementation.
 | 10 | Explicit Stimulation and Actuation loading | Complete |
 | 11 | One complete configuration snapshot across workers | Complete |
 | 12 | Worker readiness and revision acknowledgement | Complete |
-| 13 | Schema-driven profile editor | Pending |
+| 13 | Schema-driven profile editor | Complete |
 | 14 | Ordered stream draining and safe pause boundaries | Pending |
 | 15 | Session continuation and file replay checkpoints | Pending |
 | 16 | Runtime application plan and status API | Pending |

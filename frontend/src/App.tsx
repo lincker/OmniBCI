@@ -3,7 +3,7 @@ import { api } from "./api/client";
 import { usePoll } from "./hooks/usePoll";
 import { useResultsFeed } from "./hooks/useResultsFeed";
 import { ConfigCard } from "./ConfigCard";
-import { AcquisitionProfiles } from "./AcquisitionProfiles";
+import { PluginProfiles } from "./PluginProfiles";
 import { ConfigDialog } from "./ConfigDialog";
 import { RunConsole } from "./RunConsole";
 import { SessionSummary, TrialResults } from "./TrialResults";
@@ -118,7 +118,7 @@ export default function App() {
       </nav>
       <main className="editor-workspace">
         <div className="editor-viewport">
-          {view === "acquisition" ? <AcquisitionProfiles engineRunning={engineRunning} engineAvailable={engine.data !== null && engine.error === null} navigation={navigation}
+          {isSetup ? <PluginProfiles key={view} module={view as SetupPage} engineRunning={engineRunning} engineAvailable={engine.data !== null && engine.error === null} navigation={navigation}
             onDirtyChange={setDirty} onBusyChange={setBusy} />
             : view === "run" ? <RunConsole engine={engine} acquisition={acquisition} feed={feed}
               onBusyChange={setBusy} onEditSetup={() => navigate(lastSetup)} onResults={() => navigate("results")} />
@@ -130,7 +130,7 @@ export default function App() {
               <SessionSummary session={feed.session} trialCount={feed.trials.length} />
               <section className="card"><h2>Results <span className="count">{feed.trials.length}</span></h2><TrialResults trials={feed.trials} /></section>
             </div>
-            : <ConfigCard key={view} view={view} engineRunning={engineLocked} navigation={navigation}
+            : <ConfigCard key={view} view={view as SettingsPage} engineRunning={engineLocked} navigation={navigation}
               preferences={view === "general" ? preferences : undefined} onDirtyChange={setDirty} onBusyChange={setBusy}
               onOpenRun={() => navigate("run")} />}
         </div>
