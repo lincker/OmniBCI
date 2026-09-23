@@ -16,6 +16,9 @@ from omnibci.infrastructure.neuroengine.gateway import PeerGateway
 from omnibci.infrastructure.neuroengine.stimulation_feedback import StimulationFeedbackHandler
 from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
 from omnibci.infrastructure.neuroengine.actuation_feedback import ActuationFeedbackHandler
+from omnibci.infrastructure.process_lifecycle import (
+    ChildProcessStartupError, StartupChannel, wait_for_startup_report,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +61,10 @@ class NeuroEngine:
         actuation_feedback: "ActuationFeedbackHandler | None" = None,
         debug: bool = False,
         owned_ipc_queues: tuple[mp.Queue, ...] = (),
+        startup_channels: tuple[StartupChannel, ...] = (),
+        startup_timeout_s: float = 5.0,
+        config_revision: str | None = None,
+        generation: str | None = None,
     ) -> None:
         self.event_bus = event_bus
         self.data_manager = data_manager
@@ -71,6 +78,11 @@ class NeuroEngine:
         # Injecting them makes ownership explicit without teaching EventBus or
         # DataManager to close resources they merely consume.
         self._owned_ipc_queues = tuple(owned_ipc_queues)
+        self._startup_channels = tuple(startup_channels)
+        self._startup_channels_closed = not self._startup_channels
+        self._startup_timeout_s = startup_timeout_s
+        self._config_revision = config_revision
+        self._generation = generation
         # Engine-side consumer of stimulation → engine feedback (StimulationAck).
         self.stim_feedback = StimulationFeedbackHandler()
         # Actuation ACL + feedback — present only when the actuation peer is
@@ -84,7 +96,7 @@ class NeuroEngine:
         self._loop: "asyncio.AbstractEventLoop | None" = None
         # ``run()`` executes in NeuroEngineService's dedicated thread.  This
         # thread-safe barrier is the boundary between "the thread was
-        # scheduled" and "all async IPC listeners were actually bound".
+        # scheduled" and "listeners and configured workers are ready".
         self._startup_complete = threading.Event()
         self._startup_error: BaseException | None = None
 
@@ -138,8 +150,8 @@ class NeuroEngine:
 
         ``Thread.start()`` only says that the OS thread exists.  This method is
         the readiness contract used by the application service: success means
-        the EventBus consumer is running and every listening transport has
-        completed ``asyncio.start_server``.
+        the EventBus consumer, every listening transport, and all managed
+        workers have completed initialization for this configuration.
         """
         if not self._startup_complete.wait(timeout):
             raise TimeoutError("NeuroEngine startup timed out")
@@ -183,8 +195,10 @@ class NeuroEngine:
             self._register_event_listeners()
             self.acquisition_worker.start()
             self._acquisition_started = True
+            self._close_parent_startup_sender(self.acquisition_worker)
             self.signal_processing_worker.start()
             self._processor_started = True
+            self._close_parent_startup_sender(self.signal_processing_worker)
             await self.event_bus.start()
             self._event_bus_started = True
             # start() may allocate a listener and then fail while rolling it
@@ -192,6 +206,7 @@ class NeuroEngine:
             # rollback keeps the engine graph dirty and blocks replacement.
             self._gateway_started = True
             await self.peer_gateway.start()
+            await self._wait_for_workers()
             self._started = True
         except BaseException:
             logger.exception("NeuroEngine startup failed; rolling back")
@@ -201,6 +216,50 @@ class NeuroEngine:
                 logger.exception("NeuroEngine startup rollback was incomplete")
             raise
         logger.info("NeuroEngine started")
+
+    def _close_parent_startup_sender(self, process) -> None:
+        # Process.start() has copied the sender into the child. Retaining the
+        # parent's copy would keep a dead child's pipe artificially open.
+        for channel in self._startup_channels:
+            if channel.process is process:
+                channel.reporter.close()
+
+    async def _wait_for_workers(self) -> None:
+        # Explicitly injected channels distinguish managed workers from legacy
+        # manual engine graphs. Never infer readiness support from mock attributes.
+        try:
+            results = await asyncio.gather(*(
+                asyncio.to_thread(
+                    wait_for_startup_report, channel.receiver, channel.process,
+                    component=channel.component, timeout_s=self._startup_timeout_s,
+                    expected_revision=self._config_revision,
+                    expected_generation=self._generation,
+                ) for channel in self._startup_channels
+            ), return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+            for channel in self._startup_channels:
+                if not channel.process.is_alive():
+                    raise ChildProcessStartupError(
+                        f"{channel.component} subprocess exited before all workers became ready"
+                    )
+        finally:
+            self._close_startup_channels()
+
+    def _close_startup_channels(self) -> None:
+        if self._startup_channels_closed:
+            return
+        errors = []
+        for channel in self._startup_channels:
+            for handle in (channel.reporter, channel.receiver):
+                try:
+                    handle.close()
+                except Exception as exc:
+                    errors.append(exc)
+        if errors:
+            raise ExceptionGroup("Worker startup channel cleanup failed", errors)
+        self._startup_channels_closed = True
 
     async def _main_loop(self) -> None:
         # The timeout is a fallback for stop flags set before the loop is bound.
@@ -227,6 +286,10 @@ class NeuroEngine:
         """
         errors: list[Exception] = []
         self._started = False
+        try:
+            self._close_startup_channels()
+        except Exception as exc:
+            errors.append(exc)
 
         if self._acquisition_started:
             self._put_stop_command(
@@ -301,6 +364,7 @@ class NeuroEngine:
             and not self._gateway_started
             and not self._event_bus_started
             and self._queues_closed
+            and self._startup_channels_closed
         )
         if errors:
             raise ExceptionGroup("NeuroEngine shutdown failed", errors)

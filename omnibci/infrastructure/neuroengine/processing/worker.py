@@ -11,6 +11,7 @@ from typing import Optional
 
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter
 from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessor
+from omnibci.infrastructure.process_lifecycle import StartupReporter
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,8 @@ class SignalProcessingWorker(mp.Process):
 
     def __init__(self, command_queue, data_manager=None, event_bus=None,
                  sample_rate: int = 1000, baseline_duration: float = 0.0,
-                 settings_snapshot: dict | None = None) -> None:
+                 settings_snapshot: dict | None = None,
+                 startup_reporter: StartupReporter | None = None) -> None:
         super().__init__()
         self.data_manager = data_manager
         self.event_bus = event_bus
@@ -35,13 +37,25 @@ class SignalProcessingWorker(mp.Process):
         self.baseline_duration = baseline_duration
         self.settings_snapshot = deepcopy(settings_snapshot)
         self.signal_processor: Optional[SignalProcessor] = None
+        self.startup_reporter = startup_reporter
+        self._startup_stage = "settings"
 
     def run(self) -> None:
-        if self.settings_snapshot is not None:
-            from omnibci.conf import settings
-            settings.use_snapshot(self.settings_snapshot)
-        decoder, detector, filters = self._load_algorithm()
-        self._run_processor(decoder, detector, filters, self.sample_rate)
+        try:
+            if self.settings_snapshot is not None:
+                from omnibci.conf import settings
+                settings.use_snapshot(self.settings_snapshot)
+            self._startup_stage = "plugins"
+            decoder, detector, filters = self._load_algorithm()
+            self._startup_stage = "processor"
+            self._run_processor(decoder, detector, filters, self.sample_rate)
+        except BaseException as exc:
+            if self.startup_reporter is not None:
+                self.startup_reporter.failed(self._startup_stage, exc)
+            raise
+        finally:
+            if self.startup_reporter is not None:
+                self.startup_reporter.close()
 
     def _snapshot(self):
         if self.settings_snapshot is not None:
@@ -59,14 +73,17 @@ class SignalProcessingWorker(mp.Process):
         from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
         snapshot = self._snapshot()
         context = self._context(snapshot)
+        self._startup_stage = "decoder"
         decoder = load_configured_plugin(
             snapshot, "processing.decoder", "decoder", Decoder,
             legacy_key="ALGORITHM.decoder", context=context,
         )
+        self._startup_stage = "epoch_detector"
         detector = load_configured_plugin(
             snapshot, "processing.epoch_detector", "epoch_detector", EpochDetector,
             legacy_key="ALGORITHM.epoch_detector", context=context,
         )
+        self._startup_stage = "filters"
         return decoder, detector, self._load_filters(snapshot)
 
     def _load_filters(self, snapshot=None):
@@ -105,5 +122,8 @@ class SignalProcessingWorker(mp.Process):
             filters=filters,
             auto_start_session=False,
         )
+        if self.startup_reporter is not None:
+            self.startup_reporter.ready()
+        self._startup_stage = "run"
         logger.info("SignalProcessor in standby — awaiting start_session command")
         self.signal_processor.run()

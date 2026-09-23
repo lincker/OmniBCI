@@ -40,6 +40,11 @@ def _mock_spawning(monkeypatch, module, component):
     monkeypatch.setattr(module.mp, "Event", Mock())
 
     def process(**kwargs):
+        snapshot = kwargs.get("kwargs", {}).get("settings_snapshot", {})
+        receiver.recv.return_value = StartupReport.ready(
+            component, config_revision=snapshot.get("CONFIG.revision"),
+            generation=snapshot.get("CONFIG.generation"),
+        )
         child = Mock(pid=123, exitcode=0)
         child.is_alive.return_value = True
         child.join.side_effect = lambda **kwargs: setattr(child.is_alive, "return_value", False)

@@ -15,6 +15,7 @@ from omnibci.infrastructure.neuroengine.gateway.peers import (
 )
 from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
 from omnibci.infrastructure.neuroengine.actuation_feedback import ActuationFeedbackHandler
+from omnibci.infrastructure.process_lifecycle import StartupChannel, StartupReporter
 
 
 @dataclass
@@ -33,14 +34,11 @@ class NeuroEngineConfig:
     actuation_server_port: int = 8001        # actuation channel bind port
     actuation_watchdog_timeout_s: float = 1.0  # silent-link → failsafe (Phase 4)
     debug: bool = False                     # asyncio debug mode for the engine loop
+    startup_timeout_s: float = 5.0          # configured worker initialization deadline
 
     @classmethod
     def from_settings(cls, settings_snapshot: dict | None = None) -> "NeuroEngineConfig":
-        """Build config from settings.toml, falling back to dataclass defaults.
-
-        P2-9：改用 settings.get(key, default)（default 参数已修复）——
-        缺键走默认值是显式语义，异常吞噬移除，真故障不再被掩盖。
-        """
+        """Build config from settings.toml, falling back only for missing values."""
         from omnibci.conf import settings
         source = settings if settings_snapshot is None else settings_snapshot
 
@@ -60,6 +58,7 @@ class NeuroEngineConfig:
             actuation_watchdog_timeout_s=float(
                 _get("ACTUATION.watchdog_timeout_s", cls.actuation_watchdog_timeout_s)),
             debug=bool(_get("debug", cls.debug)),
+            startup_timeout_s=float(_get("NEUROENGINE.startup_timeout_s", cls.startup_timeout_s)),
         )
 
 
@@ -106,11 +105,25 @@ class NeuroEngineBuilder:
         processor_command_queue = mp.Queue(cfg.queue_size)
 
         # 4. Sub-processes (not started yet — NeuroEngine._start() does that)
+        snapshot = self._settings_snapshot or {}
+        revision = snapshot.get("CONFIG.revision")
+        generation = snapshot.get("CONFIG.generation")
+        acquisition_receiver, acquisition_sender = mp.Pipe(duplex=False)
+        processor_receiver, processor_sender = mp.Pipe(duplex=False)
+        acquisition_reporter = StartupReporter(
+            acquisition_sender, component="Acquisition",
+            config_revision=revision, generation=generation,
+        )
+        processor_reporter = StartupReporter(
+            processor_sender, component="Processing",
+            config_revision=revision, generation=generation,
+        )
         acquisition_worker = AcquisitionWorker(
             command_queue=acquisition_command_queue,
             data_manager=data_manager,
             event_bus=event_bus,
             settings_snapshot=self._settings_snapshot,
+            startup_reporter=acquisition_reporter,
         )
         signal_processing_worker = SignalProcessingWorker(
             command_queue=processor_command_queue,
@@ -119,6 +132,7 @@ class NeuroEngineBuilder:
             sample_rate=cfg.sample_rate,
             baseline_duration=cfg.baseline_duration,
             settings_snapshot=self._settings_snapshot,
+            startup_reporter=processor_reporter,
         )
 
         # 5. Peer gateway — one routed channel per external peer (host/port
@@ -161,4 +175,11 @@ class NeuroEngineBuilder:
             actuation_translator=actuation_translator,
             actuation_feedback=actuation_feedback,
             debug=cfg.debug,
+            startup_channels=(
+                StartupChannel("Acquisition", acquisition_worker, acquisition_receiver, acquisition_reporter),
+                StartupChannel("Processing", signal_processing_worker, processor_receiver, processor_reporter),
+            ),
+            startup_timeout_s=cfg.startup_timeout_s,
+            config_revision=revision,
+            generation=generation,
         )

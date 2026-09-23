@@ -50,7 +50,11 @@ def _run_stimulation(
     *paradigm* remains a subprocess-local legacy settings override.
     """
     reporter = (
-        StartupReporter(startup_connection, component="Stimulation")
+        StartupReporter(
+            startup_connection, component="Stimulation",
+            config_revision=(settings_snapshot or {}).get("CONFIG.revision"),
+            generation=(settings_snapshot or {}).get("CONFIG.generation"),
+        )
         if startup_connection is not None
         else None
     )
@@ -222,11 +226,16 @@ class StimulationProcessManager:
                 paradigm or "<config>",
             )
             try:
+                expected_identity = ({
+                    "expected_revision": snapshot.get("CONFIG.revision"),
+                    "expected_generation": snapshot.get("CONFIG.generation"),
+                } if snapshot is not None else {})
                 wait_for_startup_report(
                     startup_receiver,
                     process,
                     component="Stimulation",
                     timeout_s=self._startup_timeout_s,
+                    **expected_identity,
                 )
             except BaseException as startup_exc:
                 self._state = ChildProcessState.FAILED

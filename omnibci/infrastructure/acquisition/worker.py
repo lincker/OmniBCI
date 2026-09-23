@@ -8,6 +8,7 @@ from copy import deepcopy
 from typing import Optional
 
 from omnibci.domain.ports.acquisition import SignalSource
+from omnibci.infrastructure.process_lifecycle import StartupReporter
 from omnibci.infrastructure.acquisition.acquisition import (
     Acquisition,
     CommandQueue,
@@ -31,6 +32,7 @@ class AcquisitionWorker(mp.Process):
         data_manager: Optional[DataSink] = None,
         event_bus=None,
         settings_snapshot: dict | None = None,
+        startup_reporter: StartupReporter | None = None,
     ) -> None:
         super().__init__()
         self.data_source: SignalSource
@@ -40,13 +42,25 @@ class AcquisitionWorker(mp.Process):
         # EventBus serialization retains only its multiprocessing queue.
         self.event_bus = event_bus
         self.settings_snapshot = deepcopy(settings_snapshot)
+        self.startup_reporter = startup_reporter
+        self._startup_stage = "settings"
 
     def run(self) -> None:
-        if self.settings_snapshot is not None:
-            from omnibci.conf import settings
-            settings.use_snapshot(self.settings_snapshot)
-        self._load_data_source()
-        self._run()
+        try:
+            if self.settings_snapshot is not None:
+                from omnibci.conf import settings
+                settings.use_snapshot(self.settings_snapshot)
+            self._startup_stage = "signal_source"
+            self._load_data_source()
+            self._startup_stage = "acquisition"
+            self._run()
+        except BaseException as exc:
+            if self.startup_reporter is not None:
+                self.startup_reporter.failed(self._startup_stage, exc)
+            raise
+        finally:
+            if self.startup_reporter is not None:
+                self.startup_reporter.close()
 
     def _run(self) -> None:
         self.acquisitor = Acquisition(
@@ -55,6 +69,9 @@ class AcquisitionWorker(mp.Process):
             data_manager=self.data_manager,
             event_bus=self.event_bus,
         )
+        if self.startup_reporter is not None:
+            self.startup_reporter.ready()
+        self._startup_stage = "run"
         self.acquisitor.run()
 
     def _load_data_source(self) -> None:

@@ -47,7 +47,11 @@ def _run_actuation(
     *effector* remains a subprocess-local legacy settings override.
     """
     reporter = (
-        StartupReporter(startup_connection, component="Actuation")
+        StartupReporter(
+            startup_connection, component="Actuation",
+            config_revision=(settings_snapshot or {}).get("CONFIG.revision"),
+            generation=(settings_snapshot or {}).get("CONFIG.generation"),
+        )
         if startup_connection is not None
         else None
     )
@@ -224,11 +228,16 @@ class ActuationProcessManager:
             effector or "<config>",
         )
         try:
+            expected_identity = ({
+                "expected_revision": snapshot.get("CONFIG.revision"),
+                "expected_generation": snapshot.get("CONFIG.generation"),
+            } if snapshot is not None else {})
             wait_for_startup_report(
                 startup_receiver,
                 process,
                 component="Actuation",
                 timeout_s=self._startup_timeout_s,
+                **expected_identity,
             )
         except BaseException as startup_exc:
             self._state = ChildProcessState.FAILED
