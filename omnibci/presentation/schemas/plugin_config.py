@@ -23,6 +23,7 @@ class PluginConfigurationResponse(BaseModel):
     schema_: dict[str, Any] | None = Field(alias="schema")
     configuration_version: int | None
     available: bool
+    controls: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class PluginProfileResponse(BaseModel):

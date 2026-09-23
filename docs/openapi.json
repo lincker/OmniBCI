@@ -6042,6 +6042,14 @@
           "available": {
             "type": "boolean",
             "title": "Available"
+          },
+          "controls": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Controls"
           }
         },
         "type": "object",

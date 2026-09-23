@@ -1,5 +1,5 @@
 """Static plugin metadata used by configuration use cases."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from omnibci.application.plugin_profiles import PluginSelection
@@ -15,6 +15,7 @@ class PluginConfiguration:
     schema: dict | None
     configuration_version: int | None
     available: bool
+    controls: dict = field(default_factory=dict)
 
 
 class PluginConfigurationCatalog(Protocol):

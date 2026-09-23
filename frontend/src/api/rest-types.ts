@@ -1364,6 +1364,12 @@ export interface components {
             configuration_version: number | null;
             /** Available */
             available: boolean;
+            /** Controls */
+            controls?: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
         };
         /** PluginProfileResponse */
         PluginProfileResponse: {

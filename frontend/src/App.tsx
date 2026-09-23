@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { api } from "./api/client";
 import { usePoll } from "./hooks/usePoll";
 import { useResultsFeed } from "./hooks/useResultsFeed";
+import { useRuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
+import { RuntimeConfigurationStatus, RuntimeConfigurationReview } from "./RuntimeConfiguration";
 import { ConfigCard } from "./ConfigCard";
 import { PluginProfiles } from "./PluginProfiles";
 import { ConfigDialog } from "./ConfigDialog";
@@ -44,6 +46,7 @@ export default function App() {
   const feed = useResultsFeed();
   const engine = usePoll(api.engineStatus);
   const acquisition = usePoll(api.acquisitionStatus);
+  const runtime = useRuntimeConfiguration();
   const engineRunning = engine.data?.running ?? false;
   const engineLocked = engine.data === null || engine.error !== null || engineRunning;
   const isSetup = setupPages.some(([page]) => page === view);
@@ -117,11 +120,12 @@ export default function App() {
           onClick={() => navigate(lastSettings)}><Icon name="gear" /></button></div>
       </nav>
       <main className="editor-workspace">
+        <RuntimeConfigurationStatus runtime={runtime} />
         <div className="editor-viewport">
           {isSetup ? <PluginProfiles key={view} module={view as SetupPage} engineRunning={engineRunning} engineAvailable={engine.data !== null && engine.error === null} navigation={navigation}
-            onDirtyChange={setDirty} onBusyChange={setBusy} />
+            runtime={runtime} onDirtyChange={setDirty} onBusyChange={setBusy} />
             : view === "run" ? <RunConsole engine={engine} acquisition={acquisition} feed={feed}
-              onBusyChange={setBusy} onEditSetup={() => navigate(lastSetup)} onResults={() => navigate("results")} />
+              runtime={runtime} onBusyChange={setBusy} onEditSetup={() => navigate(lastSetup)} onResults={() => navigate("results")} />
             : view === "results" ? <div className="runtime-content">
               <div className="breadcrumbs">Results <Icon name="chevron" /> Current session</div>
               <header className="editor-heading"><div><p className="eyebrow">Session data</p><h1>Trial results</h1>
@@ -132,7 +136,7 @@ export default function App() {
             </div>
             : <ConfigCard key={view} view={view as SettingsPage} engineRunning={engineLocked} navigation={navigation}
               preferences={view === "general" ? preferences : undefined} onDirtyChange={setDirty} onBusyChange={setBusy}
-              onOpenRun={() => navigate("run")} />}
+              runtime={runtime} onOpenRun={() => navigate("run")} />}
         </div>
       </main>
     </div>
@@ -149,5 +153,6 @@ export default function App() {
       confirmLabel="Discard changes" onCancel={() => setPendingView(null)} onConfirm={() => {
         setDirty(false); setView(pendingView); setPendingView(null);
       }} />}
+    <RuntimeConfigurationReview runtime={runtime} />
   </div>;
 }

@@ -1,13 +1,15 @@
 /**
  * Layered configuration editor for defaults and named profiles.
  * Editing defaults writes settings.toml; editing a profile writes its overrides.
- * Engine-restart settings take effect on the next engine start.
+ * Saving host settings and applying them to the runtime are separate actions.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, ApiError, type ConfigData, type ConfigEntry, type ParadigmInfo, type ProfileList } from "./api/client";
 import { translateConfigDescription, translatePluginName, useI18n } from "./i18n";
 import { ConfigDialog, type ConfigDialogProps } from "./ConfigDialog";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
+import { pluginConfigApi } from "./api/plugin-config";
+import type { RuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
 
 const DEFAULT = "__default__";
 const categories = [
@@ -48,9 +50,10 @@ function parseInput(raw: string, type: string): unknown {
   return raw;
 }
 
-export function ConfigCard({ view, engineRunning, navigation, preferences, onDirtyChange, onBusyChange, onOpenRun }: {
+export function ConfigCard({ view, engineRunning, navigation, preferences, runtime, onDirtyChange, onBusyChange, onOpenRun }: {
   view: keyof typeof pages; engineRunning: boolean; navigation: ReactNode; preferences?: ReactNode;
   onDirtyChange: (dirty: boolean) => void; onBusyChange: (busy: boolean) => void; onOpenRun: () => void;
+  runtime: RuntimeConfiguration;
 }) {
   const { t } = useI18n();
   const page = pages[view];
@@ -129,7 +132,21 @@ export function ConfigCard({ view, engineRunning, navigation, preferences, onDir
     let values: Record<string, unknown>;
     try { values = updates(); } catch (e) { setError(String(e)); return; }
     void run(async () => { await api.patchConfig(values, selected === DEFAULT ? "default" : selected); },
-      view === "stimulation" ? "Settings saved. Relaunch stimulation to apply changes." : "Settings saved. Engine settings apply on the next start.");
+      "Host settings saved. Review and apply the selected settings to update the runtime.");
+  };
+  const reviewHostSettings = async () => {
+    setBusy(true); setError(null);
+    try {
+      const activation = await pluginConfigApi.activation();
+      if (!activation || activation.bindings.some((binding) => !binding.profile_id)) {
+        throw new Error("Save profiles for the selected plugins before applying host settings.");
+      }
+      await runtime.review({
+        bindings: activation.bindings.map((binding) => ({ slot: binding.slot, profile_id: binding.profile_id! })),
+        expected_revision: activation.revision, refresh_slots: [], include_host_settings: true,
+      });
+    } catch (cause) { setError(String(cause)); }
+    finally { setBusy(false); }
   };
   const visible = (config?.entries ?? []).filter((entry) => {
     const inPage = entry.key.startsWith(page.prefix) || (view === "stimulation" && entry.key === "ACQUISITION.parallel_port_address");
@@ -173,8 +190,8 @@ export function ConfigCard({ view, engineRunning, navigation, preferences, onDir
         {options.map((plugin) => <option key={plugin.plugin_type} value={plugin.plugin_type}>{translatePluginName(plugin.plugin_type, plugin.display_name, t)}</option>)}
       </datalist>}
       {locked && !owned && <span className="setting-detail">Stop the engine to edit this setting.</span>}
-      {advanced && <span className="setting-detail">Selected value: <strong>{show(entry.effective_value) || "Not set"}</strong>
-        <span> · {entry.key === "STIMULATION.paradigm" || entry.key === "ACQUISITION.parallel_port_address" ? "Next stimulation launch" : entry.requires === "hot" ? "Applies immediately" : "Engine restart"}</span></span>}
+      {advanced && <span className="setting-detail">Saved resolved value: <strong>{show(entry.effective_value) || "Not set"}</strong>
+        <span> · Saved host setting; review before applying</span></span>}
     </div>;
   };
 
@@ -205,7 +222,7 @@ export function ConfigCard({ view, engineRunning, navigation, preferences, onDir
             <option value={DEFAULT}>Default configuration</option>
             {profiles?.profiles.map((profile) => <option key={profile.name} value={profile.name}>{profile.name}</option>)}
           </select></label>
-          {advanced && <><label>Active configuration<select aria-label="Active application configuration" disabled={busy || engineRunning} value={active ?? DEFAULT}
+          {advanced && <><label>Active configuration<select aria-label="Active application configuration" disabled={busy || engineRunning || runtime.blocked} value={active ?? DEFAULT}
             onChange={(event) => { const name = event.target.value; confirmDiscard(() => void run(async () => {
               if (name === DEFAULT) await api.deactivateProfile(); else await api.activateProfile(name);
             }, "Active configuration updated.")); }}>
@@ -221,8 +238,7 @@ export function ConfigCard({ view, engineRunning, navigation, preferences, onDir
       </div>}
       {advanced && !!moduleOwnedKeys.length && <p className="inline-message">The selected acquisition profile manages its device settings. Edit them in Setup → Acquisition.</p>}
       {config && !advanced && <p className="inline-message">{selected !== (active ?? DEFAULT) ? "Editing a configuration that is not selected. Activate it in Settings → Advanced to use its overrides."
-        : view === "stimulation" ? "Saved changes apply when stimulation next launches. Stop the engine to edit the trigger interface."
-          : "Saved settings apply on the next engine start."}</p>}
+        : "Save host settings, then review and apply them. The preview reports changes that require an application restart."}</p>}
       <div className="settings-scroll">
         {!config && <div className="empty-state"><Icon name="settings" /><h2>{busy ? "Loading settings…" : "Settings unavailable"}</h2>
           {!busy && <button onClick={() => void run(async () => {}, "Settings refreshed.")}>Try again</button>}</div>}
@@ -250,6 +266,8 @@ export function ConfigCard({ view, engineRunning, navigation, preferences, onDir
               setDialog(null); void run(async () => { await api.putProfile(name, values); return name; }, "Application profile created.");
             } })}>Save as…</button>}
           <button className="primary" disabled={busy || !dirty} onClick={save}>Save settings</button>
+          <button disabled={busy || dirty || runtime.blocked || !config || (selected !== DEFAULT && selected !== active)}
+            onClick={() => void reviewHostSettings()}>Review and apply host settings</button>
         </div>
       </footer>
     </div>

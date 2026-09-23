@@ -5,6 +5,7 @@ import { SchemaForm, initialSchemaValue, schemaErrors, sameParameters } from "./
 import { pluginConfigApi as api, selectionKey, type Activation, type BindingSelection,
   type PluginDefinition, type PluginKind, type PluginProfile } from "./api/plugin-config";
 import "./PluginProfiles.css";
+import type { RuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
 
 type Module = "acquisition" | "processing" | "stimulation" | "actuation";
 type Slot = { slot: string; kind: PluginKind; label: string };
@@ -33,11 +34,12 @@ function editorFor(profile: PluginProfile | undefined, definitions: PluginDefini
 }
 
 export function PluginProfiles({ module, engineRunning, engineAvailable = true, navigation,
-  onSelected, onDirtyChange, onBusyChange }: {
+  runtime, onSelected, onDirtyChange, onBusyChange }: {
   module: Module;
   engineRunning: boolean;
   engineAvailable?: boolean;
   navigation?: ReactNode;
+  runtime: RuntimeConfiguration;
   onSelected?: () => void;
   onDirtyChange?: (dirty: boolean) => void;
   onBusyChange?: (busy: boolean) => void;
@@ -65,6 +67,20 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   const savedChain = activation?.bindings.filter((item) => item.kind === "filter")
     .map((item) => ({ slot: item.slot, profile_id: item.profile_id ?? "" })) ?? [];
   const chainDirty = JSON.stringify(chain) !== JSON.stringify(savedChain);
+  const chainDirtyRef = useRef(chainDirty);
+  chainDirtyRef.current = chainDirty;
+
+  useEffect(() => {
+    let active = true;
+    void api.activation().then((next) => {
+      if (!active) return;
+      setActivation(next);
+      if (!chainDirtyRef.current) setChain(next?.bindings.filter((item) => item.kind === "filter")
+        .map((item) => ({ slot: item.slot, profile_id: item.profile_id ?? "" })) ?? []);
+      onSelected?.();
+    }).catch((cause) => { if (active) setError(String(cause)); });
+    return () => { active = false; };
+  }, [runtime.status?.accepted_revision, onSelected]);
 
   useEffect(() => { onDirtyChange?.(dirty || chainDirty); }, [dirty, chainDirty, onDirtyChange]);
   useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
@@ -111,11 +127,12 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     if (activation?.bindings.some((item) => !item.profile_id)) throw new Error("Save a profile for every selected plugin before changing the configuration.");
     return activation?.bindings.map((item) => ({ slot: item.slot, profile_id: item.profile_id! })) ?? [];
   };
-  const accept = async (bindings: BindingSelection[], refreshSlots: string[]) => {
-    if (engineRunning) throw new Error("Stop the engine before selecting this configuration.");
-    await api.accept(bindings, activation?.revision ?? null, refreshSlots);
-    onSelected?.();
-    return editor.profile?.profile_id;
+  const reviewSelection = async (makeBindings: () => BindingSelection[], refreshSlots: string[]) => {
+    setBusy(true); setError(""); setNotice("");
+    try { await runtime.review({ bindings: makeBindings(), expected_revision: activation?.revision ?? null,
+      refresh_slots: refreshSlots, include_host_settings: false }); }
+    catch (cause) { setError(String(cause)); }
+    finally { setBusy(false); }
   };
   const save = (copy = false, name = editor.name) => {
     if (!definition) return;
@@ -124,7 +141,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
         ? await api.update(editor.profile, name, editor.parameters)
         : await api.create(slot.kind, definition.selection, name, editor.parameters);
       return saved.profile_id;
-    }, "Profile saved. Select it explicitly to use these values.", true);
+    }, "Profile saved. Review and apply it to change the selected configuration.", true);
   };
 
   return <section className="settings-workspace plugin-profiles">
@@ -149,21 +166,21 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     <div className="settings-editor">
       <header className="editor-heading"><div><p className="eyebrow">{module} / {slot.label}</p>
         <h1>{editor.profile?.name ?? "New profile"}</h1><p>Settings provided by the selected plugin.</p></div>
-        <button className="primary" disabled={busy || dirty || !editor.profile || !definition?.available || (!engineAvailable && slot.kind !== "filter") || (engineRunning && slot.kind !== "filter")}
+        <button className="primary" disabled={busy || dirty || !editor.profile || !definition?.available || (!engineAvailable && slot.kind !== "filter") || (runtime.blocked && slot.kind !== "filter")}
           onClick={() => {
             if (!editor.profile) return;
             if (slot.kind === "filter") {
               setChain([...chain, { slot: `processing.filter.${crypto.randomUUID()}`, profile_id: editor.profile.profile_id }]);
-              setNotice("Filter instance added. Use the filter chain to select this order.");
-            } else void run(() => accept([
+              setNotice("Filter instance added. Review the filter chain before applying this order.");
+            } else void reviewSelection(() => [
               ...bindingSelections().filter((item) => item.slot !== slot.slot),
               { slot: slot.slot, profile_id: editor.profile!.profile_id },
-            ], [slot.slot]), "Profile selected for the next engine start.");
-          }}>{slot.kind === "filter" ? "Add filter instance" : "Use saved profile"}</button>
+            ], [slot.slot]);
+          }}>{slot.kind === "filter" ? "Add filter instance" : "Review and apply profile"}</button>
       </header>
       {error && <p className="inline-message error" role="alert">{error}</p>}
       {notice && <p className="inline-message success" role="status">{notice}</p>}
-      {engineRunning && <p className="inline-message">Profiles can be saved while the engine runs. Stop the engine to select a configuration.</p>}
+      {engineRunning && <p className="inline-message">Profiles can be saved while the engine runs. Review the impact before applying changes.</p>}
       {selectedChanged && <p className="inline-message">This profile has saved changes that are not selected. The selected configuration retains its previous values.</p>}
       <div className="settings-scroll">
         <div className="setting-group"><h2>Profile</h2>
@@ -197,14 +214,14 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
               <button disabled={busy || index === 0} onClick={() => { const next = [...chain]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; setChain(next); }}>Move up</button>
               <button disabled={busy || index === chain.length - 1} onClick={() => { const next = [...chain]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; setChain(next); }}>Move down</button>
               <button disabled={busy} onClick={() => setChain(chain.filter((previous) => previous.slot !== item.slot))}>Remove</button>
-              <button disabled={busy || !engineAvailable || engineRunning || chainDirty} onClick={() => void run(() => accept(bindingSelections(), [item.slot]), "Saved values selected for this filter instance.")}>Use saved values</button>
+              <button disabled={busy || !engineAvailable || runtime.blocked || chainDirty} onClick={() => void reviewSelection(bindingSelections, [item.slot])}>Review saved values</button>
             </div>
           </li>)}</ol>
           {!chain.length && <p className="setting-row">No filters selected.</p>}
-          <div className="setting-row"><button className="primary" disabled={busy || !engineAvailable || engineRunning || !chainDirty || chain.some((item) => !item.profile_id)}
-            onClick={() => void run(() => accept([
+          <div className="setting-row"><button className="primary" disabled={busy || !engineAvailable || runtime.blocked || !chainDirty || chain.some((item) => !item.profile_id)}
+            onClick={() => void reviewSelection(() => [
               ...bindingSelections().filter((item) => !item.slot.startsWith("processing.filter.")), ...chain,
-            ], []), "Filter chain selected. Existing instances retain their selected values.")}>Use filter chain</button></div>
+            ], [])}>Review and apply filter chain</button></div>
         </div>}
       </div>
       <footer className="editor-footer"><span className="save-state">{dirty || chainDirty ? "Unsaved changes" : "All changes saved"}</span>

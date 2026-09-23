@@ -28,6 +28,8 @@ async function request<T>(path: string, method = "GET", data?: unknown): Promise
   return (body as ApiEnvelope<T>).data as T;
 }
 
+export { request as configRequest };
+
 export const pluginConfigApi = {
   catalog: (kind: PluginKind) => request<PluginDefinition[]>(`/plugin-catalog/${kind}`),
   profiles: () => request<PluginProfile[]>("/plugin-profiles"),

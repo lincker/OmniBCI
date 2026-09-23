@@ -118,6 +118,7 @@ export function useResultsFeed(): ResultsFeed {
               ...prev,
               {
                 trial_number: msg.trial_number,
+                config_revision: msg.config_revision ?? null,
                 target_id: msg.target_id,
                 event_id: msg.event_id,
                 confidence: msg.confidence,
