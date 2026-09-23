@@ -1,41 +1,73 @@
-# 测试 + 架构契约守卫。
-#
-# tests        — 快速测试套件（conftest 全程 mock 硬件与 OpenGL，可无头运行）。
-#                无头环境跑不了的测试给它打 @pytest.mark.gui / hardware 标记，
-#                会被 -m 表达式跳过并在代码里留下显式记号。
-# integration  — 使用仓库内真实 CNT fixture 的慢速集成测试，独立运行，避免
-#                MNE/Matplotlib 冷启动拖慢快速反馈。
-# architecture — import-linter 分层契约（配置在 pyproject [tool.importlinter]）。
-#                豁免表是棘轮：修复 P0 时删对应行；任何新增跨层依赖直接红。
-#
-# 记得在 Settings → Branches → branch protection 里把这三个 job
-# 勾成 required status checks，规矩才真正拦得住合并。
+# Headless tests, spawned-worker integration, packaged resources, and frontend
+# contracts run on each supported OS. Hardware and display timing need separate
+# validation; see docs/validation.md. Configure required checks in branch protection.
 name: tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
+  workflow_dispatch:
+
+env:
+  PYTHONUTF8: "1"
+  MPLBACKEND: Agg
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    name: headless (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.14"   # 与 pyproject 的 requires-python 保持一致
+          python-version: "3.14"
           cache: pip
 
       - name: Install package with dev extras
         run: pip install -e ".[dev]"
 
       - name: Run test suite
-        run: pytest -m "not gui and not hardware and not integration"
+        run: python -m pytest -m "not gui and not hardware and not integration"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Check generated REST types and build the console
+        run: |
+          npm --prefix frontend run codegen
+          git diff --exit-code -- frontend/src/api/rest-types.ts
+          npm --prefix frontend test
+          npm --prefix frontend run build
+
+      - name: Build and install the wheel instead of the editable checkout
+        run: |
+          python -m pip wheel --no-deps . --wheel-dir dist
+          python -c "import pathlib, subprocess, sys; wheels = list(pathlib.Path('dist').glob('omnibci-*.whl')); assert len(wheels) == 1, wheels; subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--force-reinstall', '--no-deps', str(wheels[0])])"
+
+      - name: Verify installed schemas and stimulus resources in isolated Python
+        run: python -I .github/scripts/check_installed_wheel.py
 
   integration:
-    runs-on: ubuntu-latest
+    name: integration (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -48,7 +80,7 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Run integration tests
-        run: pytest -m integration
+        run: python -m pytest -m "integration and not gui and not hardware"
 
   architecture:
     runs-on: ubuntu-latest
