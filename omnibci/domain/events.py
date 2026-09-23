@@ -31,6 +31,7 @@ class TrialCompleted(DomainEvent):
     session_id: str
     trial_number: int
     classification: Classification
+    config_revision: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.trial_number < 1:
@@ -42,6 +43,8 @@ class SessionStarted(DomainEvent):
     """Raised when a BCISession transitions from idle to running."""
     session_id: str
     paradigm: Optional[str] = None
+    continuation_of: Optional[str] = None
+    config_revision: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -55,3 +58,5 @@ class SessionEnded(DomainEvent):
     """
     session_id: str
     total_trials: int
+    config_revision: Optional[str] = None
+    interruption_reason: Optional[str] = None

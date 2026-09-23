@@ -1396,6 +1396,12 @@ export interface components {
             started_at: string | null;
             /** Ended At */
             ended_at: string | null;
+            /** Continuation Of */
+            continuation_of?: string | null;
+            /** Config Revision */
+            config_revision?: string | null;
+            /** Interruption Reason */
+            interruption_reason?: string | null;
         };
         /**
          * SessionStateDTO
@@ -1467,6 +1473,8 @@ export interface components {
              * Format: date-time
              */
             produced_at: string;
+            /** Config Revision */
+            config_revision?: string | null;
         };
         /** UpdateModuleProfileRequest */
         UpdateModuleProfileRequest: {

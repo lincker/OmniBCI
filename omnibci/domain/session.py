@@ -59,6 +59,7 @@ class Trial:
     trial_number: int
     epoch_info: EpochInfo
     classification: Classification
+    config_revision: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -83,9 +84,17 @@ class BCISession:
         self,
         session_id: Optional[str] = None,
         paradigm: Optional[str] = None,
+        *,
+        continuation_of: Optional[str] = None,
+        config_revision: Optional[str] = None,
     ) -> None:
         self._session_id: str = session_id or str(uuid.uuid4())
+        if continuation_of == self._session_id:
+            raise ValueError("A continuation must have a new session ID")
         self._paradigm: Optional[str] = paradigm
+        self._continuation_of = continuation_of
+        self._config_revision = config_revision
+        self._interruption_reason: Optional[str] = None
         self._state: SessionState = SessionState.IDLE
         self._trials: List[Trial] = []
         self._pending_events: List[DomainEvent] = []
@@ -101,6 +110,18 @@ class BCISession:
     @property
     def paradigm(self) -> Optional[str]:
         return self._paradigm
+
+    @property
+    def continuation_of(self) -> Optional[str]:
+        return self._continuation_of
+
+    @property
+    def config_revision(self) -> Optional[str]:
+        return self._config_revision
+
+    @property
+    def interruption_reason(self) -> Optional[str]:
+        return self._interruption_reason
 
     @property
     def state(self) -> SessionState:
@@ -130,10 +151,18 @@ class BCISession:
             )
         self._state = SessionState.RUNNING
         self._pending_events.append(
-            SessionStarted(session_id=self._session_id, paradigm=self._paradigm)
+            SessionStarted(
+                session_id=self._session_id,
+                paradigm=self._paradigm,
+                continuation_of=self._continuation_of,
+                config_revision=self._config_revision,
+            )
         )
 
-    def record_trial(self, epoch: Epoch, classification: Classification) -> TrialCompleted:
+    def record_trial(
+        self, epoch: Epoch, classification: Classification,
+        *, config_revision: Optional[str] = None,
+    ) -> TrialCompleted:
         """
         Record a completed trial and emit TrialCompleted.
 
@@ -156,11 +185,13 @@ class BCISession:
             )
 
         trial_number = len(self._trials) + 1
+        revision = config_revision if config_revision is not None else self._config_revision
         trial = Trial(
             trial_number=trial_number,
             # Trial history keeps only metadata, never the signal matrix.
             epoch_info=EpochInfo.from_epoch(epoch),
             classification=classification,
+            config_revision=revision,
         )
         self._trials.append(trial)
 
@@ -168,11 +199,12 @@ class BCISession:
             session_id=self._session_id,
             trial_number=trial_number,
             classification=classification,
+            config_revision=revision,
         )
         self._pending_events.append(event)
         return event
 
-    def end(self) -> None:
+    def end(self, *, interruption_reason: Optional[str] = None) -> None:
         """
         Transition RUNNING → ENDED.
         Raises RuntimeError if the session is not RUNNING.
@@ -183,10 +215,13 @@ class BCISession:
                 f"current state is {self._state.name}"
             )
         self._state = SessionState.ENDED
+        self._interruption_reason = interruption_reason
         self._pending_events.append(
             SessionEnded(
                 session_id=self._session_id,
                 total_trials=len(self._trials),
+                config_revision=self._config_revision,
+                interruption_reason=interruption_reason,
             )
         )
 

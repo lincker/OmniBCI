@@ -20,7 +20,7 @@ Accounts, cloud synchronization, and montage remain outside this implementation.
 | 12 | Worker readiness and revision acknowledgement | Complete |
 | 13 | Schema-driven profile editor | Complete |
 | 14 | Ordered stream draining and safe pause boundaries | Complete |
-| 15 | Session continuation and file replay checkpoints | Pending |
+| 15 | Session continuation and file replay checkpoints | Complete |
 | 16 | Runtime application plan and status API | Pending |
 | 17 | Automatic pause, rebuild, restore, and rollback | Pending |
 | 18 | Trial-boundary and module-local configuration updates | Pending |

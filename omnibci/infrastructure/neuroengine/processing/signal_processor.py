@@ -101,10 +101,13 @@ class SignalProcessor:
         #          down from the API (docs/session-id-unification.md). Trials
         #          decoded before that are dropped by record_trial's invariant.
         if session is None:
-            session = BCISession()
+            session = BCISession(config_revision=config_revision)
             if auto_start_session:
                 session.start()
         self.session: BCISession = session
+        self._closed_session_ids = (
+            {session.session_id} if session.state is SessionState.ENDED else set()
+        )
 
         # States hold a reference to this processor (the context)
         self._awaiting_state = AwaitingEpochState(self)
@@ -283,15 +286,32 @@ class SignalProcessor:
 
     def _start_session(self, payload) -> bool:
         """Open a session with the API-supplied identity (single-active invariant)."""
-        if not isinstance(payload, dict) or not payload.get("session_id"):
+        if (
+            not isinstance(payload, dict)
+            or not isinstance(payload.get("session_id"), str)
+            or not payload["session_id"]
+        ):
             logger.error("start_session: bad payload %r; ignored", payload)
             return False
+        session_id = payload["session_id"]
+        if session_id in self._closed_session_ids:
+            logger.warning("start_session: ended session %s cannot be reused", session_id)
+            return False
+        if session_id == self.session.session_id and self.session.state is SessionState.RUNNING:
+            # Retrying a confirmed identity must not reset its trials or events.
+            return all(
+                field not in payload or payload[field] == getattr(self.session, field)
+                for field in ("paradigm", "continuation_of", "config_revision")
+            )
+        candidate = BCISession(
+            session_id=session_id,
+            paradigm=payload.get("paradigm"),
+            continuation_of=payload.get("continuation_of"),
+            config_revision=payload.get("config_revision", self.config_revision),
+        )
         # Single-active-session invariant: a new start ends the previous one.
         self._end_current_session()
-        self.session = BCISession(
-            session_id=payload["session_id"],
-            paradigm=payload.get("paradigm"),
-        )
+        self.session = candidate
         self.session.start()
         self.event_publisher.publish_all(self.session.pop_events())
         logger.info("Session started in worker: %s", self.session.session_id)
@@ -299,23 +319,25 @@ class SignalProcessor:
 
     def _end_session(self, payload) -> bool:
         """End the current session — only if the id matches (stale-command guard)."""
-        session_id = payload if isinstance(payload, str) and payload else None
-        if session_id is None:
+        session_id = payload.get("session_id") if isinstance(payload, dict) else payload
+        reason = payload.get("interruption_reason") if isinstance(payload, dict) else None
+        if not isinstance(session_id, str) or not session_id or (reason is not None and not isinstance(reason, str)):
             logger.error("end_session: bad payload %r; ignored", payload)
             return False
         if session_id != self.session.session_id:
             logger.warning("end_session for %s ignored (current is %s)",
                            session_id, self.session.session_id)
             return False
-        self._end_current_session()
+        self._end_current_session(interruption_reason=reason)
         return True
 
-    def _end_current_session(self) -> None:
+    def _end_current_session(self, *, interruption_reason: str | None = None) -> None:
         """End + publish if RUNNING; silently no-op otherwise."""
         try:
-            self.session.end()
+            self.session.end(interruption_reason=interruption_reason)
         except RuntimeError:
             return  # already ended or never started
+        self._closed_session_ids.add(self.session.session_id)
         self.event_publisher.publish_all(self.session.pop_events())
 
     def _emit_command_result(

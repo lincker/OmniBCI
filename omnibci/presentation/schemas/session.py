@@ -21,6 +21,7 @@ class TrialResponse(BaseModel):
     confidence: Optional[float] = None
     forced: bool
     produced_at: datetime
+    config_revision: Optional[str] = None
 
 
 class SessionResponse(BaseModel):
@@ -30,6 +31,9 @@ class SessionResponse(BaseModel):
     trial_count: int
     started_at: Optional[datetime]
     ended_at: Optional[datetime]
+    continuation_of: Optional[str] = None
+    config_revision: Optional[str] = None
+    interruption_reason: Optional[str] = None
 
 
 class SessionDetailResponse(SessionResponse):

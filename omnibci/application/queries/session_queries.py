@@ -47,6 +47,7 @@ class TrialDTO:
     confidence: Optional[float]
     forced: bool
     produced_at: datetime
+    config_revision: Optional[str] = None
 
 
 @dataclass
@@ -58,3 +59,6 @@ class SessionDTO:
     started_at: Optional[datetime]
     ended_at: Optional[datetime]
     trials: List[TrialDTO] = field(default_factory=list)
+    continuation_of: Optional[str] = None
+    config_revision: Optional[str] = None
+    interruption_reason: Optional[str] = None

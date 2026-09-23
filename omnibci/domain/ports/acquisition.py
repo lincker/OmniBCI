@@ -30,6 +30,19 @@ class SignalSource(ABC):
     def is_streaming(self) -> bool:
         return self._is_streaming
 
+    @property
+    def supports_checkpoint(self) -> bool:
+        """Whether a stopped source can resume its next undelivered sample."""
+        return False
+
+    def checkpoint(self) -> dict[str, Any]:
+        """Capture a stopped source after its acquisition fetch task has joined."""
+        raise NotImplementedError("This signal source does not support checkpoints")
+
+    def restore_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        """Stage a checkpoint for the next start; unsupported for live sources."""
+        raise NotImplementedError("This signal source does not support checkpoints")
+
     @abstractmethod
     async def get_metadata(self):
         """get metadata"""
