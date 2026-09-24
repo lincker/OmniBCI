@@ -10,11 +10,9 @@ from pathlib import Path
 from omnibci.conf import settings
 from omnibci.conf.paths import resolve_config_path
 from omnibci.domain.ports.acquisition import SignalSource
-from omnibci.infrastructure.plugins.registry import register_plugin
 from omnibci.sdk import PluginContext, PluginParameters
 
 
-@register_plugin(SignalSource)
 class FileReader(SignalSource):
     plugin_type = 'file_reader'
 

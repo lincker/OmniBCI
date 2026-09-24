@@ -4,7 +4,7 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from omnibci.application.configuration import ConfigProfileConflictError
+from omnibci.application.config_errors import ConfigProfileConflictError
 from omnibci.application.plugin_profiles import (
     PluginProfileNotFoundError, PluginProfileStorageError, PluginProfileValidationError,
     PluginSelection, ProfileRevisionConflict,

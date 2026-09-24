@@ -21,7 +21,7 @@ from omnibci.infrastructure.plugins.paradigms.classic40SSVEP.ssvep import (
     _RESULT_FRAMES,
     _State,
 )
-from omnibci.infrastructure.stimulation.ports.renderer import TextureHandle
+from omnibci.sdk import TextureHandle
 
 # ---------------------------------------------------------------------------
 # Constants matching the fake frame pack

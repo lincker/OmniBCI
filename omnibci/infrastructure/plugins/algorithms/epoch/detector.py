@@ -6,11 +6,9 @@ import numpy as np
 
 from omnibci.domain.signal import SignalChunk
 from omnibci.domain.ports.algorithm import EpochDetector
-from omnibci.infrastructure.plugins.registry import register_plugin
 from omnibci.sdk import PluginContext, PluginParameters
 
 
-@register_plugin(EpochDetector)
 class DefaultEpochDetector(EpochDetector):
     plugin_type = 'DEFAULT_EPOCH_DETECTOR'
     def __init__(

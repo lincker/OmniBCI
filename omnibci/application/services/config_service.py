@@ -15,9 +15,9 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from omnibci.conf import OmniBCISettings, ProfileNameError, ProfileNotFoundError
+from omnibci.application.config_errors import ConfigProfileConflictError, ConfigProfileValidationError
 from omnibci.application.configuration import (
-    ACQUISITION_PLUGINS, ConfigProfile, ConfigProfileConflictError,
-    ConfigProfileNotFoundError, ConfigProfileValidationError,
+    ACQUISITION_PLUGINS, ConfigProfile, ConfigProfileNotFoundError,
     acquisition_fields, validate_module, validate_parameters,
 )
 from omnibci.application.ports.config_profile_repository import ConfigProfileRepository

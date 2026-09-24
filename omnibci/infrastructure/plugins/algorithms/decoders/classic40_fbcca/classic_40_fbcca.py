@@ -10,12 +10,10 @@ from numpy import typing as npt
 from scipy.signal import cheby1, filtfilt
 
 from omnibci.domain.ports.algorithm import Decoder, Prediction
-from omnibci.infrastructure.plugins.registry import register_plugin
 from omnibci.conf import settings
 from omnibci.sdk import PluginContext, PluginParameters
 
 
-@register_plugin(Decoder)
 class Classic40FBCCA(Decoder):
     plugin_type = 'THUBCI_SSVEP_classic40FBCCA'
     # class Template:

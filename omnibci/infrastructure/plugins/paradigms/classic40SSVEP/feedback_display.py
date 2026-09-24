@@ -9,7 +9,7 @@ import threading
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from omnibci.infrastructure.stimulation.ports.renderer import Renderer, Rect, TextureHandle
+from omnibci.sdk import Renderer, Rect, TextureHandle
 
 
 def _center_rect(

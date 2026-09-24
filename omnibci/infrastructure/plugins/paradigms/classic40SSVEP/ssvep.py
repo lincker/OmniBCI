@@ -17,13 +17,7 @@ from enum import Enum, auto
 from importlib import resources
 
 from omnibci.domain.ports.paradigm import Paradigm
-from omnibci.sdk import PluginContext, PluginParameters
-from omnibci.infrastructure.plugins.registry import register_plugin
-from omnibci.infrastructure.stimulation.ports.renderer import (
-    Rect,
-    Renderer,
-    TextureHandle,
-)
+from omnibci.sdk import PluginContext, PluginParameters, Rect, Renderer, TextureHandle
 from .feedback_display import FeedbackDisplay
 from .frame_pack import FramePack
 
@@ -80,7 +74,6 @@ class _State(Enum):
 # Paradigm implementation
 # ---------------------------------------------------------------------------
 
-@register_plugin(Paradigm)
 class Classic40SSVEP_2(Paradigm):
     plugin_type = 'STIMULATION_THUBCI_SSVEP_classic40'
 

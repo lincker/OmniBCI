@@ -25,9 +25,6 @@ def test_sdk_reexports_existing_contract_types(name, module):
 
     domain_module = importlib.import_module(f"omnibci.domain.ports.{module}")
     assert getattr(sdk, name) is getattr(domain_module, name)
-    if module == "renderer":
-        from omnibci.infrastructure.stimulation.ports import renderer
-        assert getattr(sdk, name) is getattr(renderer, name)
 
 
 def test_sdk_reexports_signal_chunk():

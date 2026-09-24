@@ -1,4 +1,4 @@
-"""Unit tests for FileReader lifecycle and acquisition plugin registration."""
+"""Unit tests for FileReader lifecycle."""
 from __future__ import annotations
 
 import asyncio
@@ -6,8 +6,6 @@ import asyncio
 import numpy as np
 import pytest
 
-from omnibci.domain.ports.acquisition import SignalSource
-from omnibci.infrastructure.plugins.registry import registry_for
 from omnibci.infrastructure.plugins.acquisition.file.reader import FileReader
 
 
@@ -35,16 +33,6 @@ class _FakeAdapter:
 
     def get_metadata(self):
         return "fake-device"
-
-
-# ---------------------------------------------------------------------------
-# Plugin registry
-# ---------------------------------------------------------------------------
-
-class TestDataSourceRegistry:
-    def test_filereader_is_registered_under_its_plugin_type(self):
-        assert "file_reader" in registry_for(SignalSource)
-        assert registry_for(SignalSource)["file_reader"] is FileReader
 
 
 # ---------------------------------------------------------------------------

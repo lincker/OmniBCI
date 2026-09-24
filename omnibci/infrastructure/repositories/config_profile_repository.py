@@ -7,22 +7,12 @@ from pathlib import Path
 from threading import RLock
 
 import tomlkit
-from platformdirs import user_config_path
 
 from omnibci.application.configuration import (
     ConfigProfile, ConfigProfileNotFoundError, ConfigProfileValidationError, ConfigProfileStorageError,
     validate_module, validate_profile_id,
 )
-
-
-def config_root() -> Path:
-    override = os.environ.get("OMNIBCI_CONFIG_DIR")
-    if override:
-        path = Path(override).expanduser()
-        if not path.is_absolute():
-            raise ConfigProfileValidationError("OMNIBCI_CONFIG_DIR must be an absolute path")
-        return path.resolve()
-    return user_config_path("OmniBCI", appauthor=False, roaming=False)
+from omnibci.infrastructure.config_paths import config_root
 
 
 class TomlConfigProfileRepository:

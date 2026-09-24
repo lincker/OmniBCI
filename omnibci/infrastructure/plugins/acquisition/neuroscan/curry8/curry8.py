@@ -16,7 +16,6 @@ import numpy as np
 
 from omnibci.conf import settings
 from omnibci.domain.ports.acquisition import SignalSource
-from omnibci.infrastructure.plugins.registry import register_plugin
 from omnibci.sdk import PluginContext, PluginParameters
 
 logger = logging.getLogger(__name__)
@@ -175,7 +174,6 @@ class Curry8Event:
         )
 
 
-@register_plugin(SignalSource)
 class Curry8DataReader(SignalSource):
     """Receive uncompressed EEG and event packets from CURRY 8."""
 

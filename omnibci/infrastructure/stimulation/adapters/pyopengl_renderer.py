@@ -39,7 +39,7 @@ from OpenGL.GL import (
 )
 from OpenGL.GL.shaders import compileShader, compileProgram
 
-from omnibci.infrastructure.stimulation.ports.renderer import (
+from omnibci.domain.ports.renderer import (
     Color, Rect, TextureHandle,
 )
 from omnibci.infrastructure.stimulation.ui.window import UIWindow

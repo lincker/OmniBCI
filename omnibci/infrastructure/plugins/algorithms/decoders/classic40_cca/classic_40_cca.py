@@ -22,11 +22,9 @@ from sklearn.cross_decomposition import CCA as skCCA
 
 from omnibci.conf import settings
 from omnibci.domain.ports.algorithm import Decoder, Prediction
-from omnibci.infrastructure.plugins.registry import register_plugin
 from omnibci.sdk import PluginContext, PluginParameters
 
 
-@register_plugin(Decoder)
 class Classic40CCA(Decoder):
     plugin_type = 'THUBCI_SSVEP_classic40CCA'
     class Template:

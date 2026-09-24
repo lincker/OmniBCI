@@ -7,9 +7,7 @@ import pytest
 from omnibci.application.configuration import (
     ConfigProfile, ConfigProfileNotFoundError, ConfigProfileValidationError,
 )
-from omnibci.infrastructure.repositories.config_profile_repository import (
-    TomlConfigProfileRepository, config_root,
-)
+from omnibci.infrastructure.repositories.config_profile_repository import TomlConfigProfileRepository
 
 
 @pytest.fixture()
@@ -115,14 +113,6 @@ def test_filename_and_payload_identity_must_match(repository, profile):
     path.write_text(path.read_text().replace(profile.profile_id, str(uuid4())))
     with pytest.raises(ConfigProfileValidationError):
         repository.get("acquisition", profile.profile_id)
-
-
-def test_directory_override_is_absolute(tmp_path, monkeypatch):
-    monkeypatch.setenv("OMNIBCI_CONFIG_DIR", str(tmp_path))
-    assert config_root() == tmp_path
-    monkeypatch.setenv("OMNIBCI_CONFIG_DIR", "relative/config")
-    with pytest.raises(ConfigProfileValidationError):
-        config_root()
 
 
 def test_malformed_toml_is_reported_without_overwriting(repository, profile):

@@ -24,7 +24,7 @@ from omnibci.application.plugin_profiles import (
     ProfileRevisionConflict,
     validate_profile_id,
 )
-from omnibci.infrastructure.repositories.config_profile_repository import config_root
+from omnibci.infrastructure.config_paths import config_root
 
 
 class TomlPluginProfileRepository:

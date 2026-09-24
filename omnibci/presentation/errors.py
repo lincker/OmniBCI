@@ -22,10 +22,8 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from omnibci.presentation.schemas.common import ErrorCode, ErrorResponse
-from omnibci.application.configuration import (
-    ConfigProfileValidationError, ConfigProfileNotFoundError,
-    ConfigProfileConflictError, ConfigProfileStorageError,
-)
+from omnibci.application.config_errors import ConfigProfileConflictError, ConfigProfileValidationError
+from omnibci.application.configuration import ConfigProfileNotFoundError, ConfigProfileStorageError
 from omnibci.application.services.command_result_service import (
     CommandExecutionError,
     CommandRejectedError,

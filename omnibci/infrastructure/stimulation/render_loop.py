@@ -20,7 +20,7 @@ import asyncio
 import threading
 import time
 
-from omnibci.infrastructure.stimulation.ports.renderer import Renderer
+from omnibci.domain.ports.renderer import Renderer
 
 
 class RenderLoop:

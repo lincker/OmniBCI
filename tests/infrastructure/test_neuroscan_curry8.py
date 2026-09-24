@@ -8,7 +8,6 @@ import struct
 import numpy as np
 import pytest
 
-from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8.curry8 import (
     BlockType,
     ClientRequest,
@@ -20,7 +19,6 @@ from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8.curry8 import (
     DataCode,
     InfoType,
 )
-from omnibci.infrastructure.plugins.registry import registry_for
 
 
 _HEADER = struct.Struct(">4sHHIII")
@@ -214,10 +212,6 @@ def test_header_uses_the_20_byte_network_order_layout():
         "43 54 52 4c 00 02 00 08 00 00 00 00 00 00 00 00 00 00 00 00"
     )
     assert Curry8Header.from_bytes(header.to_bytes()) == header
-
-
-def test_driver_is_registered_as_a_signal_source():
-    assert registry_for(SignalSource)[Curry8DataReader.plugin_type] is Curry8DataReader
 
 
 def test_protocol_802_native_int16_samples_are_supported():

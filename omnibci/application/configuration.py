@@ -5,17 +5,13 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-
-class ConfigProfileValidationError(ValueError):
-    """A profile, selection, or parameter is invalid or unsupported."""
+from omnibci.application.config_errors import (
+    ConfigProfileConflictError, ConfigProfileValidationError,
+)
 
 
 class ConfigProfileNotFoundError(KeyError):
     """A requested module profile does not exist."""
-
-
-class ConfigProfileConflictError(RuntimeError):
-    """A profile operation conflicts with a name or current runtime state."""
 
 
 class ConfigProfileStorageError(OSError):

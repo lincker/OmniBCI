@@ -16,7 +16,7 @@ from uuid import uuid4
 from omnibci.application.runtime_admission import RuntimeAdmission, admitted
 
 from omnibci.shared.events import EventType, Event
-from omnibci.application.configuration import ConfigProfileConflictError
+from omnibci.application.config_errors import ConfigProfileConflictError
 from omnibci.application.ports.engine_port import (
     EngineFactory,
     EngineHandle,
