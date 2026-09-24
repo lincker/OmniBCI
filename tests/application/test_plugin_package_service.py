@@ -5,8 +5,8 @@ from dataclasses import replace
 import pytest
 
 from omnibci.application.plugin_packages import PackageReference, PluginPackageConflictError
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
-from omnibci.application.plugin_schema import PluginSchemaError
+from omnibci.application.plugin_profiles import ActivationSnapshot, ProfileBinding, ProfileRevisionConflict
+from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.application.services.plugin_package_service import PluginPackageService
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
@@ -44,10 +44,28 @@ def source_profile(service):
     return service.profiles.create("effector", selection, "Output", {"gain": 2.0})
 
 
+def complete_snapshot(profiles, snapshot):
+    bindings = []
+    for slot, kind, plugin_type in (
+        ("acquisition.source", "acquisition", "file_reader"),
+        ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40FBCCA"),
+        ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR"),
+        ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40"),
+    ):
+        definition = next(item for item in profiles.catalog.list(kind) if item.plugin_type == plugin_type)
+        bindings.append(ProfileBinding(
+            slot, kind, None, definition.selection, validate_parameters(definition.schema, {}),
+            configuration_version=definition.configuration_version,
+        ))
+    return ActivationSnapshot(settings=snapshot.settings, bindings=(*bindings, *snapshot.bindings))
+
+
 def test_saved_profile_and_accepted_binding_references_are_listed_and_block_disable(service):
     svc, _ = service
     profile = source_profile(svc)
-    active = svc.profiles.propose([{"slot": "actuation.effector", "profile_id": profile.profile_id}])
+    active = complete_snapshot(svc.profiles, svc.profiles.propose([
+        {"slot": "actuation.effector", "profile_id": profile.profile_id},
+    ]))
     svc.profiles.accept(active, expected_revision=None)
     references = svc.list()[0].references
     assert {item.scope for item in references} == {"profile", "accepted"}
@@ -100,7 +118,9 @@ def test_busy_apply_rejects_package_mutations(service):
 def test_proposal_and_new_profile_do_not_mutate_accepted_or_source_profile(service):
     svc, _ = service
     original = source_profile(svc)
-    snapshot = svc.profiles.propose([{"slot": "actuation.effector", "profile_id": original.profile_id}])
+    snapshot = complete_snapshot(svc.profiles, svc.profiles.propose([
+        {"slot": "actuation.effector", "profile_id": original.profile_id},
+    ]))
     svc.profiles.accept(snapshot, expected_revision=None)
     proposal = svc.propose_profile(original.profile_id, "2.0.0", name="Output v2")
     assert proposal.parameters == {"gain": 2.0} and not proposal.target_enabled

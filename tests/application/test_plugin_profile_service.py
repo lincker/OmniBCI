@@ -1,10 +1,11 @@
 """Saving, selecting, and resolving configuration have distinct effects."""
 from contextlib import contextmanager
+from dataclasses import replace
 from uuid import uuid4
 
 import pytest
 
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.plugin_profiles import ActivationSnapshot, ProfileRevisionConflict
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
@@ -25,9 +26,34 @@ def create_source(service, name="Replay", **parameters):
     return service.create("acquisition", plugin.selection, name, parameters)
 
 
+REQUIRED_SELECTIONS = (
+    ("acquisition.source", "acquisition", "file_reader"),
+    ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA"),
+    ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR"),
+    ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40"),
+)
+
+
+def complete_selections(service, selections=()):
+    selections = list(selections)
+    slots = {item["slot"] for item in selections}
+    current = service.repository.get_activation()
+    previous = {item.slot: item.profile_id for item in current.bindings} if current else {}
+    for slot, kind, alias in REQUIRED_SELECTIONS:
+        if slot in slots:
+            continue
+        profile_id = previous.get(slot)
+        if profile_id is None:
+            plugin = service.catalog.legacy(kind, alias)
+            profile_id = service.create(kind, plugin.selection, f"Required {kind}", {}).profile_id
+        selections.append({"slot": slot, "profile_id": profile_id})
+    return selections
+
+
 def test_save_never_changes_accepted_values_even_for_active_profile(service):
     profile = create_source(service)
-    candidate = service.propose([{"slot": "acquisition.source", "profile_id": profile.profile_id}])
+    selections = complete_selections(service, [{"slot": "acquisition.source", "profile_id": profile.profile_id}])
+    candidate = service.propose(selections)
     service.accept(candidate, expected_revision=None)
     before = service.resolve_settings()
     changed = service.update(profile.profile_id, name="Changed", parameters={"sample_rate": 250},
@@ -37,7 +63,7 @@ def test_save_never_changes_accepted_values_even_for_active_profile(service):
     assert before["ACQUISITION.sample_rate"] == 1000
     assert before["PLUGINS.bindings"][0]["parameters"]["sample_rate"] == 1000
 
-    next_snapshot = service.propose([{"slot": "acquisition.source", "profile_id": profile.profile_id}])
+    next_snapshot = service.propose(selections)
     service.accept(next_snapshot, expected_revision=candidate.revision)
     assert service.resolve_settings()["ACQUISITION.sample_rate"] == 250
     assert service.resolve_settings()["CONFIG.revision"] != before["CONFIG.revision"]
@@ -48,7 +74,9 @@ def test_profile_and_activation_conflicts_do_not_overwrite(service):
     service.update(profile.profile_id, name="First", parameters={}, expected_revision=profile.revision)
     with pytest.raises(ProfileRevisionConflict):
         service.update(profile.profile_id, name="Stale", parameters={}, expected_revision=profile.revision)
-    candidate = service.propose([{"slot": "acquisition.source", "profile_id": profile.profile_id}])
+    candidate = service.propose(complete_selections(service, [
+        {"slot": "acquisition.source", "profile_id": profile.profile_id},
+    ]))
     service.accept(candidate, expected_revision=None)
     with pytest.raises(ProfileRevisionConflict):
         service.accept(candidate, expected_revision="0" * 64)
@@ -77,7 +105,9 @@ def test_profile_parameters_are_validated_by_the_selected_package(service):
 def test_scan45_profile_resolves_its_configured_channel_count(service, channels):
     plugin = service.catalog.legacy("acquisition", "neuroscan_scan45_reader")
     profile = service.create("acquisition", plugin.selection, "Device", {"channel_number": channels})
-    candidate = service.propose([{"slot": "acquisition.source", "profile_id": profile.profile_id}])
+    candidate = service.propose(complete_selections(service, [
+        {"slot": "acquisition.source", "profile_id": profile.profile_id},
+    ]))
     service.accept(candidate, expected_revision=None)
 
     assert service.repository.get_profile(profile.profile_id).parameters["channel_number"] == channels
@@ -99,7 +129,9 @@ def test_running_guard_blocks_accept_but_allows_saving(service):
         yield
     service.change_guard = running_guard
     profile = create_source(service)
-    candidate = service.propose([{"slot": "acquisition.source", "profile_id": profile.profile_id}])
+    candidate = service.propose(complete_selections(service, [
+        {"slot": "acquisition.source", "profile_id": profile.profile_id},
+    ]))
     with pytest.raises(ProfileRevisionConflict, match="running"):
         service.accept(candidate, expected_revision=None)
     assert service.repository.get_activation() is None
@@ -108,7 +140,98 @@ def test_running_guard_blocks_accept_but_allows_saving(service):
 
 def test_delete_requires_replacing_selected_binding(service):
     profile = create_source(service)
-    candidate = service.propose([{"slot": "acquisition.source", "profile_id": profile.profile_id}])
+    candidate = service.propose(complete_selections(service, [
+        {"slot": "acquisition.source", "profile_id": profile.profile_id},
+    ]))
     service.accept(candidate, expected_revision=None)
     with pytest.raises(ProfileRevisionConflict, match="selected"):
         service.delete(profile.profile_id, expected_revision=profile.revision)
+
+
+@pytest.mark.parametrize("missing_slot", [None, *(item[0] for item in REQUIRED_SELECTIONS)])
+def test_incomplete_activation_is_rejected_without_replacing_selected_values(service, missing_slot):
+    before = service.propose(complete_selections(service))
+    service.accept(before, expected_revision=None)
+    bindings = tuple(binding for binding in before.bindings if missing_slot and binding.slot != missing_slot)
+    candidate = ActivationSnapshot(before.settings, bindings)
+
+    with pytest.raises(PluginSchemaError, match="Missing required selections"):
+        service.accept(candidate, expected_revision=before.revision)
+
+    assert service.repository.get_activation() == before
+
+
+def test_enabled_actuation_requires_an_effector_without_replacing_selected_values(service):
+    before = service.propose(complete_selections(service))
+    service.accept(before, expected_revision=None)
+    candidate = ActivationSnapshot({**before.settings, "ACTUATION.enabled": True}, before.bindings)
+
+    with pytest.raises(PluginSchemaError, match="effector"):
+        service.accept(candidate, expected_revision=before.revision)
+
+    assert service.repository.get_activation() == before
+
+
+@pytest.mark.parametrize("slot,kind,alias", [
+    ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40"),
+    ("stimulation.trigger", "trigger", "neuroscan_scan45_trigger"),
+    ("actuation.effector", "effector", "logger"),
+])
+def test_unavailable_outputs_remain_portable_until_their_kind_is_active(service, monkeypatch, slot, kind, alias):
+    original_get = service.catalog.get
+
+    def get(requested_kind, selection):
+        definition = original_get(requested_kind, selection)
+        return replace(definition, available=False) if requested_kind == kind else definition
+
+    monkeypatch.setattr(service.catalog, "get", get)
+    definition = service.catalog.legacy(kind, alias)
+    profile = service.create(kind, definition.selection, "Portable output", {})
+    saved = service.update(profile.profile_id, name="Portable edited", parameters=profile.parameters,
+                           expected_revision=profile.revision)
+    assert service.repository.get_profile(saved.profile_id) == saved
+    candidate = service.propose(complete_selections(service, [{"slot": slot, "profile_id": saved.profile_id}]),
+                                settings={"ACTUATION.enabled": False})
+
+    accepted = service.accept(candidate, expected_revision=None)
+    assert accepted == candidate
+    invalid = ActivationSnapshot(candidate.settings, tuple(
+        replace(binding, parameters={**binding.parameters, "unknown": True}) if binding.kind == kind else binding
+        for binding in candidate.bindings
+    ))
+    with pytest.raises(PluginSchemaError, match="unknown"):
+        service.accept(invalid, expected_revision=candidate.revision)
+    with pytest.raises(PluginSchemaError, match="unavailable on this platform"):
+        service.validate_activation(candidate, active_kinds={kind})
+    if kind == "effector":
+        with pytest.raises(PluginSchemaError, match="unavailable on this platform"):
+            service.accept(ActivationSnapshot({"ACTUATION.enabled": True}, candidate.bindings),
+                           expected_revision=candidate.revision)
+    assert service.repository.get_activation() == candidate
+
+
+def test_unavailable_source_can_be_saved_but_not_accepted(service, monkeypatch):
+    before = service.propose(complete_selections(service))
+    service.accept(before, expected_revision=None)
+    original_get = service.catalog.get
+
+    def get(kind, selection):
+        definition = original_get(kind, selection)
+        return replace(definition, available=False) if kind == "acquisition" else definition
+
+    monkeypatch.setattr(service.catalog, "get", get)
+    profile = create_source(service, "Portable source", sample_rate=500)
+    saved = service.update(profile.profile_id, name="Portable edited", parameters={"sample_rate": 250},
+                           expected_revision=profile.revision)
+    assert service.repository.get_profile(saved.profile_id) == saved
+    candidate = service.propose(complete_selections(service, [
+        {"slot": "acquisition.source", "profile_id": saved.profile_id},
+    ]))
+
+    with pytest.raises(PluginSchemaError, match="unavailable on this platform"):
+        service.accept(candidate, expected_revision=before.revision)
+    with pytest.raises(PluginSchemaError, match="unavailable on this platform"):
+        service.validate_activation(candidate, active_kinds={"paradigm"})
+    assert service.repository.get_activation() == before
+    service.delete(saved.profile_id, expected_revision=saved.revision)
+    assert all(item.profile_id != saved.profile_id for item in service.repository.list_profiles())

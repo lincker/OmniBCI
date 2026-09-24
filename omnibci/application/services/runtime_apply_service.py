@@ -58,7 +58,7 @@ class RuntimeApplyCoordinator:
                     or (plan.running and (self.engine.generation != plan.generation
                                           or self.engine.applied_revision != plan.applied_revision))):
                 raise ProfileRevisionConflict("Runtime changed before configuration application")
-            self.profiles.validate(candidate, require_available=True, active_kinds=self.active_kinds(candidate))
+            self.profiles.validate_activation(candidate, active_kinds=self.active_kinds(candidate))
             if plan.strategy in ("select_on_start", "no_change"):
                 progress("persisting")
                 self.profiles.repository.save_activation(candidate, expected_revision=plan.expected_revision)

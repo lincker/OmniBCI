@@ -8,6 +8,7 @@ import pytest
 
 from omnibci.application.plugin_packages import PluginPackageConflictError, package_references_from_settings
 from omnibci.application.plugin_profiles import ActivationSnapshot, ProfileBinding, ProfileRevisionConflict
+from omnibci.application.plugin_schema import validate_parameters
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.plugin_package_service import PluginPackageService
 from omnibci.application.services.plugin_profile_service import PluginProfileService
@@ -33,11 +34,29 @@ def services(tmp_path, monkeypatch):
     return engine, profiles, packages, installed.contributions[0].selection
 
 
+def complete_snapshot(profiles, snapshot):
+    bindings = []
+    for slot, kind, plugin_type in (
+        ("acquisition.source", "acquisition", "file_reader"),
+        ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40FBCCA"),
+        ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR"),
+        ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40"),
+    ):
+        definition = next(item for item in profiles.catalog.list(kind) if item.plugin_type == plugin_type)
+        bindings.append(ProfileBinding(
+            slot, kind, None, definition.selection, validate_parameters(definition.schema, {}),
+            configuration_version=definition.configuration_version,
+        ))
+    return ActivationSnapshot(settings=snapshot.settings, bindings=(*bindings, *snapshot.bindings))
+
+
 @pytest.mark.parametrize("operation", ["create", "update", "delete", "accept"])
 def test_entire_profile_validation_and_write_uses_matching_guard(services, monkeypatch, operation):
     engine, profiles, _, selection = services
     profile = profiles.create("effector", selection, "Original", {})
-    snapshot = profiles.propose([{"slot": "actuation.effector", "profile_id": profile.profile_id}])
+    snapshot = complete_snapshot(profiles, profiles.propose([
+        {"slot": "actuation.effector", "profile_id": profile.profile_id},
+    ]))
     state = {"held": False, "idle": None, "calls": []}
     @contextmanager
     def guard(requires_idle):
@@ -74,6 +93,8 @@ def test_entire_profile_validation_and_write_uses_matching_guard(services, monke
 @pytest.mark.parametrize("operation", ["create", "accept"])
 def test_in_flight_validation_blocks_disable_until_reference_is_committed(services, monkeypatch, operation):
     _, profiles, packages, selection = services
+    snapshot = complete_snapshot(profiles, ActivationSnapshot(settings={}, bindings=(ProfileBinding(
+        "actuation.effector", "effector", None, selection, {"gain": 1.0}),)))
     entered, release = Event(), Event()
     original = profiles.catalog.get
     def delayed(*args, **kwargs):
@@ -81,8 +102,6 @@ def test_in_flight_validation_blocks_disable_until_reference_is_committed(servic
         assert release.wait(3), "Test did not release profile validation"
         return original(*args, **kwargs)
     monkeypatch.setattr(profiles.catalog, "get", delayed)
-    snapshot = ActivationSnapshot(settings={}, bindings=(ProfileBinding(
-        "actuation.effector", "effector", None, selection, {"gain": 1.0}),))
     action = (lambda: profiles.create("effector", selection, "New", {})) if operation == "create" else (
         lambda: profiles.accept(snapshot, expected_revision=None))
     with ThreadPoolExecutor(max_workers=1) as executor:

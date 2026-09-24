@@ -160,7 +160,7 @@ async def build_container() -> AppContainer:
         try:
             accepted = plugin_profiles.repository.get_activation()
             if accepted is not None:
-                plugin_profiles.validate(accepted)
+                plugin_profiles.validate_activation(accepted)
                 return plugin_profiles.materialize(accepted)
         except (ValueError, KeyError, RuntimeError, OSError) as exc:
             raise RuntimeError(f"Plugin configuration is invalid: {exc}") from exc

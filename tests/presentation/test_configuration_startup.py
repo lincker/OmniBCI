@@ -1,4 +1,5 @@
 """Configuration remains repairable through the real application lifespan."""
+from dataclasses import replace
 from threading import Event
 from time import monotonic, sleep
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from omnibci import bootstrap
+from omnibci.application.plugin_profiles import ActivationSnapshot
 from omnibci.conf import OmniBCISettings
 from omnibci.presentation.main import create_app
 
@@ -196,4 +198,131 @@ def test_invalid_initial_settings_can_be_repaired_without_restarting_backend(
         assert _data(client, "/config/runtime")["applied_revision"] == accepted["revision"]
         assert _data(client, "/engine/status")["running"] is True
         assert _data(client, "/acquisition/status")["sample_rate"] == 250
+        assert client.post("/api/v1/engine/stop").status_code == 200
+
+
+def _references(snapshot):
+    return [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in snapshot.bindings]
+
+
+def _assert_invalid_activation(client, environment, snapshot, operation, *, plan_status=200):
+    repository = client.app.state.container.plugin_profile_service.repository
+    previous = repository.get_activation()
+    path = environment.root / "activation.toml"
+    original = path.read_bytes()
+    request = {"bindings": _references(snapshot), "expected_revision": previous.revision}
+    plan = client.post("/api/v1/config/apply-plan", json={**request, "include_host_settings": True})
+    assert plan.status_code == plan_status, plan.text
+    if plan_status == 200:
+        assert plan.json()["data"]["errors"], plan.text
+    if operation == "accept":
+        response = client.put("/api/v1/config/activation", json=request)
+        assert response.status_code == 422, response.text
+        assert response.json()["code"] == "VALIDATION_ERROR"
+        assert path.read_bytes() == original
+    else:
+        repository.save_activation(snapshot, expected_revision=previous.revision)
+        response = client.post("/api/v1/engine/start")
+        assert response.status_code == 409, response.text
+        assert response.json()["code"] == "ENGINE_NOT_READY"
+        assert _data(client, "/engine/status")["running"] is False
+    environment.builder.assert_not_called()
+
+
+@pytest.mark.parametrize("operation", ["accept", "start"])
+@pytest.mark.parametrize("missing_slot", [
+    None, "acquisition.source", "processing.decoder", "processing.epoch_detector",
+    "stimulation.paradigm", "actuation.effector",
+], ids=["empty", "acquisition", "decoder", "epoch", "paradigm", "enabled-effector"])
+def test_required_selections_are_checked_before_accept_or_start(startup_environment, operation, missing_slot):
+    environment = startup_environment
+    with TestClient(create_app()) as client:
+        previous = client.app.state.container.plugin_profile_service.repository.get_activation()
+        if missing_slot == "actuation.effector":
+            environment.settings.set("ACTUATION.enabled", True)
+        bindings = tuple(binding for binding in previous.bindings
+                         if missing_slot is not None and binding.slot != missing_slot)
+        snapshot = ActivationSnapshot(environment.settings.snapshot(), bindings)
+        _assert_invalid_activation(client, environment, snapshot, operation)
+
+
+@pytest.mark.parametrize("operation", ["accept", "start"])
+def test_unavailable_source_profiles_can_be_saved_but_not_activated(startup_environment, monkeypatch, operation):
+    with TestClient(create_app()) as client:
+        service = client.app.state.container.plugin_profile_service
+        previous = service.repository.get_activation()
+        source = next(binding for binding in previous.bindings if binding.kind == "acquisition")
+        original_get = service.catalog.get
+
+        def get(kind, selection):
+            definition = original_get(kind, selection)
+            return replace(definition, available=False) if kind == "acquisition" else definition
+
+        monkeypatch.setattr(service.catalog, "get", get)
+        response = client.post("/api/v1/config/plugin-profiles", json={
+            "kind": "acquisition", "selection": source.selection.to_dict(),
+            "name": "Portable source", "parameters": source.parameters,
+        })
+        assert response.status_code == 201, response.text
+        profile = response.json()["data"]
+        response = client.put(f"/api/v1/config/plugin-profiles/{profile['profile_id']}", json={
+            "name": "Portable source saved", "parameters": profile["parameters"],
+            "expected_revision": profile["revision"],
+        })
+        assert response.status_code == 200, response.text
+        saved = response.json()["data"]
+        bindings = tuple(replace(binding, profile_id=saved["profile_id"], profile_revision=saved["revision"])
+                         if binding.kind == "acquisition" else binding for binding in previous.bindings)
+        snapshot = ActivationSnapshot(previous.settings, bindings)
+        _assert_invalid_activation(client, startup_environment, snapshot, operation)
+
+
+@pytest.mark.parametrize("operation", ["accept", "start"])
+@pytest.mark.parametrize("invalid", ["parameters", "schema_version"])
+def test_invalid_profile_parameters_or_schema_block_accept_and_start(startup_environment, operation, invalid):
+    with TestClient(create_app()) as client:
+        service = client.app.state.container.plugin_profile_service
+        previous = service.repository.get_activation()
+        source = next(binding for binding in previous.bindings if binding.kind == "acquisition")
+        profile = service.repository.get_profile(source.profile_id)
+        changed = (replace(profile, parameters={**profile.parameters, "sample_rate": 0})
+                   if invalid == "parameters" else replace(profile, configuration_version=profile.configuration_version + 1))
+        saved = service.repository.save_profile(changed, expected_revision=profile.revision)
+        bindings = tuple(replace(binding, parameters=saved.parameters, configuration_version=saved.configuration_version,
+                                 profile_revision=saved.revision)
+                         if binding.kind == "acquisition" else binding for binding in previous.bindings)
+        snapshot = ActivationSnapshot(previous.settings, bindings)
+        _assert_invalid_activation(client, startup_environment, snapshot, operation, plan_status=422)
+
+
+def test_inactive_output_plugins_can_retain_portable_selections(startup_environment, monkeypatch):
+    with TestClient(create_app()) as client:
+        service = client.app.state.container.plugin_profile_service
+        previous = service.repository.get_activation()
+        bindings = _references(previous)
+        original_get = service.catalog.get
+
+        def get(kind, selection):
+            definition = original_get(kind, selection)
+            return replace(definition, available=False) if kind in {"paradigm", "trigger", "effector"} else definition
+
+        monkeypatch.setattr(service.catalog, "get", get)
+        for kind, slot, alias in (("trigger", "stimulation.trigger", "neuroscan_scan45_trigger"),
+                                  ("effector", "actuation.effector", "logger")):
+            definition = next(item for item in _data(client, f"/config/plugin-catalog/{kind}")
+                              if item["plugin_type"] == alias)
+            response = client.post("/api/v1/config/plugin-profiles", json={
+                "kind": kind, "selection": definition["selection"], "name": f"Portable {kind}", "parameters": {},
+            })
+            assert response.status_code == 201, response.text
+            bindings.append({"slot": slot, "profile_id": response.json()["data"]["profile_id"]})
+        request = {"bindings": bindings, "expected_revision": previous.revision}
+        plan = client.post("/api/v1/config/apply-plan", json=request)
+        assert plan.status_code == 200, plan.text
+        assert plan.json()["data"]["errors"] == []
+        accepted = client.put("/api/v1/config/activation", json=request)
+        assert accepted.status_code == 200, accepted.text
+        started = client.post("/api/v1/engine/start")
+        assert started.status_code == 200, started.text
+        startup_environment.builder.assert_called_once()
         assert client.post("/api/v1/engine/stop").status_code == 200

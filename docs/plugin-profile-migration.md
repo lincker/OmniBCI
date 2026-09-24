@@ -43,8 +43,32 @@ not an attempt to reconstruct that old Profile.
   Trigger and Effector aliases remain unselected.
 - Each alias must resolve to an exact package, contribution and version with a
   configuration schema. Missing or ambiguous identities block initialization.
-- A selected capability unavailable on the current operating system is retained
-  with a warning; runtime startup performs its own availability check.
+- Profiles can store capabilities unavailable on the current operating system.
+  Activation requires locally used capabilities to be available; dormant output
+  selections remain portable and initialization reports a warning for them.
+
+## Shared activation validation
+
+Initialization, direct activation, runtime review, application and engine startup
+all use `PluginProfileService.validate_activation()`:
+
+- Source, Decoder, Epoch Detector and Paradigm bindings are required.
+- Enabled Actuation requires an Effector binding.
+- Every binding must match its installed configuration schema and version, with
+  all defaults resolved, including dormant output bindings.
+- Acquisition and Processing capabilities must support the current platform.
+  The Effector must also be available when Actuation is enabled. Runtime changes
+  additionally check outputs that are already active.
+- Stimulation starts separately, so its dormant Paradigm/Trigger selections do
+  not block engine startup or unrelated updates merely due to platform support.
+
+Invalid direct activation requests return 422 without changing the accepted
+snapshot. Invalid engine starts return 409 before constructing workers. Review
+reports validation errors, and application rechecks under the runtime transition
+guard before persisting configuration or pausing modules.
+
+Saving an individual Profile validates its parameters and schema without
+requiring a complete activation or local platform support.
 
 The pure helpers in `omnibci.application.legacy_plugin_config` remain in use for
 mapping settings keys and for standalone runtime adapters. Removing the old

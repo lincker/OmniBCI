@@ -58,6 +58,20 @@ def accept(http, profiles, expected_revision=None, refresh_slots=None):
     return http.put(f"{PREFIX}/activation", json=body)
 
 
+def complete_profiles(client, profiles=()):
+    profiles = list(profiles)
+    slots = {slot for slot, _ in profiles}
+    for slot, kind, alias in (
+        ("acquisition.source", "acquisition", "file_reader"),
+        ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA"),
+        ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR"),
+        ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40"),
+    ):
+        if slot not in slots:
+            profiles.append((slot, create(client, kind, alias, name=f"Required {kind}")))
+    return profiles
+
+
 def test_catalog_exposes_exact_identity_and_plugin_owned_schema(client):
     http, _, _ = client
     response = http.get(f"{PREFIX}/plugin-catalog/acquisition")
@@ -91,7 +105,8 @@ def test_saving_active_profile_does_not_change_selected_values(client):
     http, _, state = client
     assert http.get(f"{PREFIX}/activation").json()["data"] is None
     profile = create(client)
-    selected = accept(http, [("acquisition.source", profile)])
+    bindings = complete_profiles(client, [("acquisition.source", profile)])
+    selected = accept(http, bindings)
     assert selected.status_code == 200, selected.text
     previous = selected.json()["data"]
     state["running"] = True
@@ -100,7 +115,7 @@ def test_saving_active_profile_does_not_change_selected_values(client):
     })
     assert saved.status_code == 200
     assert http.get(f"{PREFIX}/activation").json()["data"] == previous
-    blocked = accept(http, [("acquisition.source", profile)], previous["revision"])
+    blocked = accept(http, bindings, previous["revision"])
     assert blocked.status_code == 409
     assert http.delete(f"{PREFIX}/plugin-profiles/{profile['profile_id']}?expected_revision=2").status_code == 409
 
@@ -109,7 +124,7 @@ def test_refreshing_one_slot_preserves_other_selected_parameter_copies(client):
     http, _, state = client
     source = create(client)
     decoder = create(client, "decoder", "THUBCI_SSVEP_classic40CCA")
-    bindings = [("acquisition.source", source), ("processing.decoder", decoder)]
+    bindings = complete_profiles(client, [("acquisition.source", source), ("processing.decoder", decoder)])
     before = accept(http, bindings).json()["data"]
     for profile, parameters in ((source, {"sample_rate": 500}), (decoder, {"window_duration": 4.0})):
         assert http.put(f"{PREFIX}/plugin-profiles/{profile['profile_id']}", json={
@@ -131,13 +146,28 @@ def test_filter_instances_have_stable_slots_and_order(client):
     http, _, _ = client
     profile = create(client, "filter", "BASELINE_CORRECTION")
     first, second = f"processing.filter.{uuid4()}", f"processing.filter.{uuid4()}"
-    before = accept(http, [(first, profile), (second, profile)]).json()["data"]
-    reordered = accept(http, [(second, profile), (first, profile)], before["revision"], [])
+    required = complete_profiles(client)
+    before = accept(http, required + [(first, profile), (second, profile)]).json()["data"]
+    reordered = accept(http, required + [(second, profile), (first, profile)], before["revision"], [])
 
     assert reordered.status_code == 200
-    assert [item["slot"] for item in reordered.json()["data"]["bindings"]] == [second, first]
+    assert [item["slot"] for item in reordered.json()["data"]["bindings"]
+            if item["kind"] == "filter"] == [second, first]
     assert reordered.json()["data"]["revision"] != before["revision"]
-    assert accept(http, [(first, profile), (first, profile)], reordered.json()["data"]["revision"]).status_code == 422
+    assert accept(http, required + [(first, profile), (first, profile)], reordered.json()["data"]["revision"]).status_code == 422
+
+
+def test_empty_activation_returns_422_without_replacing_the_current_selection(client):
+    http, _, _ = client
+    response = accept(http, complete_profiles(client))
+    assert response.status_code == 200, response.text
+    before = response.json()["data"]
+
+    rejected = accept(http, [], before["revision"])
+
+    assert rejected.status_code == 422
+    assert rejected.json()["code"] == "VALIDATION_ERROR"
+    assert http.get(f"{PREFIX}/activation").json()["data"] == before
 
 
 @pytest.mark.parametrize("parameters", [{"sample_rate": True}, {"sample_rate": 0}, {"unknown": 1}])

@@ -81,15 +81,6 @@ class RuntimeConfigurationService:
             self._validate_runtime(snapshot)
         except (ValueError, KeyError) as exc:
             errors.append(str(exc))
-        required = {"acquisition.source", "processing.decoder", "processing.epoch_detector",
-                    "stimulation.paradigm"}
-        missing = required - {binding.slot for binding in snapshot.bindings}
-        if missing:
-            errors.append("Missing required selections: " + ", ".join(sorted(missing)))
-        if snapshot.settings.get("ACTUATION.enabled", False) and not any(
-            binding.slot == "actuation.effector" for binding in snapshot.bindings
-        ):
-            errors.append("Actuation is enabled without an effector selection")
         old = {binding.slot: binding for binding in current.bindings} if current else {}
         new = {binding.slot: binding for binding in snapshot.bindings}
         slots = sorted(slot for slot in old.keys() | new.keys()
@@ -161,8 +152,7 @@ class RuntimeConfigurationService:
 
     def _validate_runtime(self, snapshot):
         usage = getattr(self.executor, "active_kinds", None)
-        self.profiles.validate(snapshot, require_available=True,
-                              active_kinds=usage(snapshot) if callable(usage) else None)
+        self.profiles.validate_activation(snapshot, active_kinds=usage(snapshot) if callable(usage) else None)
 
     def operation(self, operation_id: str):
         with self._lock:

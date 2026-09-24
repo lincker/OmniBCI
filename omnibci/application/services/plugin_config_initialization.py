@@ -123,7 +123,7 @@ class SettingsPluginConfigInitializer:
             settings["CONFIG.initialization_warnings"] = list(warnings)
         candidate = ActivationSnapshot(settings, tuple(self._binding(slot, drafts[profile_id])
                                                        for slot, profile_id in bindings))
-        self.service.validate(candidate)
+        self.service.validate_activation(candidate)
         saved = {profile_id: self._ensure_profile(draft) for profile_id, draft in drafts.items()}
         snapshot = ActivationSnapshot(settings, tuple(self._binding(slot, saved[profile_id])
                                                       for slot, profile_id in bindings))

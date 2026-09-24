@@ -5,6 +5,7 @@ from dataclasses import replace
 import pytest
 
 from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.legacy_plugin_config import PluginConfigMigrationError, legacy_parameters
 from omnibci.application.services.plugin_config_initialization import SettingsPluginConfigInitializer
 from omnibci.application.services.plugin_profile_service import PluginProfileService
@@ -111,6 +112,29 @@ def test_unavailable_platform_preserves_selection_with_warning(initialize, servi
     result = initialize(settings)
     assert "stimulation.trigger" in _bindings(result)
     assert any("stimulation.trigger" in warning and "unavailable" in warning for warning in result.warnings)
+
+
+@pytest.mark.parametrize("failure", ["unavailable_source", "missing_effector"])
+def test_invalid_initial_activation_does_not_publish_profiles(initialize, service, settings, monkeypatch, failure):
+    if failure == "unavailable_source":
+        original = service.catalog.get
+
+        def get(kind, selection):
+            definition = original(kind, selection)
+            return replace(definition, available=False) if kind == "acquisition" else definition
+
+        monkeypatch.setattr(service.catalog, "get", get)
+        message = "acquisition.source: unavailable"
+    else:
+        settings["ACTUATION.enabled"] = True
+        settings["ACTUATION.effector"] = ""
+        message = "Actuation is enabled without an effector"
+
+    with pytest.raises(PluginSchemaError, match=message):
+        initialize(settings)
+
+    assert service.repository.get_activation() is None
+    assert service.repository.list_profiles() == []
 
 
 def test_interrupted_profile_writes_resume_without_duplicate_or_revised_profiles(initialize, service, settings, monkeypatch):

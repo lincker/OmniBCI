@@ -92,22 +92,37 @@ class PluginProfileService:
             ))
         return ActivationSnapshot(bindings=tuple(bindings), settings=base)
 
-    def validate(self, snapshot: ActivationSnapshot, *, require_available: bool = False,
-                 active_kinds: set[str] | None = None) -> None:
+    def validate_activation(self, snapshot: ActivationSnapshot, *,
+                            active_kinds: set[str] | None = None) -> None:
+        """Require a complete configuration and available capabilities used here.
+
+        Stimulation is started separately; its platform-specific selections may
+        remain dormant. Callers include currently active outputs when applying.
+        """
+        slots = {binding.slot for binding in snapshot.bindings}
+        required = {"acquisition.source", "processing.decoder", "processing.epoch_detector",
+                    "stimulation.paradigm"}
+        missing = required - slots
+        if missing:
+            raise PluginSchemaError("Missing required selections: " + ", ".join(sorted(missing)))
+        kinds = {"acquisition", "decoder", "epoch_detector", "filter"} | (active_kinds or set())
+        if snapshot.settings.get("ACTUATION.enabled", False):
+            if "actuation.effector" not in slots:
+                raise PluginSchemaError("Actuation is enabled without an effector selection")
+            kinds.add("effector")
         for binding in snapshot.bindings:
             definition, parameters = self._parameters(
                 binding.kind, binding.selection, binding.parameters, binding.configuration_version,
             )
             if parameters != binding.parameters:
                 raise PluginSchemaError(f"{binding.slot}: snapshot must include resolved defaults")
-            if (require_available and (active_kinds is None or binding.kind in active_kinds)
-                    and not definition.available):
+            if binding.kind in kinds and not definition.available:
                 raise PluginSchemaError(f"{binding.slot}: unavailable on this platform")
 
     def accept(self, snapshot: ActivationSnapshot, *, expected_revision: str | None):
         """Initially idle-only; the runtime coordinator later commits after ACK."""
         with self.change_guard(True):
-            self.validate(snapshot)
+            self.validate_activation(snapshot)
             return self.repository.save_activation(snapshot, expected_revision=expected_revision)
 
     def resolve_settings(self) -> dict:
