@@ -7,6 +7,7 @@ This is the single place the per-peer routing table lives.
 
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.ipc.peer_transport import ListenTransport
+from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
 from omnibci.infrastructure.neuroengine.gateway.routing import RouteSpec, PeerConfig
 
 # Stimulation peer name — single source is the application-layer port
@@ -29,7 +30,7 @@ def _actuation_failsafe():
     return [Event(EventType.ActuationFault, ACTUATION_LINK_LOST)]
 
 
-def stimulation_peer_config(host: str, port: int) -> PeerConfig:
+def stimulation_peer_config(host: str, port: int, *, identity: PeerIdentity | None = None) -> PeerConfig:
     """
     neuroengine ↔ stimulation channel.
 
@@ -43,7 +44,8 @@ def stimulation_peer_config(host: str, port: int) -> PeerConfig:
     """
     return PeerConfig(
         name=STIMULATION,
-        transport=ListenTransport(host=host, port=port),
+        transport=ListenTransport(host=host, port=port, identity=identity,
+                                  max_clients=1 if identity is not None else None),
         routes=RouteSpec(
             outbound=frozenset({
                 EventType.TrialCompleted,
@@ -61,7 +63,8 @@ def stimulation_peer_config(host: str, port: int) -> PeerConfig:
 
 
 def actuation_peer_config(host: str, port: int,
-                          watchdog_timeout_s: float = 1.0) -> PeerConfig:
+                          watchdog_timeout_s: float = 1.0, *,
+                          identity: PeerIdentity | None = None) -> PeerConfig:
     """
     neuroengine ↔ actuation channel. The engine *listens*; the actuation
     controller dials in (same topology as stimulation).
@@ -93,6 +96,7 @@ def actuation_peer_config(host: str, port: int,
             port=port,
             max_clients=1,
             idle_timeout=connection_idle_timeout,
+            identity=identity,
         ),
         routes=RouteSpec(
             outbound=frozenset({

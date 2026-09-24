@@ -54,6 +54,8 @@ class Actuator:
         subsystem cannot serve without one (same failure mode as stimulation
         failing to load a paradigm).
         """
+        if self.effector is not None:
+            raise RuntimeError("Effector still owns resources; teardown before setup")
         effector = self._load_effector()
         if effector is None:
             raise RuntimeError(
@@ -63,21 +65,15 @@ class Actuator:
         self.effector = effector
         try:
             effector.setup()
-        except BaseException:
+        except BaseException as setup_exc:
             # setup() may fail after opening a serial port, claiming a device,
             # or moving hardware into an intermediate state.  Always give the
             # plugin a best-effort chance to roll that work back, while keeping
             # the original setup exception as the one callers observe.
             try:
-                effector.teardown()
+                self.teardown()
             except BaseException as teardown_exc:
-                logger.error(
-                    "Effector teardown after failed setup also failed: %s",
-                    teardown_exc,
-                    exc_info=True,
-                )
-            finally:
-                self.effector = None
+                raise setup_exc from teardown_exc
             raise
         logger.info("Actuator ready (effector=%s)", type(effector).__name__)
 
@@ -94,10 +90,7 @@ class Actuator:
     def teardown(self) -> None:
         """Release the device; safe to call when setup never completed."""
         if self.effector is not None:
-            try:
-                self.effector.teardown()
-            except Exception as exc:
-                logger.error("Effector teardown failed: %s", exc)
+            self.effector.teardown()
             self.effector = None
 
     def quiesce(self) -> None:

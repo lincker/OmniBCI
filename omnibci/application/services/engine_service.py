@@ -248,6 +248,18 @@ class NeuroEngineService(EnginePort):
                     "Stop the engine before changing the effective acquisition configuration")
             yield
 
+    def node_configuration_snapshot(self, selected_snapshot: Callable[[], dict]) -> tuple[str, dict]:
+        """Publish one settled snapshot; never expose an in-flight or historical graph."""
+        with self._admission.command(), self._configuration_lock:
+            if self._transitioning:
+                raise ConfigProfileConflictError("Engine transition in progress; retry after it completes")
+            if self.is_engine_ready and self._applied_snapshot is not None:
+                return "running", deepcopy(self._applied_snapshot)
+            thread = self._engine_thread
+            if self._running or self._restart_blocked or thread is not None and thread.is_alive():
+                raise ConfigProfileConflictError("Runtime still owns resources; stop it before connecting nodes")
+            return "selected", selected_snapshot()
+
     async def _stop_engine_locked(self, cmd: StopEngineCommand) -> None:
         # Close the synchronous dispatch gate before the first await.  Resource
         # ownership may remain _running=True until shutdown is confirmed (and

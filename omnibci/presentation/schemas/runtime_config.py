@@ -3,7 +3,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from omnibci.presentation.schemas.plugin_config import AcceptActivationRequest
+from omnibci.presentation.schemas.plugin_config import AcceptActivationRequest, ProfileBindingResponse
 
 
 class RuntimePlanRequest(AcceptActivationRequest):
@@ -48,3 +48,17 @@ class RuntimeConfigurationResponse(BaseModel):
     applied_revision: str | None
     generation: str | None
     operation: RuntimeOperationResponse | None
+
+
+class NodeConfigurationResponse(BaseModel):
+    format_version: Literal[1]
+    role: Literal["stimulation", "actuation"]
+    revision: str
+    generation: str | None
+    settings: dict[str, Any]
+    bindings: list[ProfileBindingResponse]
+
+
+class NodeConfigurationPublicationResponse(BaseModel):
+    state: Literal["selected", "running"]
+    configuration: NodeConfigurationResponse

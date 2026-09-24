@@ -490,12 +490,25 @@ def test_missing_required_slot_is_reviewable_error(runtime):
     assert any("acquisition.source" in error for error in plan.errors)
 
 
-def test_external_peer_rejected_before_rebuild(runtime):
+@pytest.mark.parametrize("slot,parameters,strategy", [
+    ("acquisition.source", {"sample_rate": 500}, "rebuild"),
+    ("processing.decoder", {"window_duration": 2.5}, "trial_boundary"),
+])
+def test_external_peer_rejected_before_revision_change(runtime, slot, parameters, strategy):
     service, selections, before = runtime
     service.engine.applied_snapshot["STIMULATION.auto_spawn"] = False
-    edit(runtime, "acquisition.source", {"sample_rate": 500})
+    edit(runtime, slot, parameters)
     plan = service.plan(selections, expected_revision=before.revision)
+    assert plan.strategy == strategy
     assert any("externally managed" in error for error in plan.errors)
+
+
+def test_external_peer_allows_no_change(runtime):
+    service, selections, before = runtime
+    service.engine.applied_snapshot["STIMULATION.auto_spawn"] = False
+    plan = service.plan(selections, expected_revision=before.revision)
+    assert plan.strategy == "no_change"
+    assert not plan.errors
 
 
 def test_filter_order_is_a_real_trial_boundary_change(runtime):

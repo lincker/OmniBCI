@@ -13,6 +13,7 @@ from typing import Any
 
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.infrastructure.ipc.event_bus import EventBus
+from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.outbound import make_stimulation_ack
 from omnibci.infrastructure.neuroengine.gateway.peer_channel import PeerChannel
@@ -21,6 +22,7 @@ from omnibci.infrastructure.stimulation.engine_channel import engine_peer_config
 from omnibci.infrastructure.stimulation.stimulator import Stimulator
 
 _MANAGED_CONNECT_TIMEOUT_S = 5.0
+_EXTERNAL_CONNECT_TIMEOUT_S = 10.0
 
 
 @dataclass(frozen=True)
@@ -49,7 +51,15 @@ class Stimulation:
         source = self._runtime_snapshot
         host = source.get("NEUROENGINE.message_server_ip", "127.0.0.1")
         port = int(source.get("NEUROENGINE.message_server_port", 8765))
-        self.peer_channel = PeerChannel(engine_peer_config(host, port), self.event_bus)
+        self._external_node = source.get("CONFIG.node_role") == "stimulation"
+        self._reconnect_requested = False
+        identity = None
+        if self._external_node:
+            identity = PeerIdentity("stimulation", source["CONFIG.revision"], source["CONFIG.generation"])
+        self.peer_channel = PeerChannel(engine_peer_config(
+            host, port, identity=identity, reconnect=not self._external_node,
+            on_disconnect=self._connection_lost if self._external_node else None,
+        ), self.event_bus)
 
         self.should_stop = False
         self._stop_event = stop_event
@@ -63,6 +73,12 @@ class Stimulation:
     def run(self):
         print('---StimulationMain run---')
         asyncio.run(self.serve())
+        return self._reconnect_requested
+
+    def _connection_lost(self) -> None:
+        self._reconnect_requested = True
+        self._paused = True
+        self.should_stop = True
 
     async def serve(self):
         startup_complete = False
@@ -97,12 +113,15 @@ class Stimulation:
                     render_error = self._render_task.exception()
                     if render_error is not None:
                         raise render_error
-                    if getattr(self, "_startup_reporter", None) is not None:
+                    if (getattr(self, "_startup_reporter", None) is not None
+                            or getattr(self, "_external_node", False)):
                         raise RuntimeError(
                             "stimulation window closed during startup"
                         )
 
                 await self._await_managed_readiness()
+                if getattr(self, "_reconnect_requested", False):
+                    return
                 reporter = getattr(self, "_startup_reporter", None)
                 if reporter is not None:
                     reporter.ready()
@@ -151,8 +170,16 @@ class Stimulation:
                 except asyncio.CancelledError:
                     pass
                 finally:
-                    # Renderer teardown failures must not skip IPC cleanup.
-                    await self.stop()
+                    try:
+                        if (getattr(self, "_external_node", False)
+                                and getattr(self.stimulator, "trigger", None) is not None
+                                and self._render_task is not None and self._render_task.done()):
+                            # No rendering may assert a new trigger after this
+                            # point. A failed clear must prevent automatic retry.
+                            self.stimulator.clear_trigger()
+                    finally:
+                        # Renderer/trigger teardown failures must not skip IPC cleanup.
+                        await self.stop()
 
     async def start(self):
         print('---StimulationMain start---')
@@ -160,14 +187,22 @@ class Stimulation:
         # its first frame.
         self._register_event_listener()
         await self.event_bus.start()
-        await self.peer_channel.start()
+        if not getattr(self, "_external_node", False):
+            await self.peer_channel.start()
 
     async def _await_managed_readiness(self) -> None:
         """Wait for the engine link while continuing to supervise GL startup."""
-        if getattr(self, "_startup_reporter", None) is None:
+        if (getattr(self, "_startup_reporter", None) is None
+                and not getattr(self, "_external_node", False)):
             return
+        if getattr(self, "_external_node", False):
+            # Renderer and plugin setup completed before advertising this node.
+            await self.peer_channel.start()
         connection_task = asyncio.create_task(
-            self.peer_channel.wait_until_connected(_MANAGED_CONNECT_TIMEOUT_S),
+            self.peer_channel.wait_until_connected(
+                _EXTERNAL_CONNECT_TIMEOUT_S if getattr(self, "_external_node", False)
+                else _MANAGED_CONNECT_TIMEOUT_S
+            ),
             name="stimulation-startup-engine-link",
         )
         render_task = self._render_task
@@ -192,7 +227,11 @@ class Stimulation:
                 if render_error is not None:
                     raise render_error
                 raise RuntimeError("stimulation window closed during startup")
-            await connection_task
+            try:
+                await connection_task
+            except (RuntimeError, TimeoutError):
+                if not getattr(self, "_reconnect_requested", False):
+                    raise
         except BaseException:
             if not connection_task.done():
                 connection_task.cancel()
@@ -205,6 +244,9 @@ class Stimulation:
             reporter.failed(stage, error)
 
     async def execute_command(self):
+        if getattr(self, "_external_node", False) and not self.peer_channel.is_connected:
+            self._connection_lost()
+            return
         if getattr(self, "_paused", False):
             return
         # Serialize trials: only pull the next StartStimTrial once the paradigm

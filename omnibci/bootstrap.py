@@ -17,6 +17,7 @@ from omnibci.application.services.plugin_profile_service import PluginProfileSer
 from omnibci.application.services.plugin_config_initialization import SettingsPluginConfigInitializer
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
+from omnibci.application.services.node_configuration_service import NodeConfigurationService
 from omnibci.application.services.plugin_installation_service import PluginInstallationService
 from omnibci.application.services.plugin_package_service import PluginPackageService
 from omnibci.application.services.plugin_market_service import PluginMarketService
@@ -78,6 +79,7 @@ class AppContainer:
     config_service: "ConfigService | None" = None
     plugin_profile_service: "PluginProfileService | None" = None
     runtime_configuration: "RuntimeConfigurationService | None" = None
+    node_configuration: "NodeConfigurationService | None" = None
     plugin_installation_service: "PluginInstallationService | None" = None
     plugin_package_service: "PluginPackageService | None" = None
     plugin_market_service: "PluginMarketService | None" = None
@@ -218,6 +220,7 @@ async def build_container(*, host_settings: dict | None = None) -> AppContainer:
                          admission=engine_service.admission)
     container.config_service = config_service
     container.plugin_profile_service = plugin_profiles
+    container.node_configuration = NodeConfigurationService(engine_service, plugin_profiles)
     container.runtime_configuration = RuntimeConfigurationService(
         plugin_profiles, engine_service,
         executor=RuntimeApplyCoordinator(engine_service, plugin_profiles, container.acquisition_service,

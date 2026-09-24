@@ -12,7 +12,8 @@ import math
 import time
 from typing import NamedTuple
 
-from omnibci.shared.events import Event
+from omnibci.shared.events import Event, EventType
+from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.ipc.contracts import (
     InvalidEventBody,
@@ -27,6 +28,7 @@ from .protocol import Frame, FrameProtocolError
 logger = logging.getLogger(__name__)
 
 DEFAULT_WRITE_TIMEOUT = 1.0
+PEER_HANDSHAKE_TIMEOUT = 5.0
 
 
 class StreamCleanupError(RuntimeError):
@@ -144,6 +146,7 @@ class NetworkServer:
         max_clients: int | None = None,
         idle_timeout: float | None = None,
         write_timeout: float = DEFAULT_WRITE_TIMEOUT,
+        identity: PeerIdentity | None = None,
     ):
         if max_clients is not None and max_clients < 1:
             raise ValueError("max_clients must be >= 1 or None")
@@ -153,9 +156,11 @@ class NetworkServer:
         self.max_clients = max_clients
         self.idle_timeout = _validate_idle_timeout(idle_timeout)
         self.write_timeout = _validate_write_timeout(write_timeout)
+        self.identity = identity
         self.status = "INIT"
         self.server = None
         self._clients: set = set()
+        self._pending_clients: set = set()
         self._closing_writers: set = set()
         self._client_tasks: set[asyncio.Task] = set()
         self._inbound_handler = None
@@ -199,7 +204,7 @@ class NetworkServer:
             if self.server is not None and self.server.is_serving():
                 self.status = "RUNNING"
                 return
-            if self._clients or self._closing_writers or self._client_tasks:
+            if self._clients or self._pending_clients or self._closing_writers or self._client_tasks:
                 self.status = "STOP_FAILED"
                 raise StreamCleanupError(
                     "NetworkServer cannot restart with residual client resources"
@@ -245,7 +250,7 @@ class NetworkServer:
         try:
             if self._stopping:
                 return
-            owned_writers = self._clients | self._closing_writers
+            owned_writers = self._clients | self._pending_clients | self._closing_writers
             if self.max_clients is not None and len(owned_writers) >= self.max_clients:
                 logger.warning(
                     "Peer connection rejected from %s: client limit (%d) reached",
@@ -254,6 +259,19 @@ class NetworkServer:
                 )
                 return
 
+            self._pending_clients.add(writer)
+            if self.identity is not None:
+                frame = await asyncio.wait_for(
+                    read_event_frame(reader), timeout=PEER_HANDSHAKE_TIMEOUT,
+                )
+                if (frame.event is None or frame.event.type != EventType.PeerHello
+                        or not self.identity.matches(frame.event.data)):
+                    raise InvalidEventBody("Peer identity does not match the current runtime")
+                writer.write(encode_event(Event(EventType.PeerAccepted, self.identity.to_dict())))
+                await asyncio.wait_for(writer.drain(), timeout=self.write_timeout)
+            if self._stopping:
+                return
+            self._pending_clients.discard(writer)
             self._clients.add(writer)
             logger.info("Peer client connected: %s (%d total)", addr, len(self._clients))
             while True:
@@ -292,6 +310,7 @@ class NetworkServer:
     async def _close_owned_writer(self, writer) -> bool:
         """Close a writer while retaining ownership until close is confirmed."""
         self._clients.discard(writer)
+        self._pending_clients.discard(writer)
         self._closing_writers.add(writer)
         closed = await _close_stream_writer(writer, self.write_timeout)
         if closed:
@@ -321,7 +340,7 @@ class NetworkServer:
             await asyncio.gather(
                 *(
                     self._close_owned_writer(writer)
-                    for writer in set(self._clients) | set(self._closing_writers)
+                    for writer in set(self._clients) | set(self._pending_clients) | set(self._closing_writers)
                 ),
                 return_exceptions=True,
             )
@@ -344,7 +363,7 @@ class NetworkServer:
             await asyncio.gather(
                 *(
                     self._close_owned_writer(writer)
-                    for writer in set(self._clients) | set(self._closing_writers)
+                    for writer in set(self._clients) | set(self._pending_clients) | set(self._closing_writers)
                 ),
                 return_exceptions=True,
             )
@@ -451,6 +470,8 @@ class NetworkClient:
         reconnect_max: float = 10.0,
         idle_timeout: float | None = None,
         write_timeout: float = DEFAULT_WRITE_TIMEOUT,
+        identity: PeerIdentity | None = None,
+        reconnect: bool = True,
     ):
         self.event_bus = event_bus
         self.server_ip = server_ip
@@ -466,6 +487,8 @@ class NetworkClient:
         self._reconnect_max = reconnect_max
         self._idle_timeout = _validate_idle_timeout(idle_timeout)
         self._write_timeout = _validate_write_timeout(write_timeout)
+        self.identity = identity
+        self._reconnect = reconnect
         self._should_run = False
         self._supervisor_task: asyncio.Task | None = None
         self._lifecycle_lock = asyncio.Lock()
@@ -511,7 +534,7 @@ class NetworkClient:
         try:
             while self._should_run:
                 if not await self._connect():
-                    if not self._should_run:
+                    if not self._should_run or not self._reconnect:
                         break
                     await asyncio.sleep(delay)
                     delay = min(delay * 2, self._reconnect_max)
@@ -532,13 +555,15 @@ class NetworkClient:
                 ) as exc:
                     if not self._should_run:
                         break
-                    logger.info("NetworkClient: link lost (%s); reconnecting", exc)
+                    logger.info("NetworkClient: link lost (%s)", exc)
                     self.status = "DISCONNECTED"
                     if not await self._cleanup_writers():
                         self.status = "STOP_FAILED"
                         raise StreamCleanupError(
                             "NetworkClient could not close the lost connection"
                         )
+                    if not self._reconnect:
+                        break
                     if time.monotonic() - connected_at >= self._reconnect_initial:
                         delay = self._reconnect_initial
                     await asyncio.sleep(delay)
@@ -594,8 +619,21 @@ class NetworkClient:
                     if self._should_run and self.writer is None:
                         self.reader = reader
                         self.writer = writer
-                        self.status = "CONNECTED"
+                        self.status = "HANDSHAKING" if self.identity is not None else "CONNECTED"
                         accepted = True
+                if accepted and self.identity is not None:
+                    writer.write(encode_event(Event(EventType.PeerHello, self.identity.to_dict())))
+                    await asyncio.wait_for(writer.drain(), timeout=self._write_timeout)
+                    frame = await asyncio.wait_for(
+                        read_event_frame(reader), timeout=PEER_HANDSHAKE_TIMEOUT,
+                    )
+                    if (frame.event is None or frame.event.type != EventType.PeerAccepted
+                            or not self.identity.matches(frame.event.data)):
+                        raise InvalidEventBody("Peer identity was not accepted by the engine")
+                    async with self._connection_lock:
+                        accepted = self._should_run and self.writer is writer
+                        if accepted:
+                            self.status = "CONNECTED"
             except BaseException:
                 if not await self._close_tracked_writer(writer):
                     self.status = "STOP_FAILED"
@@ -635,7 +673,7 @@ class NetworkClient:
                 )
                 return False
             writer = self.writer
-            if writer is None:
+            if writer is None or (self.identity is not None and not self.is_connected):
                 logger.warning(
                     "NetworkClient.send: not connected; dropping %d-byte frame",
                     len(frame),

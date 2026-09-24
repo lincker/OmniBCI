@@ -11,16 +11,19 @@ neuroengine/gateway/peers.py:
 
 from omnibci.shared.events import EventType
 from omnibci.infrastructure.ipc.peer_transport import ConnectTransport
+from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
 from omnibci.infrastructure.neuroengine.gateway.routing import PeerConfig, RouteSpec
 
 ENGINE = "engine"
 
 
-def engine_peer_config(host: str, port: int) -> PeerConfig:
+def engine_peer_config(host: str, port: int, *, identity: PeerIdentity | None = None,
+                       reconnect: bool = True, on_disconnect=None) -> PeerConfig:
     """PeerConfig for the actuation process to connect to the neuroengine."""
     return PeerConfig(
         name=ENGINE,
-        transport=ConnectTransport(host=host, port=port),
+        transport=ConnectTransport(host=host, port=port, identity=identity,
+                                   reconnect=reconnect, on_disconnect=on_disconnect),
         routes=RouteSpec(
             outbound=frozenset({
                 EventType.ActuationAck,

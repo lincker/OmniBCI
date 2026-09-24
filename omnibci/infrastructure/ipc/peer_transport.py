@@ -22,6 +22,7 @@ from typing import Callable, Optional
 
 from omnibci.shared.events import Event
 from omnibci.infrastructure.ipc.network import NetworkServer, NetworkClient
+from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ class ListenTransport(PeerTransport):
         *,
         idle_timeout: float | None = None,
         write_timeout: float | None = None,
+        identity: PeerIdentity | None = None,
     ) -> None:
         timeout_options = {
             name: value
@@ -77,6 +79,8 @@ class ListenTransport(PeerTransport):
             )
             if value is not None
         }
+        if identity is not None:
+            timeout_options["identity"] = identity
         self._server = NetworkServer(
             event_bus=None,
             host=host,
@@ -153,12 +157,19 @@ class ConnectTransport(PeerTransport):
         reconnect_max: float = 10.0,
         idle_timeout: float | None = None,
         write_timeout: float | None = None,
+        identity: PeerIdentity | None = None,
+        reconnect: bool = True,
+        on_disconnect: Callable[[], None] | None = None,
     ) -> None:
         client_options = {
             "connect_timeout": connect_timeout,
             "reconnect_initial": reconnect_initial,
             "reconnect_max": reconnect_max,
         }
+        if identity is not None:
+            client_options["identity"] = identity
+        if not reconnect:
+            client_options["reconnect"] = False
         client_options.update({
             name: value
             for name, value in (
@@ -176,6 +187,8 @@ class ConnectTransport(PeerTransport):
         self._run_task: Optional[asyncio.Task] = None
         self._lifecycle_lock = asyncio.Lock()
         self._last_supervisor_error: Optional[BaseException] = None
+        self._on_disconnect = on_disconnect
+        self._stopping = False
 
     def set_inbound_handler(self, handler: InboundHandler) -> None:
         self._client.set_inbound_handler(handler)
@@ -201,6 +214,7 @@ class ConnectTransport(PeerTransport):
             # A previous supervisor may have ended unexpectedly.  Its done callback
             # has already consumed/logged the exception; replace it with one owner.
             self._last_supervisor_error = None
+            self._stopping = False
             self._run_task = asyncio.create_task(
                 self._run_client(),
                 name=f"peer-connect-{self._client.server_ip}:{self._client.server_port}",
@@ -209,6 +223,7 @@ class ConnectTransport(PeerTransport):
 
     async def stop(self) -> None:
         async with self._lifecycle_lock:
+            self._stopping = True
             task = self._run_task
             if task is None:
                 if self._client_cleanup_pending:
@@ -260,7 +275,11 @@ class ConnectTransport(PeerTransport):
         try:
             await self._client.start()
         finally:
-            await self._client.stop()
+            try:
+                await self._client.stop()
+            finally:
+                if self._on_disconnect is not None and not self._stopping:
+                    self._on_disconnect()
 
     def _harvest_supervisor(self, task: asyncio.Task) -> None:
         """Retrieve every terminal result so background failures are never lost."""

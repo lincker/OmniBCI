@@ -103,20 +103,15 @@ class RuntimeConfigurationService:
             errors.append("Applied and selected revisions differ; reconcile the runtime before applying")
         if running and strategy != "no_change":
             before = self.engine.applied_snapshot or {}
-            # External peers have no negotiated configuration/restart protocol.
-            # Reject before pausing or ending the active session.
-            if strategy in ("rebuild", "module"):
-                for module, affected in (
-                    ("STIMULATION", strategy in ("rebuild", "module")),
-                    ("ACTUATION", strategy in ("rebuild", "module")),
-                ):
-                    if not affected:
-                        continue
-                    enabled = module != "ACTUATION" or before.get("ACTUATION.enabled", False)
-                    target_enabled = module != "ACTUATION" or snapshot.settings.get("ACTUATION.enabled", False)
-                    if ((enabled and not before.get(f"{module}.auto_spawn", True)) or
-                            (target_enabled and not snapshot.settings.get(f"{module}.auto_spawn", True))):
-                        errors.append(f"{module.title()} is externally managed; runtime reconfiguration is unavailable")
+            # External identities are fixed for one graph generation. Until a
+            # coordinated update protocol exists, even decoder-only edits must
+            # wait for a stop/start so every node receives the same revision.
+            for module in ("STIMULATION", "ACTUATION"):
+                enabled = module != "ACTUATION" or before.get("ACTUATION.enabled", False)
+                target_enabled = module != "ACTUATION" or snapshot.settings.get("ACTUATION.enabled", False)
+                if ((enabled and not before.get(f"{module}.auto_spawn", True)) or
+                        (target_enabled and not snapshot.settings.get(f"{module}.auto_spawn", True))):
+                    errors.append(f"{module.title()} is externally managed; stop the engine before changing configuration")
         plan = ConfigurationPlan(
             str(uuid4()), actual_revision, snapshot.revision,
             self.engine.applied_revision if running else None,

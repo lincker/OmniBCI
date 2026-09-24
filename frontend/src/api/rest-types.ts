@@ -436,6 +436,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/config/nodes/{role}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Node Configuration */
+        get: operations["node_configuration_api_v1_config_nodes__role__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/config/runtime": {
         parameters: {
             query?: never;
@@ -813,6 +830,20 @@ export interface components {
             message: string;
             /** Data */
             data?: components["schemas"]["TrialResponse"][] | null;
+        };
+        /** ApiResponse[NodeConfigurationPublicationResponse] */
+        ApiResponse_NodeConfigurationPublicationResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["NodeConfigurationPublicationResponse"] | null;
         };
         /** ApiResponse[PackageInstallationResponse] */
         ApiResponse_PackageInstallationResponse_: {
@@ -1226,6 +1257,38 @@ export interface components {
                 string,
                 string
             ][];
+        };
+        /** NodeConfigurationPublicationResponse */
+        NodeConfigurationPublicationResponse: {
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "selected" | "running";
+            configuration: components["schemas"]["NodeConfigurationResponse"];
+        };
+        /** NodeConfigurationResponse */
+        NodeConfigurationResponse: {
+            /**
+             * Format Version
+             * @constant
+             */
+            format_version: 1;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "stimulation" | "actuation";
+            /** Revision */
+            revision: string;
+            /** Generation */
+            generation: string | null;
+            /** Settings */
+            settings: {
+                [key: string]: unknown;
+            };
+            /** Bindings */
+            bindings: components["schemas"]["ProfileBindingResponse"][];
         };
         /** PackageContributionResponse */
         PackageContributionResponse: {
@@ -4165,6 +4228,82 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_ActivationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    node_configuration_api_v1_config_nodes__role__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                role: "stimulation" | "actuation";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_NodeConfigurationPublicationResponse_"];
                 };
             };
             /** @description Bad request */

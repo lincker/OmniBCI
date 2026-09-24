@@ -562,6 +562,8 @@ def test_unavailable_outputs_remain_portable_until_their_kind_is_active(service,
         with pytest.raises(PluginSchemaError, match="unavailable on this platform"):
             service.accept(ActivationSnapshot({"ACTUATION.enabled": True}, candidate.bindings),
                            expected_revision=candidate.revision)
+        service.validate_activation(ActivationSnapshot(
+            {"ACTUATION.enabled": True, "ACTUATION.auto_spawn": False}, candidate.bindings))
     assert service.repository.get_activation() == candidate
 
 

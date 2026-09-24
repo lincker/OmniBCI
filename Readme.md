@@ -221,26 +221,41 @@ VITE_BACKEND=http://192.168.1.10:8000 npm run dev
 To run stimulation on another machine, save `STIMULATION.auto_spawn = false`
 and the engine's reachable `NEUROENGINE.message_server_ip` / `message_server_port`
 in the host settings file. Review and apply these host settings while the engine
-is stopped. Copy the accepted `activation.toml` to the other node's configuration
-directory, install the pinned packages, and run:
+is stopped. Install the pinned Paradigm and Trigger packages on the stimulation
+node, then run (replace the example address with your backend):
 
 ```bash
-python scripts/run_stimulation.py
+python scripts/run_stimulation.py --backend http://192.168.1.10:8000
 ```
 
 For Actuation, save `ACTUATION.enabled = true`, `ACTUATION.auto_spawn = false`,
 and its `server_ip` / `server_port` in host settings. Select the Effector Profile
-in Setup, review and apply the configuration, and distribute the accepted
-activation before running the following command on the device machine:
+in Setup, review and apply the configuration, and install the pinned Effector
+package before running the following command on the device machine:
 
 ```bash
-python scripts/run_actuation.py
+python scripts/run_actuation.py --backend http://192.168.1.10:8000
 ```
 
-Standalone scripts use the accepted snapshot, including its transport addresses;
-they do not initialize or substitute configuration. All nodes currently need the
-complete pinned package/schema catalog, including platform support for the engine
-plugins. The selected output plugins must support the node where they run.
-No remote configuration transfer or automatic live update is provided. Keep
-nodes on the same accepted revision and allow the corresponding TCP ports.
+`OMNIBCI_BACKEND_URL` can supply the backend URL instead; the default is
+`http://127.0.0.1:8000`. Nodes wait for the backend engine to start, fetch their
+role-specific applied snapshot, and validate only their own plugins. No local
+Activation or Profile files are needed. The backend retains the complete
+configuration catalog for authoring; output platform checks run on their node.
+
+The HTTP address and both configured IPC addresses must be reachable from the
+respective nodes. Use the backend's LAN IP for the IPC settings when running
+across machines: `127.0.0.1` is local-only, and `0.0.0.0` is a listener address,
+not a remote destination. Allow the configured HTTP and TCP ports.
+
+After plugin initialization, a socket handshake verifies the node's role,
+Activation revision, and engine generation before accepting business events.
+On disconnection the node tears down, fetches configuration again, and starts a
+fresh instance only after cleanup succeeds. Stimulation clears its trigger;
+Actuation requires the Effector to confirm that physical outputs have stopped.
+Hardware/setup, output-settlement, or cleanup errors stop the script for inspection.
+Saving a Profile does not change a running
+node. To change configuration with external nodes, stop the engine, apply, then
+start the engine; waiting node scripts synchronize automatically. Coordinated
+live updates of external nodes remain a separate phase.
 See [configuration ownership](docs/configuration-ownership.md) for the boundaries.

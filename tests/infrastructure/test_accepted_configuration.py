@@ -117,36 +117,16 @@ def test_unavailable_active_output_is_rejected_before_launch(profiles, monkeypat
     assert profiles.repository.get_activation() == accepted
 
 
-@pytest.mark.parametrize("role,class_name,kinds", [
-    ("stimulation", "Stimulation", {"paradigm", "trigger"}),
-    ("actuation", "Actuation", {"effector"}),
+@pytest.mark.parametrize("role,class_name", [
+    ("stimulation", "Stimulation"),
+    ("actuation", "Actuation"),
 ])
-def test_scripts_resolve_before_constructing_application(monkeypatch, role, class_name, kinds):
-    import omnibci.conf as conf
-
+def test_scripts_start_backend_configured_supervisor(monkeypatch, role, class_name):
     script = import_module(f"scripts.run_{role}")
-    snapshot = {"CONFIG.revision": "accepted", "PLUGINS.bindings": []}
-    resolver = Mock(return_value=snapshot)
-    settings = Mock()
-    instance = Mock()
-
-    def construct(**kwargs):
-        settings.use_snapshot.assert_called_once_with(snapshot)
-        return instance
-
-    application = Mock(side_effect=construct)
-    monkeypatch.setattr(conf, "settings", settings)
-    monkeypatch.setattr(script, "accepted_runtime_settings", resolver)
+    supervisor = Mock()
+    application = Mock()
+    monkeypatch.setattr(script, "run_configured_node", supervisor)
     monkeypatch.setattr(script, class_name, application)
-    script.main()
-    resolver.assert_called_once_with(active_kinds=kinds)
-    application.assert_called_once_with(settings_snapshot=snapshot)
-    settings.use_snapshot.assert_called_once_with(snapshot)
-    instance.run.assert_called_once_with()
-    resolver.side_effect = RuntimeError("configuration invalid")
-    application.reset_mock()
-    settings.reset_mock()
-    with pytest.raises(RuntimeError, match="configuration invalid"):
-        script.main()
+    script.main(["--backend", "http://192.0.2.1:8000"])
+    supervisor.assert_called_once_with(role, application, backend_url="http://192.0.2.1:8000")
     application.assert_not_called()
-    settings.use_snapshot.assert_not_called()

@@ -2900,6 +2900,102 @@
         }
       }
     },
+    "/api/v1/config/nodes/{role}": {
+      "get": {
+        "tags": [
+          "Runtime configuration"
+        ],
+        "summary": "Node Configuration",
+        "operationId": "node_configuration_api_v1_config_nodes__role__get",
+        "parameters": [
+          {
+            "name": "role",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "stimulation",
+                "actuation"
+              ],
+              "type": "string",
+              "title": "Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_NodeConfigurationPublicationResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/config/runtime": {
       "get": {
         "tags": [
@@ -4405,6 +4501,32 @@
         "type": "object",
         "title": "ApiResponse[List[TrialResponse]]"
       },
+      "ApiResponse_NodeConfigurationPublicationResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NodeConfigurationPublicationResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[NodeConfigurationPublicationResponse]"
+      },
       "ApiResponse_PackageInstallationResponse_": {
         "properties": {
           "success": {
@@ -5298,6 +5420,81 @@
           "requires"
         ],
         "title": "MarketPackageResponse"
+      },
+      "NodeConfigurationPublicationResponse": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "selected",
+              "running"
+            ],
+            "title": "State"
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/NodeConfigurationResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state",
+          "configuration"
+        ],
+        "title": "NodeConfigurationPublicationResponse"
+      },
+      "NodeConfigurationResponse": {
+        "properties": {
+          "format_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Format Version"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "stimulation",
+              "actuation"
+            ],
+            "title": "Role"
+          },
+          "revision": {
+            "type": "string",
+            "title": "Revision"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Settings"
+          },
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileBindingResponse"
+            },
+            "type": "array",
+            "title": "Bindings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "format_version",
+          "role",
+          "revision",
+          "generation",
+          "settings",
+          "bindings"
+        ],
+        "title": "NodeConfigurationResponse"
       },
       "PackageContributionResponse": {
         "properties": {

@@ -353,14 +353,12 @@ adapters remain available for isolated tests and embedding.
 
 ### Step 6: explicit configuration at every launch
 
-Backend engine startup and `scripts/run_stimulation.py` /
-`scripts/run_actuation.py` use the same accepted-configuration resolver. It
+Backend engine startup uses the accepted-configuration resolver. It
 reads `activation.toml`, validates its pinned selections and resolved parameters,
 and materializes one runtime snapshot. It neither refreshes saved Profiles nor
 creates an activation. Missing, corrupt, unavailable, or unsupported selections
-fail before standalone application construction. Stimulation requires its
-accepted trigger; standalone Actuation requires an enabled subsystem and an
-accepted effector.
+fail before runtime construction. Standalone scripts now obtain a projection
+from the backend as described below.
 
 The standalone scripts install that snapshot in the in-memory settings adapter
 and pass it to the application. Transport addresses and plugins therefore use
@@ -378,14 +376,53 @@ Stateless constructor API 1 contributions can still be loaded through an exact
 binding; configurable contributions require constructor API 2. The explicit
 first-initialization alias mapper remains separate from runtime loading.
 
-Independent nodes currently need a copy of the accepted activation and its
-complete pinned package/schema catalog. Validation still checks the engine
-kinds for platform availability as well as the output kinds used on the node;
-role-specific catalog validation is not implemented. Saved Profile files are
-not required to run an accepted snapshot. This batch adds no remote transfer,
-revision handshake, accounts, cloud synchronization, or automatic update of
-external peers. Operators must keep independent nodes on the same accepted
-revision; existing live-apply restrictions for external peers remain in place.
+### Independent nodes: role-scoped startup and reconnect
+
+`GET /api/v1/config/nodes/{role}` publishes configuration for external
+`stimulation` and `actuation` nodes. While idle it reports `selected` with no
+generation; while running it projects the actual applied snapshot. Startup,
+shutdown, configuration transition, and recovery states reject publication.
+Publication never treats a historical stopped snapshot or saved Profile edits
+as current runtime inputs. Backend-managed roles and disabled Actuation reject
+external node requests.
+
+The versioned `NodeConfiguration` envelope contains a role, the parent Activation
+revision, engine generation, necessary host/context settings, and owned bindings:
+
+| Role | Locally validated and loaded contributions |
+| --- | --- |
+| Engine | Acquisition, Decoder, Epoch Detector, Filters |
+| Stimulation | Paradigm, Trigger |
+| Actuation | Effector |
+
+Sampling rate, channel count, and optional channel names provide shared context;
+other roles' plugin parameters and local paths are omitted. Nodes validate exact
+package/contribution/version, resolved defaults, schema version, and local
+platform support. They derive aliases from the local catalog. The backend still
+needs the complete manifest/schema catalog for configuration authoring, but does
+not require remote output plugins to support its operating system.
+
+Standalone scripts use `--backend` or `OMNIBCI_BACKEND_URL`; no local Activation
+fallback exists. HTTP fetching and validation happen only between application
+lifetimes. Offline, selected, and transitioning backends are retried before
+hardware initialization. After local setup, external IPC connections must match
+role, revision, and generation through `PeerHello` / `PeerAccepted`; mismatches
+cannot route business events or count as connected. Managed subprocesses retain
+their existing `StartupReporter` barrier. Each external role has one connection
+owner. This handshake confirms configuration consistency, not authentication.
+
+Connection loss stops queued command execution and triggers teardown before
+re-fetching and rebuilding. Stimulation clears its initialized trigger after
+rendering exits. Actuation requires `Effector.quiesce()` to confirm outputs have
+finished or been cancelled before releasing the device. Setup, quiescence,
+trigger-clear, and teardown failures stop the script. An explicit normal
+application stop does not restart it. No cloud, account, plugin installation,
+or cross-node live-apply protocol is added. Revision-changing Apply operations,
+including decoder-only changes, are rejected while external roles are configured
+on a running engine. Stop, apply, and start the engine to let waiting nodes fetch
+the new generation automatically. The API backend and IPC addresses must be
+reachable; use explicit backend LAN addresses, not wildcard listener addresses,
+for cross-machine IPC.
 
 All configuration reads and validation happen at startup or management/apply
 boundaries. Acquisition, processing, trial, rendering, and command timing loops

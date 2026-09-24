@@ -16,6 +16,7 @@ from omnibci.infrastructure.neuroengine.gateway.peers import (
 from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
 from omnibci.infrastructure.neuroengine.actuation_feedback import ActuationFeedbackHandler
 from omnibci.infrastructure.process_lifecycle import StartupChannel, StartupReporter
+from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
 
 
 @dataclass
@@ -90,6 +91,13 @@ class NeuroEngineBuilder:
           6. NeuroEngine  (receives everything above)
         """
         cfg = self._config
+        snapshot = self._settings_snapshot
+        revision = snapshot.get("CONFIG.revision")
+        generation = snapshot.get("CONFIG.generation")
+        stimulation_identity = (PeerIdentity("stimulation", revision, generation)
+                                if not snapshot.get("STIMULATION.auto_spawn", True) else None)
+        actuation_identity = (PeerIdentity("actuation", revision, generation)
+                              if cfg.actuation_enabled and not snapshot.get("ACTUATION.auto_spawn", True) else None)
 
         # 1. EventBus — event_queue must be mp.Queue for cross-process delivery
         event_queue = mp.Queue()
@@ -104,9 +112,6 @@ class NeuroEngineBuilder:
         processor_command_queue = mp.Queue(cfg.queue_size)
 
         # 4. Sub-processes (not started yet — NeuroEngine._start() does that)
-        snapshot = self._settings_snapshot or {}
-        revision = snapshot.get("CONFIG.revision")
-        generation = snapshot.get("CONFIG.generation")
         acquisition_receiver, acquisition_sender = mp.Pipe(duplex=False)
         processor_receiver, processor_sender = mp.Pipe(duplex=False)
         acquisition_reporter = StartupReporter(
@@ -142,6 +147,7 @@ class NeuroEngineBuilder:
             stimulation_peer_config(
                 host=cfg.message_server_ip,
                 port=cfg.message_server_port,
+                identity=stimulation_identity,
             )
         )
 
@@ -156,6 +162,7 @@ class NeuroEngineBuilder:
                     host=cfg.actuation_server_ip,
                     port=cfg.actuation_server_port,
                     watchdog_timeout_s=cfg.actuation_watchdog_timeout_s,
+                    identity=actuation_identity,
                 )
             )
             actuation_translator = ActuationCommandTranslator(event_bus)

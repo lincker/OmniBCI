@@ -162,12 +162,14 @@ class TestLifecycle:
                 raise ValueError("secondary teardown failure")
 
         a = Actuator()
-        monkeypatch.setattr(a, "_load_effector", _BrokenRollbackEffector)
+        effector = _BrokenRollbackEffector()
+        monkeypatch.setattr(a, "_load_effector", lambda: effector)
 
-        with pytest.raises(RuntimeError, match="original setup failure"):
+        with pytest.raises(RuntimeError, match="original setup failure") as raised:
             a.setup()
 
-        assert a.effector is None
+        assert isinstance(raised.value.__cause__, ValueError)
+        assert a.effector is effector
 
     def test_teardown_releases_and_clears(self):
         eff = _FakeEffector()
@@ -175,11 +177,21 @@ class TestLifecycle:
         a.teardown()
         assert "teardown" in eff.calls and a.effector is None
 
-    def test_teardown_swallows_effector_error(self):
+    def test_failed_teardown_retains_ownership_until_success(self):
         class _BadTeardown(_FakeEffector):
             plugin_type = "bad_teardown_for_actuator_test"
+
             def teardown(self):
-                raise RuntimeError("stuck valve")
-        a = _actuator_with(_BadTeardown())
-        a.teardown()               # must not raise
+                self.calls.append("teardown")
+                if len(self.calls) == 1:
+                    raise RuntimeError("stuck valve")
+
+        effector = _BadTeardown()
+        a = _actuator_with(effector)
+        with pytest.raises(RuntimeError, match="stuck valve"):
+            a.teardown()
+        assert a.effector is effector
+        with pytest.raises(RuntimeError, match="still owns resources"):
+            a.setup()
+        a.teardown()
         assert a.effector is None

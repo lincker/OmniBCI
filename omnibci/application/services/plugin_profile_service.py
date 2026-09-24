@@ -163,7 +163,8 @@ class PluginProfileService:
         if snapshot.settings.get("ACTUATION.enabled", False):
             if "actuation.effector" not in slots:
                 raise PluginSchemaError("Actuation is enabled without an effector selection")
-            kinds.add("effector")
+            if snapshot.settings.get("ACTUATION.auto_spawn", True):
+                kinds.add("effector")
         for binding in snapshot.bindings:
             _validate_source_metadata(binding)
             definition, parameters = self._parameters(

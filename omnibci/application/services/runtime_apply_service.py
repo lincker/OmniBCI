@@ -43,10 +43,12 @@ class RuntimeApplyCoordinator:
     def active_kinds(self, snapshot):
         kinds = {"acquisition", "decoder", "epoch_detector", "filter"}
         owned = self.engine.runtime_package_snapshots
-        if (snapshot.settings.get("ACTUATION.enabled", False)
-                or any(settings.get("ACTUATION.enabled", False) for settings in owned)):
+        if any(settings.get("ACTUATION.enabled", False) and settings.get("ACTUATION.auto_spawn", True)
+               for settings in (snapshot.settings, *owned)):
             kinds.add("effector")
-        if self.stimulation.is_active or self.stimulation.process_alive:
+        if ((self.stimulation.is_active or self.stimulation.process_alive)
+                and any(settings.get("STIMULATION.auto_spawn", True)
+                        for settings in (snapshot.settings, *owned))):
             kinds.update(("paradigm", "trigger"))
         return kinds
 

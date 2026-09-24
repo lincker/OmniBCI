@@ -68,6 +68,7 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/config/activation", "get"),
     ("/api/v1/config/activation", "put"),
     ("/api/v1/config/runtime", "get"),
+    ("/api/v1/config/nodes/{role}", "get"),
     ("/api/v1/config/apply-plan", "post"),
     ("/api/v1/config/apply", "post"),
     ("/api/v1/config/operations/{operation_id}", "get"),

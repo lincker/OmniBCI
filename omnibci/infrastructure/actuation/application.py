@@ -32,6 +32,7 @@ from typing import Any
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.ipc.event_bus import EventBus
+from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
 from omnibci.infrastructure.outbound import make_actuation_ack, make_actuation_fault
 from omnibci.infrastructure.neuroengine.gateway.peer_channel import PeerChannel
 from omnibci.infrastructure.actuation.engine_channel import engine_peer_config
@@ -46,6 +47,7 @@ from omnibci.infrastructure.process_lifecycle import StartupReporter
 logger = logging.getLogger(__name__)
 
 _MANAGED_CONNECT_TIMEOUT_S = 5.0
+_EXTERNAL_CONNECT_TIMEOUT_S = 10.0
 
 
 class Actuation:
@@ -73,7 +75,15 @@ class Actuation:
         # 0 = disabled; requires engine/device clocks roughly in sync to use.
         self._max_command_age = float(
             source.get("ACTUATION.max_command_age_s", 0.0))
-        self.peer_channel = PeerChannel(engine_peer_config(host, port), self.event_bus)
+        self._external_node = source.get("CONFIG.node_role") == "actuation"
+        self._reconnect_requested = False
+        identity = None
+        if self._external_node:
+            identity = PeerIdentity("actuation", source["CONFIG.revision"], source["CONFIG.generation"])
+        self.peer_channel = PeerChannel(engine_peer_config(
+            host, port, identity=identity, reconnect=not self._external_node,
+            on_disconnect=self._connection_lost if self._external_node else None,
+        ), self.event_bus)
 
         self.should_stop = False
         self._stop_event = stop_event
@@ -92,6 +102,12 @@ class Actuation:
     def run(self):
         logger.info('---ActuationMain run---')
         asyncio.run(self.serve())
+        return self._reconnect_requested
+
+    def _connection_lost(self) -> None:
+        self._reconnect_requested = True
+        self._paused = True
+        self.should_stop = True
 
     async def serve(self):
         startup_complete = False
@@ -105,6 +121,8 @@ class Actuation:
             await self.start()
             self._heartbeat_task = asyncio.create_task(self._heartbeat())
             await self._await_managed_connection()
+            if getattr(self, "_reconnect_requested", False):
+                return
             reporter = getattr(self, "_startup_reporter", None)
             if reporter is not None:
                 reporter.ready()
@@ -150,11 +168,25 @@ class Actuation:
                     pending = tuple(getattr(self, "_settlement_tasks", ()))
                     if pending:
                         await asyncio.gather(*pending, return_exceptions=True)
-                    self.actuator.teardown()
+                    if getattr(self, "_reconnect_requested", False):
+                        # A completed play() does not confirm settled outputs.
+                        # Refetch only after the driver verifies a safe state.
+                        quiescence = asyncio.create_task(
+                            asyncio.to_thread(self.actuator.quiesce),
+                        )
+                        try:
+                            await asyncio.shield(quiescence)
+                        except asyncio.CancelledError:
+                            # Cancellation cannot stop physical work in a thread.
+                            await quiescence
+                            raise
                 finally:
-                    # Plugin teardown and heartbeat failures must not skip the
-                    # IPC ownership boundary.
-                    await self.stop()
+                    try:
+                        self.actuator.teardown()
+                    finally:
+                        # Plugin teardown and heartbeat failures must not skip
+                        # the IPC ownership boundary.
+                        await self.stop()
 
     async def start(self):
         logger.info('---ActuationMain start---')
@@ -165,14 +197,26 @@ class Actuation:
         self.event_bus.register_event_listener(
             event_type=EventType.SettleActuation, handler=self._request_settlement)
         await self.event_bus.start()
-        await self.peer_channel.start()
-        self.actuator.setup()
+        if getattr(self, "_external_node", False):
+            # The engine must not recognize this node until its device is ready.
+            self.actuator.setup()
+            await self.peer_channel.start()
+        else:
+            await self.peer_channel.start()
+            self.actuator.setup()
 
     async def _await_managed_connection(self) -> None:
-        """Use the stronger connection barrier only for parent-managed starts."""
-        if getattr(self, "_startup_reporter", None) is None:
+        """Wait for the verified connection before commands can run."""
+        if (getattr(self, "_startup_reporter", None) is None
+                and not getattr(self, "_external_node", False)):
             return
-        await self.peer_channel.wait_until_connected(_MANAGED_CONNECT_TIMEOUT_S)
+        try:
+            timeout = (_EXTERNAL_CONNECT_TIMEOUT_S if getattr(self, "_external_node", False)
+                       else _MANAGED_CONNECT_TIMEOUT_S)
+            await self.peer_channel.wait_until_connected(timeout)
+        except (RuntimeError, TimeoutError):
+            if not getattr(self, "_reconnect_requested", False):
+                raise
 
     def _report_startup_failed(self, stage: str, error: BaseException) -> None:
         reporter = getattr(self, "_startup_reporter", None)
@@ -180,6 +224,9 @@ class Actuation:
             reporter.failed(stage, error)
 
     async def execute_command(self):
+        if getattr(self, "_external_node", False) and not self.peer_channel.is_connected:
+            self._connection_lost()
+            return
         if getattr(self, "_paused", False):
             return
         try:
