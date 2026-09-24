@@ -21,17 +21,11 @@ const pluginCategories: Record<string, string> = {
   "ALGORITHM.decoder": "decoder", "ACTUATION.effector": "effector",
 };
 const pages = {
-  processing: { title: "Processing", description: "Choose how incoming signals are prepared and decoded.", prefix: "ALGORITHM." },
-  stimulation: { title: "Stimulation", description: "Prepare the paradigm and trigger interface.", prefix: "STIMULATION." },
-  actuation: { title: "Actuation", description: "Configure the effector that handles decoded control output.", prefix: "ACTUATION." },
   general: { title: "General settings", description: "Preferences for the console and shared engine settings.", prefix: "NEUROENGINE." },
   advanced: { title: "Advanced configuration", description: "Inspect defaults and named application configurations.", prefix: "" },
 };
 const fieldLabels: Record<string, string> = {
-  "ALGORITHM.decoder": "Decoder", "ALGORITHM.filters": "Filter chain", "ALGORITHM.window_duration": "Window duration (s)",
-  "ALGORITHM.offset_time": "Trigger offset (s)", "ALGORITHM.baseline_duration": "Baseline duration (s)",
-  "STIMULATION.paradigm": "Paradigm", "ACQUISITION.parallel_port_address": "Parallel-port address",
-  "ACTUATION.effector": "Effector plugin ID", "NEUROENGINE.queue_size": "Queue capacity",
+  "NEUROENGINE.queue_size": "Queue capacity",
 };
 function show(value: unknown): string {
   if (value == null) return "";
@@ -50,9 +44,9 @@ function parseInput(raw: string, type: string): unknown {
   return raw;
 }
 
-export function ConfigCard({ view, engineRunning, navigation, preferences, runtime, onDirtyChange, onBusyChange, onOpenRun }: {
+export function ConfigCard({ view, engineRunning, navigation, preferences, runtime, onDirtyChange, onBusyChange }: {
   view: keyof typeof pages; engineRunning: boolean; navigation: ReactNode; preferences?: ReactNode;
-  onDirtyChange: (dirty: boolean) => void; onBusyChange: (busy: boolean) => void; onOpenRun: () => void;
+  onDirtyChange: (dirty: boolean) => void; onBusyChange: (busy: boolean) => void;
   runtime: RuntimeConfiguration;
 }) {
   const { t } = useI18n();
@@ -149,16 +143,11 @@ export function ConfigCard({ view, engineRunning, navigation, preferences, runti
     finally { setBusy(false); }
   };
   const visible = (config?.entries ?? []).filter((entry) => {
-    const inPage = entry.key.startsWith(page.prefix) || (view === "stimulation" && entry.key === "ACQUISITION.parallel_port_address");
+    const inPage = entry.key.startsWith(page.prefix);
     const text = `${entry.key} ${translateConfigDescription(entry.key, entry.description, t)}`.toLowerCase();
     return inPage && (category === "all" || entry.key.startsWith(`${category}.`))
       && text.includes(search.toLowerCase()) && (!modifiedOnly || draft[entry.key] !== undefined);
   });
-  const groupName = (key: string) => {
-    if (view === "processing") return key === "ALGORITHM.decoder" ? "Decoder" : key === "ALGORITHM.filters" ? "Preprocessing" : "Epoch";
-    if (view === "stimulation") return key.startsWith("STIMULATION.") ? "Paradigm" : "Trigger interface";
-    return view === "actuation" ? "Effector" : "Engine";
-  };
   const renderEntry = (entry: ConfigEntry) => {
     const value = selected === DEFAULT ? entry.default_value : overrides[entry.key] ?? entry.default_value;
     const owned = (selected === DEFAULT || selected === active) && moduleOwnedKeys.includes(entry.key);
@@ -173,20 +162,15 @@ export function ConfigCard({ view, engineRunning, navigation, preferences, runti
       return next;
     });
     const label = advanced ? entry.key : fieldLabels[entry.key] ?? entry.key.split(".")[1].replace(/_/g, " ");
-    const pluginSelect = !advanced && ["ALGORITHM.decoder", "STIMULATION.paradigm"].includes(entry.key);
     return <div className={`setting-row ${draft[entry.key] !== undefined ? "modified" : ""}`} key={entry.key}>
       <label className="setting-label" htmlFor={fieldId}>{label}{owned && <span className="setting-badge">Profile managed</span>}</label>
       <p className="setting-description">{translateConfigDescription(entry.key, entry.description, t)}</p>
-      {pluginSelect ? <select id={fieldId} aria-label={label} disabled={disabled} value={raw} onChange={(event) => onChange(event.target.value)}>
-        {!options.some((option) => option.plugin_type === raw) && <option value={raw}>{raw || "Select a plugin"}</option>}
-        {options.map((plugin) => <option key={plugin.plugin_type} value={plugin.plugin_type}>
-          {translatePluginName(plugin.plugin_type, plugin.display_name, t)}</option>)}
-      </select> : entry.type === "bool" ? <select id={fieldId} aria-label={label} disabled={disabled} value={raw} onChange={(event) => onChange(event.target.value)}>
+      {entry.type === "bool" ? <select id={fieldId} aria-label={label} disabled={disabled} value={raw} onChange={(event) => onChange(event.target.value)}>
         <option value="true">True</option><option value="false">False</option>
       </select> : <input id={fieldId} aria-label={label} disabled={disabled} value={raw}
         type={entry.type === "int" || entry.type === "float" ? "number" : "text"} step={entry.type === "int" ? 1 : "any"}
         list={options.length ? `options-${entry.key}` : undefined} onChange={(event) => onChange(event.target.value)} />}
-      {!pluginSelect && options.length > 0 && <datalist id={`options-${entry.key}`}>
+      {options.length > 0 && <datalist id={`options-${entry.key}`}>
         {options.map((plugin) => <option key={plugin.plugin_type} value={plugin.plugin_type}>{translatePluginName(plugin.plugin_type, plugin.display_name, t)}</option>)}
       </datalist>}
       {locked && !owned && <span className="setting-detail">Stop the engine to edit this setting.</span>}
@@ -206,8 +190,8 @@ export function ConfigCard({ view, engineRunning, navigation, preferences, runti
         <p>{view === "general" ? "Console preferences" : "Saved settings for the selected module."}</p></div>
     </aside>
     <div className="settings-editor">
-      <div className="breadcrumbs">{advanced || view === "general" ? "Settings" : "Setup"} <Icon name="chevron" /> {advanced ? "Advanced" : view === "general" ? "General" : page.title}</div>
-      <header className="editor-heading"><div><p className="eyebrow">{advanced || view === "general" ? "Preferences" : "Module settings"}</p><h1>{page.title}</h1>
+      <div className="breadcrumbs">Settings <Icon name="chevron" /> {advanced ? "Advanced" : "General"}</div>
+      <header className="editor-heading"><div><p className="eyebrow">Preferences</p><h1>{page.title}</h1>
         <p>{page.description}</p></div><button className="icon-button" aria-label="Refresh settings" title="Refresh settings" disabled={busy}
           onClick={() => confirmDiscard(() => void run(async () => {}, "Settings refreshed."))}><Icon name="refresh" /></button></header>
       {notice && <p className="inline-message success" role="status">{notice}</p>}
@@ -245,12 +229,9 @@ export function ConfigCard({ view, engineRunning, navigation, preferences, runti
         {preferences}
         {config && !visible.length && <p className="empty-search">No settings match the current filters.</p>}
         {advanced ? visible.map(renderEntry) : <div className="module-fields">
-          {[...new Set(visible.map((entry) => groupName(entry.key)))].map((group) => <div className="setting-group" data-group={group} key={group}>
-            <h2>{group}</h2>{visible.filter((entry) => groupName(entry.key) === group).map(renderEntry)}</div>)}
+          {visible.length > 0 && <div className="setting-group" data-group="Engine">
+            <h2>Engine</h2>{visible.map(renderEntry)}</div>}
         </div>}
-        {view === "stimulation" && <div className="module-next"><span>Launch stimulation and trigger trials in Run.</span>
-          <button disabled={busy} onClick={onOpenRun}><Icon name="play" />Open Run</button></div>}
-        {view === "actuation" && <p className="meta module-note">Leave the effector empty when no external control output is needed. Decoded trials remain available in Results.</p>}
       </div>
       <footer className="editor-footer"><span className="save-state">{dirty ? <><span className="unsaved-dot" />{Object.keys(draft).length} unsaved changes</> : "All changes saved"}</span>
         <div className="actions">

@@ -1,7 +1,7 @@
 """Tests for SignalProcessingWorker plugin loading and processor wiring."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -48,16 +48,24 @@ class TestAlgorithmLoading:
         from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
         snapshot = {"ACQUISITION.sample_rate": 250, "CONFIG.revision": "test-revision"}
         bindings = []
+        descriptors = []
         for slot, kind, alias, parameters in (
             ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA", {"window_duration": 1.5, "offset_time": 0.2}),
             ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
         ):
             descriptor = PluginCatalog().resolve(kind, alias)
+            descriptors.append(descriptor)
             bindings.append(ProfileBinding(slot, kind, None, descriptor.selection, parameters).to_dict())
         snapshot["PLUGINS.bindings"] = bindings
         monkeypatch.setattr(conf_module.settings, "get", lambda *a, **k: pytest.fail("global settings read"))
-        monkeypatch.setattr(PluginLoader, "load_from_dir", lambda *a, **k: pytest.fail("recursive scan"))
-        decoder, detector, filters = _worker(settings_snapshot=snapshot)._load_algorithm()
+        with patch.object(
+            PluginLoader, "load_entrypoint", wraps=PluginLoader.load_entrypoint
+        ) as load_entrypoint:
+            decoder, detector, filters = _worker(settings_snapshot=snapshot)._load_algorithm()
+        assert load_entrypoint.call_args_list == [
+            call(descriptors[0], Decoder),
+            call(descriptors[1], EpochDetector),
+        ]
         assert decoder.SAMPLE_COUNT == 375
         assert decoder.OFFSET_LENGTH == 50
         assert detector.plugin_type == "DEFAULT_EPOCH_DETECTOR"

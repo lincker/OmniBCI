@@ -190,11 +190,3 @@ class TestLifecycle:
         a = _actuator_with(_BadTeardown())
         a.teardown()               # must not raise
         assert a.effector is None
-
-    def test_registry_loading_via_factory(self):
-        # Legacy registry/factory remains available to subsystems not yet
-        # migrated to selected-entrypoint descriptors.
-        from omnibci.infrastructure.plugins.registry import ObjectFactory, register_plugin
-        register_plugin(Effector)(_FakeEffector)
-        instance = ObjectFactory.create(Effector, "fake_for_actuator_test")
-        assert isinstance(instance, _FakeEffector)

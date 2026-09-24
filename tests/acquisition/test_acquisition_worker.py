@@ -60,8 +60,11 @@ def test_load_data_source_uses_pinned_parameters_without_registry_or_global_sett
         "ACQUISITION.signal_source": "must_not_be_used",
     })
     monkeypatch.setattr(settings, "get", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("global settings read")))
-    monkeypatch.setattr(PluginLoader, "load_from_dir", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("recursive scan")))
-    worker._load_data_source()
+    with patch.object(
+        PluginLoader, "load_entrypoint", wraps=PluginLoader.load_entrypoint
+    ) as load_entrypoint:
+        worker._load_data_source()
 
+    load_entrypoint.assert_called_once_with(descriptor, SignalSource)
     assert worker.data_source._chunk_size == 37
     assert worker.data_source.file_path.endswith("selected.cnt")

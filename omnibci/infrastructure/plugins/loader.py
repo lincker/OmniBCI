@@ -3,9 +3,7 @@
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2026-01-28 05:58
 import hashlib
-import importlib
 import json
-import logging
 import sys
 from dataclasses import replace
 from importlib.machinery import ModuleSpec, NamespaceLoader, PathFinder
@@ -18,8 +16,6 @@ from omnibci.application.plugin_schema import validate_parameters
 from omnibci.infrastructure.plugins.descriptors import PluginDescriptor
 from omnibci.infrastructure.plugins.registry import isolated_registry
 from omnibci.sdk import PluginContext
-
-logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -271,60 +267,3 @@ class PluginLoader:
                 f"{descriptor.manifest_path}: failed to instantiate "
                 f"{descriptor.identifier}: {exc}"
             ) from exc
-
-    @staticmethod
-    def load_from_dir(
-        plugin_dir: str,
-        base_package: str = "omnibci.infrastructure.plugins",
-    ) -> None:
-        """Load legacy plugins without retaining a temporary import path."""
-        root_path = Path(plugin_dir).resolve()
-        if not root_path.exists():
-            logger.warning(f"[PluginLoader] Directory not found: {root_path}")
-            return
-
-        import_path = str(root_path.parent)
-        added_import_path = import_path not in sys.path
-        if added_import_path:
-            sys.path.insert(0, import_path)
-
-        try:
-            count = 0
-            for file_path in root_path.rglob("*.py"):
-                try:
-                    relative_path = file_path.relative_to(root_path)
-                except ValueError:
-                    continue
-
-                if file_path.name == "__init__.py":
-                    module_parts = relative_path.parent.parts
-                else:
-                    module_parts = relative_path.with_suffix("").parts
-
-                if not module_parts:
-                    continue
-
-                module_name = f"{base_package}.{'.'.join(module_parts)}"
-
-                if module_name in sys.modules:
-                    continue
-
-                try:
-                    importlib.import_module(module_name)
-                    count += 1
-                    logger.debug(f"Loaded plugin module: {module_name}")
-                except Exception as exc:
-                    logger.error(
-                        f"Failed to load module '{module_name}': {exc}",
-                        exc_info=True,
-                    )
-
-            logger.info(
-                f"[PluginLoader] Scanned '{plugin_dir}' - Loaded {count} modules."
-            )
-        finally:
-            if added_import_path:
-                try:
-                    sys.path.remove(import_path)
-                except ValueError:
-                    pass

@@ -15,7 +15,7 @@ from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder, Neuro
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.ipc.data_manager import DataManager
-from omnibci.infrastructure.acquisition.service import AcquisitionWorker
+from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
 from omnibci.infrastructure.neuroengine.processing.worker import SignalProcessingWorker
 from omnibci.infrastructure.neuroengine.gateway import PeerGateway
 

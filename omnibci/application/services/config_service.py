@@ -257,12 +257,6 @@ class ConfigService:
             raise RuntimeError("Module profile repository is not configured")
         return self._repository
 
-    def get(self, key: str, default=None):
-        """Settings-compatible reads for acquisition status in the API process."""
-        if key.startswith("ACQUISITION."):
-            return self.resolve_snapshot().get(key, default)
-        return self._settings.get(key, default)
-
     def resolve_snapshot(self) -> dict:
         """Resolve once at engine start; callers pass this copy to all workers."""
         with self._write_lock:

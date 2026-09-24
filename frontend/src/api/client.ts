@@ -12,7 +12,6 @@ export type EngineStatus = S["EngineStatusResponse"];
 export type AcquisitionStatus = S["AcquisitionStatusResponse"];
 export type SessionInfo = S["SessionResponse"];
 export type Trial = S["TrialResponse"];
-export type ErrorCode = S["ErrorCode"];
 export type ConfigEntry = S["ConfigEntry"];
 export type ConfigData = S["ConfigResponse"];
 export type PatchConfigResult = S["PatchConfigResponse"];
@@ -20,8 +19,6 @@ export type ProfileList = S["ProfileListResponse"];
 export type ParadigmInfo = S["ParadigmInfo"];
 export type ParadigmsResponse = S["ParadigmsResponse"];
 export type ModuleConfig = S["ModuleConfigResponse"];
-export type ModuleProfile = S["ModuleProfileResponse"];
-export type ModuleConfigField = S["ModuleConfigField"];
 export interface StimulationStatus {
   active: boolean;
   process_alive: boolean;
@@ -76,8 +73,6 @@ export const api = {
   engineStatus: () => get<EngineStatus>("/api/v1/engine/status"),
   acquisitionStatus: () => get<AcquisitionStatus>("/api/v1/acquisition/status"),
   stimulationStatus: () => get<StimulationStatus>("/api/v1/stimulation/status"),
-  listSessions: () =>
-    get<S["SessionListResponse"]>("/api/v1/sessions"),
 
   /** null = no active session (NO_ACTIVE_SESSION is a normal state, not an error). */
   activeSession: async (): Promise<SessionInfo | null> => {
@@ -98,8 +93,6 @@ export const api = {
 
   acqConnect: () => post("/api/v1/acquisition/connect"),
   acqDisconnect: () => post("/api/v1/acquisition/disconnect"),
-  streamStart: () => post("/api/v1/acquisition/stream/start"),
-  streamStop: () => post("/api/v1/acquisition/stream/stop"),
 
   stimStart: (paradigm?: string) =>
     post("/api/v1/stimulation/start", paradigm ? { paradigm } : {}),
@@ -107,19 +100,12 @@ export const api = {
   trialStart: (n_trials = 1, trial_params?: number[]) =>
     post("/api/v1/stimulation/trial/start", { n_trials, trial_params }),
 
-  createSession: (paradigm?: string) =>
-    post<SessionInfo>("/api/v1/sessions", paradigm ? { paradigm } : {}),
-  endSession: (sessionId: string) =>
-    del(`/api/v1/sessions/${encodeURIComponent(sessionId)}`),
-
   recordingStart: () => post<{ session_id: string }>("/api/v1/recording/start"),
   recordingStop: () => post<{ session_id: string }>("/api/v1/recording/stop"),
 
   // ---- plugin discovery ----------------------------------------------------
   /** List plugins by category: "paradigm" | "decoder" | "acquisition" | "effector" */
   listPlugins: (category: string) => get<ParadigmsResponse>(`/api/v1/plugins/${encodeURIComponent(category)}`),
-  /** @deprecated Use listPlugins("paradigm") */
-  listParadigms: () => get<ParadigmsResponse>("/api/v1/stimulation/paradigms"),
 
   // ---- layered config (stage 4) ------------------------------------------
   getConfig: () => get<ConfigData>("/api/v1/config"),
@@ -138,14 +124,4 @@ export const api = {
   deactivateProfile: () => post("/api/v1/config/profiles/deactivate"),
 
   getAcquisitionConfig: () => get<ModuleConfig>("/api/v1/config/modules/acquisition"),
-  listAcquisitionProfiles: () =>
-    get<S["ModuleProfileListResponse"]>("/api/v1/config/modules/acquisition/profiles"),
-  createAcquisitionProfile: (body: S["CreateModuleProfileRequest"]) =>
-    post<ModuleProfile>("/api/v1/config/modules/acquisition/profiles", body),
-  updateAcquisitionProfile: (id: string, body: S["UpdateModuleProfileRequest"]) =>
-    send<ModuleProfile>("PUT", `/api/v1/config/modules/acquisition/profiles/${encodeURIComponent(id)}`, body),
-  deleteAcquisitionProfile: (id: string) =>
-    del(`/api/v1/config/modules/acquisition/profiles/${encodeURIComponent(id)}`),
-  selectAcquisitionProfile: (profileId: string | null) =>
-    send<ModuleConfig>("PUT", "/api/v1/config/modules/acquisition/active-profile", { profile_id: profileId }),
 };

@@ -10,7 +10,6 @@ export type PluginDefinition = Omit<S["PluginConfigurationResponse"], "schema"> 
   schema: ConfigurationSchema | null;
 };
 export type PluginProfile = S["PluginProfileResponse"];
-export type ProfileBinding = S["ProfileBindingResponse"];
 export type Activation = S["ActivationResponse"];
 export type BindingSelection = S["SelectProfileBindingRequest"];
 
@@ -41,6 +40,4 @@ export const pluginConfigApi = {
       { name, parameters, expected_revision: profile.revision }),
   delete: (profile: PluginProfile) => request<null>(
     `/plugin-profiles/${encodeURIComponent(profile.profile_id)}?expected_revision=${profile.revision}`, "DELETE"),
-  accept: (bindings: BindingSelection[], expected_revision: string | null, refresh_slots: string[]) =>
-    request<Activation>("/activation", "PUT", { bindings, expected_revision, refresh_slots }),
 };

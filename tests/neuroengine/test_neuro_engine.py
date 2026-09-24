@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from omnibci.infrastructure.acquisition.service import AcquisitionCommand
+from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.shared.events import EventType, Event
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
 from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessorCommand

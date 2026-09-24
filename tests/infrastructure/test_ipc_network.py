@@ -10,7 +10,6 @@ These tests pin the fixed behaviour:
   1. Frame length-prefix codec round-trips (pure, no sockets).
   2. A real loopback TCP round-trip delivers events in BOTH directions and a
      client disconnect does not crash the server handler.
-  3. ClientMessageManagement keeps a strong reference to its background task.
 
 Round-trips use a real asyncio server on 127.0.0.1 with an ephemeral port —
 no external services, no settings, no multiprocessing.
@@ -169,17 +168,6 @@ class TestLoopbackRoundTrip:
             await client_a.stop()
             await client_b.stop()
             await server.stop()
-        asyncio.run(scenario())
-
-    def test_unknown_event_type_is_dropped_not_crashing(self):
-        async def scenario():
-            from omnibci.infrastructure.ipc.network import _decode_event
-            import json
-            assert _decode_event(json.dumps({"type": 999999, "data": 1}).encode()) is None
-            assert _decode_event(b"not json") is None
-            assert _decode_event(b"[]") is None
-            ev = _decode_event(json.dumps({"type": int(EventType.SessionEnded), "data": 2}).encode())
-            assert ev is not None and ev.type == EventType.SessionEnded and ev.data == 2
         asyncio.run(scenario())
 
 
@@ -997,67 +985,3 @@ class TestReconnectBackoff:
 
         assert attempts == 3
         assert delays == [0.25, 0.5]
-
-
-# ---------------------------------------------------------------------------
-# 3. ClientMessageManagement task reference
-# ---------------------------------------------------------------------------
-
-class _FakeClient:
-    def __init__(self) -> None:
-        self.stopped = False
-        self.status = "CONNECTED"
-        self.send_result = True
-
-    async def start(self) -> None:
-        await asyncio.Event().wait()  # block until cancelled
-
-    async def stop(self) -> None:
-        self.stopped = True
-
-    async def send_event(self, _event) -> bool:
-        return self.send_result
-
-
-class TestClientMessageManagementTaskRef:
-    def _make(self):
-        from omnibci.infrastructure.stimulation.client import ClientMessageManagement
-        m = ClientMessageManagement.__new__(ClientMessageManagement)
-        m.event_bus = _SpyBus()
-        m.client = _FakeClient()
-        m._client_task = None
-        return m
-
-    def test_start_retains_task(self):
-        async def scenario():
-            m = self._make()
-            await m.start()
-            assert isinstance(m._client_task, asyncio.Task)
-            await asyncio.sleep(0)
-            assert not m._client_task.done()
-            await m.stop()
-        asyncio.run(scenario())
-
-    def test_stop_cancels_and_clears_task(self):
-        async def scenario():
-            m = self._make()
-            await m.start()
-            await asyncio.sleep(0)
-            task = m._client_task
-            await m.stop()
-            assert m.client.stopped is True
-            assert task.cancelled() or task.done()
-            assert m._client_task is None
-        asyncio.run(scenario())
-
-    def test_send_event_preserves_network_delivery_bool(self):
-        async def scenario():
-            m = self._make()
-            event = Event(EventType.StimulationAck, {"status": "ok"})
-
-            m.client.send_result = False
-            assert await m.send_event(event) is False
-            m.client.send_result = True
-            assert await m.send_event(event) is True
-
-        asyncio.run(scenario())

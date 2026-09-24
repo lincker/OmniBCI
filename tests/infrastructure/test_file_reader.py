@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from omnibci.domain.ports.acquisition import SignalSource
-from omnibci.infrastructure.plugins.registry import ObjectFactory, registry_for
+from omnibci.infrastructure.plugins.registry import registry_for
 from omnibci.infrastructure.plugins.acquisition.file.reader import FileReader
 
 
@@ -38,27 +38,13 @@ class _FakeAdapter:
 
 
 # ---------------------------------------------------------------------------
-# Plugin registry / factory mechanism
+# Plugin registry
 # ---------------------------------------------------------------------------
 
 class TestDataSourceRegistry:
     def test_filereader_is_registered_under_its_plugin_type(self):
         assert "file_reader" in registry_for(SignalSource)
         assert registry_for(SignalSource)["file_reader"] is FileReader
-
-    def test_factory_resolves_configured_data_source(self):
-        # settings.toml ships ACQUISITION.signal_source = "file_reader"
-        from omnibci.conf import settings
-        instance = ObjectFactory.create(SignalSource, settings.get("ACQUISITION.signal_source"))
-        assert isinstance(instance, FileReader)
-
-    def test_factory_returns_none_for_unknown_type(self):
-        assert ObjectFactory.create(SignalSource, "does_not_exist") is None
-
-    def test_factory_returns_none_for_missing_target(self):
-        # Configuration is resolved upstream, so missing config reaches the
-        # factory as target_id=None.
-        assert ObjectFactory.create(SignalSource, None) is None
 
 
 # ---------------------------------------------------------------------------

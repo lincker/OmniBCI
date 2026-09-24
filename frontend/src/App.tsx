@@ -139,7 +139,7 @@ export default function App() {
             </div>
             : <ConfigCard key={view} view={view as SettingsPage} engineRunning={engineLocked} navigation={navigation}
               preferences={view === "general" ? preferences : undefined} onDirtyChange={setDirty} onBusyChange={setBusy}
-              runtime={runtime} onOpenRun={() => navigate("run")} />}
+              runtime={runtime} />}
         </div>
       </main>
     </div>

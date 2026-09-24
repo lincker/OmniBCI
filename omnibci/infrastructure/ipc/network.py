@@ -18,7 +18,6 @@ from omnibci.infrastructure.ipc.contracts import (
     InvalidEventBody,
     PROTOCOL_VERSION,
     UnsupportedProtocolVersion,
-    body_to_event,
     decode_event_body,
     encode_event,
     require_supported_version,
@@ -32,11 +31,6 @@ DEFAULT_WRITE_TIMEOUT = 1.0
 
 class StreamCleanupError(RuntimeError):
     """A socket/listener close was requested but could not be confirmed."""
-
-
-def _decode_event(raw: bytes) -> "Event | None":
-    """Back-compat shim: decode a body at the current protocol version."""
-    return body_to_event(raw, PROTOCOL_VERSION)
 
 
 def _validate_idle_timeout(value: float | None) -> float | None:
@@ -242,10 +236,6 @@ class NetworkServer:
                 raise
             self.server = server
             self.status = "RUNNING"
-
-    async def _start_server(self) -> None:
-        """Backward-compatible alias for the old private bind entry point."""
-        await self.start()
 
     async def handle_client(self, reader, writer) -> None:
         task = asyncio.current_task()

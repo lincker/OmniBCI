@@ -152,7 +152,7 @@ async function change(harness, label, value, type = "select") {
 async function withProfiles(module, action) {
   const originalApi = { ...api };
   const data = fixture();
-  const calls = { create: [], update: [], accept: [], review: [] };
+  const calls = { create: [], update: [], apply: [], review: [] };
   api.catalog = async (kind) => clone(data.definitions.filter((item) => item.kind === kind));
   api.profiles = async () => clone(data.profiles);
   api.activation = async () => clone(data.activation);
@@ -166,10 +166,10 @@ async function withProfiles(module, action) {
     const updated = { ...saved, name, parameters: clone(parameters), revision: saved.revision + 1 };
     data.profiles = data.profiles.map((item) => item.profile_id === saved.profile_id ? updated : item); return clone(updated);
   };
-  api.accept = async (...args) => { calls.accept.push(args); return clone(data.activation); };
   const harness = componentHarness({ module, engineRunning: false, runtime: {
     blocked: false, status: { running: false, accepted_revision: data.activation.revision, applied_revision: null },
     review: async (body) => { calls.review.push(clone(body)); },
+    apply: async (...args) => { calls.apply.push(args); },
   } });
   try { await harness.settle(); await action(harness, calls, data); }
   finally { harness.dispose(); Object.assign(api, originalApi); }
@@ -187,7 +187,7 @@ test("the profile selector is scoped to the selected plugin and exact version", 
     assert.equal(text(harness.tree).includes("Lab B"), false);
     await change(harness, "Plugin and version", selectionKey(scanV1));
     assert.equal(control(harness, "Profile").props.value, "lab-a", "Return to the bound profile before the first saved profile");
-    assert.deepEqual(calls, { create: [], update: [], accept: [], review: [] });
+    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
   });
 });
 
@@ -199,7 +199,7 @@ test("browsing profiles and a plugin without profiles never selects a runtime bi
     assert.equal(control(harness, "Plugin and version").props.value, selectionKey(unsavedPlugin));
     assert.deepEqual(form(harness).props.value, { gain: 1, calibration: [1, 2] });
     assert.equal(!!button(harness, "Review and apply profile").props.disabled, true);
-    assert.deepEqual(calls, { create: [], update: [], accept: [], review: [] });
+    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
   });
 });
 
@@ -212,7 +212,7 @@ test("New profile uses the current plugin defaults and Save creates without appl
     await change(harness, "Name", "New version 2 lab", "input");
     await click(harness, "Save profile");
     assert.deepEqual(calls.create, [{ kind: "acquisition", selection: scanV2, name: "New version 2 lab", parameters: { gain: 1, calibration: [1, 2] } }]);
-    assert.equal(calls.update.length, 0); assert.equal(calls.review.length, 0); assert.equal(calls.accept.length, 0);
+    assert.equal(calls.update.length, 0); assert.equal(calls.review.length, 0); assert.equal(calls.apply.length, 0);
     assert.equal(control(harness, "Profile").props.value, "created-1");
   });
 });
@@ -231,7 +231,7 @@ test("Duplicate profile isolates parameters and creates a new profile without ch
     dialog(harness).props.onConfirm("Lab A alternative"); await harness.settle();
     assert.deepEqual(calls.create, [{ kind: "acquisition", selection: scanV1, name: "Lab A alternative", parameters: { gain: 9, calibration: [10, 11] } }]);
     assert.deepEqual(data.profiles.find((item) => item.profile_id === "lab-a"), original);
-    assert.equal(calls.update.length, 0); assert.equal(calls.review.length, 0); assert.equal(calls.accept.length, 0);
+    assert.equal(calls.update.length, 0); assert.equal(calls.review.length, 0); assert.equal(calls.apply.length, 0);
     assert.equal(control(harness, "Profile").props.value, "created-1");
     form(harness).props.onChange({ gain: 15, calibration: [20, 21] }); await harness.settle();
     await click(harness, "Save profile");
@@ -253,7 +253,7 @@ test("plugin changes require an explicit discard when the edited profile is dirt
     dialog(harness).props.onConfirm(""); await harness.settle();
     assert.equal(control(harness, "Plugin and version").props.value, selectionKey(scanV2));
     assert.equal(control(harness, "Name", "input").props.value, "Version 2 lab");
-    assert.deepEqual(calls, { create: [], update: [], accept: [], review: [] });
+    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
   });
 });
 
@@ -264,14 +264,15 @@ test("saving changed parameters keeps the old activation until an explicit revie
     assert.equal(!!button(harness, "Review and apply profile").props.disabled, true);
     await click(harness, "Save profile");
     assert.equal(calls.update.length, 1); assert.equal(calls.create.length, 0);
-    assert.equal(calls.review.length, 0); assert.equal(calls.accept.length, 0);
+    assert.equal(calls.review.length, 0); assert.equal(calls.apply.length, 0);
     assert.deepEqual(data.activation, accepted);
     await click(harness, "Review and apply profile");
     assert.equal(calls.review.length, 1);
     assert.deepEqual(calls.review[0].refresh_slots, ["acquisition.source"]);
     assert.deepEqual(calls.review[0].bindings.find((item) => item.slot === "acquisition.source"), { slot: "acquisition.source", profile_id: "lab-a" });
     assert.equal(calls.review[0].expected_revision, accepted.revision);
-    assert.equal(calls.accept.length, 0);
+    assert.equal(calls.apply.length, 0);
+    assert.deepEqual(data.activation, accepted);
   });
 });
 
@@ -293,7 +294,7 @@ test("filter instances select a plugin and its profiles while retaining stable o
       { slot: "processing.filter.second", profile_id: "notch-a" },
       { slot: "processing.filter.first", profile_id: "band-b" },
     ]);
-    assert.equal(calls.accept.length, 0);
+    assert.equal(calls.apply.length, 0);
   });
 });
 
@@ -306,7 +307,7 @@ test("a filter plugin without a profile cannot be applied until a saved profile 
     await change(harness, "Filter 1 plugin", selectionKey(notch));
     assert.equal(control(harness, "Filter 1 profile").props.value, "notch-a");
     assert.equal(!!button(harness, "Review and apply filter chain").props.disabled, false);
-    assert.equal(calls.review.length, 0); assert.equal(calls.accept.length, 0);
+    assert.equal(calls.review.length, 0); assert.equal(calls.apply.length, 0);
   });
 });
 
@@ -325,6 +326,6 @@ test("discarding an editor change preserves pending filter order, while Discard 
     assert.equal(control(harness, "Filter 1 profile").props.value, "band-a");
     assert.equal(control(harness, "Filter 2 profile").props.value, "notch-a");
     assert.equal(!!button(harness, "Review and apply filter chain").props.disabled, true);
-    assert.equal(calls.review.length, 0); assert.equal(calls.accept.length, 0);
+    assert.equal(calls.review.length, 0); assert.equal(calls.apply.length, 0);
   });
 });
