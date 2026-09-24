@@ -23,7 +23,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from omnibci.presentation.schemas.common import ErrorCode, ErrorResponse
 from omnibci.application.config_errors import ConfigProfileConflictError, ConfigProfileValidationError
-from omnibci.application.configuration import ConfigProfileNotFoundError, ConfigProfileStorageError
 from omnibci.application.services.command_result_service import (
     CommandExecutionError,
     CommandRejectedError,
@@ -138,17 +137,9 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _handle_config_validation(_: Request, exc: ConfigProfileValidationError):
         return _json_error(422, ErrorCode.VALIDATION_ERROR, str(exc))
 
-    @app.exception_handler(ConfigProfileNotFoundError)
-    async def _handle_config_missing(_: Request, exc: ConfigProfileNotFoundError):
-        return _json_error(404, ErrorCode.CONFIG_PROFILE_NOT_FOUND, f"Profile not found: {exc}")
-
     @app.exception_handler(ConfigProfileConflictError)
     async def _handle_config_conflict(_: Request, exc: ConfigProfileConflictError):
         return _json_error(409, ErrorCode.CONFLICT, str(exc))
-
-    @app.exception_handler(ConfigProfileStorageError)
-    async def _handle_config_storage(_: Request, exc: ConfigProfileStorageError):
-        return _json_error(503, ErrorCode.SERVICE_UNAVAILABLE, str(exc))
 
     @app.exception_handler(ApiError)
     async def _handle_api_error(_: Request, exc: ApiError) -> JSONResponse:

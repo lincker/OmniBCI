@@ -13,7 +13,6 @@ from omnibci.application.services.recording_service import RecordingService
 from omnibci.application.services.command_result_service import CommandResultBroker
 from omnibci.application.services.config_service import ConfigService
 from omnibci.application.services.plugin_profile_service import PluginProfileService
-from omnibci.application.services.plugin_config_migration import LegacyPluginConfigMigration
 from omnibci.application.services.plugin_config_initialization import SettingsPluginConfigInitializer
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
@@ -21,11 +20,9 @@ from omnibci.application.services.plugin_installation_service import PluginInsta
 from omnibci.application.services.plugin_package_service import PluginPackageService
 from omnibci.application.services.plugin_market_service import PluginMarketService
 from omnibci.application.plugin_packages import package_references_from_settings
-from omnibci.application.plugin_profiles import PluginProfileValidationError
 from omnibci.domain.repositories import SessionRepository
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
-from omnibci.infrastructure.repositories.config_profile_repository import TomlConfigProfileRepository
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.plugin_catalog import list_plugins
@@ -85,6 +82,7 @@ def assemble(
     repository: SessionRepository,
     *,
     settings=None,
+    acquisition_settings=None,
     auto_spawn: bool = True,
     actuation_process_manager: "ActuationProcessManager | None" = None,
     stimulation_process_manager: "StimulationProcessManager | None" = None,
@@ -103,7 +101,7 @@ def assemble(
     )
     acquisition_service = AcquisitionAppService(
         command_results,
-        settings=settings,
+        settings=acquisition_settings if acquisition_settings is not None else settings,
         admission=admission,
     )
     session_service = SessionAppService(
@@ -159,11 +157,16 @@ async def build_container() -> AppContainer:
 
     # Processes are single-use, so every restart requires a fresh engine graph.
     def startup_snapshot():
-        if plugin_profiles.repository.get_activation() is None:
-            raise PluginProfileValidationError(
-                "Plugin configuration is not selected; review the migration error or select profiles"
-            )
-        return plugin_profiles.resolve_settings()
+        try:
+            accepted = plugin_profiles.repository.get_activation()
+            if accepted is not None:
+                plugin_profiles.validate(accepted)
+                return plugin_profiles.materialize(accepted)
+        except (ValueError, KeyError, RuntimeError, OSError) as exc:
+            raise RuntimeError(f"Plugin configuration is invalid: {exc}") from exc
+        raise RuntimeError(
+            "Plugin configuration is not selected; review and apply valid plugin profiles before starting"
+        )
 
     engine_service = NeuroEngineService(
         engine_factory=lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
@@ -171,36 +174,29 @@ async def build_container() -> AppContainer:
         actuation_process_manager=actuation_manager,
         stimulation_process_manager=stimulation_manager,
     )
-    legacy_profiles = TomlConfigProfileRepository()
     config_service = ConfigService(
-        settings, plugin_catalog=list_plugins, repository=legacy_profiles,
+        settings, plugin_catalog=list_plugins,
         change_guard=engine_service.configuration_change,
     )
     plugin_profiles = PluginProfileService(
         TomlPluginProfileRepository(), CatalogConfigurationAdapter(),
-        settings_source=config_service.resolve_snapshot,
+        settings_source=settings.snapshot,
         change_guard=engine_service.configuration_change,
     )
     try:
-        if plugin_profiles.repository.get_activation() is None:
-            initial_settings = config_service.resolve_snapshot()
-            historical_profiles = legacy_profiles.list("acquisition")
-            active_acquisition_id = legacy_profiles.get_active("acquisition")
-            if historical_profiles or active_acquisition_id is not None:
-                migrated = LegacyPluginConfigMigration(plugin_profiles).migrate(
-                    initial_settings, historical_profiles, active_acquisition_id,
-                )
-            else:
-                migrated = SettingsPluginConfigInitializer(plugin_profiles).initialize(initial_settings)
-            for warning in migrated.warnings:
-                logger.warning("Plugin configuration migration: %s", warning)
+        initializer = SettingsPluginConfigInitializer(plugin_profiles)
+        if initializer.existing() is None:
+            result = initializer.initialize(settings.snapshot())
+            for warning in result.warnings:
+                logger.warning("Plugin configuration initialization: %s", warning)
     except (ValueError, KeyError, RuntimeError, OSError):
         # Keep configuration management available so invalid saved data can be
         # repaired. Starting workers still requires a valid accepted snapshot.
-        logger.exception("Plugin configuration migration requires attention")
+        logger.exception("Plugin configuration initialization requires attention")
     await engine_service.startup()
     container = assemble(engine_service, repository,
-                         settings=_RuntimeSettings(engine_service, plugin_profiles), auto_spawn=auto_spawn,
+                         settings=settings, acquisition_settings=_RuntimeSettings(engine_service, plugin_profiles),
+                         auto_spawn=auto_spawn,
                          actuation_process_manager=actuation_manager,
                          stimulation_process_manager=stimulation_manager,
                          admission=engine_service.admission)
@@ -238,7 +234,14 @@ class _RuntimeSettings:
     def get(self, key, default=None):
         snapshot = self.engine.applied_snapshot
         if snapshot is None or not self.engine.is_engine_ready:
-            snapshot = self.profiles.resolve_settings()
+            try:
+                accepted = self.profiles.repository.get_activation()
+                if accepted is None:
+                    return default
+                snapshot = self.profiles.materialize(accepted)
+            except (ValueError, KeyError, RuntimeError, OSError):
+                # Optional status metadata must not block configuration repair.
+                return default
         return snapshot.get(key, default)
 
 

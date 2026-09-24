@@ -18,7 +18,6 @@ export type PatchConfigResult = S["PatchConfigResponse"];
 export type ProfileList = S["ProfileListResponse"];
 export type ParadigmInfo = S["ParadigmInfo"];
 export type ParadigmsResponse = S["ParadigmsResponse"];
-export type ModuleConfig = S["ModuleConfigResponse"];
 export interface StimulationStatus {
   active: boolean;
   process_alive: boolean;
@@ -123,5 +122,4 @@ export const api = {
     post(`/api/v1/config/profiles/${encodeURIComponent(name)}/activate`),
   deactivateProfile: () => post("/api/v1/config/profiles/deactivate"),
 
-  getAcquisitionConfig: () => get<ModuleConfig>("/api/v1/config/modules/acquisition"),
 };

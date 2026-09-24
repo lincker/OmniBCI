@@ -113,10 +113,3 @@ def test_alias_resolution_preserves_catalog_error_context(error):
     with pytest.raises(PluginConfigMigrationError, match="Cannot resolve decoder plugin") as captured:
         resolve_legacy_configuration(catalog, "decoder", CCA_PLUGIN_TYPE)
     assert captured.value.__cause__ is error
-
-
-def test_migration_import_path_reexports_the_same_mapping_contracts():
-    from omnibci.application.services import plugin_config_migration
-
-    assert plugin_config_migration.PluginConfigMigrationError is PluginConfigMigrationError
-    assert plugin_config_migration.legacy_parameters is legacy_parameters

@@ -33,7 +33,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from omnibci.presentation.routers import engine, acquisition, stimulation, session, recording, config, plugins
-from omnibci.presentation.routers import module_config, plugin_config, runtime_config, plugin_packages
+from omnibci.presentation.routers import plugin_config, runtime_config, plugin_packages
 from omnibci.presentation.routers import plugin_package_lifecycle, plugin_market
 from omnibci.presentation.websockets.results import results_broadcaster, results_ws_endpoint
 from omnibci.bootstrap import build_container, register_engine_listeners
@@ -137,7 +137,6 @@ def create_app() -> FastAPI:
     app.include_router(session.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(recording.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(config.router, prefix=prefix, responses=ERROR_RESPONSES)
-    app.include_router(module_config.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(plugin_config.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(runtime_config.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(plugin_packages.router, prefix=prefix, responses=ERROR_RESPONSES)

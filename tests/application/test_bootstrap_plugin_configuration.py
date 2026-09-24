@@ -5,10 +5,9 @@ from uuid import uuid4
 import pytest
 
 from omnibci import bootstrap
-from omnibci.application.configuration import ConfigProfile, ConfigProfileNotFoundError
 from omnibci.bootstrap import _RuntimeSettings, build_container
 from omnibci.conf import OmniBCISettings
-from omnibci.infrastructure.repositories.config_profile_repository import TomlConfigProfileRepository
+from omnibci.infrastructure.config_paths import config_root
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 
 
@@ -52,11 +51,32 @@ retain = ["settings-only", "user-value"]
     builder.assert_not_called()
 
 
-def _legacy_profile():
-    return ConfigProfile(str(uuid4()), "Existing acquisition", "acquisition", "file_reader", {
-        "data_file_path": "recordings/legacy.cnt", "sample_rate": 512,
-        "channel_number": 7, "file_reader_chunk_size": 32,
-    })
+def _legacy_files(state):
+    """Write retired documents directly; production no longer reads this format."""
+    root = config_root()
+    root.mkdir(parents=True, exist_ok=True)
+    profile_id = str(uuid4())
+    if state != "inactive":
+        (root / "active.toml").write_text(
+            f'schema_version = 1\n[active]\nacquisition = "{profile_id}"\n', encoding="utf-8",
+        )
+    if state == "corrupt_active":
+        (root / "active.toml").write_text('active = "unterminated', encoding="utf-8")
+    if state != "missing":
+        path = root / "profiles" / "acquisition" / "file_reader" / f"{profile_id}.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('name = "unterminated' if state == "corrupt_profile" else f'''schema_version = 1
+profile_id = "{profile_id}"
+name = "Existing acquisition"
+module = "acquisition"
+plugin_type = "file_reader"
+[parameters]
+data_file_path = "recordings/legacy.cnt"
+sample_rate = 512
+channel_number = 7
+file_reader_chunk_size = 32
+''', encoding="utf-8")
+    return root, profile_id
 
 
 def _toml_files(root):
@@ -64,7 +84,7 @@ def _toml_files(root):
 
 
 @pytest.mark.asyncio
-async def test_composition_migrates_once_and_saved_edits_do_not_change_startup():
+async def test_composition_initializes_once_and_saved_edits_do_not_change_startup():
     container = await build_container()
     profiles = container.plugin_profile_service
     accepted = profiles.repository.get_activation()
@@ -84,18 +104,16 @@ async def test_composition_migrates_once_and_saved_edits_do_not_change_startup()
 def test_status_reads_applied_values_while_engine_running():
     engine = Mock(is_engine_ready=True, applied_snapshot={"ACQUISITION.sample_rate": 250})
     profiles = Mock()
-    profiles.resolve_settings.return_value = {"ACQUISITION.sample_rate": 1000}
+    profiles.materialize.return_value = {"ACQUISITION.sample_rate": 1000}
     view = _RuntimeSettings(engine, profiles)
     assert view.get("ACQUISITION.sample_rate") == 250
-    profiles.resolve_settings.assert_not_called()
+    profiles.materialize.assert_not_called()
     engine.is_engine_ready = False
     assert view.get("ACQUISITION.sample_rate") == 1000
 
 
 @pytest.mark.asyncio
-async def test_settings_only_initialization_preserves_nondefault_values(bootstrap_settings, monkeypatch):
-    legacy_migration = Mock(side_effect=AssertionError("No legacy profiles need importing"))
-    monkeypatch.setattr(bootstrap, "LegacyPluginConfigMigration", legacy_migration)
+async def test_settings_only_initialization_preserves_nondefault_values(bootstrap_settings):
     original_settings = bootstrap_settings._config_path.read_bytes()
 
     container = await build_container()
@@ -111,34 +129,25 @@ async def test_settings_only_initialization_preserves_nondefault_values(bootstra
     assert "actuation.effector" not in bindings
     assert accepted.settings == bootstrap_settings.snapshot()
     assert bootstrap_settings._config_path.read_bytes() == original_settings
-    assert TomlConfigProfileRepository().list("acquisition") == []
-    legacy_migration.assert_not_called()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("active", [False, True])
-async def test_bootstrap_imports_existing_profiles_without_rewriting_them(bootstrap_settings, active):
-    legacy = TomlConfigProfileRepository()
-    profile = _legacy_profile()
-    legacy.save(profile)
-    if active:
-        legacy.set_active("acquisition", profile.profile_id)
-    original_files = _toml_files(legacy.root)
+@pytest.mark.parametrize("state", ["inactive", "active", "missing", "corrupt_profile", "corrupt_active"])
+async def test_retired_profiles_do_not_affect_initialization(bootstrap_settings, state):
+    root, old_id = _legacy_files(state)
+    original_files = _toml_files(root)
     original_settings = bootstrap_settings._config_path.read_bytes()
 
     container = await build_container()
 
     repository = container.plugin_profile_service.repository
-    imported = repository.get_profile(profile.profile_id)
-    assert imported.name == profile.name
-    assert imported.parameters == profile.parameters
     source = next(binding for binding in repository.get_activation().bindings if binding.kind == "acquisition")
-    if active:
-        assert source.profile_id == profile.profile_id
-        assert source.parameters == profile.parameters
-    else:
-        assert source.profile_id != profile.profile_id
-        assert source.parameters["sample_rate"] == 256
+    assert source.profile_id != old_id
+    assert old_id not in {profile.profile_id for profile in repository.list_profiles()}
+    assert source.parameters["sample_rate"] == 256
+    assert container.acquisition_service._device_metadata() == ("file_reader", 256, 5)
+    entries, _ = container.config_service.list_entries()
+    assert next(entry for entry in entries if entry["key"] == "ACQUISITION.sample_rate")["effective_value"] == 256
     assert {path: path.read_bytes() for path in original_files} == original_files
     assert bootstrap_settings._config_path.read_bytes() == original_settings
 
@@ -146,16 +155,10 @@ async def test_bootstrap_imports_existing_profiles_without_rewriting_them(bootst
 @pytest.mark.asyncio
 async def test_existing_activation_ignores_damaged_legacy_files(bootstrap_settings, caplog):
     first = await build_container()
-    repository = first.plugin_profile_service.repository
-    accepted = repository.get_activation()
-    legacy = TomlConfigProfileRepository()
-    profile = _legacy_profile()
-    legacy.save(profile)
-    legacy.set_active("acquisition", profile.profile_id)
-    profile_path = next((legacy.root / "profiles").rglob("*.toml"))
-    profile_path.write_text('name = "unterminated', encoding="utf-8")
-    (legacy.root / "active.toml").write_text('active = "unterminated', encoding="utf-8")
-    original_files = _toml_files(legacy.root)
+    accepted = first.plugin_profile_service.repository.get_activation()
+    root, _ = _legacy_files("corrupt_profile")
+    (root / "active.toml").write_text('active = "unterminated', encoding="utf-8")
+    original_files = _toml_files(root)
     original_settings = bootstrap_settings._config_path.read_bytes()
     caplog.clear()
 
@@ -163,26 +166,40 @@ async def test_existing_activation_ignores_damaged_legacy_files(bootstrap_settin
 
     assert restarted.plugin_profile_service.repository.get_activation() == accepted
     assert restarted.engine_service._snapshot_provider() == first.engine_service._snapshot_provider()
-    assert _toml_files(legacy.root) == original_files
+    assert _toml_files(root) == original_files
     assert bootstrap_settings._config_path.read_bytes() == original_settings
     assert not [record for record in caplog.records if record.levelname == "ERROR"]
 
 
 @pytest.mark.asyncio
-async def test_missing_active_legacy_profile_does_not_initialize_replacement(bootstrap_settings):
-    legacy = TomlConfigProfileRepository()
-    profile = _legacy_profile()
-    legacy.save(profile)
-    legacy.set_active("acquisition", profile.profile_id)
-    legacy.delete("acquisition", profile.profile_id)
-    original_files = _toml_files(legacy.root)
-    original_settings = bootstrap_settings._config_path.read_bytes()
+@pytest.mark.parametrize("key,value", [
+    ("ACQUISITION.sample_rate", "invalid"),
+    ("ALGORITHM.decoder", "missing_decoder"),
+])
+async def test_failed_initialization_keeps_management_available(bootstrap_settings, key, value):
+    bootstrap_settings.set(key, value)
+    container = await build_container()
 
-    with pytest.raises(ConfigProfileNotFoundError):
-        await build_container()
+    assert container.plugin_profile_service.repository.get_activation() is None
+    assert container.plugin_profile_service.repository.list_profiles() == []
+    assert container.acquisition_service._device_metadata() == (None, None, None)
+    assert container.config_service.list_entries()[0]
+    with pytest.raises(RuntimeError, match="not selected"):
+        container.engine_service._snapshot_provider()
 
-    repository = TomlPluginProfileRepository()
-    assert repository.get_activation() is None
-    assert repository.list_profiles() == []
-    assert _toml_files(legacy.root) == original_files
-    assert bootstrap_settings._config_path.read_bytes() == original_settings
+
+@pytest.mark.asyncio
+async def test_broken_activation_keeps_management_available_without_replacement(bootstrap_settings):
+    first = await build_container()
+    repository = first.plugin_profile_service.repository
+    path = repository.root / "activation.toml"
+    path.write_text('format_version = "unterminated', encoding="utf-8")
+    original_files = _toml_files(repository.root)
+
+    container = await build_container()
+
+    assert container.config_service.list_entries()[0]
+    assert container.acquisition_service._device_metadata() == (None, None, None)
+    with pytest.raises(RuntimeError, match="configuration is invalid"):
+        container.engine_service._snapshot_provider()
+    assert _toml_files(repository.root) == original_files

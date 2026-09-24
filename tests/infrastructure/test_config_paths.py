@@ -1,4 +1,4 @@
-"""Both configuration stores retain the same platform and override paths."""
+"""Configuration storage uses platform defaults or an explicit override."""
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -6,9 +6,6 @@ import pytest
 
 from omnibci.application.config_errors import ConfigProfileValidationError
 from omnibci.infrastructure import config_paths
-from omnibci.infrastructure.repositories.config_profile_repository import (
-    TomlConfigProfileRepository, config_root as legacy_config_root,
-)
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 
 
@@ -47,17 +44,12 @@ def test_relative_override_is_rejected(monkeypatch):
         config_paths.config_root()
 
 
-@pytest.mark.parametrize("repository_type", [TomlConfigProfileRepository, TomlPluginProfileRepository])
-def test_repositories_share_override_and_explicit_root_precedence(tmp_path, monkeypatch, repository_type):
+def test_repository_uses_override_and_explicit_root_precedence(tmp_path, monkeypatch):
     override = tmp_path / "shared"
     explicit = tmp_path / "explicit"
     monkeypatch.setenv("OMNIBCI_CONFIG_DIR", str(override))
 
-    assert repository_type().root == override
+    assert TomlPluginProfileRepository().root == override
     monkeypatch.setenv("OMNIBCI_CONFIG_DIR", "invalid-relative-override")
-    assert repository_type(explicit).root == explicit
+    assert TomlPluginProfileRepository(explicit).root == explicit
     assert list(tmp_path.iterdir()) == []
-
-
-def test_legacy_path_export_is_the_shared_function():
-    assert legacy_config_root is config_paths.config_root

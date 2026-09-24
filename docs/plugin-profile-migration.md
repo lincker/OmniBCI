@@ -1,113 +1,86 @@
-# Plugin configuration initialization and legacy import
+# Plugin configuration initialization
 
-## Startup paths
+OmniBCI has not shipped. The retired Acquisition-only Profile format and its
+`/config/modules/{module}` API are no longer supported or imported. The backend
+and console use version 2 Plugin Profiles and accepted activation snapshots.
+Old `active.toml` and `profiles/acquisition/` files are ignored and left untouched.
 
-The composition root uses three paths:
+## Startup policy
 
-1. If an accepted activation exists, reuse it without inspecting old profiles.
-2. If no old Acquisition profiles or active ID exist, initialize from the
-   resolved settings snapshot with `SettingsPluginConfigInitializer`.
-3. Otherwise, import the old Acquisition profiles with
-   `LegacyPluginConfigMigration`, then use the same initializer to publish the
-   complete configuration.
-
-An empty old profile directory does not prove a fresh installation. A user may
-have customized only `settings.toml` or an application profile. Settings-based
-initialization preserves those resolved values instead of substituting a new
-set of plugin defaults:
+1. Reuse an existing activation without inspecting old Profile files or replacing
+   it with current settings.
+2. When activation is absent, initialize Plugin Profiles from `settings.snapshot()`:
+   `settings.toml` plus the selected named application configuration, if any.
+3. Validate all profiles before publishing an activation. Invalid plugin selections
+   or parameters leave activation unset; the API server still starts.
 
 ```python
 result = SettingsPluginConfigInitializer(profile_service).initialize(
-    settings_snapshot=legacy_config_service.resolve_snapshot(),
+    settings_snapshot=settings.snapshot(),
 )
 ```
 
-The initializer does not depend on the old `ConfigProfile` model. The historical
-importer validates and converts old profiles in memory before passing the new
-profile drafts to it; no old profile file is rewritten.
+`InitializationResult` contains `snapshot`, `warnings`, and
+`already_initialized`. Warnings are persisted in `CONFIG.initialization_warnings`.
+Generated profiles use `Initial ...` names and deterministic UUID5 identities.
 
-`InitializationResult` contains `snapshot`, `warnings`, and `already_migrated`.
-The historical field name is retained for compatibility and is true whenever an
-accepted activation was reused. `MigrationResult` remains an alias for this same
-result type. Generated UUIDs, `Migrated ...` names and the stored warnings key
-also remain unchanged so interrupted initialization or import can resume.
+Missing or corrupt retired files do not represent errors in the current format.
+For example, an old `active.toml` pointing to a missing Acquisition Profile no
+longer prevents initialization from valid settings. This is normal initialization,
+not an attempt to reconstruct that old Profile.
 
-## Importing old Acquisition profiles
+## Values and identities
 
-`LegacyPluginConfigMigration` converts a resolved legacy settings snapshot and
-existing Acquisition profiles into version 2 plugin profiles and one accepted
-activation snapshot. The caller supplies data; the migration does not read or
-modify legacy settings/profile files.
-
-```python
-result = LegacyPluginConfigMigration(profile_service).migrate(
-    settings_snapshot=legacy_config_service.resolve_snapshot(),
-    legacy_profiles=existing_acquisition_profiles,
-    active_acquisition_id=selected_acquisition_profile_id,
-)
-```
-
-`MigrationResult` contains `snapshot`, `warnings`, and `already_migrated`.
-Warnings are also stored in `CONFIG.migration_warnings` within the accepted
-snapshot, so they remain available after restarting the backend.
-
-## Preserved behavior
-
-- Legacy Acquisition profile UUIDs, names, and valid parameters are preserved.
-  The selected profile must agree with the resolved settings snapshot.
-- Imported profiles pass both legacy validation and the selected plugin's
-  schema. Required legacy values are not repaired with new defaults.
-- Acquisition and Trigger parameters come from the corresponding
-  `ACQUISITION.<parameter>` settings.
-- CCA retains `ssvep.duration` and `ssvep.offset_time`. Differences from
-  `ALGORITHM.window_duration` or `ALGORITHM.offset_time` produce warnings; the
-  migration does not switch CCA to previously unused values.
-- FBCCA uses `ALGORITHM.window_duration` and `ALGORITHM.offset_time`.
-- Missing scalar settings use declared plugin defaults. Supplied values,
-  including zero, are validated and preserved rather than replaced by defaults.
-- The filter list preserves order and repeated aliases. Each instance receives
-  a deterministic UUID slot and an independent profile.
-- Host settings and unrelated legacy keys remain in the accepted settings copy.
-- Source, Decoder, Epoch Detector, and Paradigm aliases must be explicit. Empty
+- Acquisition and Trigger parameters come from `ACQUISITION.<parameter>`.
+- CCA still reads `ssvep.duration` and `ssvep.offset_time`; differences from the
+  similarly named `ALGORITHM` values produce warnings.
+- FBCCA reads `ALGORITHM.window_duration` and `ALGORITHM.offset_time`.
+- Missing scalar settings use declared plugin defaults. Supplied values are
+  validated and preserved, including zero.
+- Filter order and repeated aliases are retained with distinct instance IDs.
+- Host settings and unrelated settings remain in the accepted snapshot.
+- Source, Decoder, Epoch Detector and Paradigm aliases must be explicit. Empty
   Trigger and Effector aliases remain unselected.
+- Each alias must resolve to an exact package, contribution and version with a
+  configuration schema. Missing or ambiguous identities block initialization.
+- A selected capability unavailable on the current operating system is retained
+  with a warning; runtime startup performs its own availability check.
 
-The pure helpers in `omnibci.application.legacy_plugin_config` resolve legacy
-aliases and map `legacy_parameters(definition, settings_snapshot)` without
-accessing global settings or storage. Standalone runtime adapters use this
-module without importing initialization or migration services. The previous
-`plugin_config_migration` imports of `legacy_parameters` and
-`PluginConfigMigrationError` remain aliases to the same objects.
+The pure helpers in `omnibci.application.legacy_plugin_config` remain in use for
+mapping settings keys and for standalone runtime adapters. Removing the old
+Acquisition Profile store does not remove these settings-based launch paths.
 
-## Exact identity and invalid data
+## Failure and recovery
 
-Each alias is first resolved using the existing legacy resolver. The resulting
-package, contribution, and version must then resolve exactly and provide a
-configuration schema. Missing or ambiguous packages, missing versions, and
-missing schemas block activation; another alias or version is not substituted.
+Host service assembly reads host settings directly. Optional acquisition status
+metadata uses an applied or accepted snapshot; absent or unreadable activation
+returns unavailable metadata instead of falling back to unaccepted settings.
+This keeps health, engine status and host configuration APIs available when
+plugin initialization fails.
 
-A selected capability unavailable on the current operating system remains in
-the portable configuration, with a warning. Runtime startup still performs its
-own availability check.
+Starting the engine requires a readable, validated activation. Missing or invalid
+activation returns HTTP 409 `ENGINE_NOT_READY` before constructing any worker
+or starting an engine thread. Existing invalid activation files are not reset or
+silently replaced. Configuration read endpoints report their specific storage or
+validation error when such a file cannot be read.
 
-An invalid active Acquisition profile blocks migration. An invalid inactive
-profile is skipped with an identifying warning; its original file is retained.
-Unknown profile parameters are never silently removed.
+When initialization failed and activation is absent, clients can create valid
+Plugin Profiles, review a complete set of required bindings through
+`/config/apply-plan`, then apply the plan. The engine can start without restarting
+the backend. The current Web editor reviews one slot at a time and does not yet
+provide a complete initial-configuration wizard; this recovery sequence is
+currently available through the API.
 
-## Interrupted migration and retries
+These changes affect management and startup boundaries. They do not add work to
+acquisition, processing, trial or rendering loops.
 
-Settings initialization and historical import share the following write path:
+## Interrupted initialization
 
 1. Resolve and validate all intended bindings before writing profiles.
-2. Preserve legacy profile IDs and use deterministic UUID5 IDs for generated
-   profiles and filter instances.
-3. Write every profile durably through the profile repository.
-4. Write the accepted activation snapshot last, using compare-and-swap.
+2. Write every profile durably using deterministic identities.
+3. Write activation last with compare-and-swap.
 
-If writing fails, previously created valid profiles remain available and no
-activation is published. Retrying with the same inputs reuses those profiles
-only when their complete planned content matches, excluding the storage revision.
-It does not overwrite edits to a partially migrated profile.
-
-If an accepted activation already exists, migration returns it unchanged and
-reports `already_migrated=True`. New legacy input does not implicitly replace a
-configuration the user has already accepted.
+If writing fails, valid profiles remain available and no activation is published.
+A retry reuses profiles only when their complete planned content matches,
+excluding storage revision. It does not overwrite user edits to a partially
+initialized profile. An existing activation is returned unchanged.

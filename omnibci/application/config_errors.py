@@ -1,4 +1,4 @@
-"""Configuration errors shared by legacy profiles and runtime admission."""
+"""Configuration errors shared by storage paths and runtime admission."""
 
 
 class ConfigProfileValidationError(ValueError):

@@ -61,7 +61,6 @@ export function ConfigCard({ view, engineRunning, navigation, preferences, runti
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
-  const [moduleOwnedKeys, setModuleOwnedKeys] = useState<string[]>([]);
   const [category, setCategory] = useState("all");
   const [search, setSearch] = useState("");
   const [modifiedOnly, setModifiedOnly] = useState(false);
@@ -72,8 +71,8 @@ export function ConfigCard({ view, engineRunning, navigation, preferences, runti
 
   const reload = useCallback(async (scope?: string) => {
     const id = ++request.current;
-    const [cfg, profs, acquisition, ...plugins] = await Promise.all([
-      api.getConfig(), api.listProfiles(), api.getAcquisitionConfig(),
+    const [cfg, profs, ...plugins] = await Promise.all([
+      api.getConfig(), api.listProfiles(),
       ...Object.values(pluginCategories).map((cat) => api.listPlugins(cat).catch(() => null)),
     ]);
     if (id !== request.current) return;
@@ -82,9 +81,6 @@ export function ConfigCard({ view, engineRunning, navigation, preferences, runti
     const detail = target === DEFAULT ? null : await api.getProfile(target);
     if (id !== request.current) return;
     setConfig(cfg); setProfiles(profs); setOverrides(detail?.entries ?? {}); setSelected(target);
-    const fields = acquisition?.plugins.find((p) => p.plugin_type === acquisition.effective_plugin_type)?.fields ?? [];
-    setModuleOwnedKeys(acquisition?.active_profile_id
-      ? ["ACQUISITION.signal_source", ...fields.map((f) => `ACQUISITION.${f.key}`)] : []);
     const options: Record<string, ParadigmInfo[]> = {};
     Object.keys(pluginCategories).forEach((key, i) => { if (plugins[i]) options[key] = plugins[i]!.paradigms; });
     setPluginOptions(options);
@@ -150,11 +146,10 @@ export function ConfigCard({ view, engineRunning, navigation, preferences, runti
   });
   const renderEntry = (entry: ConfigEntry) => {
     const value = selected === DEFAULT ? entry.default_value : overrides[entry.key] ?? entry.default_value;
-    const owned = (selected === DEFAULT || selected === active) && moduleOwnedKeys.includes(entry.key);
     const locked = (selected === DEFAULT || selected === active) && engineRunning && entry.key.startsWith("ACQUISITION.");
     const fieldId = `setting-${entry.key}`;
     const raw = draft[entry.key] ?? show(value);
-    const disabled = busy || owned || locked;
+    const disabled = busy || locked;
     const options = pluginOptions[entry.key] ?? [];
     const onChange = (raw: string) => setDraft((previous) => {
       const next = { ...previous };
@@ -163,7 +158,7 @@ export function ConfigCard({ view, engineRunning, navigation, preferences, runti
     });
     const label = advanced ? entry.key : fieldLabels[entry.key] ?? entry.key.split(".")[1].replace(/_/g, " ");
     return <div className={`setting-row ${draft[entry.key] !== undefined ? "modified" : ""}`} key={entry.key}>
-      <label className="setting-label" htmlFor={fieldId}>{label}{owned && <span className="setting-badge">Profile managed</span>}</label>
+      <label className="setting-label" htmlFor={fieldId}>{label}</label>
       <p className="setting-description">{translateConfigDescription(entry.key, entry.description, t)}</p>
       {entry.type === "bool" ? <select id={fieldId} aria-label={label} disabled={disabled} value={raw} onChange={(event) => onChange(event.target.value)}>
         <option value="true">True</option><option value="false">False</option>
@@ -173,7 +168,7 @@ export function ConfigCard({ view, engineRunning, navigation, preferences, runti
       {options.length > 0 && <datalist id={`options-${entry.key}`}>
         {options.map((plugin) => <option key={plugin.plugin_type} value={plugin.plugin_type}>{translatePluginName(plugin.plugin_type, plugin.display_name, t)}</option>)}
       </datalist>}
-      {locked && !owned && <span className="setting-detail">Stop the engine to edit this setting.</span>}
+      {locked && <span className="setting-detail">Stop the engine to edit this setting.</span>}
       {advanced && <span className="setting-detail">Saved resolved value: <strong>{show(entry.effective_value) || "Not set"}</strong>
         <span> · Saved host setting; review before applying</span></span>}
     </div>;
@@ -220,7 +215,6 @@ export function ConfigCard({ view, engineRunning, navigation, preferences, runti
             onClick={() => setModifiedOnly(!modifiedOnly)}>Unsaved ({Object.keys(draft).length})</button></>}
         </div>}
       </div>}
-      {advanced && !!moduleOwnedKeys.length && <p className="inline-message">The selected acquisition profile manages its device settings. Edit them in Setup → Acquisition.</p>}
       {config && !advanced && <p className="inline-message">{selected !== (active ?? DEFAULT) ? "Editing a configuration that is not selected. Activate it in Settings → Advanced to use its overrides."
         : "Save host settings, then review and apply them. The preview reports changes that require an application restart."}</p>}
       <div className="settings-scroll">

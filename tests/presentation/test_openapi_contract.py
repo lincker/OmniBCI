@@ -64,14 +64,7 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/config/profiles/{name}", "delete"),
     ("/api/v1/config/profiles/{name}/activate", "post"),
     ("/api/v1/config/profiles/deactivate", "post"),
-    # Local acquisition profiles, with immutable UUID identities.
-    ("/api/v1/config/modules/{module}", "get"),
-    ("/api/v1/config/modules/{module}/profiles", "get"),
-    ("/api/v1/config/modules/{module}/profiles", "post"),
-    ("/api/v1/config/modules/{module}/profiles/{profile_id}", "get"),
-    ("/api/v1/config/modules/{module}/profiles/{profile_id}", "put"),
-    ("/api/v1/config/modules/{module}/profiles/{profile_id}", "delete"),
-    ("/api/v1/config/modules/{module}/active-profile", "put"),
+    # Plugin profiles and accepted activation.
     ("/api/v1/config/plugin-catalog/{kind}", "get"),
     ("/api/v1/config/plugin-profiles", "get"),
     ("/api/v1/config/plugin-profiles", "post"),
