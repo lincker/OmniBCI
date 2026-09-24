@@ -126,6 +126,160 @@ def test_logging_exclusion_does_not_hide_runtime_host_changes(runtime):
     assert plan.changed_settings == ("NEUROENGINE.queue_size",)
 
 
+LEGACY_PLUGIN_VALUES = {
+    "ACQUISITION.sample_rate": 125,
+    "ACQUISITION.channel_number": 99,
+    "ACQUISITION.parallel_port_address": "0x378",
+    "ALGORITHM.decoder": "obsolete_decoder",
+    "ALGORITHM.window_duration": 7.0,
+    "ALGORITHM.offset_time": 0.9,
+    "ssvep.sample_rate": 125,
+    "ssvep.duration": 8.0,
+    "ssvep.offset_time": 0.8,
+}
+
+
+def accept_historical_settings(runtime, legacy_values):
+    service, _, before = runtime
+    accepted = ActivationSnapshot({"ALGORITHM.baseline_duration": 0.2, **legacy_values}, before.bindings)
+    service.profiles.accept(accepted, expected_revision=before.revision)
+    service.engine.applied_revision = accepted.revision
+    service.engine.applied_snapshot = service.profiles.materialize(accepted)
+    service.profiles.settings_source = lambda: {
+        **accepted.settings,
+        "ACQUISITION.sample_rate": 2000,
+        "ACQUISITION.channel_number": 64,
+        "ACQUISITION.parallel_port_address": "0x3100",
+        "ALGORITHM.decoder": "another_obsolete_decoder",
+        "ALGORITHM.window_duration": 12.0,
+        "ALGORITHM.offset_time": 1.0,
+        "ssvep.sample_rate": 2000,
+        "ssvep.duration": 12.0,
+        "ssvep.offset_time": 1.0,
+    }
+    return accepted
+
+
+@pytest.mark.parametrize("legacy_values", [{}, LEGACY_PLUGIN_VALUES])
+def test_raw_plugin_edits_do_not_change_candidate_revision_or_rebuild(runtime, legacy_values):
+    service, selections, _ = runtime
+    accepted = accept_historical_settings(runtime, legacy_values)
+
+    candidate = service.profiles.propose(
+        selections, settings=service.profiles.settings_source(), refresh_slots=[],
+    )
+    plan = service.plan(selections, expected_revision=accepted.revision,
+                        refresh_slots=[], include_host_settings=True)
+
+    assert candidate == accepted
+    assert plan.strategy == "no_change"
+    assert plan.changed_settings == ()
+    assert plan.changed_slots == ()
+    assert plan.target_revision == accepted.revision
+    assert not plan.errors
+    assert service.resolve_plan(plan.plan_id).snapshot == accepted
+    assert service.profiles.repository.get_activation() == accepted
+    assert service.profiles.materialize(candidate) == service.engine.applied_snapshot
+
+
+@pytest.mark.parametrize("decoder_alias", ["THUBCI_SSVEP_classic40CCA", "THUBCI_SSVEP_classic40FBCCA"])
+def test_source_context_and_decoder_use_pinned_values_until_explicit_refresh(runtime, decoder_alias):
+    from omnibci.infrastructure.neuroengine.builder import NeuroEngineConfig
+    from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin, plugin_context
+    from omnibci.sdk import Decoder
+
+    service, selections, before = runtime
+    edit(runtime, "acquisition.source", {"sample_rate": 500, "channel_number": 3})
+    decoder_profile = service.profiles.create(
+        "decoder", service.profiles.catalog.legacy("decoder", decoder_alias).selection,
+        "Selected decoder", {"window_duration": 1.5, "offset_time": 0.1},
+    )
+    selections = [
+        {"slot": item["slot"], "profile_id": decoder_profile.profile_id}
+        if item["slot"] == "processing.decoder" else item
+        for item in selections
+    ]
+    accepted = service.profiles.propose(selections, settings={
+        **LEGACY_PLUGIN_VALUES,
+        "ALGORITHM.baseline_duration": 0.2,
+        "ACQUISITION.channel_names": ["O1", "O2"],
+    })
+    service.profiles.accept(accepted, expected_revision=before.revision)
+    materialized = service.profiles.resolve_settings()
+    context = plugin_context(materialized)
+    decoder = load_configured_plugin(materialized, "processing.decoder", "decoder", Decoder)
+    source = next(binding for binding in accepted.bindings if binding.slot == "acquisition.source")
+
+    assert not set(LEGACY_PLUGIN_VALUES) & accepted.settings.keys()
+    assert materialized["ACQUISITION.sample_rate"] == source.parameters["sample_rate"] == 500
+    assert materialized["ACQUISITION.channel_number"] == source.parameters["channel_number"] == 3
+    assert NeuroEngineConfig.from_settings(materialized).sample_rate == context.sample_rate == 500
+    assert context.channel_names == ("O1", "O2")
+    assert context.config_revision == accepted.revision
+    assert (decoder.SAMPLE_RATE, decoder.SAMPLE_COUNT, decoder.OFFSET_LENGTH) == (500, 750, 50)
+    assert "ALGORITHM.window_duration" not in materialized
+    assert "ssvep.duration" not in materialized
+    assert "ACQUISITION.parallel_port_address" not in materialized
+
+    edit((service, selections, accepted), "acquisition.source", {"sample_rate": 250, "channel_number": 4})
+    edit((service, selections, accepted), "processing.decoder", {"window_duration": 2.5})
+
+    assert service.profiles.propose(selections, refresh_slots=[]) == accepted
+    assert service.profiles.resolve_settings() == materialized
+    unchanged = load_configured_plugin(service.profiles.resolve_settings(), "processing.decoder", "decoder", Decoder)
+    assert (unchanged.SAMPLE_RATE, unchanged.SAMPLE_COUNT) == (500, 750)
+    refreshed = service.profiles.propose(
+        selections, refresh_slots=["acquisition.source", "processing.decoder"],
+    )
+    refreshed_settings = service.profiles.materialize(refreshed)
+    refreshed_decoder = load_configured_plugin(refreshed_settings, "processing.decoder", "decoder", Decoder)
+    assert refreshed_settings["ACQUISITION.channel_number"] == 4
+    assert (refreshed_decoder.SAMPLE_RATE, refreshed_decoder.SAMPLE_COUNT) == (250, 625)
+    assert service.profiles.repository.get_activation() == accepted
+
+
+def test_stripped_legacy_fields_preserve_decoder_trial_application(runtime):
+    from omnibci.infrastructure.neuroengine.processing.pipeline_configuration import build_pipeline_update
+
+    service, selections, _ = runtime
+    accepted = accept_historical_settings(runtime, LEGACY_PLUGIN_VALUES)
+    edit(runtime, "processing.decoder", {"window_duration": 2.5})
+    plan = service.plan(selections, expected_revision=accepted.revision,
+                        refresh_slots=["processing.decoder"], include_host_settings=True)
+
+    assert plan.strategy == "trial_boundary"
+    assert plan.changed_settings == ()
+    assert not plan.errors
+    candidate = service.profiles.materialize(service.resolve_plan(plan.plan_id).snapshot)
+    bundle = build_pipeline_update(service.engine.applied_snapshot, candidate,
+                                   sample_rate=1000, baseline_duration=0.2)
+    assert bundle.decoder.SAMPLE_COUNT == 2500
+    assert "ALGORITHM.window_duration" not in bundle.settings_snapshot
+    assert "ssvep.duration" not in bundle.settings_snapshot
+
+
+def test_stripped_legacy_fields_preserve_output_module_application(runtime):
+    from omnibci.infrastructure.neuroengine.processing.pipeline_configuration import validate_output_context
+
+    service, selections, _ = runtime
+    accepted = accept_historical_settings(runtime, LEGACY_PLUGIN_VALUES)
+    effector = service.profiles.create(
+        "effector", service.profiles.catalog.legacy("effector", "logger").selection, "Logger", {},
+    )
+    selections = selections + [{"slot": "actuation.effector", "profile_id": effector.profile_id}]
+    plan = service.plan(selections, expected_revision=accepted.revision,
+                        refresh_slots=["actuation.effector"], include_host_settings=True)
+
+    assert plan.strategy == "module"
+    assert plan.changed_settings == ()
+    assert not plan.errors
+    candidate = service.profiles.materialize(service.resolve_plan(plan.plan_id).snapshot)
+    updated = validate_output_context(service.engine.applied_snapshot, candidate)
+    assert updated["ACTUATION.effector"] == "logger"
+    assert "ACQUISITION.parallel_port_address" not in updated
+    assert updated["ACQUISITION.sample_rate"] == service.engine.applied_snapshot["ACQUISITION.sample_rate"]
+
+
 @pytest.mark.parametrize("changed", ["generation", "applied_revision", "is_engine_ready"])
 def test_stale_runtime_plan_cannot_execute(runtime, changed):
     service, selections, before = runtime

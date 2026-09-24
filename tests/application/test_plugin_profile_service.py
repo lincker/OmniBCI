@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from omnibci.application.plugin_profiles import ActivationSnapshot, ProfileRevisionConflict
+from omnibci.application.plugin_profiles import ActivationSnapshot, PluginSelection, ProfileRevisionConflict
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
@@ -117,6 +117,180 @@ def test_new_activation_and_worker_settings_exclude_backend_logging(service):
     assert not any(key.startswith("LOGGING.") for key in worker_settings)
     assert worker_settings["CONFIG.revision"] == previous.revision
     assert host["LOGGING.level"] == "INFO"
+
+
+LEGACY_PLUGIN_SETTINGS = {
+    "ACQUISITION.signal_source": "old_source",
+    "ACQUISITION.sample_rate": 500,
+    "ACQUISITION.channel_number": 99,
+    "ACQUISITION.DATA_PROVIDER_IP": "192.0.2.1",
+    "ACQUISITION.DATA_PROVIDER_PORT": 9000,
+    "ACQUISITION.data_file_path": "old.cnt",
+    "ACQUISITION.file_reader_chunk_size": 999,
+    "ACQUISITION.trigger": "old_trigger",
+    "ACQUISITION.parallel_port_address": "0x378",
+    "ALGORITHM.decoder": "old_decoder",
+    "ALGORITHM.epoch_detector": "old_detector",
+    "ALGORITHM.filters": ["old_filter"],
+    "ALGORITHM.window_duration": 99.0,
+    "ALGORITHM.offset_time": 9.0,
+    "STIMULATION.paradigm": "old_paradigm",
+    "ACTUATION.effector": "old_effector",
+    "ssvep.duration": 88.0,
+    "ssvep.offset_time": 8.0,
+    "ssvep.sample_rate": 800,
+}
+
+
+def test_new_activation_excludes_plugin_settings_but_keeps_host_and_context(service):
+    host = {
+        "ALGORITHM.baseline_duration": 0.4,
+        "NEUROENGINE.queue_size": 29,
+        "ACQUISITION.channel_names": ["C3", "C4"],
+        "custom.values": ["retained"],
+    }
+    inputs = {**host, **LEGACY_PLUGIN_SETTINGS}
+    service.settings_source = lambda: inputs
+    selections = complete_selections(service)
+
+    candidate = service.propose(selections)
+
+    assert candidate.settings == host
+    assert service.propose(selections, settings=inputs).settings == host
+    assert inputs == {**host, **LEGACY_PLUGIN_SETTINGS}
+    assert service.repository.get_activation() is None
+
+
+def test_old_plugin_setting_copies_are_inert_and_cannot_change_accepted_revision(service):
+    selections = complete_selections(service)
+    proposed = service.propose(selections)
+    previous = ActivationSnapshot({
+        "host": "original", **LEGACY_PLUGIN_SETTINGS, "LOGGING.level": "INFO",
+    }, proposed.bindings)
+    service.accept(previous, expected_revision=None)
+    original_files = {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")}
+    inputs = {"host": "original", **{key: "changed" for key in LEGACY_PLUGIN_SETTINGS},
+              "LOGGING.level": "DEBUG"}
+    service.settings_source = lambda: inputs
+
+    candidate = service.propose(selections, settings=inputs, refresh_slots=[])
+    restored = ActivationSnapshot.from_dict(previous.to_dict())
+
+    assert candidate == previous
+    assert candidate.revision == restored.revision == previous.revision
+    assert candidate.settings == previous.settings
+    assert service.repository.get_activation() == previous
+    assert {path: path.read_bytes() for path in original_files} == original_files
+
+
+def test_materialization_uses_bindings_instead_of_old_plugin_setting_copies(service):
+    source = create_source(service, sample_rate=256, channel_number=5)
+    selections = complete_selections(service, [{"slot": "acquisition.source", "profile_id": source.profile_id}])
+    proposed = service.propose(selections)
+    host = {"ALGORITHM.baseline_duration": 0.4, "ACQUISITION.channel_names": ["C3", "C4"]}
+    previous = ActivationSnapshot({**host, **LEGACY_PLUGIN_SETTINGS}, proposed.bindings)
+
+    runtime = service.materialize(previous)
+
+    derived = {
+        "ACQUISITION.signal_source", "ACQUISITION.sample_rate", "ACQUISITION.channel_number",
+        "ACQUISITION.data_file_path", "ACQUISITION.file_reader_chunk_size", "ALGORITHM.decoder",
+        "ALGORITHM.epoch_detector", "ALGORITHM.filters", "STIMULATION.paradigm",
+    }
+    assert not (set(LEGACY_PLUGIN_SETTINGS) - derived) & runtime.keys()
+    assert runtime["ACQUISITION.sample_rate"] == 256
+    assert runtime["ACQUISITION.channel_number"] == 5
+    assert runtime["ACQUISITION.signal_source"] == "file_reader"
+    assert runtime["ALGORITHM.decoder"] == "THUBCI_SSVEP_classic40CCA"
+    assert runtime["ALGORITHM.filters"] == []
+    assert runtime["CONFIG.revision"] == previous.revision
+    assert {key: runtime[key] for key in host} == host
+    assert previous.settings == {**host, **LEGACY_PLUGIN_SETTINGS}
+    assert runtime["PLUGINS.bindings"] == [binding.to_dict() for binding in previous.bindings]
+
+
+def test_flat_plugin_edits_do_not_change_a_clean_activation(service):
+    selections = complete_selections(service)
+    before = service.propose(selections)
+    service.accept(before, expected_revision=None)
+
+    candidate = service.propose(selections, settings={"host": "original", **LEGACY_PLUGIN_SETTINGS},
+                                refresh_slots=[])
+
+    assert candidate == before
+    assert candidate.revision == before.revision
+    assert service.materialize(candidate)["ACQUISITION.sample_rate"] == 1000
+
+
+def external_source_profile(service, monkeypatch, parameters):
+    definition = service.catalog.legacy("acquisition", "file_reader")
+    types = {int: "integer", float: "number", bool: "boolean", str: "string"}
+    external = replace(definition,
+        selection=PluginSelection("test.external-source", "source", "1.0.0"),
+        plugin_type="external_source",
+        schema={"type": "object", "additionalProperties": False,
+                "properties": {key: {"type": types[type(value)]} for key, value in parameters.items()}},
+    )
+    original_get = service.catalog.get
+    monkeypatch.setattr(service.catalog, "get", lambda kind, selection:
+                        external if kind == "acquisition" and selection == external.selection
+                        else original_get(kind, selection))
+    return service.create("acquisition", external.selection, "External source", parameters)
+
+
+@pytest.mark.parametrize("key", ["sample_rate", "channel_number"])
+@pytest.mark.parametrize("value", [None, True, 0, -1, 1.5])
+def test_source_runtime_metadata_must_be_declared_in_its_binding(service, monkeypatch, key, value):
+    before = service.propose(complete_selections(service))
+    service.accept(before, expected_revision=None)
+    parameters = {"sample_rate": 250, "channel_number": 1}
+    if value is None:
+        parameters.pop(key)
+    else:
+        parameters[key] = value
+    profile = external_source_profile(service, monkeypatch, parameters)
+    selections = complete_selections(service, [{"slot": "acquisition.source", "profile_id": profile.profile_id}])
+    proposed = service.propose(selections)
+    candidate = ActivationSnapshot({**proposed.settings, "ACQUISITION.sample_rate": 500,
+                                    "ACQUISITION.channel_number": 16}, proposed.bindings)
+    original_files = {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")}
+
+    with pytest.raises(PluginSchemaError, match=rf"acquisition.source.*{key}.*positive integer"):
+        service.validate_activation(candidate)
+    with pytest.raises(PluginSchemaError, match=rf"acquisition.source.*{key}.*positive integer"):
+        service.materialize(candidate)
+    with pytest.raises(PluginSchemaError, match=rf"acquisition.source.*{key}.*positive integer"):
+        service.accept(candidate, expected_revision=before.revision)
+    assert service.repository.get_activation() == before
+    assert service.repository.get_profile(profile.profile_id) == profile
+    assert {path: path.read_bytes() for path in original_files} == original_files
+
+
+def test_resolving_old_source_without_metadata_fails_without_rewriting_storage(service, monkeypatch):
+    profile = external_source_profile(service, monkeypatch, {})
+    selections = complete_selections(service, [{"slot": "acquisition.source", "profile_id": profile.profile_id}])
+    candidate = service.propose(selections)
+    previous = ActivationSnapshot({"ACQUISITION.sample_rate": 250, "ACQUISITION.channel_number": 16},
+                                  candidate.bindings)
+    service.repository.save_activation(previous, expected_revision=None)
+    original_files = {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")}
+
+    with pytest.raises(PluginSchemaError, match="acquisition.source.*sample_rate.*positive integer"):
+        service.resolve_settings()
+
+    assert service.repository.get_activation() == previous
+    assert {path: path.read_bytes() for path in original_files} == original_files
+
+
+def test_external_source_can_declare_one_channel_without_an_event_row(service, monkeypatch):
+    profile = external_source_profile(service, monkeypatch, {"sample_rate": 250, "channel_number": 1})
+    selections = complete_selections(service, [{"slot": "acquisition.source", "profile_id": profile.profile_id}])
+    accepted = service.accept(service.propose(selections), expected_revision=None)
+
+    runtime = service.materialize(accepted)
+
+    assert runtime["ACQUISITION.sample_rate"] == 250
+    assert runtime["ACQUISITION.channel_number"] == 1
 
 
 @pytest.mark.parametrize("channels", [2, 9, 10, 33, 65])

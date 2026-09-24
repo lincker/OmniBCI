@@ -79,6 +79,19 @@ parameters or schema defaults.
 Metadata is preserved without changing parameter values. These annotations do
 not by themselves activate runtime reconfiguration.
 
+## Acquisition source context
+
+To activate an `acquisition.source` Profile, the current engine requires resolved
+`sample_rate` and `channel_number` parameters, both positive integers. Source
+schemas must declare these parameters; the host validates them before activation
+and runtime projection. Plugin-specific bounds still apply, such as the bundled
+sources' event-channel convention.
+
+The host derives acquisition runtime settings and processing sample rate from
+this pinned source Profile. It does not recover missing values from old host
+settings or silently use the engine's default sample rate. This validation does
+not verify that a connected device or file agrees with the declarations.
+
 ## Example
 
 ```json

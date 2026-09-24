@@ -128,7 +128,14 @@ async def test_settings_only_initialization_preserves_nondefault_values(bootstra
     assert bindings["processing.decoder"].parameters == {"window_duration": 4.25, "offset_time": 0.15}
     assert "stimulation.trigger" not in bindings
     assert "actuation.effector" not in bindings
-    assert accepted.settings == bootstrap_settings.snapshot()
+    assert accepted.settings == {
+        "ALGORITHM.baseline_duration": 0.4,
+        "STIMULATION.auto_spawn": False,
+        "ACTUATION.enabled": False,
+        "ACTUATION.auto_spawn": False,
+        "NEUROENGINE.queue_size": 29,
+        "custom.retain": ["settings-only", "user-value"],
+    }
     assert bootstrap_settings._config_path.read_bytes() == original_settings
 
 
@@ -171,6 +178,46 @@ async def test_existing_activation_ignores_damaged_legacy_files(bootstrap_settin
     assert _toml_files(root) == original_files
     assert bootstrap_settings._config_path.read_bytes() == original_settings
     assert not [record for record in caplog.records if record.levelname == "ERROR"]
+
+
+@pytest.mark.asyncio
+async def test_existing_activation_keeps_its_revision_and_pinned_inputs(bootstrap_settings):
+    first = await build_container()
+    profiles = first.plugin_profile_service
+    current = profiles.repository.get_activation()
+    historical = ActivationSnapshot(
+        {**bootstrap_settings.snapshot(), "ACQUISITION.sample_rate": 111,
+         "ALGORITHM.window_duration": 9.0, "ssvep.duration": 8.0,
+         "ACQUISITION.parallel_port_address": "0x378"},
+        current.bindings,
+    )
+    profiles.repository.save_activation(historical, expected_revision=current.revision)
+    source = next(binding for binding in historical.bindings if binding.kind == "acquisition")
+    profile = profiles.repository.get_profile(source.profile_id)
+    profiles.update(profile.profile_id, name="Saved source edit",
+                    parameters={**profile.parameters, "sample_rate": 1024},
+                    expected_revision=profile.revision)
+    bootstrap_settings.set("ACQUISITION.sample_rate", 128)
+    bootstrap_settings.set("ALGORITHM.decoder", "not-a-selected-plugin")
+    bootstrap_settings.save()
+    original_files = _toml_files(profiles.repository.root)
+    original_settings = bootstrap_settings._config_path.read_bytes()
+
+    restarted = await build_container()
+
+    assert restarted.plugin_profile_service.repository.get_activation() == historical
+    runtime = restarted.engine_service._snapshot_provider()
+    assert runtime["CONFIG.revision"] == historical.revision
+    assert runtime["ACQUISITION.sample_rate"] == 256
+    assert runtime["ACQUISITION.channel_number"] == 5
+    assert runtime["ALGORITHM.decoder"] == "THUBCI_SSVEP_classic40FBCCA"
+    assert not {"ALGORITHM.window_duration", "ssvep.duration",
+                "ACQUISITION.parallel_port_address"} & runtime.keys()
+    decoder = next(binding for binding in runtime["PLUGINS.bindings"]
+                   if binding["kind"] == "decoder")
+    assert decoder["parameters"] == {"window_duration": 4.25, "offset_time": 0.15}
+    assert _toml_files(profiles.repository.root) == original_files
+    assert bootstrap_settings._config_path.read_bytes() == original_settings
 
 
 @pytest.mark.asyncio

@@ -1,11 +1,12 @@
 # Configuration ownership and consolidation
 
-Status: step 1 and the backend logging batch are committed. Step 2 is implemented
-for review: Settings has one host editor, and the old named Application Profile
-editing/activation and file overlay have been removed. Playback speed and the
-reviewed unused settings have also been removed. Real-time worker logging remains
-deferred. Steps 3 through 6 require separate review; no automatic commits are
-authorized.
+Status: steps 1 and 2 and the backend logging batch are committed. Step 3 is
+implemented for review: new activations separate host settings from plugin
+inputs, and runtime projections use pinned bindings. Settings has one host
+editor; the old named Application Profile editor and file overlay are removed.
+Playback speed and the reviewed unused settings are also removed. Real-time
+worker logging remains deferred. Steps 4 through 6 require separate review;
+no automatic commits are authorized.
 
 The inventory covers all 38 leaf keys currently declared in
 [`settings.toml`](../omnibci/conf/settings.toml), all ten bundled plugin schemas,
@@ -188,8 +189,9 @@ candidate. Configuration apply and host persistence remain mutually exclusive.
 `OmniBCISettings` now reads the settings file or an installed worker snapshot;
 it never reads the old `conf/profiles/` directory. Existing accepted values and
 revisions are preserved. Fresh initialization uses the flat defaults still
-present in `settings.toml`; removing duplicated plugin inputs and refining host
-candidate merging remain steps 3 and 4. Retired files are not deleted or migrated.
+present in `settings.toml`. Step 3 removes those inputs from new activation host
+settings; refining host candidate merging remains step 4. Retired files are not
+deleted or migrated.
 Browser verification confirmed that the existing Review can still list
 `CONFIG.initialization_warnings` as a changed host field alongside a real edit.
 Removing diagnostic metadata from change detection belongs to step 4.
@@ -199,6 +201,50 @@ settings file. Those values must be reviewed before choosing the saved host
 values for the next Apply. In this workspace, the old profile contains queue
 capacity 90 while the raw settings file contains 100; that value decision is
 separate from removing the editor and does not rewrite the accepted activation.
+
+### Step 3: plugin inputs belong to pinned bindings
+
+New activations omit the 19 flat plugin selection and parameter keys listed in
+sections 1 and 2 from host settings. They retain host-owned values such as
+`ALGORITHM.baseline_duration`, optional `ACQUISITION.channel_names`, and output
+deployment settings. Plugin parameters remain in their selected bindings;
+Profile edits cannot change the pinned values until explicitly refreshed.
+
+Existing accepted activations are read without changing their stored contents,
+revision, or Profile files. Their old flat plugin copies remain inert historical
+metadata: a new proposal retains those exact old copies, so editing an unused
+raw plugin key cannot change the candidate revision or request a rebuild. New
+host input cannot introduce or update these copies. Runtime materialization
+always removes them before projecting values from the pinned bindings.
+
+Runtime projections retain the existing plugin aliases, ordered filter aliases,
+and source parameters under `ACQUISITION.*`. The source's sampling declaration
+therefore reaches both the engine and `PluginContext`. Decoder and trigger
+parameters are supplied directly from bindings; no second flat parameter copy
+is generated for them. This preserves existing trial-boundary decoder updates
+and output-module changes. Revision and serialized bindings remain generated
+runtime fields.
+
+The selected source must provide positive integer `sample_rate` and
+`channel_number` values in its resolved Profile. Missing or invalid declarations
+fail explicitly before runtime projection instead of falling back to old host
+copies or the engine's default sample rate. An existing third-party source that
+only stored these values in host settings requires a reviewed Profile/schema
+correction; its accepted file is not automatically rewritten. Device/file
+metadata consistency after connection remains a separate issue.
+
+The raw `settings.toml` plugin entries remain explicit first-initialization
+inputs for this step; they are not live controls. Their existing values are
+copied into initial Plugin Profiles before filtering the activation host
+settings. This does not replace values with schema defaults, select another
+plugin, or rewrite actual configuration files. Retiring this initialization
+source requires a separate explicit startup policy; standalone legacy loading
+remains step 6. The startup-only/diagnostic change rules remain step 4.
+
+The exclusion set covers the 19 reviewed flat keys, not arbitrary third-party
+legacy prefixes. Unknown legacy seed fields can still remain in host settings
+until that initialization path is retired. Plugin Profile parameters themselves
+remain governed by each plugin's full schema, without a fixed parameter list.
 
 ### Backend logging: first implementation batch
 
@@ -289,8 +335,8 @@ it must not silently select a different legacy alias.
 | Step | Deliverable | Validation before review |
 | --- | --- | --- |
 | 1 (committed) | This ownership inventory and the boundary decisions above | Cover all 38 declared keys, all ten schemas, and additional runtime inputs; check actual consumers |
-| 2 (implemented, awaiting review) | Restrict the settings writer to host-owned values; remove old Application Profile editing/activation, file overlays, and duplicate UI entry points | Legacy plugin writes and scope fields are rejected; Plugin Profile CRUD still works; host settings remain editable; fresh initialization and existing accepted values remain correct |
-| 3 | Remove independently editable plugin values from activation host settings; retain any necessary flat fields only as derived runtime values | Source/decoder/context agree; accepted values survive saved Profile edits; fresh startup and existing valid activation handling are explicit |
+| 2 (committed) | Restrict the settings writer to host-owned values; remove old Application Profile editing/activation, file overlays, and duplicate UI entry points | Legacy plugin writes and scope fields are rejected; Plugin Profile CRUD still works; host settings remain editable; fresh initialization and existing accepted values remain correct |
+| 3 (implemented, awaiting review) | Remove independently editable plugin values from activation host settings; retain any necessary flat fields only as derived runtime values | Source/decoder/context agree; accepted values survive saved Profile edits; fresh startup and existing valid activation handling are explicit |
 | 4 | Unify candidate construction and application semantics for all activation routes | The same input produces the same candidate; changes to ineffective legacy/diagnostic fields cannot cause a rebuild; startup-only settings cannot falsely report runtime success; preserve snapshot-driven Actuation topology and external-peer restrictions |
 | 5 | Store editable host settings in the user configuration directory with revision checks and atomic writes | Cross-platform paths, concurrent edits, interrupted writes, and backend restart persistence |
 | 6 | Use the accepted configuration at standalone launch; retire remaining implicit legacy plugin constructors/loaders | Managed and standalone launches resolve the same explicit selection; missing/invalid configuration fails clearly; external-peer limitations remain explicit |

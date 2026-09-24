@@ -61,6 +61,15 @@ def test_initialization_preserves_actual_cca_values_and_unrelated_settings(initi
     assert any("ssvep.offset_time" in warning for warning in result.warnings)
     assert result.snapshot.settings["CONFIG.initialization_warnings"] == list(result.warnings)
     assert result.snapshot.settings["custom.legacy"] == settings["custom.legacy"]
+    assert not any(key.startswith(("ACQUISITION.", "ALGORITHM.", "ssvep."))
+                   for key in result.snapshot.settings)
+    assert "STIMULATION.paradigm" not in result.snapshot.settings
+    assert "ACTUATION.effector" not in result.snapshot.settings
+    assert result.snapshot.settings["ACTUATION.enabled"] is False
+    assert bindings["acquisition.source"].parameters == {
+        "sample_rate": 500, "channel_number": 10,
+        "file_reader_chunk_size": 64, "data_file_path": "recordings/example.cnt",
+    }
     assert settings == original_settings
 
 

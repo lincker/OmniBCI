@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 from uuid import NAMESPACE_URL, uuid5
 
+from omnibci.application.activation_settings import activation_host_settings
 from omnibci.application.legacy_plugin_config import (
     CCA_PLUGIN_TYPE, PluginConfigMigrationError, legacy_parameters, resolve_legacy_configuration,
 )
@@ -76,8 +77,7 @@ class SettingsPluginConfigInitializer:
             return existing
         if not isinstance(settings_snapshot, dict):
             raise PluginConfigMigrationError("settings_snapshot must be an object")
-        settings = {key: deepcopy(value) for key, value in settings_snapshot.items()
-                    if not key.startswith("LOGGING.")}
+        settings = deepcopy(settings_snapshot)
         warnings: list[str] = []
         drafts: dict[str, PluginProfile] = {}
         bindings: list[tuple[str, str]] = []
@@ -122,11 +122,12 @@ class SettingsPluginConfigInitializer:
 
         if warnings:
             settings["CONFIG.initialization_warnings"] = list(warnings)
-        candidate = ActivationSnapshot(settings, tuple(self._binding(slot, drafts[profile_id])
-                                                       for slot, profile_id in bindings))
+        host_settings = activation_host_settings(settings)
+        candidate = ActivationSnapshot(host_settings, tuple(self._binding(slot, drafts[profile_id])
+                                                            for slot, profile_id in bindings))
         self.service.validate_activation(candidate)
         saved = {profile_id: self._ensure_profile(draft) for profile_id, draft in drafts.items()}
-        snapshot = ActivationSnapshot(settings, tuple(self._binding(slot, saved[profile_id])
-                                                      for slot, profile_id in bindings))
+        snapshot = ActivationSnapshot(host_settings, tuple(self._binding(slot, saved[profile_id])
+                                                           for slot, profile_id in bindings))
         accepted = self.service.accept(snapshot, expected_revision=None)
         return InitializationResult(accepted, tuple(warnings), already_initialized=False)

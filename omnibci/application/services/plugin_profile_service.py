@@ -4,12 +4,25 @@ from copy import deepcopy
 from dataclasses import replace
 from uuid import uuid4
 
+from omnibci.application.activation_settings import PLUGIN_SETTING_KEYS, activation_host_settings
 from omnibci.application.plugin_profiles import (
     ActivationSnapshot, PluginProfile, PluginSelection, ProfileBinding,
     ProfileRevisionConflict,
 )
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfigurationCatalog
+
+
+def _validate_source_metadata(binding: ProfileBinding) -> None:
+    """The current engine consumes integer sampling and channel declarations."""
+    if binding.slot != "acquisition.source":
+        return
+    for key in ("sample_rate", "channel_number"):
+        value = binding.parameters.get(key)
+        if type(value) is not int or value <= 0:
+            raise PluginSchemaError(
+                f"acquisition.source.parameters.{key} must be a positive integer for the current engine"
+            )
 
 
 class PluginProfileService:
@@ -60,13 +73,14 @@ class PluginProfileService:
                 refresh_slots: list[str] | None = None) -> ActivationSnapshot:
         """Resolve an ordered set of slot/profile references into pinned copies."""
         current = self.repository.get_activation()
-        base = deepcopy(current.settings if current is not None else self.settings_source())
+        base = current.settings if current is not None else self.settings_source()
         if settings is not None:
-            base = deepcopy(settings)
-        base = {key: value for key, value in base.items() if not key.startswith("LOGGING.")}
+            base = settings
+        base = activation_host_settings(base)
         if current is not None:
-            # Retain old inert values so backend-only edits never change a running revision.
-            base.update({key: value for key, value in current.settings.items() if key.startswith("LOGGING.")})
+            # Preserve old inert copies without allowing saved edits to change a running revision.
+            base.update({key: value for key, value in current.settings.items()
+                         if key in PLUGIN_SETTING_KEYS or key.startswith("LOGGING.")})
         if refresh_slots is not None and (
             not isinstance(refresh_slots, list) or any(not isinstance(slot, str) for slot in refresh_slots)
             or len(set(refresh_slots)) != len(refresh_slots)
@@ -115,6 +129,7 @@ class PluginProfileService:
                 raise PluginSchemaError("Actuation is enabled without an effector selection")
             kinds.add("effector")
         for binding in snapshot.bindings:
+            _validate_source_metadata(binding)
             definition, parameters = self._parameters(
                 binding.kind, binding.selection, binding.parameters, binding.configuration_version,
             )
@@ -138,7 +153,7 @@ class PluginProfileService:
     def materialize(self, snapshot: ActivationSnapshot) -> dict:
         """Project compatibility keys while retaining exact pinned inputs."""
         # Keep host configuration and plugin inputs together through spawn.
-        result = {key: value for key, value in snapshot.settings.items() if not key.startswith("LOGGING.")}
+        result = activation_host_settings(snapshot.settings)
         aliases = {
             "acquisition.source": "ACQUISITION.signal_source",
             "processing.decoder": "ALGORITHM.decoder",
@@ -149,6 +164,7 @@ class PluginProfileService:
         }
         filters = []
         for binding in snapshot.bindings:
+            _validate_source_metadata(binding)
             definition = self.catalog.get(binding.kind, binding.selection)
             if binding.slot in aliases:
                 result[aliases[binding.slot]] = definition.plugin_type
