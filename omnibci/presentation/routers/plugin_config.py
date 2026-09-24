@@ -99,6 +99,7 @@ def accept_activation(body: AcceptActivationRequest,
                       svc: PluginProfileService = Depends(get_plugin_profile_service)):
     with _configuration_errors():
         snapshot = svc.propose([item.model_dump() for item in body.bindings],
-                               settings=svc.settings_source(), refresh_slots=body.refresh_slots)
+                               include_host_settings=body.include_host_settings,
+                               refresh_slots=body.refresh_slots)
         accepted = svc.accept(snapshot, expected_revision=body.expected_revision)
         return ApiResponse(message="Configuration selected for the next start", data=accepted.to_dict())

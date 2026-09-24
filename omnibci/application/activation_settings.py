@@ -1,4 +1,4 @@
-"""Separate known plugin inputs from host settings without changing saved data."""
+"""Classify activation inputs without changing stored snapshots or host settings."""
 from copy import deepcopy
 
 
@@ -14,7 +14,41 @@ PLUGIN_SETTING_KEYS = frozenset({
 })
 
 
+RUNTIME_HOST_SETTING_KEYS = frozenset({
+    "ALGORITHM.baseline_duration", "NEUROENGINE.queue_size",
+    "NEUROENGINE.message_server_ip", "NEUROENGINE.message_server_port",
+    "NEUROENGINE.startup_timeout_s", "debug", "ACTUATION.enabled",
+    "ACTUATION.server_ip", "ACTUATION.server_port", "ACTUATION.watchdog_timeout_s",
+    "ACTUATION.max_command_age_s", "ACTUATION.auto_spawn",
+    "STIMULATION.renderer", "STIMULATION.auto_spawn", "ACQUISITION.channel_names",
+})
+
+BACKEND_STARTUP_DEFAULTS = {
+    "LOGGING.level": "INFO",
+    "LOGGING.file_path": "omnibci.log",
+    "NEUROENGINE.command_timeout_s": 10.0,
+    "PERSISTENCE.session_repository": "in_memory",
+    "PLUGINS.user_dir": "",
+}
+
+_RETIRED_SETTING_KEYS = frozenset({
+    "ACQUISITION.file_reader_play_speed", "project_name", "version",
+    "CONSTANT.ASYNC_SLEEP_TIME", "NEUROENGINE.COMMAND_SERVER_IP", "NEUROENGINE.COMMAND_SERVER_PORT",
+})
+
+
+def is_inert_activation_setting(key: str) -> bool:
+    return (key in PLUGIN_SETTING_KEYS or key in _RETIRED_SETTING_KEYS
+            or key in BACKEND_STARTUP_DEFAULTS or key == "PLUGINS.bindings"
+            or key.startswith(("CONFIG.", "PROFILES.", "LOGGING.")))
+
+
+def backend_startup_settings(settings: dict) -> dict:
+    """Resolve declared backend defaults for comparison with the loaded process."""
+    return {key: deepcopy(settings.get(key, default)) for key, default in BACKEND_STARTUP_DEFAULTS.items()}
+
+
 def activation_host_settings(settings: dict) -> dict:
-    """Copy host/context values; plugin parameters are owned by pinned bindings."""
+    """Copy runtime/context and unknown values; keep unknown ownership explicit."""
     return {key: deepcopy(value) for key, value in settings.items()
-            if key not in PLUGIN_SETTING_KEYS and not key.startswith("LOGGING.")}
+            if not is_inert_activation_setting(key)}

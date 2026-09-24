@@ -10,6 +10,7 @@ import pytest
 from omnibci.application.commands.session_commands import CreateSessionCommand
 from omnibci.application.events import CommandResult, StreamDrainReceipt, TrialOutcome
 from omnibci.application.plugin_profiles import ActivationSnapshot, ProfileRevisionConflict
+from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.queries.acquisition_queries import AcquisitionStatusResult
 from omnibci.application.runtime_admission import RuntimeAdmission
 from omnibci.application.services.command_result_service import CommandTimeoutError
@@ -30,6 +31,7 @@ class Engine:
         self.applied_snapshot = {**snapshot, "CONFIG.generation": "original-generation"}
         self.is_engine_ready = True
         self.restart_blocked = False
+        self.owned_unready = False
         self.start_failure = None
         self.log = log
         self.starts = []
@@ -41,6 +43,10 @@ class Engine:
     @property
     def generation(self):
         return self.applied_snapshot["CONFIG.generation"]
+
+    @property
+    def runtime_package_snapshots(self):
+        return (deepcopy(self.applied_snapshot),) if self.is_engine_ready or self.owned_unready else ()
 
     @asynccontextmanager
     async def runtime_transition(self):
@@ -191,6 +197,110 @@ async def apply(harness):
     operation = harness.runtime.submit(harness.plan.plan_id, str(uuid4()))
     await harness.runtime.wait_for_idle()
     return harness.runtime.operation(operation["operation_id"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ownership", ["owned_unready", "restart_blocked"])
+@pytest.mark.parametrize("before_review", [False, True])
+async def test_idle_owned_resources_reject_review_or_resolve_before_submission(harness, ownership, before_review):
+    h = harness()
+    h.engine.is_engine_ready = False
+    bindings = [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in h.previous.bindings]
+    setattr(h.engine, ownership, before_review)
+    plan = h.runtime.plan(bindings, expected_revision=h.previous.revision)
+    if before_review:
+        assert any("still owns resources" in error for error in plan.errors)
+    else:
+        assert not plan.errors
+        setattr(h.engine, ownership, True)
+
+    with pytest.raises(PluginSchemaError, match="still owns resources"):
+        h.runtime.resolve_plan(plan.plan_id)
+    with pytest.raises(PluginSchemaError, match="still owns resources"):
+        h.runtime.submit(plan.plan_id, str(uuid4()))
+
+    assert h.runtime.status()["operation"] is None
+    assert h.profiles.repository.get_activation() == h.previous
+    assert h.log == []
+    assert h.engine.starts == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ownership", ["owned_unready", "restart_blocked"])
+async def test_idle_selection_rechecks_unreleased_resources_before_persistence(harness, ownership):
+    h = harness()
+    h.engine.is_engine_ready = False
+    bindings = [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in h.previous.bindings]
+    h.plan = h.runtime.plan(bindings, expected_revision=h.previous.revision)
+    assert h.plan.strategy == "select_on_start" and not h.plan.errors
+    stored = h.runtime.resolve_plan(h.plan.plan_id)
+    setattr(h.engine, ownership, True)
+
+    with pytest.raises(ProfileRevisionConflict, match="still owns resources"):
+        await h.runtime.executor.execute(stored, lambda stage: None)
+
+    assert h.profiles.repository.get_activation() == h.previous
+    assert h.log == []
+    assert h.engine.starts == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owned_unready", [False, True])
+async def test_disabled_idle_effector_validation_uses_owned_resources_not_history(harness, monkeypatch, owned_unready):
+    h = harness(actuation=True)
+    h.engine.is_engine_ready = False
+    h.engine.owned_unready = owned_unready
+    bindings = [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in h.previous.bindings]
+    h.profiles.settings_source = lambda: {**h.previous.settings, "ACTUATION.enabled": False}
+    get = h.profiles.catalog.get
+
+    def unavailable_effector(kind, selection):
+        definition = get(kind, selection)
+        return replace(definition, available=False) if kind == "effector" else definition
+
+    monkeypatch.setattr(h.profiles.catalog, "get", unavailable_effector)
+    h.plan = h.runtime.plan(bindings, expected_revision=h.previous.revision,
+                            refresh_slots=[], include_host_settings=True)
+    candidate = h.runtime._plans[h.plan.plan_id].snapshot
+    assert ("effector" in h.runtime.executor.active_kinds(candidate)) is owned_unready
+
+    if owned_unready:
+        assert any("still owns resources" in error for error in h.plan.errors)
+    else:
+        assert not h.plan.errors
+        operation = await apply(h)
+        assert operation["status"] == "succeeded"
+        assert operation["result"] == {"outcome": "selected"}
+        assert h.profiles.repository.get_activation().settings["ACTUATION.enabled"] is False
+    assert h.log == []
+    assert h.engine.starts == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("running", [False, True])
+async def test_same_values_can_update_profile_reference_without_runtime_work(harness, running):
+    h = harness()
+    h.engine.is_engine_ready = running
+    previous = next(binding for binding in h.previous.bindings if binding.slot == "processing.decoder")
+    clone = h.profiles.create("decoder", previous.selection, "Equivalent decoder profile", previous.parameters)
+    bindings = [{"slot": binding.slot,
+                 "profile_id": clone.profile_id if binding.slot == previous.slot else binding.profile_id}
+                for binding in h.previous.bindings]
+    h.plan = h.runtime.plan(bindings, expected_revision=h.previous.revision,
+                            refresh_slots=[previous.slot])
+    assert h.plan.strategy == ("no_change" if running else "select_on_start")
+    assert h.plan.target_revision == h.previous.revision
+
+    operation = await apply(h)
+
+    assert operation["status"] == "succeeded"
+    assert operation["result"] == {"outcome": "applied" if running else "selected"}
+    accepted = h.profiles.repository.get_activation()
+    assert accepted.revision == h.previous.revision
+    assert next(binding for binding in accepted.bindings if binding.slot == previous.slot).profile_id == clone.profile_id
+    assert h.engine.applied_revision == h.previous.revision
+    assert h.log == []
+    assert h.engine.starts == []
 
 
 def assert_quarantined(harness):

@@ -6,6 +6,7 @@ import pytest
 
 from omnibci import bootstrap
 from omnibci.application.plugin_profiles import ActivationSnapshot
+from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.bootstrap import _RuntimeSettings, build_container
 from omnibci.conf import OmniBCISettings
 from omnibci.infrastructure.config_paths import config_root
@@ -137,6 +138,51 @@ async def test_settings_only_initialization_preserves_nondefault_values(bootstra
         "custom.retain": ["settings-only", "user-value"],
     }
     assert bootstrap_settings._config_path.read_bytes() == original_settings
+
+
+@pytest.mark.asyncio
+async def test_host_review_compares_loaded_backend_values_after_restart(bootstrap_settings):
+    first = await build_container()
+    before = first.plugin_profile_service.repository.get_activation()
+    references = [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in before.bindings]
+    bootstrap_settings.set("NEUROENGINE.command_timeout_s", 15.0)
+    original_files = _toml_files(config_root())
+
+    with pytest.raises(PluginSchemaError, match="Backend restart required.*NEUROENGINE.command_timeout_s"):
+        first.runtime_configuration.plan(references, expected_revision=before.revision,
+                                         include_host_settings=True, refresh_slots=[])
+    assert first.command_results._timeout_s == 10.0
+    assert _toml_files(config_root()) == original_files
+
+    restarted = await build_container()
+
+    assert restarted.command_results._timeout_s == 15.0
+    plan = restarted.runtime_configuration.plan(references, expected_revision=before.revision,
+                                                include_host_settings=True, refresh_slots=[])
+    assert plan.target_revision == before.revision
+    assert plan.changed_settings == ()
+    assert not plan.errors
+    assert _toml_files(config_root()) == original_files
+
+
+@pytest.mark.asyncio
+async def test_plugin_directory_restart_check_uses_effective_environment_path(bootstrap_settings, monkeypatch, tmp_path):
+    container = await build_container()
+    before = container.plugin_profile_service.repository.get_activation()
+    references = [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in before.bindings]
+    original_files = _toml_files(config_root())
+    bootstrap_settings.set("PLUGINS.user_dir", str(tmp_path / "masked-by-environment"))
+
+    plan = container.runtime_configuration.plan(references, expected_revision=before.revision,
+                                                include_host_settings=True, refresh_slots=[])
+
+    assert plan.target_revision == before.revision
+    assert not plan.errors
+    monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "changed-effective-path"))
+    with pytest.raises(PluginSchemaError, match="Backend restart required.*PLUGINS.user_dir"):
+        container.runtime_configuration.plan(references, expected_revision=before.revision,
+                                             include_host_settings=True, refresh_slots=[])
+    assert _toml_files(config_root()) == original_files
 
 
 @pytest.mark.asyncio

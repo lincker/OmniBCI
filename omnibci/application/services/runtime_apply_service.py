@@ -42,8 +42,9 @@ class RuntimeApplyCoordinator:
 
     def active_kinds(self, snapshot):
         kinds = {"acquisition", "decoder", "epoch_detector", "filter"}
-        before = self.engine.applied_snapshot or {}
-        if snapshot.settings.get("ACTUATION.enabled", False) or before.get("ACTUATION.enabled", False):
+        owned = self.engine.runtime_package_snapshots
+        if (snapshot.settings.get("ACTUATION.enabled", False)
+                or any(settings.get("ACTUATION.enabled", False) for settings in owned)):
             kinds.add("effector")
         if self.stimulation.is_active or self.stimulation.process_alive:
             kinds.update(("paradigm", "trigger"))
@@ -58,6 +59,10 @@ class RuntimeApplyCoordinator:
                     or (plan.running and (self.engine.generation != plan.generation
                                           or self.engine.applied_revision != plan.applied_revision))):
                 raise ProfileRevisionConflict("Runtime changed before configuration application")
+            if not plan.running and (self.engine.restart_blocked or self.engine.runtime_package_snapshots):
+                raise ProfileRevisionConflict(
+                    "The previous engine still owns resources; stop it before selecting configuration"
+                )
             self.profiles.validate_activation(candidate, active_kinds=self.active_kinds(candidate))
             if plan.strategy in ("select_on_start", "no_change"):
                 progress("persisting")

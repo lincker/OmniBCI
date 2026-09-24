@@ -80,3 +80,4 @@ class AcceptActivationRequest(BaseModel):
     bindings: list[SelectProfileBindingRequest]
     expected_revision: str | None = None
     refresh_slots: list[str] | None = None
+    include_host_settings: bool = False

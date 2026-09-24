@@ -7,7 +7,7 @@ from omnibci.presentation.schemas.plugin_config import AcceptActivationRequest
 
 
 class RuntimePlanRequest(AcceptActivationRequest):
-    include_host_settings: bool = False
+    pass
 
 
 class RuntimePlanResponse(BaseModel):

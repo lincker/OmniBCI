@@ -4148,6 +4148,11 @@
               }
             ],
             "title": "Refresh Slots"
+          },
+          "include_host_settings": {
+            "type": "boolean",
+            "title": "Include Host Settings",
+            "default": false
           }
         },
         "additionalProperties": false,

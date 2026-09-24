@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Callable, Iterable, Tuple
 
 from omnibci.shared.events import EventType
+from omnibci.application.activation_settings import backend_startup_settings
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.acquisition_service import AcquisitionAppService
 from omnibci.application.services.stimulation_service import StimulationAppService
@@ -26,6 +27,7 @@ from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugins.plugin_catalog import user_plugins_dir
 from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
 from omnibci.infrastructure.plugins.market_adapter import configured_market_service
 from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
@@ -42,6 +44,13 @@ def create_backend_logging() -> BackendLogging:
     from omnibci.conf import settings
 
     return BackendLogging(settings.snapshot())
+
+
+def _effective_backend_startup_settings(snapshot: dict) -> dict:
+    values = backend_startup_settings(snapshot)
+    directory = user_plugins_dir()
+    values["PLUGINS.user_dir"] = str(directory.resolve()) if directory is not None else None
+    return values
 
 
 @dataclass
@@ -189,6 +198,7 @@ async def build_container() -> AppContainer:
         TomlPluginProfileRepository(), CatalogConfigurationAdapter(),
         settings_source=settings.snapshot,
         change_guard=engine_service.configuration_change,
+        startup_settings_resolver=_effective_backend_startup_settings,
     )
     try:
         initializer = SettingsPluginConfigInitializer(plugin_profiles)

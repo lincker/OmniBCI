@@ -211,8 +211,9 @@ def _assert_invalid_activation(client, environment, snapshot, operation, *, plan
     previous = repository.get_activation()
     path = environment.root / "activation.toml"
     original = path.read_bytes()
-    request = {"bindings": _references(snapshot), "expected_revision": previous.revision}
-    plan = client.post("/api/v1/config/apply-plan", json={**request, "include_host_settings": True})
+    request = {"bindings": _references(snapshot), "expected_revision": previous.revision,
+               "include_host_settings": True}
+    plan = client.post("/api/v1/config/apply-plan", json=request)
     assert plan.status_code == plan_status, plan.text
     if plan_status == 200:
         assert plan.json()["data"]["errors"], plan.text

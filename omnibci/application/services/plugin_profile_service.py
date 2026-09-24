@@ -2,9 +2,13 @@
 from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import replace
+import json
 from uuid import uuid4
 
-from omnibci.application.activation_settings import PLUGIN_SETTING_KEYS, activation_host_settings
+from omnibci.application.activation_settings import (
+    RUNTIME_HOST_SETTING_KEYS, activation_host_settings, backend_startup_settings,
+    is_inert_activation_setting,
+)
 from omnibci.application.plugin_profiles import (
     ActivationSnapshot, PluginProfile, PluginSelection, ProfileBinding,
     ProfileRevisionConflict,
@@ -27,11 +31,13 @@ def _validate_source_metadata(binding: ProfileBinding) -> None:
 
 class PluginProfileService:
     def __init__(self, repository, catalog: PluginConfigurationCatalog, *,
-                 settings_source, change_guard=None):
+                 settings_source, change_guard=None, startup_settings_resolver=None):
         self.repository = repository
         self.catalog = catalog
         self.settings_source = settings_source
         self.change_guard = change_guard or (lambda requires_idle: nullcontext())
+        self._startup_settings_resolver = startup_settings_resolver or backend_startup_settings
+        self._startup_settings = deepcopy(self._startup_settings_resolver(settings_source()))
 
     def _parameters(self, kind, selection, parameters, configuration_version=None):
         definition = self.catalog.get(kind, selection)
@@ -69,18 +75,18 @@ class PluginProfileService:
                 raise ProfileRevisionConflict("Profile is selected; replace its binding first")
             self.repository.delete_profile(profile_id, expected_revision=expected_revision)
 
-    def propose(self, selections: list[dict], *, settings: dict | None = None,
+    def propose(self, selections: list[dict], *, include_host_settings: bool = False,
                 refresh_slots: list[str] | None = None) -> ActivationSnapshot:
         """Resolve an ordered set of slot/profile references into pinned copies."""
         current = self.repository.get_activation()
-        base = current.settings if current is not None else self.settings_source()
-        if settings is not None:
-            base = settings
+        base = self.settings_source() if current is None or include_host_settings else current.settings
+        if include_host_settings:
+            self._validate_host_changes(base, current)
         base = activation_host_settings(base)
         if current is not None:
             # Preserve old inert copies without allowing saved edits to change a running revision.
             base.update({key: value for key, value in current.settings.items()
-                         if key in PLUGIN_SETTING_KEYS or key.startswith("LOGGING.")})
+                         if is_inert_activation_setting(key)})
         if refresh_slots is not None and (
             not isinstance(refresh_slots, list) or any(not isinstance(slot, str) for slot in refresh_slots)
             or len(set(refresh_slots)) != len(refresh_slots)
@@ -109,6 +115,34 @@ class PluginProfileService:
                 profile_revision=profile.revision,
             ))
         return ActivationSnapshot(bindings=tuple(bindings), settings=base)
+
+    def _validate_host_changes(self, settings: dict, current: ActivationSnapshot | None) -> None:
+        startup = self._startup_settings_resolver(settings)
+        changed = sorted(key for key in startup.keys() | self._startup_settings.keys()
+                         if key not in startup or key not in self._startup_settings
+                         or startup[key] != self._startup_settings[key])
+        if changed:
+            raise PluginSchemaError(
+                "Backend restart required for " + ", ".join(changed)
+                + "; an engine restart does not apply these settings"
+            )
+        if current is not None:
+            before = activation_host_settings(current.settings)
+            after = activation_host_settings(settings)
+            unknown = (before.keys() | after.keys()) - RUNTIME_HOST_SETTING_KEYS
+            canonical = lambda value: json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                                  ensure_ascii=False, allow_nan=False)
+            try:
+                changed = sorted(key for key in unknown
+                                 if key not in before or key not in after
+                                 or canonical(before[key]) != canonical(after[key]))
+            except (TypeError, ValueError, RecursionError) as exc:
+                raise PluginSchemaError("Unclassified host settings must contain finite JSON values") from exc
+            if changed:
+                raise PluginSchemaError(
+                    "Unclassified host settings cannot be changed: " + ", ".join(changed)
+                    + "; use a Plugin Profile or declare their host ownership first"
+                )
 
     def validate_activation(self, snapshot: ActivationSnapshot, *,
                             active_kinds: set[str] | None = None) -> None:

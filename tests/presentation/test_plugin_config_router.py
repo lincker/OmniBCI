@@ -9,10 +9,12 @@ from fastapi.testclient import TestClient
 
 from omnibci.application.config_errors import ConfigProfileConflictError
 from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 from omnibci.presentation.errors import register_exception_handlers
 from omnibci.presentation.routers.plugin_config import router
+from omnibci.presentation.routers.runtime_config import router as runtime_router
 
 PREFIX = "/api/v1/config"
 
@@ -20,7 +22,7 @@ PREFIX = "/api/v1/config"
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
-    state = {"running": False, "host": "initial"}
+    state = {"running": False, "settings": {"NEUROENGINE.queue_size": 32}}
 
     @contextmanager
     def guard(requires_idle):
@@ -30,12 +32,15 @@ def client(tmp_path, monkeypatch):
 
     service = PluginProfileService(
         TomlPluginProfileRepository(tmp_path / "configuration"), CatalogConfigurationAdapter(),
-        settings_source=lambda: {"host": state["host"]}, change_guard=guard,
+        settings_source=lambda: state["settings"], change_guard=guard,
     )
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(router, prefix="/api/v1")
-    app.state.container = SimpleNamespace(plugin_profile_service=service)
+    app.include_router(runtime_router, prefix="/api/v1")
+    engine = SimpleNamespace(is_engine_ready=False, applied_revision=None, generation=None)
+    app.state.container = SimpleNamespace(plugin_profile_service=service,
+                                         runtime_configuration=RuntimeConfigurationService(service, engine))
     with TestClient(app) as http:
         yield http, service, state
 
@@ -50,11 +55,13 @@ def create(client, kind="acquisition", alias="file_reader", name="Example", para
     return response.json()["data"]
 
 
-def accept(http, profiles, expected_revision=None, refresh_slots=None):
+def accept(http, profiles, expected_revision=None, refresh_slots=None, *, include_host_settings=None):
     body = {"bindings": [{"slot": slot, "profile_id": profile["profile_id"]} for slot, profile in profiles],
             "expected_revision": expected_revision}
     if refresh_slots is not None:
         body["refresh_slots"] = refresh_slots
+    if include_host_settings is not None:
+        body["include_host_settings"] = include_host_settings
     return http.put(f"{PREFIX}/activation", json=body)
 
 
@@ -101,7 +108,8 @@ def test_profile_crud_and_compare_and_swap(client):
     assert http.get(path).status_code == 404
 
 
-def test_saving_active_profile_does_not_change_selected_values(client):
+@pytest.mark.parametrize("include_host_settings", [False, True])
+def test_saving_active_profile_does_not_change_selected_values(client, include_host_settings):
     http, _, state = client
     assert http.get(f"{PREFIX}/activation").json()["data"] is None
     profile = create(client)
@@ -115,13 +123,16 @@ def test_saving_active_profile_does_not_change_selected_values(client):
     })
     assert saved.status_code == 200
     assert http.get(f"{PREFIX}/activation").json()["data"] == previous
-    blocked = accept(http, bindings, previous["revision"])
+    state["settings"]["NEUROENGINE.queue_size"] = 64
+    blocked = accept(http, bindings, previous["revision"], include_host_settings=include_host_settings)
     assert blocked.status_code == 409
+    assert http.get(f"{PREFIX}/activation").json()["data"] == previous
     assert http.delete(f"{PREFIX}/plugin-profiles/{profile['profile_id']}?expected_revision=2").status_code == 409
 
 
-def test_refreshing_one_slot_preserves_other_selected_parameter_copies(client):
-    http, _, state = client
+@pytest.mark.parametrize("include_host_settings", [None, False, True])
+def test_plan_and_direct_selection_use_the_same_candidate(client, include_host_settings):
+    http, service, state = client
     source = create(client)
     decoder = create(client, "decoder", "THUBCI_SSVEP_classic40CCA")
     bindings = complete_profiles(client, [("acquisition.source", source), ("processing.decoder", decoder)])
@@ -130,16 +141,61 @@ def test_refreshing_one_slot_preserves_other_selected_parameter_copies(client):
         assert http.put(f"{PREFIX}/plugin-profiles/{profile['profile_id']}", json={
             "name": profile["name"], "parameters": parameters, "expected_revision": 1,
         }).status_code == 200
-    state["host"] = "current"
+    state["settings"]["NEUROENGINE.queue_size"] = 64
 
-    response = accept(http, bindings, before["revision"], ["processing.decoder"])
+    body = {"bindings": [{"slot": slot, "profile_id": profile["profile_id"]} for slot, profile in bindings],
+            "expected_revision": before["revision"], "refresh_slots": ["processing.decoder"]}
+    if include_host_settings is not None:
+        body["include_host_settings"] = include_host_settings
+    planned = http.post(f"{PREFIX}/apply-plan", json=body)
+    assert planned.status_code == 200, planned.text
+    runtime = http.app.state.container.runtime_configuration
+    candidate = runtime.resolve_plan(planned.json()["data"]["plan_id"]).snapshot.to_dict()
+    assert service.repository.get_activation().to_dict() == before
+
+    response = http.put(f"{PREFIX}/activation", json=body)
 
     assert response.status_code == 200, response.text
     selected = response.json()["data"]
+    assert selected == candidate
+    assert selected["revision"] == planned.json()["data"]["target_revision"]
     assert selected["bindings"][0]["parameters"]["sample_rate"] == 1000
     assert selected["bindings"][1]["parameters"]["window_duration"] == 4.0
-    assert selected["settings"] == {"host": "current"}
+    assert selected["settings"]["NEUROENGINE.queue_size"] == (64 if include_host_settings else 32)
     assert accept(http, bindings, before["revision"]).status_code == 409
+
+
+@pytest.mark.parametrize("method, path", [("put", "activation"), ("post", "apply-plan")])
+@pytest.mark.parametrize("key, value", [
+    ("NEUROENGINE.command_timeout_s", 20),
+    ("PERSISTENCE.session_repository", "sqlite"),
+    ("PLUGINS.user_dir", "/different/plugin-directory"),
+    ("LOGGING.level", "DEBUG"),
+    ("LOGGING.file_path", "changed.log"),
+    ("CUSTOM.setting", "changed"),
+])
+def test_startup_and_unknown_host_changes_return_422_without_writes(client, method, path, key, value):
+    http, service, state = client
+    if key == "CUSTOM.setting":
+        state["settings"][key] = "original"
+    profiles = complete_profiles(client)
+    before = accept(http, profiles).json()["data"]
+    stored = {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")}
+    state["settings"][key] = value
+
+    response = getattr(http, method)(f"{PREFIX}/{path}", json={
+        "bindings": [{"slot": slot, "profile_id": profile["profile_id"]} for slot, profile in profiles],
+        "expected_revision": before["revision"], "refresh_slots": [], "include_host_settings": True,
+    })
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "VALIDATION_ERROR"
+    assert key in response.json()["message"]
+    if key != "CUSTOM.setting":
+        assert "restart" in response.json()["message"].lower()
+    assert http.get(f"{PREFIX}/activation").json()["data"] == before
+    assert {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")} == stored
+    assert not http.app.state.container.runtime_configuration._plans
 
 
 def test_filter_instances_have_stable_slots_and_order(client):
@@ -195,3 +251,6 @@ def test_openapi_publishes_typed_profile_and_snapshot_contracts(client):
     assert "schema" in schemas["PluginConfigurationResponse"]["properties"]
     assert "expected_revision" in schemas["UpdatePluginProfileRequest"]["required"]
     assert "bindings" in schemas["ActivationResponse"]["required"]
+    for name in ("AcceptActivationRequest", "RuntimePlanRequest"):
+        assert schemas[name]["properties"]["include_host_settings"]["default"] is False
+        assert "include_host_settings" not in schemas[name]["required"]

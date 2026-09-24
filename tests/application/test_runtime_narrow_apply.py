@@ -548,7 +548,8 @@ schema_version=1
     host = profiles.settings_source()
     host.update({"ACTUATION.enabled": True, "ACTUATION.auto_spawn": True,
                  "ACTUATION.server_port": unused_tcp_port})
-    profiles.accept(profiles.propose(bindings, settings=host),
+    profiles.settings_source = lambda: host
+    profiles.accept(profiles.propose(bindings, include_host_settings=True),
                     expected_revision=profiles.repository.get_activation().revision)
     manager = ActuationProcessManager()
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),

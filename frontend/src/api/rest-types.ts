@@ -692,6 +692,11 @@ export interface components {
             expected_revision?: string | null;
             /** Refresh Slots */
             refresh_slots?: string[] | null;
+            /**
+             * Include Host Settings
+             * @default false
+             */
+            include_host_settings: boolean;
         };
         /** AcquisitionStatusResponse */
         AcquisitionStatusResponse: {

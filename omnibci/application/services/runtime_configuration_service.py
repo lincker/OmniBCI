@@ -73,7 +73,7 @@ class RuntimeConfigurationService:
             raise ProfileRevisionConflict("The selected configuration changed; reload before planning")
         snapshot = self.profiles.propose(
             bindings, refresh_slots=refresh_slots,
-            settings=self.profiles.settings_source() if include_host_settings else None,
+            include_host_settings=include_host_settings,
         )
         running = self.engine.is_engine_ready
         errors = []
@@ -151,6 +151,12 @@ class RuntimeConfigurationService:
         return stored
 
     def _validate_runtime(self, snapshot):
+        if not self.engine.is_engine_ready and (
+                getattr(self.engine, "restart_blocked", False)
+                or getattr(self.engine, "runtime_package_snapshots", ())):
+            raise PluginSchemaError(
+                "The previous engine still owns resources; stop it before selecting configuration"
+            )
         usage = getattr(self.executor, "active_kinds", None)
         self.profiles.validate_activation(snapshot, active_kinds=usage(snapshot) if callable(usage) else None)
 

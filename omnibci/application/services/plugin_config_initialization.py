@@ -120,9 +120,9 @@ class SettingsPluginConfigInitializer:
             add(f"processing.filter.{instance_id}", "filter", alias,
                 name=f"Initial filter {index + 1}: {alias}"[:64])
 
-        if warnings:
-            settings["CONFIG.initialization_warnings"] = list(warnings)
         host_settings = activation_host_settings(settings)
+        if warnings:
+            host_settings["CONFIG.initialization_warnings"] = list(warnings)
         candidate = ActivationSnapshot(host_settings, tuple(self._binding(slot, drafts[profile_id])
                                                             for slot, profile_id in bindings))
         self.service.validate_activation(candidate)

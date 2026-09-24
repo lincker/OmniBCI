@@ -1,11 +1,13 @@
 # Configuration ownership and consolidation
 
-Status: steps 1 and 2 and the backend logging batch are committed. Step 3 is
-implemented for review: new activations separate host settings from plugin
-inputs, and runtime projections use pinned bindings. Settings has one host
-editor; the old named Application Profile editor and file overlay are removed.
+Status: steps 1 through 4 and the backend logging batch are committed.
+Activation routes share candidate construction and
+reject host changes that the current runtime cannot apply. New activations
+separate host settings from plugin inputs, and runtime projections use pinned
+bindings. Settings has one host editor; the old named Application Profile editor
+and file overlay are removed.
 Playback speed and the reviewed unused settings are also removed. Real-time
-worker logging remains deferred. Steps 4 through 6 require separate review;
+worker logging remains deferred. Steps 5 and 6 require separate review;
 no automatic commits are authorized.
 
 The inventory covers all 38 leaf keys currently declared in
@@ -192,9 +194,9 @@ revisions are preserved. Fresh initialization uses the flat defaults still
 present in `settings.toml`. Step 3 removes those inputs from new activation host
 settings; refining host candidate merging remains step 4. Retired files are not
 deleted or migrated.
-Browser verification confirmed that the existing Review can still list
-`CONFIG.initialization_warnings` as a changed host field alongside a real edit.
-Removing diagnostic metadata from change detection belongs to step 4.
+The former Review incorrectly listed `CONFIG.initialization_warnings` as a
+changed host field alongside a real edit. Step 4 keeps these accepted diagnostics
+read-only and excludes them from runtime materialization.
 
 An existing Application Profile can contain values different from the raw
 settings file. Those values must be reviewed before choosing the saved host
@@ -241,10 +243,64 @@ plugin, or rewrite actual configuration files. Retiring this initialization
 source requires a separate explicit startup policy; standalone legacy loading
 remains step 6. The startup-only/diagnostic change rules remain step 4.
 
-The exclusion set covers the 19 reviewed flat keys, not arbitrary third-party
-legacy prefixes. Unknown legacy seed fields can still remain in host settings
-until that initialization path is retired. Plugin Profile parameters themselves
-remain governed by each plugin's full schema, without a fixed parameter list.
+The plugin exclusion set covers the 19 reviewed flat keys, not arbitrary
+third-party legacy prefixes. Unknown legacy seed fields can still remain in
+host settings until that initialization path is retired; step 4 rejects changes
+to such unclassified fields. Plugin Profile parameters themselves remain
+governed by each plugin's full schema, without a fixed parameter list.
+
+### Step 4: one candidate construction policy
+
+`PUT /api/v1/config/activation` and `POST /api/v1/config/apply-plan` share the same
+`include_host_settings` and `refresh_slots` inputs. Host refresh defaults to
+`false` on both routes. Plugin selection therefore retains accepted host values
+unless a caller explicitly includes saved host settings. General uses
+`include_host_settings: true` and `refresh_slots: []`; the plugin editor retains
+its explicit slot refresh behavior. Direct activation remains idle-only, while
+Review/Apply retains its pinned plan and runtime acknowledgement requirements.
+
+The shared configuration service reads the selected host source once when
+constructing a candidate. Its runtime host key set is the 15 existing inputs
+listed in sections 3 and 5, including `ACQUISITION.channel_names` and
+`NEUROENGINE.startup_timeout_s`. Existing `ACTUATION.enabled` and both
+`auto_spawn` settings remain runtime topology/deployment inputs. They still
+require the current managed-process and external-peer checks.
+
+The backend-startup boundary covers `NEUROENGINE.command_timeout_s`,
+`PERSISTENCE.session_repository`, `PLUGINS.user_dir`, `LOGGING.level`, and
+`LOGGING.file_path`. The service captures the loaded startup values when the
+backend is assembled, using the existing defaults for absent keys. Plugin path
+comparison uses the effective resolved path, including `OMNIBCI_PLUGIN_DIR`
+precedence. It does not compare against potentially stale startup copies in an
+accepted activation.
+
+If an explicit host refresh finds a changed startup input, both routes return a
+validation error naming the keys and requiring a backend restart. No plan or
+activation is published, even if the engine is stopped or the request also
+contains valid runtime changes. The existing console request-error display
+shows the reason. Restoring the loaded value or restarting the backend clears
+that condition; restarting only the engine does not. This adds no startup
+settings editor, file watcher, or new restart operation.
+
+Generated fields, diagnostics, retired settings, old plugin copies, and old
+startup copies are inert in candidate construction. Existing accepted copies
+retain their exact values; new host input cannot edit them or force a different
+revision. Runtime materialization excludes them and generates revision/binding
+fields afresh. The initializer still stores its own generated warnings as
+read-only metadata, so diagnostics remain available after restart.
+
+First initialization may retain unknown fields from its explicit settings seed;
+existing accepted unknown values are also preserved. Adding, changing, or
+removing an unknown field through a later host refresh is rejected rather than
+silently ignored or reported as applied. Such a field needs a reviewed host
+owner or must become a Plugin Profile parameter. This does not restrict the
+plugin's own schema or rewrite actual saved data.
+
+Normal engine shutdown no longer treats its retained historical Actuation
+snapshot as an active output. Failed shutdown or other retained graph ownership
+still prevents an idle selection from being accepted over unconfirmed runtime
+resources. Running output availability and external-peer restrictions remain
+enforced before any pause, rebuild, or persistence.
 
 ### Backend logging: first implementation batch
 
@@ -255,10 +311,12 @@ live controls. Supported levels are `DEBUG`, `INFO`, `WARNING`, `ERROR`, and
 restart, not an engine restart. No new web editor is introduced in this batch.
 
 New activations omit `LOGGING.*`. Previously accepted snapshots retain their
-original logging values as inert metadata so their hashes remain valid. Proposals
-ignore new host logging values, and materialization excludes all logging keys
-from worker settings. A logging-only edit therefore leaves the BCI revision and
-runtime apply plan unchanged.
+original logging values as inert metadata so their hashes remain valid.
+Materialization excludes all logging keys from worker settings. A logging-only
+edit therefore never changes the BCI revision or requests an engine rebuild.
+Step 4 rejects explicit host Review while saved logging values differ from the
+loaded backend values, naming the required backend restart without publishing
+an apply plan.
 
 #### Files and ownership
 
@@ -336,8 +394,8 @@ it must not silently select a different legacy alias.
 | --- | --- | --- |
 | 1 (committed) | This ownership inventory and the boundary decisions above | Cover all 38 declared keys, all ten schemas, and additional runtime inputs; check actual consumers |
 | 2 (committed) | Restrict the settings writer to host-owned values; remove old Application Profile editing/activation, file overlays, and duplicate UI entry points | Legacy plugin writes and scope fields are rejected; Plugin Profile CRUD still works; host settings remain editable; fresh initialization and existing accepted values remain correct |
-| 3 (implemented, awaiting review) | Remove independently editable plugin values from activation host settings; retain any necessary flat fields only as derived runtime values | Source/decoder/context agree; accepted values survive saved Profile edits; fresh startup and existing valid activation handling are explicit |
-| 4 | Unify candidate construction and application semantics for all activation routes | The same input produces the same candidate; changes to ineffective legacy/diagnostic fields cannot cause a rebuild; startup-only settings cannot falsely report runtime success; preserve snapshot-driven Actuation topology and external-peer restrictions |
+| 3 (committed) | Remove independently editable plugin values from activation host settings; retain any necessary flat fields only as derived runtime values | Source/decoder/context agree; accepted values survive saved Profile edits; fresh startup and existing valid activation handling are explicit |
+| 4 (committed) | Unify candidate construction and application semantics for all activation routes | The same input produces the same candidate; changes to ineffective legacy/diagnostic fields cannot cause a rebuild; startup-only settings cannot falsely report runtime success; preserve snapshot-driven Actuation topology and external-peer restrictions |
 | 5 | Store editable host settings in the user configuration directory with revision checks and atomic writes | Cross-platform paths, concurrent edits, interrupted writes, and backend restart persistence |
 | 6 | Use the accepted configuration at standalone launch; retire remaining implicit legacy plugin constructors/loaders | Managed and standalone launches resolve the same explicit selection; missing/invalid configuration fails clearly; external-peer limitations remain explicit |
 

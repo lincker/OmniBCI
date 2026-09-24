@@ -15,7 +15,13 @@ def test_status_and_review_plan_contract():
     plan = dict(plan_id="plan", expected_revision="selected", target_revision="new",
                 applied_revision=None, generation=None, running=False, strategy="select_on_start",
                 changed_slots=["processing.decoder"], changed_settings=[], session_effect="preserve", errors=[])
-    service = SimpleNamespace(status=lambda: status, plan=lambda **kwargs: SimpleNamespace(to_dict=lambda: plan))
+    requests = []
+
+    def create_plan(**kwargs):
+        requests.append(kwargs)
+        return SimpleNamespace(to_dict=lambda: plan)
+
+    service = SimpleNamespace(status=lambda: status, plan=create_plan)
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(router)
@@ -25,6 +31,14 @@ def test_status_and_review_plan_contract():
         response = client.post("/config/apply-plan", json={"bindings": [], "expected_revision": "selected"})
         assert response.status_code == 200
         assert response.json()["data"] == plan
+        assert requests[-1] == {"bindings": [], "expected_revision": "selected",
+                                "refresh_slots": None, "include_host_settings": False}
+        assert client.post("/config/apply-plan", json={
+            "bindings": [], "expected_revision": "selected", "refresh_slots": [],
+            "include_host_settings": True,
+        }).status_code == 200
+        assert requests[-1] == {"bindings": [], "expected_revision": "selected",
+                                "refresh_slots": [], "include_host_settings": True}
         assert client.post("/config/apply-plan", json={"bindings": [], "unknown": True}).status_code == 422
 
         def stale(**kwargs):

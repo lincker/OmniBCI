@@ -83,6 +83,42 @@ def test_initialization_keeps_logging_out_of_engine_activation(initialize, setti
     assert settings == original
 
 
+def test_initialization_keeps_generated_diagnostics_without_runtime_or_revision_changes(service, settings):
+    settings.update({
+        "NEUROENGINE.command_timeout_s": 15.0,
+        "PERSISTENCE.session_repository": "in_memory",
+        "PLUGINS.user_dir": "/initial/plugins",
+        "CONFIG.initialization_warnings": ["Untrusted saved diagnostic"],
+        "CONFIG.revision": "untrusted-revision", "CONFIG.generation": "untrusted-generation",
+        "PLUGINS.bindings": [], "PROFILES.active": "obsolete",
+        "project_name": "Obsolete project", "version": "obsolete",
+        "ACQUISITION.file_reader_play_speed": 2.0,
+    })
+    initializer = SettingsPluginConfigInitializer(service)
+
+    result = initializer.initialize(settings)
+
+    assert result.warnings
+    assert "Untrusted saved diagnostic" not in result.warnings
+    assert result.snapshot.settings["CONFIG.initialization_warnings"] == list(result.warnings)
+    excluded = {"NEUROENGINE.command_timeout_s", "PERSISTENCE.session_repository", "PLUGINS.user_dir",
+                "CONFIG.revision", "CONFIG.generation", "PLUGINS.bindings", "PROFILES.active",
+                "project_name", "version", "ACQUISITION.file_reader_play_speed"}
+    assert not excluded & result.snapshot.settings.keys()
+    runtime = service.materialize(result.snapshot)
+    assert "CONFIG.initialization_warnings" not in runtime
+    assert "CONFIG.generation" not in runtime
+    assert runtime["CONFIG.revision"] == result.snapshot.revision
+    assert runtime["PLUGINS.bindings"]
+    assert initializer.existing().warnings == result.warnings
+    references = [{"slot": binding.slot, "profile_id": binding.profile_id}
+                  for binding in result.snapshot.bindings]
+    # Only the constructor baseline changes here; the initializer does not apply
+    # backend inputs. A fresh service models a backend that loaded those inputs.
+    restarted = PluginProfileService(service.repository, service.catalog, settings_source=lambda: settings)
+    assert restarted.propose(references, include_host_settings=True, refresh_slots=[]) == result.snapshot
+
+
 def test_fbcca_uses_algorithm_settings_and_scalar_defaults_only_when_absent(initialize, service, settings):
     settings["ALGORITHM.decoder"] = "THUBCI_SSVEP_classic40FBCCA"
     result = initialize(settings)

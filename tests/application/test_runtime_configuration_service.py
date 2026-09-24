@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from omnibci.application.plugin_profiles import ActivationSnapshot, ProfileRevisionConflict
+from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
@@ -92,16 +93,16 @@ def test_no_semantic_change_does_not_restart(runtime):
     {},
     {"LOGGING.level": "INFO", "LOGGING.file_path": "original.log"},
 ])
-def test_logging_changes_do_not_change_running_revision_or_rebuild(runtime, previous_logging):
+def test_historical_logging_metadata_does_not_change_running_revision_or_rebuild(runtime, previous_logging):
     service, selections, before = runtime
     accepted = ActivationSnapshot({**before.settings, **previous_logging}, before.bindings)
     service.profiles.accept(accepted, expected_revision=before.revision)
     service.engine.applied_revision = accepted.revision
     service.engine.applied_snapshot = service.profiles.materialize(accepted)
-    host = {**accepted.settings, "LOGGING.level": "DEBUG", "LOGGING.file_path": "changed.log"}
+    host = {key: value for key, value in accepted.settings.items() if not key.startswith("LOGGING.")}
     service.profiles.settings_source = lambda: host
 
-    direct = service.profiles.propose(selections, settings=host)
+    direct = service.profiles.propose(selections, include_host_settings=True)
     plan = service.plan(selections, expected_revision=accepted.revision, include_host_settings=True)
 
     assert direct.revision == accepted.revision
@@ -114,16 +115,199 @@ def test_logging_changes_do_not_change_running_revision_or_rebuild(runtime, prev
     assert service.profiles.repository.get_activation() == accepted
 
 
-def test_logging_exclusion_does_not_hide_runtime_host_changes(runtime):
+def test_runtime_host_changes_still_require_rebuild(runtime):
     service, selections, before = runtime
     service.profiles.settings_source = lambda: {
-        **before.settings, "LOGGING.level": "DEBUG", "NEUROENGINE.queue_size": 256,
+        **before.settings, "NEUROENGINE.queue_size": 256,
     }
 
     plan = service.plan(selections, expected_revision=before.revision, include_host_settings=True)
 
     assert plan.strategy == "rebuild"
     assert plan.changed_settings == ("NEUROENGINE.queue_size",)
+
+
+@pytest.mark.parametrize("running", [False, True])
+@pytest.mark.parametrize("key,value", [
+    ("LOGGING.level", "DEBUG"),
+    ("LOGGING.file_path", "changed.log"),
+    ("NEUROENGINE.command_timeout_s", 42.0),
+    ("PERSISTENCE.session_repository", "another-repository"),
+    ("PLUGINS.user_dir", "/another/plugin-directory"),
+])
+def test_changed_backend_startup_settings_cannot_produce_an_apply_plan(runtime, running, key, value):
+    service, selections, before = runtime
+    service.engine.is_engine_ready = running
+    service.profiles.settings_source = lambda: {**before.settings, key: value}
+
+    with pytest.raises(PluginSchemaError) as error:
+        service.plan(selections, expected_revision=before.revision,
+                     refresh_slots=[], include_host_settings=True)
+
+    assert key in str(error.value)
+    assert not service._plans
+    assert service.profiles.repository.get_activation() == before
+
+
+@pytest.mark.parametrize("running", [False, True])
+def test_pending_backend_restart_rejects_mixed_runtime_changes_without_partial_plan(runtime, running):
+    service, selections, before = runtime
+    service.engine.is_engine_ready = running
+    service.profiles.settings_source = lambda: {
+        **before.settings, "LOGGING.level": "DEBUG", "NEUROENGINE.queue_size": 256,
+    }
+
+    with pytest.raises(PluginSchemaError):
+        service.plan(selections, expected_revision=before.revision,
+                     refresh_slots=[], include_host_settings=True)
+
+    assert not service._plans
+    assert service.profiles.repository.get_activation() == before
+
+
+@pytest.mark.parametrize("running", [False, True])
+def test_unknown_host_changes_cannot_be_reported_as_applied(runtime, running):
+    service, selections, before = runtime
+    service.engine.is_engine_ready = running
+    service.profiles.settings_source = lambda: {
+        **before.settings, "NEUROENGINE.unknown_option": True, "NEUROENGINE.queue_size": 256,
+    }
+
+    with pytest.raises(PluginSchemaError) as error:
+        service.plan(selections, expected_revision=before.revision,
+                     refresh_slots=[], include_host_settings=True)
+
+    assert "NEUROENGINE.unknown_option" in str(error.value)
+    assert not service._plans
+    assert service.profiles.repository.get_activation() == before
+
+
+def test_saved_host_changes_are_excluded_from_default_plugin_plan(runtime):
+    service, selections, before = runtime
+    service.profiles.settings_source = lambda: {
+        **before.settings, "LOGGING.level": "DEBUG", "NEUROENGINE.queue_size": 256,
+    }
+    edit(runtime, "processing.decoder", {"window_duration": 2.5})
+
+    plan = service.plan(selections, expected_revision=before.revision,
+                        refresh_slots=["processing.decoder"])
+
+    assert plan.strategy == "trial_boundary"
+    assert plan.changed_settings == ()
+    assert not plan.errors
+    assert service.resolve_plan(plan.plan_id).snapshot.settings == before.settings
+
+
+def test_restarted_backend_uses_new_startup_baseline_without_false_pending_restart(runtime):
+    service, selections, before = runtime
+    host = {**before.settings, "LOGGING.level": "DEBUG", "NEUROENGINE.queue_size": 256}
+    service.profiles.settings_source = lambda: host
+    with pytest.raises(PluginSchemaError):
+        service.plan(selections, expected_revision=before.revision, include_host_settings=True)
+
+    profiles = PluginProfileService(service.profiles.repository, service.profiles.catalog,
+                                    settings_source=lambda: host)
+    idle_engine = SimpleNamespace(is_engine_ready=False, applied_revision=None,
+                                  generation=None, applied_snapshot=None)
+    restarted = RuntimeConfigurationService(profiles, idle_engine)
+    plan = restarted.plan(selections, expected_revision=before.revision, include_host_settings=True)
+
+    assert plan.strategy == "select_on_start"
+    assert plan.changed_settings == ("NEUROENGINE.queue_size",)
+    assert not plan.errors
+    assert restarted.resolve_plan(plan.plan_id).snapshot.settings == {"NEUROENGINE.queue_size": 256}
+    assert profiles.repository.get_activation() == before
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_diagnostic_and_retired_edits_do_not_hide_actual_runtime_changes(runtime, historical):
+    service, selections, before = runtime
+    inert = {
+        "CONFIG.revision": "old-generated-revision", "CONFIG.generation": "old-generation",
+        "PLUGINS.bindings": [], "PROFILES.active": "old-profile",
+        "LOGGING.dropped_records": 1, "project_name": "old-name", "version": "old-version",
+        "CONSTANT.ASYNC_SLEEP_TIME": 1.0, "NEUROENGINE.COMMAND_SERVER_IP": "old-host",
+        "NEUROENGINE.COMMAND_SERVER_PORT": 9000, "ACQUISITION.file_reader_play_speed": 2.0,
+    }
+    accepted = ActivationSnapshot(inert if historical else before.settings, before.bindings)
+    service.profiles.accept(accepted, expected_revision=before.revision)
+    service.engine.applied_revision = accepted.revision
+    service.engine.applied_snapshot = service.profiles.materialize(accepted)
+    host = {key: "changed-inert-value" for key in inert}
+    service.profiles.settings_source = lambda: host
+
+    plan = service.plan(selections, expected_revision=accepted.revision,
+                        refresh_slots=[], include_host_settings=True)
+
+    assert plan.strategy == "no_change"
+    assert plan.changed_settings == ()
+    candidate = service.resolve_plan(plan.plan_id).snapshot
+    assert candidate == accepted
+    materialized = service.profiles.materialize(candidate)
+    assert not (inert.keys() - {"CONFIG.revision", "PLUGINS.bindings"}) & materialized.keys()
+    assert materialized["CONFIG.revision"] == accepted.revision
+    assert materialized["PLUGINS.bindings"] == [binding.to_dict() for binding in accepted.bindings]
+
+    host["NEUROENGINE.queue_size"] = 256
+    changed = service.plan(selections, expected_revision=accepted.revision,
+                           refresh_slots=[], include_host_settings=True)
+    assert changed.strategy == "rebuild"
+    assert changed.changed_settings == ("NEUROENGINE.queue_size",)
+    assert not changed.errors
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_actuation_topology_changes_remain_runtime_rebuilds(runtime, enabled):
+    service, selections, before = runtime
+    profile = service.profiles.create(
+        "effector", service.profiles.catalog.legacy("effector", "logger").selection, "Logger", {},
+    )
+    selections = selections + [{"slot": "actuation.effector", "profile_id": profile.profile_id}]
+    selected = service.profiles.propose(selections)
+    accepted = ActivationSnapshot({"ACTUATION.enabled": enabled, "ACTUATION.auto_spawn": True}, selected.bindings)
+    service.profiles.accept(accepted, expected_revision=before.revision)
+    service.engine.applied_revision = accepted.revision
+    service.engine.applied_snapshot = service.profiles.materialize(accepted)
+    service.profiles.settings_source = lambda: {**accepted.settings, "ACTUATION.enabled": not enabled}
+
+    plan = service.plan(selections, expected_revision=accepted.revision,
+                        refresh_slots=[], include_host_settings=True)
+
+    assert plan.strategy == "rebuild"
+    assert plan.changed_settings == ("ACTUATION.enabled",)
+    assert not plan.errors
+    candidate = service.resolve_plan(plan.plan_id).snapshot
+    assert candidate.settings["ACTUATION.enabled"] is (not enabled)
+    assert service.profiles.materialize(candidate)["ACTUATION.enabled"] is (not enabled)
+
+
+@pytest.mark.parametrize("module", ["STIMULATION", "ACTUATION"])
+@pytest.mark.parametrize("external_before", [False, True])
+def test_external_mode_transitions_check_both_current_and_target(runtime, module, external_before):
+    service, selections, before = runtime
+    if module == "ACTUATION":
+        profile = service.profiles.create(
+            "effector", service.profiles.catalog.legacy("effector", "logger").selection, "Logger", {},
+        )
+        selections = selections + [{"slot": "actuation.effector", "profile_id": profile.profile_id}]
+    selected = service.profiles.propose(selections)
+    host = {"STIMULATION.auto_spawn": True, "ACTUATION.auto_spawn": True,
+            "ACTUATION.enabled": module == "ACTUATION", f"{module}.auto_spawn": not external_before}
+    accepted = ActivationSnapshot(host, selected.bindings)
+    service.profiles.accept(accepted, expected_revision=before.revision)
+    service.engine.applied_revision = accepted.revision
+    service.engine.applied_snapshot = service.profiles.materialize(accepted)
+    service.profiles.settings_source = lambda: {**host, f"{module}.auto_spawn": external_before}
+
+    plan = service.plan(selections, expected_revision=accepted.revision,
+                        refresh_slots=[], include_host_settings=True)
+
+    assert plan.strategy == "rebuild"
+    assert plan.changed_settings == (f"{module}.auto_spawn",)
+    assert any(f"{module.title()} is externally managed" in error for error in plan.errors)
+    with pytest.raises(PluginSchemaError):
+        service.resolve_plan(plan.plan_id)
+    assert service.profiles.repository.get_activation() == accepted
 
 
 LEGACY_PLUGIN_VALUES = {
@@ -166,7 +350,7 @@ def test_raw_plugin_edits_do_not_change_candidate_revision_or_rebuild(runtime, l
     accepted = accept_historical_settings(runtime, legacy_values)
 
     candidate = service.profiles.propose(
-        selections, settings=service.profiles.settings_source(), refresh_slots=[],
+        selections, include_host_settings=True, refresh_slots=[],
     )
     plan = service.plan(selections, expected_revision=accepted.revision,
                         refresh_slots=[], include_host_settings=True)
@@ -199,11 +383,12 @@ def test_source_context_and_decoder_use_pinned_values_until_explicit_refresh(run
         if item["slot"] == "processing.decoder" else item
         for item in selections
     ]
-    accepted = service.profiles.propose(selections, settings={
+    service.profiles.settings_source = lambda: {
         **LEGACY_PLUGIN_VALUES,
         "ALGORITHM.baseline_duration": 0.2,
         "ACQUISITION.channel_names": ["O1", "O2"],
-    })
+    }
+    accepted = service.profiles.propose(selections, include_host_settings=True)
     service.profiles.accept(accepted, expected_revision=before.revision)
     materialized = service.profiles.resolve_settings()
     context = plugin_context(materialized)

@@ -156,7 +156,7 @@ def test_new_activation_excludes_plugin_settings_but_keeps_host_and_context(serv
     candidate = service.propose(selections)
 
     assert candidate.settings == host
-    assert service.propose(selections, settings=inputs).settings == host
+    assert service.propose(selections, include_host_settings=True).settings == host
     assert inputs == {**host, **LEGACY_PLUGIN_SETTINGS}
     assert service.repository.get_activation() is None
 
@@ -170,10 +170,10 @@ def test_old_plugin_setting_copies_are_inert_and_cannot_change_accepted_revision
     service.accept(previous, expected_revision=None)
     original_files = {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")}
     inputs = {"host": "original", **{key: "changed" for key in LEGACY_PLUGIN_SETTINGS},
-              "LOGGING.level": "DEBUG"}
+              "LOGGING.level": "INFO"}
     service.settings_source = lambda: inputs
 
-    candidate = service.propose(selections, settings=inputs, refresh_slots=[])
+    candidate = service.propose(selections, include_host_settings=True, refresh_slots=[])
     restored = ActivationSnapshot.from_dict(previous.to_dict())
 
     assert candidate == previous
@@ -214,12 +214,175 @@ def test_flat_plugin_edits_do_not_change_a_clean_activation(service):
     before = service.propose(selections)
     service.accept(before, expected_revision=None)
 
-    candidate = service.propose(selections, settings={"host": "original", **LEGACY_PLUGIN_SETTINGS},
-                                refresh_slots=[])
+    service.settings_source = lambda: {"host": "original", **LEGACY_PLUGIN_SETTINGS}
+    candidate = service.propose(selections, include_host_settings=True, refresh_slots=[])
 
     assert candidate == before
     assert candidate.revision == before.revision
     assert service.materialize(candidate)["ACQUISITION.sample_rate"] == 1000
+
+
+INERT_HOST_SETTINGS = {
+    "CONFIG.initialization_warnings": ["Original warning"],
+    "CONFIG.revision": "old-revision-copy",
+    "CONFIG.generation": "old-generation-copy",
+    "PROFILES.active": "old-profile",
+    "PLUGINS.bindings": [],
+    "LOGGING.custom": "old-backend-copy",
+    "ACQUISITION.file_reader_play_speed": 1.0,
+    "project_name": "Old name",
+    "version": "0.0.1",
+    "CONSTANT.ASYNC_SLEEP_TIME": 0.01,
+    "NEUROENGINE.COMMAND_SERVER_IP": "192.0.2.1",
+    "NEUROENGINE.COMMAND_SERVER_PORT": 8002,
+}
+
+
+def test_diagnostics_and_retired_fields_are_inert_without_rewriting_accepted_storage(service):
+    selections = complete_selections(service)
+    proposed = service.propose(selections)
+    previous = ActivationSnapshot({**proposed.settings, **INERT_HOST_SETTINGS}, proposed.bindings)
+    service.accept(previous, expected_revision=None)
+    original_files = {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")}
+    service.settings_source = lambda: {"host": "original", **{key: "changed" for key in INERT_HOST_SETTINGS}}
+
+    candidate = service.propose(selections, include_host_settings=True)
+    runtime = service.materialize(candidate)
+
+    assert candidate == previous
+    assert candidate.revision == previous.revision
+    assert not (INERT_HOST_SETTINGS.keys() - {"CONFIG.revision", "PLUGINS.bindings"}) & runtime.keys()
+    assert runtime["CONFIG.revision"] == previous.revision
+    assert runtime["PLUGINS.bindings"] == [binding.to_dict() for binding in previous.bindings]
+    assert {path: path.read_bytes() for path in original_files} == original_files
+
+
+def test_new_candidates_do_not_include_retired_diagnostic_or_backend_settings(service):
+    service.settings_source = lambda: {
+        "NEUROENGINE.queue_size": 64, **INERT_HOST_SETTINGS,
+        "LOGGING.level": "INFO", "LOGGING.file_path": "backend.log",
+        "NEUROENGINE.command_timeout_s": 20.0,
+        "PERSISTENCE.session_repository": "in_memory", "PLUGINS.user_dir": "/plugins",
+    }
+    candidate = service.propose(complete_selections(service))
+    assert candidate.settings == {"NEUROENGINE.queue_size": 64}
+
+
+def test_host_settings_are_included_only_when_explicitly_requested(service):
+    selections = complete_selections(service)
+    previous = service.accept(service.propose(selections), expected_revision=None)
+    service.settings_source = lambda: {"host": "original", "NEUROENGINE.queue_size": 64}
+
+    assert service.propose(selections) == previous
+    candidate = service.propose(selections, include_host_settings=True)
+    assert candidate.settings == {"host": "original", "NEUROENGINE.queue_size": 64}
+    assert candidate.revision != previous.revision
+    assert service.repository.get_activation() == previous
+
+
+@pytest.mark.parametrize("key,value", [
+    ("LOGGING.level", "DEBUG"),
+    ("LOGGING.file_path", "new-backend.log"),
+    ("NEUROENGINE.command_timeout_s", 20.0),
+    ("PERSISTENCE.session_repository", "other"),
+    ("PLUGINS.user_dir", "/other-plugins"),
+])
+def test_backend_startup_edits_require_backend_restart(service, key, value):
+    selections = complete_selections(service)
+    previous = service.accept(service.propose(selections), expected_revision=None)
+    original_files = {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")}
+    service.settings_source = lambda: {"host": "original", key: value}
+
+    assert service.propose(selections) == previous
+    with pytest.raises(PluginSchemaError, match=rf"Backend restart required for .*{key}.*engine restart"):
+        service.propose(selections, include_host_settings=True)
+    assert {path: path.read_bytes() for path in original_files} == original_files
+
+
+def test_backend_restart_uses_loaded_values_instead_of_old_accepted_copies(service):
+    selections = complete_selections(service)
+    proposed = service.propose(selections)
+    previous = ActivationSnapshot({**proposed.settings, "NEUROENGINE.command_timeout_s": 10.0},
+                                  proposed.bindings)
+    service.accept(previous, expected_revision=None)
+    restarted = PluginProfileService(service.repository, service.catalog,
+        settings_source=lambda: {"host": "original", "NEUROENGINE.command_timeout_s": 20.0})
+
+    candidate = restarted.propose(selections, include_host_settings=True)
+
+    assert candidate == previous
+    assert "NEUROENGINE.command_timeout_s" not in restarted.materialize(candidate)
+
+
+def test_backend_startup_resolver_can_identify_environment_overrides(service):
+    inputs = {"host": "original", "PLUGINS.user_dir": "/ignored-before"}
+    overridden = PluginProfileService(service.repository, service.catalog,
+        settings_source=lambda: inputs,
+        startup_settings_resolver=lambda settings: {"PLUGINS.user_dir": "/environment-plugins"})
+    selections = complete_selections(overridden)
+    previous = overridden.accept(overridden.propose(selections), expected_revision=None)
+    inputs["PLUGINS.user_dir"] = "/ignored-after"
+
+    assert overridden.propose(selections, include_host_settings=True) == previous
+
+
+@pytest.mark.parametrize("inputs,key", [
+    ({"host": "original", "vendor.setting": 2}, "vendor.setting"),
+    ({"host": "changed"}, "host"),
+    ({}, "host"),
+])
+def test_unknown_host_settings_cannot_be_added_changed_or_deleted(service, inputs, key):
+    selections = complete_selections(service)
+    previous = service.accept(service.propose(selections), expected_revision=None)
+    service.settings_source = lambda: inputs
+
+    assert service.propose(selections) == previous
+    with pytest.raises(PluginSchemaError, match=rf"Unclassified host settings.*{key}"):
+        service.propose(selections, include_host_settings=True)
+    assert service.materialize(previous)["host"] == "original"
+    assert service.repository.get_activation() == previous
+
+
+@pytest.mark.parametrize("before,after", [
+    (1, True),
+    (1, 1.0),
+    ({"nested": [1]}, {"nested": [True]}),
+])
+def test_unknown_host_settings_reject_type_changes(service, before, after):
+    service.settings_source = lambda: {"vendor.setting": before}
+    selections = complete_selections(service)
+    previous = service.accept(service.propose(selections), expected_revision=None)
+    original_files = {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")}
+    service.settings_source = lambda: {"vendor.setting": after}
+
+    with pytest.raises(PluginSchemaError, match="Unclassified host settings.*vendor.setting"):
+        service.propose(selections, include_host_settings=True)
+
+    assert service.repository.get_activation() == previous
+    assert {path: path.read_bytes() for path in original_files} == original_files
+
+
+def test_unknown_host_settings_ignore_object_key_order(service):
+    service.settings_source = lambda: {"vendor.setting": {"first": 1, "second": {"a": 2, "b": 3}}}
+    selections = complete_selections(service)
+    previous = service.accept(service.propose(selections), expected_revision=None)
+    service.settings_source = lambda: {"vendor.setting": {"second": {"b": 3, "a": 2}, "first": 1},
+                                      "NEUROENGINE.command_timeout_s": 10}
+
+    assert service.propose(selections, include_host_settings=True) == previous
+
+
+@pytest.mark.parametrize("value", [float("nan"), {1}])
+def test_unknown_host_setting_serialization_errors_are_validation_errors(service, value):
+    service.settings_source = lambda: {"vendor.setting": 1}
+    selections = complete_selections(service)
+    previous = service.accept(service.propose(selections), expected_revision=None)
+    service.settings_source = lambda: {"vendor.setting": value}
+
+    with pytest.raises(PluginSchemaError, match="Unclassified host settings must contain finite JSON values"):
+        service.propose(selections, include_host_settings=True)
+
+    assert service.repository.get_activation() == previous
 
 
 def external_source_profile(service, monkeypatch, parameters):
@@ -382,8 +545,8 @@ def test_unavailable_outputs_remain_portable_until_their_kind_is_active(service,
     saved = service.update(profile.profile_id, name="Portable edited", parameters=profile.parameters,
                            expected_revision=profile.revision)
     assert service.repository.get_profile(saved.profile_id) == saved
-    candidate = service.propose(complete_selections(service, [{"slot": slot, "profile_id": saved.profile_id}]),
-                                settings={"ACTUATION.enabled": False})
+    service.settings_source = lambda: {"ACTUATION.enabled": False}
+    candidate = service.propose(complete_selections(service, [{"slot": slot, "profile_id": saved.profile_id}]))
 
     accepted = service.accept(candidate, expected_revision=None)
     assert accepted == candidate
