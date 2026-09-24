@@ -85,7 +85,7 @@ point inward:
 | Domain | `omnibci/domain` | Sessions, signals, epochs, classification results, and core interfaces |
 | Infrastructure | `omnibci/infrastructure` | Acquisition, signal processing, IPC, process management, plugins, persistence, and external-device adapters |
 | Shared kernel | `omnibci/shared` | Cross-process event contracts and common utilities with no internal package dependencies |
-| Configuration | `omnibci/conf` | Base TOML settings and active-profile overlays |
+| Configuration | `omnibci/conf` | Read-only defaults, user host settings, and worker snapshots |
 | Composition root | `omnibci/bootstrap.py` | Selects concrete implementations from configuration and assembles the object graph |
 
 The Application layer does not depend directly on Infrastructure.
@@ -100,7 +100,8 @@ reads each plugin's `manifest.toml` without importing its Python code. Concrete
 implementations are loaded on demand at the relevant execution boundary.
 
 Configure the user plugin directory with the `OMNIBCI_PLUGIN_DIR` environment
-variable or `PLUGINS.user_dir` in `omnibci/conf/settings.toml`.
+variable or `PLUGINS.user_dir` in the user configuration directory's
+`settings.toml`. Restart the backend after changing this deployment setting.
 
 ## Getting Started
 
@@ -152,23 +153,23 @@ cd ..
 
 ### 3. Configure the Data Source
 
-The base configuration is stored in `omnibci/conf/settings.toml`. Values in
-the active `omnibci/conf/profiles/<name>.toml` profile override matching base
-settings.
+After starting the backend and console below, use **Setup → Acquisition** to
+choose an installed source plugin and a named Plugin Profile. Scan45, Curry8,
+and File Reader can each have multiple saved profiles. For File Reader, set
+`data_file_path` in the Profile to an EEG file available on the acquisition
+machine. Save, review, and apply the selection before starting the engine.
 
-For reusable Scan45, Curry8, or file playback setups, use **Configuration →
-Acquisition profiles** in the console. Save a named profile and select it before
-starting the engine. These profiles live in the backend user's configuration
-directory and override only their acquisition parameters.
+Shared host controls are edited in **Settings → General**. They are saved in
+the backend user's `settings.toml`, separately from Plugin Profiles and the
+accepted `activation.toml`. Saving never changes an active experiment; use
+Review and Apply to apply supported changes. Conflicting edits require a
+refresh before saving again.
 
-For file playback, make sure the following configuration points to an EEG data
-file that exists on the local machine:
-
-```toml
-[ACQUISITION]
-signal_source = "file_reader"
-data_file_path = "/absolute/path/to/train.cnt"
-```
+The user directory defaults to `~/Library/Application Support/OmniBCI` on macOS,
+`~/.config/OmniBCI` on Linux (honoring `XDG_CONFIG_HOME`), and
+`%LOCALAPPDATA%/OmniBCI` on Windows. `OMNIBCI_CONFIG_DIR` can select an absolute
+directory. The packaged `omnibci/conf/settings.toml` supplies read-only defaults;
+retired named Application Profile overlays are not loaded.
 
 ### 4. Start the Backend
 
@@ -201,7 +202,7 @@ npm run dev
 
 Open <http://localhost:5173> and perform these steps:
 
-1. Select a data source and decoder.
+1. Select source/decoder plugins and Profiles in Setup, then review and apply.
 2. Start the engine.
 3. Connect the data source.
 4. Start reading.
@@ -217,21 +218,29 @@ VITE_BACKEND=http://192.168.1.10:8000 npm run dev
 
 ### Distributed Stimulation and Actuation
 
-To run stimulation on another machine, set `STIMULATION.auto_spawn` to `false`,
-configure `NEUROENGINE.message_server_ip` and `message_server_port`, and run the
-following command on the stimulation machine:
+To run stimulation on another machine, save `STIMULATION.auto_spawn = false`
+and the engine's reachable `NEUROENGINE.message_server_ip` / `message_server_port`
+in the host settings file. Review and apply these host settings while the engine
+is stopped. Copy the accepted `activation.toml` to the other node's configuration
+directory, install the pinned packages, and run:
 
 ```bash
 python scripts/run_stimulation.py
 ```
 
-To run actuation on another machine, set `ACTUATION.enabled` to `true` and
-`ACTUATION.auto_spawn` to `false`. Configure `server_ip`, `server_port`, and
-`effector`, then run the following command on the device machine:
+For Actuation, save `ACTUATION.enabled = true`, `ACTUATION.auto_spawn = false`,
+and its `server_ip` / `server_port` in host settings. Select the Effector Profile
+in Setup, review and apply the configuration, and distribute the accepted
+activation before running the following command on the device machine:
 
 ```bash
 python scripts/run_actuation.py
 ```
 
-All nodes in a distributed deployment must use compatible configuration, and
-the corresponding TCP ports must be allowed through their firewalls.
+Standalone scripts use the accepted snapshot, including its transport addresses;
+they do not initialize or substitute configuration. All nodes currently need the
+complete pinned package/schema catalog, including platform support for the engine
+plugins. The selected output plugins must support the node where they run.
+No remote configuration transfer or automatic live update is provided. Keep
+nodes on the same accepted revision and allow the corresponding TCP ports.
+See [configuration ownership](docs/configuration-ownership.md) for the boundaries.

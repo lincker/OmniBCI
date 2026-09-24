@@ -22,7 +22,7 @@ from omnibci.infrastructure.stimulation.stimulator import Stimulator
 
 def _make_stimulator():
     """Return a Stimulator with all IO mocked, ready to call start()."""
-    s = Stimulator()
+    s = Stimulator(settings_snapshot={"STIMULATION.renderer": "moderngl"})
     mock_renderer  = MagicMock()
     mock_paradigm  = MagicMock()
     mock_trigger   = MagicMock()

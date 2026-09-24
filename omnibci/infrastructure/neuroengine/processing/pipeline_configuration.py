@@ -22,15 +22,8 @@ class ConfiguredPipeline:
 def load_filters(snapshot: dict, context: PluginContext) -> list[Filter]:
     """Each ordered filter slot owns a fresh plugin instance."""
     bindings = configured_bindings(snapshot)
-    if bindings is not None:
-        return [load_configured_plugin(snapshot, binding.slot, "filter", Filter, context=context)
-                for binding in bindings if binding.kind == "filter"]
-    names = snapshot.get("ALGORITHM.filters", [])
-    if not isinstance(names, list) or any(not isinstance(name, str) or not name for name in names):
-        raise ValueError("ALGORITHM.filters must be an ordered list of plugin aliases")
-    return [load_configured_plugin(snapshot, f"processing.filter.{index}", "filter", Filter,
-                                   legacy_alias=name, context=context)
-            for index, name in enumerate(names)]
+    return [load_configured_plugin(snapshot, binding.slot, "filter", Filter, context=context)
+            for binding in bindings if binding.kind == "filter"]
 
 
 def _binding_content(binding):
@@ -42,8 +35,6 @@ def validate_output_context(current: dict, candidate: dict) -> dict:
     """Update output-module metadata after a drain without replacing the pipeline."""
     before = configured_bindings(current)
     after = configured_bindings(candidate)
-    if before is None or after is None:
-        raise ValueError("Runtime context requires pinned bindings")
     output_kinds = {"paradigm", "trigger", "effector"}
     if ([_binding_content(b) for b in before if b.kind not in output_kinds]
             != [_binding_content(b) for b in after if b.kind not in output_kinds]):
@@ -84,8 +75,6 @@ def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int,
         raise ValueError("Pipeline update requires a configuration revision")
     previous = configured_bindings(current)
     selected = configured_bindings(snapshot)
-    if previous is None or selected is None:
-        raise ValueError("Pipeline updates require exact plugin selections")
 
     flexible = {"decoder", "filter"}
     before_fixed = [_binding_content(binding) for binding in previous if binding.kind not in flexible]

@@ -58,14 +58,12 @@ class Stimulator:
         from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
         return load_configured_plugin(
             self._snapshot, "stimulation.trigger", "trigger", TriggerEmitter,
-            legacy_key="ACQUISITION.trigger",
         )
 
     def _load_paradigm(self, trigger: TriggerEmitter) -> Paradigm:
         from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
         paradigm = load_configured_plugin(
             self._snapshot, "stimulation.paradigm", "paradigm", Paradigm,
-            legacy_key="STIMULATION.paradigm", legacy_kwargs={"trigger": trigger},
         )
         paradigm.bind_trigger(trigger)
         return paradigm

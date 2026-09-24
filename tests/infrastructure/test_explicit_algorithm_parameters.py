@@ -27,7 +27,7 @@ def test_window_requires_at_least_two_host_samples(decoder_class):
 def forbid_settings_reads(monkeypatch):
     getter = Mock(side_effect=AssertionError("Explicit plugins must not read settings"))
     for module in (classic_40_cca, classic_40_fbcca):
-        monkeypatch.setattr(module, "settings", SimpleNamespace(get=getter))
+        monkeypatch.setattr(module, "settings", SimpleNamespace(get=getter), raising=False)
     return getter
 
 
@@ -41,7 +41,7 @@ def test_explicit_decoder_requires_host_sample_rate(decoder_class, context):
 @pytest.mark.parametrize("decoder_class", DECODERS)
 def test_decoder_defaults_use_host_sample_rate(decoder_class):
     decoder = decoder_class(parameters={}, context=PluginContext(sample_rate=250))
-    context_only_decoder = decoder_class(context=PluginContext(sample_rate=500))
+    context_only_decoder = decoder_class(parameters={}, context=PluginContext(sample_rate=500))
 
     assert (decoder.SAMPLE_RATE, decoder.SAMPLE_COUNT, decoder.OFFSET_LENGTH) == (250, 750, 35)
     assert context_only_decoder.SAMPLE_COUNT == 1500
@@ -82,39 +82,10 @@ def test_decoder_uses_explicit_window_slice(monkeypatch, decoder_class):
     np.testing.assert_array_equal(classify.call_args.args[0], window[:, 20:120])
 
 
-@pytest.mark.parametrize(
-    ("module", "decoder_class", "window_key", "offset_key"),
-    [
-        (classic_40_cca, classic_40_cca.Classic40CCA, "ssvep.duration", "ssvep.offset_time"),
-        (classic_40_fbcca, classic_40_fbcca.Classic40FBCCA,
-         "ALGORITHM.window_duration", "ALGORITHM.offset_time"),
-    ],
-)
-def test_legacy_values_and_explicit_values_produce_same_prediction(
-    monkeypatch, module, decoder_class, window_key, offset_key,
-):
-    values = {
-        "ACQUISITION.sample_rate": 250,
-        "ssvep.duration": 2.0,
-        "ssvep.offset_time": 0.2,
-        "ALGORITHM.window_duration": 1.5,
-        "ALGORITHM.offset_time": 0.3,
-        window_key: 0.5,
-        offset_key: 0.1,
-    }
-    getter = Mock(side_effect=lambda key, default=None: values.get(key, default))
-    monkeypatch.setattr(module, "settings", SimpleNamespace(get=getter))
-    legacy = decoder_class()
-    getter.side_effect = AssertionError("Explicit construction read legacy settings")
-    explicit = decoder_class(
-        parameters={"window_duration": 0.5, "offset_time": 0.1},
-        context=PluginContext(sample_rate=250),
-    )
-    window = np.random.default_rng(8).normal(size=(3, 160))
-
-    assert legacy.SAMPLE_COUNT == explicit.SAMPLE_COUNT == 125
-    assert legacy.OFFSET_LENGTH == explicit.OFFSET_LENGTH == 25
-    assert legacy.decode(window, window) == explicit.decode(window, window)
+@pytest.mark.parametrize("decoder_class", DECODERS)
+def test_implicit_decoder_configuration_is_rejected(decoder_class):
+    with pytest.raises(TypeError, match="parameters"):
+        decoder_class()
 
 
 def test_detector_accepts_explicit_empty_configuration():

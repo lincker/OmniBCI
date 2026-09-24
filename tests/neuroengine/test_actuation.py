@@ -147,7 +147,7 @@ class TestBuilderActuationOptIn:
             patch("omnibci.infrastructure.neuroengine.builder.AcquisitionWorker", return_value=MagicMock()),
             patch("omnibci.infrastructure.neuroengine.builder.SignalProcessingWorker", return_value=MagicMock()),
         ):
-            return NeuroEngineBuilder(NeuroEngineConfig(**cfg_kwargs)).build()
+            return NeuroEngineBuilder(NeuroEngineConfig(**cfg_kwargs), settings_snapshot={}).build()
 
     def test_disabled_by_default(self):
         eng = self._build(actuation_enabled=False)

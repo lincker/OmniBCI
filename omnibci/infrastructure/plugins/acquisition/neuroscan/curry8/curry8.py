@@ -14,7 +14,6 @@ from enum import IntEnum
 
 import numpy as np
 
-from omnibci.conf import settings
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.sdk import PluginContext, PluginParameters
 
@@ -190,26 +189,15 @@ class Curry8DataReader(SignalSource):
         port: int | None = None,
         timeout: float = 5.0,
         *,
-        parameters: PluginParameters | None = None,
+        parameters: PluginParameters,
         context: PluginContext | None = None,
     ) -> None:
         super().__init__()
-        if parameters is None and context is None:
-            self.data_provider_ip = host or settings.get(
-                "ACQUISITION.DATA_PROVIDER_IP", "127.0.0.1"
-            )
-            self.data_provider_port = int(
-                port
-                if port is not None
-                else settings.get("ACQUISITION.DATA_PROVIDER_PORT", self.DEFAULT_PORT)
-            )
-        else:
-            parameters = parameters if parameters is not None else {}
-            self.data_provider_ip = host or parameters.get("DATA_PROVIDER_IP", "127.0.0.1")
-            self.data_provider_port = int(
-                port if port is not None
-                else parameters.get("DATA_PROVIDER_PORT", self.DEFAULT_PORT)
-            )
+        self.data_provider_ip = host or parameters.get("DATA_PROVIDER_IP", "127.0.0.1")
+        self.data_provider_port = int(
+            port if port is not None
+            else parameters.get("DATA_PROVIDER_PORT", self.DEFAULT_PORT)
+        )
         if timeout <= 0:
             raise ValueError("timeout must be positive")
         self.timeout = timeout

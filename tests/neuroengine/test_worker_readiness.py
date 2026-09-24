@@ -165,6 +165,26 @@ async def test_worker_must_still_be_alive_when_other_worker_becomes_ready():
     assert engine.shutdown_complete
 
 
+def _pinned_worker_snapshot(broken_kind=None):
+    from dataclasses import replace
+    from omnibci.application.plugin_profiles import ProfileBinding
+    from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+    snapshot = {"CONFIG.revision": "r", "CONFIG.generation": "g", "ACQUISITION.sample_rate": 250}
+    bindings = []
+    for slot, kind, alias, parameters in (
+        ("acquisition.source", "acquisition", "file_reader", {"sample_rate": 250, "channel_number": 10}),
+        ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA", {}),
+        ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
+    ):
+        descriptor = PluginCatalog().resolve(kind, alias)
+        selection = descriptor.selection
+        if kind == broken_kind:
+            selection = replace(selection, package_id="missing-plugin")
+        bindings.append(ProfileBinding(slot, kind, None, selection, parameters).to_dict())
+    snapshot["PLUGINS.bindings"] = bindings
+    return snapshot
+
+
 @pytest.mark.integration
 @pytest.mark.parametrize("kind", ["acquisition", "processing"])
 @pytest.mark.parametrize("broken", [False, True])
@@ -174,14 +194,8 @@ def test_spawned_configured_worker_reports_real_plugin_initialization(kind, brok
     receiver, sender = context.Pipe(duplex=False)
     component = "Acquisition" if kind == "acquisition" else "Processing"
     reporter = StartupReporter(sender, component=component, config_revision="r", generation="g")
-    snapshot = {
-        "CONFIG.revision": "r", "CONFIG.generation": "g",
-        "ACQUISITION.signal_source": "file_reader", "ACQUISITION.sample_rate": 250,
-        "ALGORITHM.decoder": "THUBCI_SSVEP_classic40CCA",
-        "ALGORITHM.epoch_detector": "DEFAULT_EPOCH_DETECTOR", "ALGORITHM.filters": [],
-    }
-    if broken:
-        snapshot["ACQUISITION.signal_source" if kind == "acquisition" else "ALGORITHM.decoder"] = "missing-plugin"
+    broken_kind = ("acquisition" if kind == "acquisition" else "decoder") if broken else None
+    snapshot = _pinned_worker_snapshot(broken_kind)
     worker_type = AcquisitionWorker if kind == "acquisition" else SignalProcessingWorker
     worker = worker_type(commands, DataManager(buffer=data), EventBus(events),
                          settings_snapshot=snapshot, startup_reporter=reporter)
@@ -224,12 +238,9 @@ def test_spawned_configured_worker_reports_real_plugin_initialization(kind, brok
 @pytest.mark.parametrize("broken", [False, True])
 async def test_builder_manages_real_worker_startup_and_cleanup(broken):
     from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
-    engine = NeuroEngineBuilder(settings_snapshot={
-        "CONFIG.revision": "r", "CONFIG.generation": "g",
-        "ACQUISITION.signal_source": "file_reader", "ACQUISITION.sample_rate": 250,
-        "ALGORITHM.decoder": "missing-plugin" if broken else "THUBCI_SSVEP_classic40CCA",
-        "ALGORITHM.epoch_detector": "DEFAULT_EPOCH_DETECTOR", "ALGORITHM.filters": [],
-    }).build()
+    engine = NeuroEngineBuilder(settings_snapshot=_pinned_worker_snapshot(
+        "decoder" if broken else None,
+    )).build()
     engine.peer_gateway = MagicMock(start=AsyncMock(), stop=AsyncMock())
     try:
         if broken:

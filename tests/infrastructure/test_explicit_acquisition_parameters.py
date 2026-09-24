@@ -19,7 +19,7 @@ from omnibci.sdk import PluginContext
 def forbid_settings_reads(monkeypatch):
     getter = Mock(side_effect=AssertionError("Explicit plugins must not read settings"))
     for module in (file_module, curry8, scan45):
-        monkeypatch.setattr(module, "settings", SimpleNamespace(get=getter))
+        monkeypatch.setattr(module, "settings", SimpleNamespace(get=getter), raising=False)
     return getter
 
 
@@ -36,7 +36,7 @@ def test_file_reader_uses_explicit_path_and_chunk_size(tmp_path):
     assert not reader.is_connected
 
 
-@pytest.mark.parametrize("kwargs", [{"parameters": {}}, {"context": PluginContext()}])
+@pytest.mark.parametrize("kwargs", [{"parameters": {}}, {"parameters": {}, "context": PluginContext()}])
 def test_file_reader_explicit_defaults_never_fall_back_to_settings(kwargs):
     reader = file_module.FileReader(**kwargs)
 
@@ -54,7 +54,7 @@ def test_network_reader_explicit_parameters_and_defaults(source, default_port):
         context=PluginContext(sample_rate=500),
     )
     default_reader = source(parameters={})
-    context_only_reader = source(context=PluginContext())
+    context_only_reader = source(parameters={}, context=PluginContext())
 
     assert (reader.data_provider_ip, reader.data_provider_port) == ("192.0.2.8", 9001)
     assert not reader.is_connected
@@ -65,7 +65,7 @@ def test_network_reader_explicit_parameters_and_defaults(source, default_port):
 
 
 def test_curry_retains_positional_host_port_timeout():
-    reader = curry8.Curry8DataReader("192.0.2.4", 5678, 0.25)
+    reader = curry8.Curry8DataReader("192.0.2.4", 5678, 0.25, parameters={})
 
     assert reader.data_provider_ip == "192.0.2.4"
     assert reader.data_provider_port == 5678
@@ -98,7 +98,14 @@ def test_trigger_retains_positional_address(monkeypatch):
     monkeypatch.setattr(scan45.Scan45Trigger, "_set_parallel_port", open_port)
     monkeypatch.setattr(scan45.Scan45Trigger, "clear", Mock())
 
-    trigger = scan45.Scan45Trigger("0x3bc")
+    trigger = scan45.Scan45Trigger("0x3bc", parameters={})
 
     assert trigger.address == 0x3BC
     open_port.assert_called_once_with(0x3BC)
+
+
+@pytest.mark.parametrize("source", [file_module.FileReader, scan45.Scan45DataReader,
+                                   curry8.Curry8DataReader, scan45.Scan45Trigger])
+def test_implicit_configuration_is_rejected(source):
+    with pytest.raises(TypeError, match="parameters"):
+        source()

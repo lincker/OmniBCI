@@ -82,5 +82,4 @@ class AcquisitionWorker(mp.Process):
         snapshot = self.settings_snapshot if self.settings_snapshot is not None else settings.snapshot()
         self.data_source = load_configured_plugin(
             snapshot, "acquisition.source", "acquisition", SignalSource,
-            legacy_key="ACQUISITION.signal_source",
         )

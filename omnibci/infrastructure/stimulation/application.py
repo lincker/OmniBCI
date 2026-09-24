@@ -4,6 +4,7 @@
 # @Date     : 2025-05-10 23:15
 
 import logging
+from copy import deepcopy
 import multiprocessing as mp
 import asyncio
 from dataclasses import dataclass
@@ -35,15 +36,19 @@ class Stimulation:
         self,
         stop_event=None,
         startup_reporter: StartupReporter | None = None,
+        *,
+        settings_snapshot: dict | None = None,
     ):
         self._event_queue = mp.Queue()
         self._event_queue_closed = False
         self.event_bus = EventBus(self._event_queue)
 
         from omnibci.conf import settings
-        self._runtime_snapshot = settings.snapshot()
-        host = settings.get("NEUROENGINE.message_server_ip", "127.0.0.1")
-        port = int(settings.get("NEUROENGINE.message_server_port", 8765))
+        self._runtime_snapshot = (deepcopy(settings_snapshot) if settings_snapshot is not None
+                                  else settings.snapshot())
+        source = self._runtime_snapshot
+        host = source.get("NEUROENGINE.message_server_ip", "127.0.0.1")
+        port = int(source.get("NEUROENGINE.message_server_port", 8765))
         self.peer_channel = PeerChannel(engine_peer_config(host, port), self.event_bus)
 
         self.should_stop = False
@@ -51,7 +56,7 @@ class Stimulation:
         self._startup_reporter = startup_reporter
         self.stim_command_queue = Queue()
         self.result_command_queue = Queue()
-        self.stimulator = Stimulator()
+        self.stimulator = Stimulator(settings_snapshot=self._runtime_snapshot)
         self._render_task = None  # The IPC process survives a closed render window.
         self._paused = False
 

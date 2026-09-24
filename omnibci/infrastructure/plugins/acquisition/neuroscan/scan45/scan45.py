@@ -11,7 +11,6 @@ from enum import IntEnum
 import numpy as np
 
 from omnibci.domain.ports.acquisition import SignalSource, TriggerEmitter
-from omnibci.conf import settings
 from omnibci.sdk import PluginContext, PluginParameters
 
 
@@ -139,19 +138,13 @@ scan45_message_manager = Scan45Message()
 class Scan45DataReader(SignalSource):
     plugin_type = 'neuroscan_scan45_reader'
     def __init__(
-        self, *, parameters: PluginParameters | None = None,
+        self, *, parameters: PluginParameters,
         context: PluginContext | None = None,
     ) -> None:
         super().__init__()
-        if parameters is None and context is None:
-            self.data_provider_ip = settings.get("ACQUISITION.DATA_PROVIDER_IP")
-            self.data_provider_port = settings.get("ACQUISITION.DATA_PROVIDER_PORT")
-            self.channel_number = settings.get("ACQUISITION.channel_number", 10)
-        else:
-            parameters = parameters if parameters is not None else {}
-            self.data_provider_ip = parameters.get("DATA_PROVIDER_IP", "127.0.0.1")
-            self.data_provider_port = parameters.get("DATA_PROVIDER_PORT", 4000)
-            self.channel_number = parameters.get("channel_number", 10)
+        self.data_provider_ip = parameters.get("DATA_PROVIDER_IP", "127.0.0.1")
+        self.data_provider_port = parameters.get("DATA_PROVIDER_PORT", 4000)
+        self.channel_number = parameters.get("channel_number", 10)
         if type(self.channel_number) is not int or self.channel_number < 2:
             raise ValueError("channel_number must be an integer >= 2, including the event channel")
         # self.record_srate = config.get('record_srate', 1000)
@@ -300,16 +293,13 @@ class Scan45Trigger(TriggerEmitter):
     plugin_type = 'neuroscan_scan45_trigger'
     def __init__(
         self, parallel_port_address: str | None = None, *,
-        parameters: PluginParameters | None = None,
+        parameters: PluginParameters,
         context: PluginContext | None = None,
     ):
         super().__init__()
         if parallel_port_address is not None:
             self.parallel_port_address = parallel_port_address
-        elif parameters is None and context is None:
-            self.parallel_port_address = settings.get('ACQUISITION.parallel_port_address')
         else:
-            parameters = parameters if parameters is not None else {}
             self.parallel_port_address = parameters.get('parallel_port_address', '0x3100')
         self.address = int(self.parallel_port_address, 16)
         self.port = self._set_parallel_port(self.address)

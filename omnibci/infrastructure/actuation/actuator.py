@@ -2,8 +2,7 @@
 Actuator — device lifecycle for the actuation subsystem.
 
 Mirrors the plugin-loading part of stimulation's Stimulator: loads the
-Effector plugin named by ``ACTUATION.effector`` from the effectors plugin
-directory and drives it through the domain port (setup / play / teardown).
+Effector plugin pinned by the accepted activation and drives it through the domain port (setup / play / teardown).
 No render loop — the actuator is command-driven.
 """
 
@@ -40,13 +39,9 @@ class Actuator:
 
         from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
         snapshot = self._settings_snapshot if self._settings_snapshot is not None else settings.snapshot()
-        if "PLUGINS.bindings" not in snapshot and self._settings_snapshot is None:
-            snapshot["ACTUATION.effector"] = settings.get('ACTUATION.effector')
-        if "PLUGINS.bindings" not in snapshot and not snapshot.get("ACTUATION.effector"):
-            return None
         return load_configured_plugin(
             snapshot, "actuation.effector", "effector", Effector,
-            legacy_key="ACTUATION.effector", catalog=self._plugin_catalog,
+            catalog=self._plugin_catalog,
             loader=self._plugin_loader,
         )
 
@@ -62,7 +57,7 @@ class Actuator:
         effector = self._load_effector()
         if effector is None:
             raise RuntimeError(
-                "No Effector plugin loaded (check ACTUATION.effector and the "
+                "No Effector plugin loaded (check the accepted activation and the "
                 "effectors plugin directory)"
             )
         self.effector = effector

@@ -27,6 +27,7 @@ from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 from omnibci.infrastructure.plugins.plugin_catalog import user_plugins_dir
 from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
 from omnibci.infrastructure.plugins.market_adapter import configured_market_service
@@ -179,16 +180,7 @@ async def build_container(*, host_settings: dict | None = None) -> AppContainer:
 
     # Processes are single-use, so every restart requires a fresh engine graph.
     def startup_snapshot():
-        try:
-            accepted = plugin_profiles.repository.get_activation()
-            if accepted is not None:
-                plugin_profiles.validate_activation(accepted)
-                return plugin_profiles.materialize(accepted)
-        except (ValueError, KeyError, RuntimeError, OSError) as exc:
-            raise RuntimeError(f"Plugin configuration is invalid: {exc}") from exc
-        raise RuntimeError(
-            "Plugin configuration is not selected; review and apply valid plugin profiles before starting"
-        )
+        return accepted_runtime_settings(profiles=plugin_profiles)
 
     engine_service = NeuroEngineService(
         engine_factory=lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),

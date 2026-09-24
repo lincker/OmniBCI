@@ -148,6 +148,6 @@ def test_child_installs_snapshot_before_importing_application(
     entrypoint = getattr(module, f"_run_{component.lower()}")
     entrypoint(settings_snapshot=snapshot)
 
-    application.assert_called_once_with(stop_event=None)
+    application.assert_called_once_with(stop_event=None, settings_snapshot=snapshot)
     application.return_value.run.assert_called_once_with()
     settings.set.assert_not_called()

@@ -43,8 +43,7 @@ def _run_actuation(
 ) -> None:
     """Actuation subprocess entry point.  Runs in the spawned child process.
 
-    A supplied snapshot is installed before runtime imports. Without a snapshot,
-    *effector* remains a subprocess-local legacy settings override.
+    A pinned snapshot is required and installed before runtime imports.
     """
     reporter = (
         StartupReporter(
@@ -56,17 +55,15 @@ def _run_actuation(
         else None
     )
     try:
-        if settings_snapshot is not None:
-            from omnibci.conf import settings
-            selected = settings_snapshot.get("ACTUATION.effector")
-            if effector is not None and effector != selected:
-                raise RuntimeError("Apply the effector configuration before starting Actuation")
-            settings.use_snapshot(settings_snapshot)
-        elif effector is not None:
-            from omnibci.conf import settings
-            settings.set("ACTUATION.effector", effector)
+        if settings_snapshot is None:
+            raise RuntimeError("Actuation requires a pinned settings snapshot")
+        from omnibci.conf import settings
+        selected = settings_snapshot.get("ACTUATION.effector")
+        if effector is not None and effector != selected:
+            raise RuntimeError("Apply the effector configuration before starting Actuation")
+        settings.use_snapshot(settings_snapshot)
         from omnibci.infrastructure.actuation.application import Actuation
-        kwargs = {"stop_event": stop_event}
+        kwargs = {"stop_event": stop_event, "settings_snapshot": settings_snapshot}
         if reporter is not None:
             kwargs["startup_reporter"] = reporter
         Actuation(**kwargs).run()

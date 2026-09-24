@@ -183,7 +183,7 @@ class PluginProfileService:
     def resolve_settings(self) -> dict:
         snapshot = self.repository.get_activation()
         if snapshot is None:
-            return deepcopy(self.settings_source())
+            raise PluginSchemaError("Plugin configuration is not selected; review and apply profiles first")
         return self.materialize(snapshot)
 
     def materialize(self, snapshot: ActivationSnapshot) -> dict:

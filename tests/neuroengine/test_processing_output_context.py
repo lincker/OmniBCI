@@ -113,5 +113,5 @@ def test_output_context_rejects_changed_host_settings(context_update, key, value
 def test_output_context_requires_pinned_bindings(context_update):
     _, before, candidate, _ = context_update
     candidate.pop("PLUGINS.bindings")
-    with pytest.raises(ValueError, match="pinned bindings"):
+    with pytest.raises(RuntimeError, match="pinned"):
         validate_output_context(before, candidate)

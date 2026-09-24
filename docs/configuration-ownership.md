@@ -1,14 +1,14 @@
 # Configuration ownership and consolidation
 
-Status: steps 1 through 5 and the backend logging batch are committed.
+Status: steps 1 through 6 and the backend logging batch are committed.
 Activation routes share candidate construction and
 reject host changes that the current runtime cannot apply. New activations
 separate host settings from plugin inputs, and runtime projections use pinned
 bindings. Settings has one host editor; the old named Application Profile editor
 and file overlay are removed.
 Playback speed and the reviewed unused settings are also removed. Real-time
-worker logging remains deferred. Step 6 is in progress. The current instruction
-authorizes completing and committing the remaining steps after validation.
+worker logging remains deferred. The current instruction authorizes completing
+and committing the remaining steps after validation.
 
 The inventory covers all 38 leaf keys currently declared in
 [`settings.toml`](../omnibci/conf/settings.toml), all ten bundled plugin schemas,
@@ -241,8 +241,9 @@ inputs for this step; they are not live controls. Their existing values are
 copied into initial Plugin Profiles before filtering the activation host
 settings. This does not replace values with schema defaults, select another
 plugin, or rewrite actual configuration files. Retiring this initialization
-source requires a separate explicit startup policy; standalone legacy loading
-remains step 6. The startup-only/diagnostic change rules remain step 4.
+source requires a separate explicit first-initialization policy. Step 6 removes
+standalone runtime fallback; this explicit initializer remains. The
+startup-only/diagnostic change rules are covered by step 4.
 
 The plugin exclusion set covers the 19 reviewed flat keys, not arbitrary
 third-party legacy prefixes. Unknown legacy seed fields can still remain in
@@ -342,10 +343,53 @@ The existing engine transition guard still excludes Save during Apply.
 
 Backend assembly and host Review read saved values at their management
 boundaries. Saving does not change accepted or running configuration; backend
-startup checks from step 4 remain in effect. Worker `get()` and `snapshot()` read
+startup checks from step 4 remain in effect. Logging, container assembly, and
+the loaded startup baseline share one captured host snapshot. An edit during
+startup therefore cannot be mistaken for a value the backend already loaded.
+Worker `get()` and `snapshot()` read
 only their injected dictionary, without file access or added locking. Importing
 the global settings adapter does not read the user file. Explicit complete-file
 adapters remain available for isolated tests and embedding.
+
+### Step 6: explicit configuration at every launch
+
+Backend engine startup and `scripts/run_stimulation.py` /
+`scripts/run_actuation.py` use the same accepted-configuration resolver. It
+reads `activation.toml`, validates its pinned selections and resolved parameters,
+and materializes one runtime snapshot. It neither refreshes saved Profiles nor
+creates an activation. Missing, corrupt, unavailable, or unsupported selections
+fail before standalone application construction. Stimulation requires its
+accepted trigger; standalone Actuation requires an enabled subsystem and an
+accepted effector.
+
+The standalone scripts install that snapshot in the in-memory settings adapter
+and pass it to the application. Transport addresses and plugins therefore use
+the same accepted inputs. Managed subprocess entry points likewise require a
+snapshot and no longer mutate raw alias keys. `NeuroEngineBuilder` also requires
+an explicit snapshot; its host controls are derived from that snapshot unless a
+caller supplies an explicit builder configuration.
+
+Runtime plugin loading requires `PLUGINS.bindings`. It resolves the exact
+package/contribution/version and checks the schema version, with no alias
+fallback. Ordered filters come from their binding slots. File Reader, Scan45,
+Curry8, and Scan45 Trigger require explicit parameters; CCA and FBCCA also
+require sampling context. Their constructors no longer read global settings.
+Stateless constructor API 1 contributions can still be loaded through an exact
+binding; configurable contributions require constructor API 2. The explicit
+first-initialization alias mapper remains separate from runtime loading.
+
+Independent nodes currently need a copy of the accepted activation and its
+complete pinned package/schema catalog. Validation still checks the engine
+kinds for platform availability as well as the output kinds used on the node;
+role-specific catalog validation is not implemented. Saved Profile files are
+not required to run an accepted snapshot. This batch adds no remote transfer,
+revision handshake, accounts, cloud synchronization, or automatic update of
+external peers. Operators must keep independent nodes on the same accepted
+revision; existing live-apply restrictions for external peers remain in place.
+
+All configuration reads and validation happen at startup or management/apply
+boundaries. Acquisition, processing, trial, rendering, and command timing loops
+retain their existing execution model.
 
 ### Backend logging: first implementation batch
 
@@ -430,8 +474,8 @@ These are outside the 38-key file inventory but must have an explicit boundary.
 Existing in-memory `settings.use_snapshot()` adapters may remain while consumers
 are updated. In a managed worker these read the injected snapshot, so importing
 `settings` alone is not evidence of reading an independent disk configuration.
-Standalone startup must ultimately resolve an explicit accepted configuration;
-it must not silently select a different legacy alias.
+Standalone startup now resolves an explicit accepted configuration;
+it cannot silently select a different legacy alias.
 
 ## 6. Implementation and review gates
 
@@ -442,7 +486,7 @@ it must not silently select a different legacy alias.
 | 3 (committed) | Remove independently editable plugin values from activation host settings; retain any necessary flat fields only as derived runtime values | Source/decoder/context agree; accepted values survive saved Profile edits; fresh startup and existing valid activation handling are explicit |
 | 4 (committed) | Unify candidate construction and application semantics for all activation routes | The same input produces the same candidate; changes to ineffective legacy/diagnostic fields cannot cause a rebuild; startup-only settings cannot falsely report runtime success; preserve snapshot-driven Actuation topology and external-peer restrictions |
 | 5 (committed) | Store editable host settings in the user configuration directory with revision checks and atomic writes | Cross-platform paths, concurrent edits, interrupted writes, and backend restart persistence |
-| 6 | Use the accepted configuration at standalone launch; retire remaining implicit legacy plugin constructors/loaders | Managed and standalone launches resolve the same explicit selection; missing/invalid configuration fails clearly; external-peer limitations remain explicit |
+| 6 (committed) | Use the accepted configuration at standalone launch; retire remaining implicit legacy plugin constructors/loaders | Managed and standalone launches resolve the same explicit selection; missing/invalid configuration fails clearly; external-peer limitations remain explicit |
 
 Do not add an automatic legacy migration layer for this unreleased system.
 Preserve valid current Plugin Profiles and accepted activations where their

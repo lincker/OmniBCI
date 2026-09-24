@@ -27,16 +27,28 @@ def _worker(**overrides) -> SignalProcessingWorker:
 
 
 class TestFilterLoading:
+    @staticmethod
+    def snapshot(count=1, *, missing=False):
+        from dataclasses import replace
+        from omnibci.application.plugin_profiles import ProfileBinding
+        from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+        from uuid import uuid4
+        descriptor = PluginCatalog().resolve("filter", "BASELINE_CORRECTION")
+        selection = replace(descriptor.selection, package_id="missing") if missing else descriptor.selection
+        return {"PLUGINS.bindings": [ProfileBinding(
+            f"processing.filter.{uuid4()}", "filter", None, selection, {},
+        ).to_dict() for _ in range(count)]}
+
     def test_empty_configuration_returns_no_filters(self):
-        assert _worker(settings_snapshot={"ALGORITHM.filters": []})._load_filters() == []
+        assert _worker(settings_snapshot=self.snapshot(0))._load_filters() == []
 
     def test_unknown_filter_blocks_pipeline(self):
         from omnibci.infrastructure.plugins.plugin_catalog import PluginNotFoundError
         with pytest.raises(PluginNotFoundError):
-            _worker(settings_snapshot={"ALGORITHM.filters": ["MISSING"]})._load_filters()
+            _worker(settings_snapshot=self.snapshot(missing=True))._load_filters()
 
     def test_repeated_filters_construct_separate_instances_in_order(self):
-        filters = _worker(settings_snapshot={"ALGORITHM.filters": ["BASELINE_CORRECTION"] * 2})._load_filters()
+        filters = _worker(settings_snapshot=self.snapshot(2))._load_filters()
         assert len(filters) == 2
         assert filters[0] is not filters[1]
         assert all(item.plugin_type == "BASELINE_CORRECTION" for item in filters)

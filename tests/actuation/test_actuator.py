@@ -61,8 +61,6 @@ class TestExecute:
 
 class TestLifecycle:
     def test_user_effector_descriptor_drives_full_lifecycle(self, monkeypatch, tmp_path):
-        from omnibci.conf import settings
-
         plugin_root = tmp_path / "plugins"
         package_dir = plugin_root / "effectors" / "user-device"
         package_dir.mkdir(parents=True)
@@ -106,16 +104,11 @@ class TestLifecycle:
             encoding="utf-8",
         )
         monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(plugin_root))
-        original_get = settings.get
-        monkeypatch.setattr(
-            settings,
-            "get",
-            lambda key, *args: "user_device"
-            if key == "ACTUATION.effector"
-            else original_get(key, *args),
-        )
-
-        actuator = Actuator()
+        from omnibci.application.plugin_profiles import ProfileBinding
+        from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+        descriptor = PluginCatalog().resolve("effector", "user_device")
+        binding = ProfileBinding("actuation.effector", "effector", None, descriptor.selection, {})
+        actuator = Actuator(settings_snapshot={"PLUGINS.bindings": [binding.to_dict()]})
         actuator.setup()
         loaded = actuator.effector
         actuator.execute({"target_id": 7})

@@ -9,14 +9,16 @@ Old `active.toml` and `profiles/acquisition/` files are ignored and left untouch
 
 1. Reuse an existing activation without inspecting old Profile files or replacing
    it with current settings.
-2. When activation is absent, initialize Plugin Profiles from `settings.snapshot()`:
-   `settings.toml` plus the selected named application configuration, if any.
+2. When activation is absent, initialize Plugin Profiles from the captured saved
+   host settings and packaged first-initialization plugin defaults. Retired named
+   Application Profiles are never loaded. The user host file cannot override
+   plugin parameters; subsequent changes belong in Plugin Profiles.
 3. Validate all profiles before publishing an activation. Invalid plugin selections
    or parameters leave activation unset; the API server still starts.
 
 ```python
 result = SettingsPluginConfigInitializer(profile_service).initialize(
-    settings_snapshot=settings.snapshot(),
+    settings_snapshot=settings.saved_snapshot(),
 )
 ```
 
@@ -32,9 +34,10 @@ not an attempt to reconstruct that old Profile.
 ## Values and identities
 
 - Acquisition and Trigger parameters come from `ACQUISITION.<parameter>`.
-- CCA still reads `ssvep.duration` and `ssvep.offset_time`; differences from the
-  similarly named `ALGORITHM` values produce warnings.
-- FBCCA reads `ALGORITHM.window_duration` and `ALGORITHM.offset_time`.
+- The initializer maps CCA's `ssvep.duration` and `ssvep.offset_time`; differences
+  from the similarly named `ALGORITHM` defaults produce warnings.
+- It maps FBCCA's `ALGORITHM.window_duration` and `ALGORITHM.offset_time`.
+  At runtime both decoders use only their pinned parameters and source context.
 - Missing scalar settings use declared plugin defaults. Supplied values are
   validated and preserved, including zero.
 - Filter order and repeated aliases are retained with distinct instance IDs.
@@ -70,9 +73,11 @@ guard before persisting configuration or pausing modules.
 Saving an individual Profile validates its parameters and schema without
 requiring a complete activation or local platform support.
 
-The pure helpers in `omnibci.application.legacy_plugin_config` remain in use for
-mapping settings keys and for standalone runtime adapters. Removing the old
-Acquisition Profile store does not remove these settings-based launch paths.
+The pure helpers in `omnibci.application.legacy_plugin_config` remain only for
+explicit first-initialization mapping. Standalone processes and runtime loaders
+require accepted bindings and do not fall back to raw aliases. Standalone nodes
+currently need the complete pinned package/schema catalog; remote configuration
+distribution and role-specific catalog validation are not implemented.
 
 ## Failure and recovery
 

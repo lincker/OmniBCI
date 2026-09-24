@@ -42,7 +42,7 @@ def test_event_debounce_spans_packets(channels):
     np.testing.assert_array_equal(reader._unpack_int32_eeg(second)[-1], [0, 0, 7, 8])
 
 
-@pytest.mark.parametrize("kwargs", [{"parameters": {}}, {"context": PluginContext()}])
+@pytest.mark.parametrize("kwargs", [{"parameters": {}}, {"parameters": {}, "context": PluginContext()}])
 def test_explicit_default_retains_ten_channel_layout(kwargs):
     reader = scan45.Scan45DataReader(**kwargs)
     body, eeg = packet(10, [0, 7])
@@ -51,15 +51,6 @@ def test_explicit_default_retains_ten_channel_layout(kwargs):
     assert reader.channel_number == 10
     np.testing.assert_array_equal(decoded[:-1], eeg)
     np.testing.assert_array_equal(decoded[-1], [0, 7])
-
-
-@pytest.mark.parametrize("configured,expected", [(None, 10), (33, 33)])
-def test_legacy_constructor_reads_channel_count_with_default(monkeypatch, configured, expected):
-    settings = {"ACQUISITION.DATA_PROVIDER_IP": "127.0.0.1", "ACQUISITION.DATA_PROVIDER_PORT": 4000}
-    if configured is not None:
-        settings["ACQUISITION.channel_number"] = configured
-    monkeypatch.setattr(scan45, "settings", settings)
-    assert scan45.Scan45DataReader().channel_number == expected
 
 
 @pytest.mark.parametrize("channels", [None, True, False, 0, 1, -1, 3.5, "33"])

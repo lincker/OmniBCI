@@ -76,12 +76,12 @@ class SignalProcessingWorker(mp.Process):
         self._startup_stage = "decoder"
         decoder = load_configured_plugin(
             snapshot, "processing.decoder", "decoder", Decoder,
-            legacy_key="ALGORITHM.decoder", context=context,
+            context=context,
         )
         self._startup_stage = "epoch_detector"
         detector = load_configured_plugin(
             snapshot, "processing.epoch_detector", "epoch_detector", EpochDetector,
-            legacy_key="ALGORITHM.epoch_detector", context=context,
+            context=context,
         )
         self._startup_stage = "filters"
         return decoder, detector, self._load_filters(snapshot)

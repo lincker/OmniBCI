@@ -26,6 +26,7 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 from omnibci.infrastructure.stimulation.application import Stimulation
+from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,7 +38,10 @@ logger = logging.getLogger("run_stimulation")
 def main() -> None:
     logger.info("Starting Stimulation process...")
     try:
-        Stimulation().run()
+        snapshot = accepted_runtime_settings(active_kinds={"paradigm", "trigger"})
+        from omnibci.conf import settings
+        settings.use_snapshot(snapshot)
+        Stimulation(settings_snapshot=snapshot).run()
     except KeyboardInterrupt:
         logger.info("Stimulation process stopped by user.")
 

@@ -10,7 +10,7 @@ machine in a multi-machine deployment, with ACTUATION.auto_spawn = false):
 
 The process:
   1. Connects to the NeuroEngine actuation socket (settings: ACTUATION.server_*)
-  2. Loads the Effector plugin named by ACTUATION.effector and calls setup()
+  2. Loads the pinned Effector from the accepted activation and calls setup()
   3. Executes ActuationCommand events via Effector.play(command),
      acking each (ActuationAck) or reporting failure (ActuationFault)
   4. Publishes a heartbeat (ActuationState) so the engine's link watchdog
@@ -28,6 +28,7 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 from omnibci.infrastructure.actuation.application import Actuation
+from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,7 +40,10 @@ logger = logging.getLogger("run_actuation")
 def main() -> None:
     logger.info("Starting Actuation process...")
     try:
-        Actuation().run()
+        snapshot = accepted_runtime_settings(active_kinds={"effector"})
+        from omnibci.conf import settings
+        settings.use_snapshot(snapshot)
+        Actuation(settings_snapshot=snapshot).run()
     except KeyboardInterrupt:
         logger.info("Actuation process interrupted — exiting")
 

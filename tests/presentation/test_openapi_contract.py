@@ -132,15 +132,17 @@ def _schema(spec, name):
 class TestResponseDtos:
     def test_host_configuration_has_no_application_profile_contract(self, spec):
         assert not any(path.startswith("/api/v1/config/profiles") for path in spec["paths"])
-        assert set(_schema(spec, "ConfigResponse")["properties"]) == {"entries"}
+        assert set(_schema(spec, "ConfigResponse")["properties"]) == {"entries", "revision"}
         assert set(_schema(spec, "ConfigEntry")["properties"]) == {
             "key", "value", "type", "requires", "description",
         }
         request = _schema(spec, "PatchConfigRequest")
-        assert set(request["properties"]) == {"updates"}
+        assert set(request["properties"]) == {"updates", "expected_revision"}
+        assert set(request["required"]) == {"updates", "expected_revision"}
+        assert request["properties"]["expected_revision"]["pattern"] == "^[0-9a-f]{64}$"
         assert request["additionalProperties"] is False
         assert set(_schema(spec, "PatchConfigResponse")["properties"]) == {
-            "saved", "engine_restart_required",
+            "saved", "engine_restart_required", "revision",
         }
 
     def test_session_response_fields(self, spec):

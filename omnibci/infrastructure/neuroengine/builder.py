@@ -21,8 +21,7 @@ from omnibci.infrastructure.process_lifecycle import StartupChannel, StartupRepo
 @dataclass
 class NeuroEngineConfig:
     """
-    Configuration for NeuroEngineBuilder. Defaults mirror dataclass values; reads
-    them from settings.
+    Host controls for NeuroEngineBuilder, resolved from its runtime snapshot.
     """
     queue_size: int = 100                    # max items in each mp.Queue
     message_server_ip: str = "127.0.0.1"    # result-push server bind host
@@ -37,10 +36,9 @@ class NeuroEngineConfig:
     startup_timeout_s: float = 5.0          # configured worker initialization deadline
 
     @classmethod
-    def from_settings(cls, settings_snapshot: dict | None = None) -> "NeuroEngineConfig":
-        """Build config from settings.toml, falling back only for missing values."""
-        from omnibci.conf import settings
-        source = settings if settings_snapshot is None else settings_snapshot
+    def from_settings(cls, settings_snapshot: dict) -> "NeuroEngineConfig":
+        """Build host controls from an explicitly supplied runtime snapshot."""
+        source = settings_snapshot
 
         def _get(key, default):
             value = source.get(key, default)
@@ -68,13 +66,14 @@ class NeuroEngineBuilder:
 
     Usage::
 
-        engine = NeuroEngineBuilder().build()                       # config from settings
-        engine = NeuroEngineBuilder(NeuroEngineConfig(queue_size=50)).build()  # explicit
+        engine = NeuroEngineBuilder(settings_snapshot=snapshot).build()
+        engine = NeuroEngineBuilder(config, settings_snapshot=snapshot).build()
     """
 
     def __init__(self, config: NeuroEngineConfig | None = None,
                  *, settings_snapshot: dict | None = None) -> None:
-        # Default: read every tunable from settings ONCE, here.
+        if settings_snapshot is None:
+            raise ValueError("NeuroEngineBuilder requires a pinned settings snapshot")
         self._settings_snapshot = deepcopy(settings_snapshot)
         self._config = config or NeuroEngineConfig.from_settings(self._settings_snapshot)
 

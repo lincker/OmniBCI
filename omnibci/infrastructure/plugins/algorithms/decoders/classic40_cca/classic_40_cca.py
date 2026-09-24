@@ -20,7 +20,6 @@ import numpy as np
 from numpy import typing as npt
 from sklearn.cross_decomposition import CCA as skCCA
 
-from omnibci.conf import settings
 from omnibci.domain.ports.algorithm import Decoder, Prediction
 from omnibci.sdk import PluginContext, PluginParameters
 
@@ -58,22 +57,15 @@ class Classic40CCA(Decoder):
             return template_set
 
     def __init__(
-        self, *, parameters: PluginParameters | None = None,
-        context: PluginContext | None = None,
+        self, *, parameters: PluginParameters,
+        context: PluginContext,
     ) -> None:
         super().__init__()
-        if parameters is None and context is None:
-            self.SAMPLE_RATE = settings.get(
-                'ACQUISITION.sample_rate', default=settings.get('ssvep.sample_rate', default=1000))
-            window_duration = settings.get('ssvep.duration', default=3)
-            offset_time = settings.get('ssvep.offset_time', default=0.14)
-        else:
-            if context is None or context.sample_rate is None:
-                raise ValueError("Classic40CCA requires context.sample_rate")
-            parameters = parameters if parameters is not None else {}
-            self.SAMPLE_RATE = context.sample_rate
-            window_duration = parameters.get('window_duration', 3.0)
-            offset_time = parameters.get('offset_time', 0.14)
+        if context is None or context.sample_rate is None:
+            raise ValueError("Classic40CCA requires context.sample_rate")
+        self.SAMPLE_RATE = context.sample_rate
+        window_duration = parameters.get('window_duration', 3.0)
+        offset_time = parameters.get('offset_time', 0.14)
         self.SAMPLE_COUNT = int(window_duration * self.SAMPLE_RATE)
         if self.SAMPLE_COUNT < 2:
             raise ValueError("Decode window must contain at least two samples")

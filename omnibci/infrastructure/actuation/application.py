@@ -23,6 +23,7 @@ loaded Effector plugin. Differences from stimulation:
 
 import asyncio
 import logging
+from copy import deepcopy
 import multiprocessing as mp
 import time
 from queue import Empty, Full, Queue
@@ -52,22 +53,26 @@ class Actuation:
         self,
         stop_event: Any = None,
         startup_reporter: StartupReporter | None = None,
+        *,
+        settings_snapshot: dict | None = None,
     ):
         self._event_queue = mp.Queue()
         self._event_queue_closed = False
         self.event_bus = EventBus(self._event_queue)
 
         from omnibci.conf import settings
-        self._runtime_snapshot = settings.snapshot()
-        host = settings.get("ACTUATION.server_ip", "127.0.0.1")
-        port = int(settings.get("ACTUATION.server_port", 8001))
+        self._runtime_snapshot = (deepcopy(settings_snapshot) if settings_snapshot is not None
+                                  else settings.snapshot())
+        source = self._runtime_snapshot
+        host = source.get("ACTUATION.server_ip", "127.0.0.1")
+        port = int(source.get("ACTUATION.server_port", 8001))
         self._heartbeat_interval = float(
-            settings.get("ACTUATION.watchdog_timeout_s", 1.0)) / 2.0
+            source.get("ACTUATION.watchdog_timeout_s", 1.0)) / 2.0
         # Age gate for the slow-trickle case (old commands arriving one at a
         # time on a live-but-slow link, where drain-to-latest cannot help).
         # 0 = disabled; requires engine/device clocks roughly in sync to use.
         self._max_command_age = float(
-            settings.get("ACTUATION.max_command_age_s", 0.0))
+            source.get("ACTUATION.max_command_age_s", 0.0))
         self.peer_channel = PeerChannel(engine_peer_config(host, port), self.event_bus)
 
         self.should_stop = False
@@ -77,7 +82,7 @@ class Actuation:
         # command already executing remains serial; among commands waiting for
         # it, only the newest valid intent is retained.
         self.command_queue = Queue(maxsize=1)
-        self.actuator = Actuator()
+        self.actuator = Actuator(settings_snapshot=self._runtime_snapshot)
         self._heartbeat_task = None
         self._paused = False
         self._execution_task = None

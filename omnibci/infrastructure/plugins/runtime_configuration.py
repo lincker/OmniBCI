@@ -2,16 +2,15 @@
 from copy import deepcopy
 
 from omnibci.application.plugin_profiles import ProfileBinding
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.loader import PluginLoader, PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.sdk import PluginContext
 
 
-def configured_bindings(snapshot: dict) -> tuple[ProfileBinding, ...] | None:
-    """None is legacy configuration; an explicit empty list has no selections."""
+def configured_bindings(snapshot: dict) -> tuple[ProfileBinding, ...]:
+    """Require explicit selections, including an intentional empty list."""
     if "PLUGINS.bindings" not in snapshot:
-        return None
+        raise PluginLoadError("Runtime configuration requires pinned PLUGINS.bindings")
     raw = snapshot["PLUGINS.bindings"]
     if not isinstance(raw, list):
         raise PluginLoadError("PLUGINS.bindings must be a list")
@@ -30,33 +29,24 @@ def plugin_context(snapshot: dict) -> PluginContext:
 
 
 def load_configured_plugin(snapshot: dict, slot: str, kind: str, expected_base,
-                           *, legacy_key: str | None = None, legacy_alias: str | None = None,
-                           context: PluginContext | None = None, legacy_kwargs: dict | None = None,
+                           *, context: PluginContext | None = None,
                            catalog: PluginCatalog | None = None, loader=PluginLoader):
-    """Use exact selections when present; never substitute a missing version."""
-    catalog = catalog or PluginCatalog()
+    """Use exact accepted selections; never substitute aliases or versions."""
     bindings = configured_bindings(snapshot)
-    if bindings is not None:
-        binding = next((binding for binding in bindings if binding.slot == slot), None)
-        if binding is None or binding.kind != kind:
-            raise PluginLoadError(f"No {kind} selected for {slot}")
-        descriptor = catalog.resolve_selection(kind, binding.selection)
-        if descriptor.configuration_version != binding.configuration_version:
-            raise PluginLoadError(f"{slot}: configuration schema migration required")
-        parameters = deepcopy(binding.parameters)
-    else:
-        from omnibci.application.legacy_plugin_config import legacy_parameters
-        alias = legacy_alias if legacy_alias is not None else snapshot.get(legacy_key)
-        if not isinstance(alias, str) or not alias:
-            raise PluginLoadError(f"No {kind} selected for {slot}")
-        descriptor = catalog.resolve_legacy(kind, alias)
-        parameters = (legacy_parameters(CatalogConfigurationAdapter._adapt(descriptor), snapshot)
-                      if descriptor.api_version == "2" and descriptor.configuration_schema is not None else {})
+    binding = next((binding for binding in bindings if binding.slot == slot), None)
+    if binding is None or binding.kind != kind:
+        raise PluginLoadError(f"No {kind} selected for {slot}")
+    catalog = catalog or PluginCatalog()
+    descriptor = catalog.resolve_selection(kind, binding.selection)
+    if ((descriptor.api_version == "2" or descriptor.configuration_version is not None)
+            and descriptor.configuration_version != binding.configuration_version):
+        raise PluginLoadError(f"{slot}: configuration schema migration required")
+    parameters = deepcopy(binding.parameters)
     if descriptor.api_version == "2":
         return loader.instantiate(
             descriptor, expected_base, parameters=parameters,
             context=context or plugin_context(snapshot),
         )
-    if bindings is not None and parameters:
+    if parameters:
         raise PluginLoadError(f"{slot}: configurable plugins require constructor API 2")
-    return loader.instantiate(descriptor, expected_base, **(legacy_kwargs or {}))
+    return loader.instantiate(descriptor, expected_base)

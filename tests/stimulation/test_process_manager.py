@@ -252,10 +252,11 @@ def test_ready_state_detects_child_that_dies_later(
 
 
 @patch("omnibci.infrastructure.stimulation.application.Stimulation")
-def test_child_entrypoint_forwards_stop_event(mock_stimulation_cls):
+def test_child_entrypoint_forwards_stop_event(mock_stimulation_cls, monkeypatch):
+    monkeypatch.setattr("omnibci.conf.settings.use_snapshot", lambda _: None)
     stop_event = object()
 
-    _run_stimulation(paradigm=None, stop_event=stop_event)
+    _run_stimulation(paradigm=None, stop_event=stop_event, settings_snapshot={})
 
-    mock_stimulation_cls.assert_called_once_with(stop_event=stop_event)
+    mock_stimulation_cls.assert_called_once_with(stop_event=stop_event, settings_snapshot={})
     mock_stimulation_cls.return_value.run.assert_called_once_with()

@@ -7,7 +7,6 @@ import asyncio
 from copy import deepcopy
 from pathlib import Path
 
-from omnibci.conf import settings
 from omnibci.conf.paths import resolve_config_path
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.sdk import PluginContext, PluginParameters
@@ -17,7 +16,7 @@ class FileReader(SignalSource):
     plugin_type = 'file_reader'
 
     def __init__(
-        self, *, parameters: PluginParameters | None = None,
+        self, *, parameters: PluginParameters,
         context: PluginContext | None = None,
     ):
         super().__init__()
@@ -27,13 +26,8 @@ class FileReader(SignalSource):
         self._file_identity = None
         self._resume_checkpoint = None
         self._read_in_progress = False
-        if parameters is None and context is None:
-            self._chunk_size = settings.get('ACQUISITION.file_reader_chunk_size')
-            file_path = settings.get('ACQUISITION.data_file_path')
-        else:
-            parameters = parameters if parameters is not None else {}
-            self._chunk_size = parameters.get('file_reader_chunk_size', 100)
-            file_path = parameters.get('data_file_path', 'tests/fixture/train.cnt')
+        self._chunk_size = parameters.get('file_reader_chunk_size', 100)
+        file_path = parameters.get('data_file_path', 'tests/fixture/train.cnt')
         self.file_path = str(resolve_config_path(file_path))
         self.data = None
 
