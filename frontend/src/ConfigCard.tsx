@@ -62,13 +62,18 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
       await reload();
       setDraft({});
       setNotice(success);
-    } catch (e) { setError(e instanceof ApiError ? `[${e.code}] ${e.message}` : String(e)); }
+    } catch (e) {
+      const message = e instanceof ApiError ? `[${e.code}] ${e.message}` : String(e);
+      setError(e instanceof ApiError && e.status === 409
+        ? `${message}. Your edits are preserved. Refresh settings before saving again.` : message);
+    }
     finally { setBusy(false); }
   };
   const save = () => {
+    if (!config) return;
     const updates: Record<string, unknown> = {};
     try {
-      for (const entry of config?.entries ?? []) {
+      for (const entry of config.entries) {
         const raw = draft[entry.key];
         if (fieldLabels[entry.key] && raw !== undefined) {
           try { updates[entry.key] = parseInput(raw, entry.type); }
@@ -76,7 +81,7 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
         }
       }
     } catch (e) { setError(String(e)); return; }
-    void run(async () => { await api.patchConfig(updates); },
+    void run(async () => { await api.patchConfig(updates, config.revision); },
       "Host settings saved. Review and apply them to update the runtime.");
   };
   const reviewHostSettings = async () => {

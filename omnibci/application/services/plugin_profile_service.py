@@ -31,13 +31,15 @@ def _validate_source_metadata(binding: ProfileBinding) -> None:
 
 class PluginProfileService:
     def __init__(self, repository, catalog: PluginConfigurationCatalog, *,
-                 settings_source, change_guard=None, startup_settings_resolver=None):
+                 settings_source, change_guard=None, startup_settings_resolver=None,
+                 loaded_startup_settings=None):
         self.repository = repository
         self.catalog = catalog
         self.settings_source = settings_source
         self.change_guard = change_guard or (lambda requires_idle: nullcontext())
         self._startup_settings_resolver = startup_settings_resolver or backend_startup_settings
-        self._startup_settings = deepcopy(self._startup_settings_resolver(settings_source()))
+        loaded = settings_source() if loaded_startup_settings is None else loaded_startup_settings
+        self._startup_settings = deepcopy(self._startup_settings_resolver(loaded))
 
     def _parameters(self, kind, selection, parameters, configuration_version=None):
         definition = self.catalog.get(kind, selection)

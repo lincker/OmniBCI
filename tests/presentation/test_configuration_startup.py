@@ -242,6 +242,7 @@ def test_required_selections_are_checked_before_accept_or_start(startup_environm
         previous = client.app.state.container.plugin_profile_service.repository.get_activation()
         if missing_slot == "actuation.effector":
             environment.settings.set("ACTUATION.enabled", True)
+            environment.settings.save()
         bindings = tuple(binding for binding in previous.bindings
                          if missing_slot is not None and binding.slot != missing_slot)
         snapshot = ActivationSnapshot(environment.settings.snapshot(), bindings)
@@ -333,6 +334,7 @@ def test_inactive_output_plugins_can_retain_portable_selections(startup_environm
 def test_backend_logging_covers_startup_and_shutdown(startup_environment, tmp_path):
     startup_environment.settings.set("LOGGING.level", "INFO")
     startup_environment.settings.set("LOGGING.file_path", str(tmp_path / "backend.log"))
+    startup_environment.settings.save()
     app = create_app()
 
     with TestClient(app) as client:
@@ -352,8 +354,9 @@ def test_backend_logging_closes_when_startup_fails(startup_environment, tmp_path
     from omnibci.presentation import main
 
     startup_environment.settings.set("LOGGING.file_path", str(tmp_path / "failed-startup.log"))
+    startup_environment.settings.save()
 
-    async def failed_container():
+    async def failed_container(**kwargs):
         logging.getLogger("omnibci.test_backend").error("Container startup failed")
         raise RuntimeError("Container unavailable")
 
@@ -369,6 +372,7 @@ def test_backend_logging_closes_when_startup_fails(startup_environment, tmp_path
 
 def test_backend_logging_closes_when_shutdown_fails(startup_environment, tmp_path, monkeypatch):
     startup_environment.settings.set("LOGGING.file_path", str(tmp_path / "failed-shutdown.log"))
+    startup_environment.settings.save()
 
     async def failed_shutdown():
         logging.getLogger("omnibci.test_backend").error("Engine shutdown failed")
@@ -398,3 +402,41 @@ async def test_lifespan_error_stops_services_before_logging(startup_environment,
 
     stop.assert_awaited_once()
     assert not app.state.backend_logging.is_running
+
+
+def test_saved_logging_edit_during_startup_still_requires_backend_restart(
+    startup_environment, monkeypatch, tmp_path,
+):
+    from omnibci.presentation import main
+
+    initial_log = tmp_path / "loaded.log"
+    changed_log = tmp_path / "changed.log"
+    startup_environment.settings.set("LOGGING.file_path", str(initial_log))
+    startup_environment.settings.save()
+    create_logging = main.create_backend_logging
+    loaded = {}
+
+    def edit_after_logging_is_configured(*args, **kwargs):
+        service = create_logging(*args, **kwargs)
+        loaded["path"] = service.file_path
+        startup_environment.settings.set("LOGGING.file_path", str(changed_log))
+        startup_environment.settings.save()
+        return service
+
+    monkeypatch.setattr(main, "create_backend_logging", edit_after_logging_is_configured)
+    app = create_app()
+    with TestClient(app) as client:
+        assert app.state.backend_logging.file_path == loaded["path"]
+        accepted = _data(client, "/config/activation")
+        response = client.post("/api/v1/config/apply-plan", json={
+            "bindings": [{"slot": binding["slot"], "profile_id": binding["profile_id"]}
+                         for binding in accepted["bindings"]],
+            "expected_revision": accepted["revision"], "include_host_settings": True,
+            "refresh_slots": [],
+        })
+        assert response.status_code == 422, response.text
+        assert "Backend restart required" in response.json()["message"]
+        assert "LOGGING.file_path" in response.json()["message"]
+
+    assert loaded["path"].is_file()
+    assert not list(tmp_path.glob("changed*"))

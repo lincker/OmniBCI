@@ -34,7 +34,8 @@ def test_host_settings_can_be_saved_while_running_without_applying(application_c
     engine._running = True
     engine._applied_snapshot = application_config._settings.snapshot()
 
-    saved, restart = application_config.save({"ALGORITHM.baseline_duration": 2.0})
+    saved, restart, _ = application_config.save(
+        {"ALGORITHM.baseline_duration": 2.0}, expected_revision=application_config.read()[1])
 
     assert saved == ["ALGORITHM.baseline_duration"]
     assert restart is True
@@ -60,13 +61,15 @@ async def test_runtime_apply_blocks_host_save_without_partial_write(application_
     try:
         await asyncio.wait_for(entered.wait(), 3)
         with pytest.raises(ProfileRevisionConflict):
-            application_config.save({"NEUROENGINE.queue_size": 64})
+            application_config.save(
+                {"NEUROENGINE.queue_size": 64}, expected_revision=application_config.read()[1])
         assert application_config._settings.get("NEUROENGINE.queue_size") == 32
         assert path.read_bytes() == before
     finally:
         release.set()
         await task
-    application_config.save({"NEUROENGINE.queue_size": 64})
+    application_config.save(
+        {"NEUROENGINE.queue_size": 64}, expected_revision=application_config.read()[1])
     assert OmniBCISettings(path).get("NEUROENGINE.queue_size") == 64
 
 
@@ -75,15 +78,17 @@ async def test_host_save_excludes_runtime_apply_until_persisted(application_conf
     entered, release = threading.Event(), threading.Event()
     engine = NeuroEngineService(engine_factory=MagicMock())
     application_config._change_guard = engine.configuration_change
-    save = application_config._settings.save
+    update = application_config._settings.update
+    revision = application_config.read()[1]
 
-    def persist():
+    def persist(updates, *, expected_revision):
         entered.set()
         assert release.wait(3)
-        save()
+        return update(updates, expected_revision=expected_revision)
 
-    monkeypatch.setattr(application_config._settings, "save", persist)
-    thread = threading.Thread(target=lambda: application_config.save({"NEUROENGINE.queue_size": 64}))
+    monkeypatch.setattr(application_config._settings, "update", persist)
+    thread = threading.Thread(target=lambda: application_config.save(
+        {"NEUROENGINE.queue_size": 64}, expected_revision=revision))
     thread.start()
     try:
         assert await asyncio.to_thread(entered.wait, 3)

@@ -36,7 +36,7 @@ from omnibci.presentation.routers import engine, acquisition, stimulation, sessi
 from omnibci.presentation.routers import plugin_config, runtime_config, plugin_packages
 from omnibci.presentation.routers import plugin_package_lifecycle, plugin_market
 from omnibci.presentation.websockets.results import results_broadcaster, results_ws_endpoint
-from omnibci.bootstrap import build_container, create_backend_logging, register_engine_listeners
+from omnibci.bootstrap import build_container, create_backend_logging, load_host_settings, register_engine_listeners
 from omnibci.presentation.errors import register_exception_handlers
 from omnibci.presentation.schemas.common import ErrorResponse
 from omnibci.shared.events import EventType
@@ -58,14 +58,15 @@ ERROR_RESPONSES = {
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Keep logging available throughout startup and service shutdown."""
-    with create_backend_logging() as backend_logging:
+    host_settings = load_host_settings()
+    with create_backend_logging(host_settings) as backend_logging:
         app.state.backend_logging = backend_logging
-        async with _services_lifespan(app):
+        async with _services_lifespan(app, host_settings):
             yield
 
 
 @asynccontextmanager
-async def _services_lifespan(app: FastAPI):
+async def _services_lifespan(app: FastAPI, host_settings: dict):
     """
     Startup / shutdown lifecycle.
 
@@ -76,7 +77,7 @@ async def _services_lifespan(app: FastAPI):
       3. stores a hook that registers EventBus listeners (engine read-model +
          WebSocket broadcaster) once the engine process is actually running.
     """
-    container = await build_container()
+    container = await build_container(host_settings=host_settings)
 
     app.state.container = container
     app.state.engine_service = container.engine_service

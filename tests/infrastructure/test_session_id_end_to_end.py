@@ -63,7 +63,7 @@ def test_file_reader_session_id_matches_websocket_and_rest(
         actuation_enabled=False,
     )
 
-    async def build_acceptance_container():
+    async def build_acceptance_container(**kwargs):
         engine_service = NeuroEngineService(
             engine_factory=lambda: NeuroEngineBuilder(engine_config).build()
         )

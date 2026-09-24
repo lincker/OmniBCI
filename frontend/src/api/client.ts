@@ -106,6 +106,6 @@ export const api = {
 
   // ---- host settings ------------------------------------------------------
   getConfig: () => get<ConfigData>("/api/v1/config"),
-  patchConfig: (updates: Record<string, unknown>) =>
-    send<PatchConfigResult>("PATCH", "/api/v1/config", { updates }),
+  patchConfig: (updates: Record<string, unknown>, expected_revision: string) =>
+    send<PatchConfigResult>("PATCH", "/api/v1/config", { updates, expected_revision }),
 };

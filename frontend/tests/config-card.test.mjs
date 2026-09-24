@@ -91,7 +91,7 @@ async function click(component, label) {
 const dialog = (component) => elements(component.tree).find((item) => item.type.name === "ConfigDialog");
 
 async function withSettings(action, overrides = {}) {
-  const cfg = { entries: [
+  const cfg = { revision: "a".repeat(64), entries: [
     { key: "ALGORITHM.baseline_duration", type: "float", value: 0.5, requires: "engine_restart", description: "Baseline duration in seconds" },
     { key: "NEUROENGINE.queue_size", type: "int", value: 32, requires: "engine_restart", description: "Queue capacity" },
   ] };
@@ -113,9 +113,11 @@ async function withSettings(action, overrides = {}) {
     }
     else if (path === "/api/v1/config/activation" && method === "GET") data = activation;
     else if (path === "/api/v1/config" && method === "PATCH") {
+      if (body.expected_revision !== cfg.revision) return { ok: false, status: 409, json: async () => ({ code: "CONFLICT", message: "Host settings changed" }) };
       if (overrides.patchError) return { ok: false, status: 422, json: async () => ({ code: "VALIDATION_ERROR", message: "Value is invalid" }) };
       for (const entry of cfg.entries) if (entry.key in body.updates) entry.value = body.updates[entry.key];
-      data = { saved: Object.keys(body.updates), engine_restart_required: true };
+      cfg.revision = "b".repeat(64);
+      data = { saved: Object.keys(body.updates), engine_restart_required: true, revision: cfg.revision };
     } else throw new Error(`Unexpected request: ${method} ${path}`);
     return { ok: true, json: async () => ({ success: true, data: structuredClone(data) }) };
   };
@@ -153,7 +155,7 @@ test("Save sends host updates only and Review retains every selected plugin bind
     await change(component, "NEUROENGINE.queue_size", "64");
     await click(component, "Save settings");
     assert.deepEqual(calls.filter((call) => call.method === "PATCH"), [{ path: "/api/v1/config", method: "PATCH", body: {
-      updates: { "ALGORITHM.baseline_duration": 0.75, "NEUROENGINE.queue_size": 64 },
+      updates: { "ALGORITHM.baseline_duration": 0.75, "NEUROENGINE.queue_size": 64 }, expected_revision: "a".repeat(64),
     } }]);
     assert.deepEqual(reviews, []);
     assert.deepEqual(applied, []);
@@ -234,4 +236,32 @@ test("runtime recovery blocks Review while host settings remain editable", async
     assert.equal(button(component.tree, "Review and apply host settings").props.disabled, true);
     assert.deepEqual(reviews, []);
   }, { runtime: { blocked: true } });
+});
+
+
+test("a stale save preserves the draft and requires an explicit refresh", async () => {
+  await withSettings(async ({ component, cfg, calls, dirty, busy }) => {
+    await change(component, "NEUROENGINE.queue_size", "64");
+    cfg.entries.find((entry) => entry.key === "NEUROENGINE.queue_size").value = 128;
+    cfg.revision = "c".repeat(64);
+    await click(component, "Save settings");
+    assert.match(text(component.tree), /CONFLICT.*Refresh settings before saving again/);
+    assert.equal(input(component, "NEUROENGINE.queue_size").props.value, "64");
+    assert.equal(dirty.at(-1), true);
+    assert.equal(busy.at(-1), false);
+    assert.equal(button(component.tree, "Review and apply host settings").props.disabled, true);
+    assert.equal(calls.filter((call) => call.method === "PATCH").length, 1);
+    assert.equal(calls.filter((call) => call.method === "GET").length, 1);
+    assert.equal(cfg.entries.find((entry) => entry.key === "NEUROENGINE.queue_size").value, 128);
+    const refresh = elements(component.tree).find((item) => item.props["aria-label"] === "Refresh settings");
+    refresh.props.onClick(); await component.settle();
+    assert.equal(dialog(component).props.message, "Discard unsaved host settings?");
+    dialog(component).props.onConfirm(); await component.settle();
+    assert.equal(input(component, "NEUROENGINE.queue_size").props.value, "128");
+    assert.equal(dirty.at(-1), false);
+    await change(component, "NEUROENGINE.queue_size", "256");
+    await click(component, "Save settings");
+    assert.equal(calls.filter((call) => call.method === "PATCH").at(-1).body.expected_revision, "c".repeat(64));
+    assert.equal(cfg.entries.find((entry) => entry.key === "NEUROENGINE.queue_size").value, 256);
+  });
 });

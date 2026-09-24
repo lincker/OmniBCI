@@ -1,14 +1,14 @@
 # Configuration ownership and consolidation
 
-Status: steps 1 through 4 and the backend logging batch are committed.
+Status: steps 1 through 5 and the backend logging batch are committed.
 Activation routes share candidate construction and
 reject host changes that the current runtime cannot apply. New activations
 separate host settings from plugin inputs, and runtime projections use pinned
 bindings. Settings has one host editor; the old named Application Profile editor
 and file overlay are removed.
 Playback speed and the reviewed unused settings are also removed. Real-time
-worker logging remains deferred. Steps 5 and 6 require separate review;
-no automatic commits are authorized.
+worker logging remains deferred. Step 6 is in progress. The current instruction
+authorizes completing and committing the remaining steps after validation.
 
 The inventory covers all 38 leaf keys currently declared in
 [`settings.toml`](../omnibci/conf/settings.toml), all ten bundled plugin schemas,
@@ -178,8 +178,9 @@ are edited through Setup / Plugin Profiles. Advanced and all named Application
 Profile controls have been removed.
 
 `GET /api/v1/config` returns `entries` with a saved `value`, not a claim about
-the currently running value. `PATCH /api/v1/config` accepts only `updates` and
-returns `saved` keys plus `engine_restart_required`. Plugin keys and mixed
+the currently running value. Step 5 adds a saved `revision` to this response.
+`PATCH /api/v1/config` accepts `updates` and the required `expected_revision`, and
+returns `saved` keys, the new `revision`, and `engine_restart_required`. Plugin keys and mixed
 host/plugin writes are rejected before mutation. Removed `scope` and
 `description` fields are rejected; `/api/v1/config/profiles` routes no longer
 exist. Plugin Profile APIs and accepted activation remain separate and intact.
@@ -302,6 +303,50 @@ still prevents an idle selection from being accepted over unconfirmed runtime
 resources. Running output availability and external-peer restrictions remain
 enforced before any pause, rebuild, or persistence.
 
+### Step 5: user host settings and optimistic saves
+
+The packaged `omnibci/conf/settings.toml` is a read-only defaults source. Saved
+host overrides live in `settings.toml` alongside `activation.toml` and
+`plugin-profiles/` in the shared user configuration directory:
+
+| Platform | Default directory |
+| --- | --- |
+| macOS | `~/Library/Application Support/OmniBCI` |
+| Linux | `$XDG_CONFIG_HOME/OmniBCI`, normally `~/.config/OmniBCI` |
+| Windows | `%LOCALAPPDATA%/OmniBCI` |
+
+`OMNIBCI_CONFIG_DIR` remains an absolute deployment override. A missing user
+settings file uses the packaged defaults without copying them. A save writes
+only the user overrides, preserving their TOML comments. The user file accepts
+the existing runtime and backend-startup host keys; plugin values, generated
+fields, retired profile metadata, and unknown keys fail clearly. A corrupt file
+is never silently replaced. Pointing the user file at the defaults file is
+rejected. No existing Profile, activation, or retired file is migrated.
+
+GET returns the saved values and a SHA-256 revision from the same read. PATCH
+requires that revision and returns the committed revision. The token includes
+the defaults bytes, user file bytes, and presence of the user file, so manual
+edits, deletion, and changes to defaults invalidate stale edits. This is a host
+storage revision, independent of the BCI activation revision. A conflict returns
+409; the console retains its draft and requires an explicit refresh. There is
+no automatic overwrite or retry. Invalid input returns 422; inaccessible
+storage returns 503. Queue capacity must be positive; baseline duration must be
+finite and nonnegative.
+
+Host writes use a process lock (`flock` on POSIX, `msvcrt.locking` on Windows),
+then compare the current revision and replace the document through a flushed,
+fsynced temporary file in the same directory. A failed write leaves the previous
+saved file and committed in-memory values intact. These guarantees cover
+cooperating API writers; an external editor does not participate in the lock.
+The existing engine transition guard still excludes Save during Apply.
+
+Backend assembly and host Review read saved values at their management
+boundaries. Saving does not change accepted or running configuration; backend
+startup checks from step 4 remain in effect. Worker `get()` and `snapshot()` read
+only their injected dictionary, without file access or added locking. Importing
+the global settings adapter does not read the user file. Explicit complete-file
+adapters remain available for isolated tests and embedding.
+
 ### Backend logging: first implementation batch
 
 `LOGGING.level` and `LOGGING.file_path` are host settings read from
@@ -396,7 +441,7 @@ it must not silently select a different legacy alias.
 | 2 (committed) | Restrict the settings writer to host-owned values; remove old Application Profile editing/activation, file overlays, and duplicate UI entry points | Legacy plugin writes and scope fields are rejected; Plugin Profile CRUD still works; host settings remain editable; fresh initialization and existing accepted values remain correct |
 | 3 (committed) | Remove independently editable plugin values from activation host settings; retain any necessary flat fields only as derived runtime values | Source/decoder/context agree; accepted values survive saved Profile edits; fresh startup and existing valid activation handling are explicit |
 | 4 (committed) | Unify candidate construction and application semantics for all activation routes | The same input produces the same candidate; changes to ineffective legacy/diagnostic fields cannot cause a rebuild; startup-only settings cannot falsely report runtime success; preserve snapshot-driven Actuation topology and external-peer restrictions |
-| 5 | Store editable host settings in the user configuration directory with revision checks and atomic writes | Cross-platform paths, concurrent edits, interrupted writes, and backend restart persistence |
+| 5 (committed) | Store editable host settings in the user configuration directory with revision checks and atomic writes | Cross-platform paths, concurrent edits, interrupted writes, and backend restart persistence |
 | 6 | Use the accepted configuration at standalone launch; retire remaining implicit legacy plugin constructors/loaders | Managed and standalone launches resolve the same explicit selection; missing/invalid configuration fails clearly; external-peer limitations remain explicit |
 
 Do not add an automatic legacy migration layer for this unreleased system.

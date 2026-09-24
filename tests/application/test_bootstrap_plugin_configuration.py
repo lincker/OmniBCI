@@ -146,6 +146,7 @@ async def test_host_review_compares_loaded_backend_values_after_restart(bootstra
     before = first.plugin_profile_service.repository.get_activation()
     references = [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in before.bindings]
     bootstrap_settings.set("NEUROENGINE.command_timeout_s", 15.0)
+    bootstrap_settings.save()
     original_files = _toml_files(config_root())
 
     with pytest.raises(PluginSchemaError, match="Backend restart required.*NEUROENGINE.command_timeout_s"):
@@ -172,6 +173,7 @@ async def test_plugin_directory_restart_check_uses_effective_environment_path(bo
     references = [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in before.bindings]
     original_files = _toml_files(config_root())
     bootstrap_settings.set("PLUGINS.user_dir", str(tmp_path / "masked-by-environment"))
+    bootstrap_settings.save()
 
     plan = container.runtime_configuration.plan(references, expected_revision=before.revision,
                                                 include_host_settings=True, refresh_slots=[])
@@ -317,6 +319,7 @@ async def test_retired_application_overlay_cannot_change_accepted_or_initial_con
 ])
 async def test_failed_initialization_keeps_management_available(bootstrap_settings, key, value):
     bootstrap_settings.set(key, value)
+    bootstrap_settings.save()
     container = await build_container()
 
     assert container.plugin_profile_service.repository.get_activation() is None
@@ -342,3 +345,42 @@ async def test_broken_activation_keeps_management_available_without_replacement(
     with pytest.raises(RuntimeError, match="configuration is invalid"):
         container.engine_service._snapshot_provider()
     assert _toml_files(repository.root) == original_files
+
+
+@pytest.mark.asyncio
+async def test_saved_edit_during_bootstrap_does_not_change_loaded_startup_baseline(
+    bootstrap_settings, monkeypatch,
+):
+    build_repository = bootstrap._build_session_repository
+
+    def edit_saved_settings(kind):
+        bootstrap_settings.set("NEUROENGINE.command_timeout_s", 20.0)
+        bootstrap_settings.save()
+        return build_repository(kind)
+
+    monkeypatch.setattr(bootstrap, "_build_session_repository", edit_saved_settings)
+    container = await build_container()
+    service = container.plugin_profile_service
+    accepted = service.repository.get_activation()
+    bindings = [{"slot": binding.slot, "profile_id": binding.profile_id}
+                for binding in accepted.bindings]
+
+    assert container.command_results._timeout_s == 10.0
+    with pytest.raises(PluginSchemaError, match="Backend restart required.*NEUROENGINE.command_timeout_s"):
+        service.propose(bindings, include_host_settings=True, refresh_slots=[])
+
+
+def test_effective_plugin_directory_uses_supplied_startup_snapshot(
+    bootstrap_settings, monkeypatch, tmp_path,
+):
+    monkeypatch.delenv("OMNIBCI_PLUGIN_DIR")
+    loaded_directory = tmp_path / "loaded-plugins"
+    bootstrap_settings.set("PLUGINS.user_dir", str(loaded_directory))
+    bootstrap_settings.save()
+    loaded = bootstrap_settings.saved_snapshot()
+    bootstrap_settings.set("PLUGINS.user_dir", str(tmp_path / "new-plugins"))
+    bootstrap_settings.save()
+
+    resolved = bootstrap._effective_backend_startup_settings(loaded)
+
+    assert resolved["PLUGINS.user_dir"] == str(loaded_directory.resolve())

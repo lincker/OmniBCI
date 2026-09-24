@@ -1,5 +1,6 @@
 """Whitelist-governed host settings, saved separately from runtime activation."""
 
+import math
 import threading
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -21,10 +22,21 @@ CONFIG_WHITELIST: Dict[str, ConfigPolicy] = {
     "NEUROENGINE.queue_size": ConfigPolicy("int", "engine-restart", "Inter-process queue capacity"),
 }
 
+
+def _valid_baseline(value: Any) -> bool:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value) and value >= 0
+    except OverflowError:
+        return False
+
+
 _CHECKS = {
-    "int": lambda v: isinstance(v, int) and not isinstance(v, bool),
-    "float": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+    "int": lambda v: isinstance(v, int) and not isinstance(v, bool) and v > 0,
+    "float": _valid_baseline,
 }
+_EXPECTATIONS = {"int": "positive integer", "float": "finite nonnegative number"}
 
 
 class ConfigKeyNotAllowedError(KeyError):
@@ -47,16 +59,19 @@ class ConfigService:
         self._change_guard = change_guard or (lambda requires_idle: nullcontext())
         self._write_lock = threading.RLock()
 
-    def list_entries(self) -> List[dict]:
+    def read(self) -> Tuple[List[dict], str]:
         with self._write_lock:
-            snapshot = self._settings.snapshot()
+            snapshot, revision = self._settings.read_saved()
         return [{
             "key": key,
             "value": snapshot.get(key),
             "type": policy.type,
             "requires": policy.requires,
             "description": policy.description,
-        } for key, policy in CONFIG_WHITELIST.items()]
+        } for key, policy in CONFIG_WHITELIST.items()], revision
+
+    def list_entries(self) -> List[dict]:
+        return self.read()[0]
 
     def _validate(self, updates: Dict[str, Any]) -> Dict[str, Any]:
         if not updates:
@@ -65,7 +80,7 @@ class ConfigService:
         if unknown:
             raise ConfigKeyNotAllowedError(unknown)
         bad = {
-            key: f"expected {CONFIG_WHITELIST[key].type}"
+            key: f"expected {_EXPECTATIONS[CONFIG_WHITELIST[key].type]}"
             for key, value in updates.items()
             if not _CHECKS[CONFIG_WHITELIST[key].type](value)
         }
@@ -77,11 +92,9 @@ class ConfigService:
             for key, value in updates.items()
         }
 
-    def save(self, updates: Dict[str, Any]) -> Tuple[List[str], bool]:
+    def save(self, updates: Dict[str, Any], *, expected_revision: str) -> Tuple[List[str], bool, str]:
         clean = self._validate(updates)
         with self._write_lock, self._change_guard(False):
-            for key, value in clean.items():
-                self._settings.set(key, value)
-            self._settings.save()
+            revision = self._settings.update(clean, expected_revision=expected_revision)
         restart = any(CONFIG_WHITELIST[key].requires == "engine-restart" for key in clean)
-        return sorted(clean), restart
+        return sorted(clean), restart, revision

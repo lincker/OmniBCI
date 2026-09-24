@@ -75,7 +75,7 @@ def test_lifespan_registers_engine_listeners(monkeypatch):
 
     container, engine = _make_container()
 
-    async def _fake_build_container():
+    async def _fake_build_container(**kwargs):
         return container
 
     monkeypatch.setattr(main_mod, "build_container", _fake_build_container)
@@ -107,7 +107,7 @@ def test_no_dangling_unused_hook_on_app_state(monkeypatch):
 
     container, _ = _make_container()
 
-    async def _fake_build_container():
+    async def _fake_build_container(**kwargs):
         return container
 
     monkeypatch.setattr(main_mod, "build_container", _fake_build_container)

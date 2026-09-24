@@ -62,7 +62,7 @@ def vendor_plugins_dir() -> Path:
     return pkg_root / "infrastructure" / "plugins"
 
 
-def user_plugins_dir() -> Optional[Path]:
+def user_plugins_dir(*, host_settings: dict | None = None) -> Optional[Path]:
     """Resolve the user plugins directory; return None if undeterminable.
 
     Resolution order
@@ -85,7 +85,8 @@ def user_plugins_dir() -> Optional[Path]:
     # 2. settings.toml override (lazy import to avoid circular dependency)
     try:
         from omnibci.conf import settings  # noqa: PLC0415
-        raw = settings._raw_get(settings._data, "PLUGINS.user_dir")
+        raw = (settings.host_get("PLUGINS.user_dir") if host_settings is None
+               else host_settings.get("PLUGINS.user_dir"))
         if raw:
             return Path(raw)
     except Exception:

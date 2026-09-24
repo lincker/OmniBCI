@@ -1099,6 +1099,11 @@ export interface components {
         ConfigResponse: {
             /** Entries */
             entries: components["schemas"]["ConfigEntry"][];
+            /**
+             * Revision
+             * @description Revision of the saved host settings
+             */
+            revision: string;
         };
         /** CreatePluginProfileRequest */
         CreatePluginProfileRequest: {
@@ -1335,11 +1340,21 @@ export interface components {
             updates: {
                 [key: string]: unknown;
             };
+            /**
+             * Expected Revision
+             * @description Saved revision returned by GET /config
+             */
+            expected_revision: string;
         };
         /** PatchConfigResponse */
         PatchConfigResponse: {
             /** Saved */
             saved: string[];
+            /**
+             * Revision
+             * @description Revision after saving the host settings
+             */
+            revision: string;
             /**
              * Engine Restart Required
              * @description Whether applying these saved changes requires an engine restart

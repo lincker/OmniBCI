@@ -2,6 +2,7 @@
 import base64
 import json
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Event
 from unittest.mock import Mock
 
@@ -24,13 +25,14 @@ def isolated_composition(tmp_path, monkeypatch):
     for name in ("OMNIBCI_MARKET_URL", "OMNIBCI_MARKET_REPOSITORY_ID", "OMNIBCI_MARKET_TRUSTED_KEYS", "OMNIBCI_MARKET_CACHE_DIR"):
         monkeypatch.delenv(name, raising=False)
     settings_path = tmp_path / "settings.toml"
-    settings_path.write_bytes(conf.settings._config_path.read_bytes())
+    settings_path.write_bytes(Path(conf.__file__).with_name("settings.toml").read_bytes())
     settings = conf.OmniBCISettings(settings_path)
     settings.set("STIMULATION.auto_spawn", False)
     settings.set("ACTUATION.auto_spawn", False)
     settings.set("ACTUATION.enabled", False)
     settings.set("PERSISTENCE.session_repository", "in_memory")
     settings.set("ACQUISITION.signal_source", "file_reader")
+    settings.save()
     monkeypatch.setattr(conf, "settings", settings)
     builder = Mock(side_effect=AssertionError("Package APIs must not construct an engine graph"))
     monkeypatch.setattr("omnibci.bootstrap.NeuroEngineBuilder.build", builder)

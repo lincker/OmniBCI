@@ -4933,11 +4933,17 @@
             },
             "type": "array",
             "title": "Entries"
+          },
+          "revision": {
+            "type": "string",
+            "title": "Revision",
+            "description": "Revision of the saved host settings"
           }
         },
         "type": "object",
         "required": [
-          "entries"
+          "entries",
+          "revision"
         ],
         "title": "ConfigResponse"
       },
@@ -5546,12 +5552,19 @@
             "type": "object",
             "title": "Updates",
             "description": "Dotted host settings key to saved value"
+          },
+          "expected_revision": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Expected Revision",
+            "description": "Saved revision returned by GET /config"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "updates"
+          "updates",
+          "expected_revision"
         ],
         "title": "PatchConfigRequest"
       },
@@ -5564,6 +5577,11 @@
             "type": "array",
             "title": "Saved"
           },
+          "revision": {
+            "type": "string",
+            "title": "Revision",
+            "description": "Revision after saving the host settings"
+          },
           "engine_restart_required": {
             "type": "boolean",
             "title": "Engine Restart Required",
@@ -5573,6 +5591,7 @@
         "type": "object",
         "required": [
           "saved",
+          "revision",
           "engine_restart_required"
         ],
         "title": "PatchConfigResponse"

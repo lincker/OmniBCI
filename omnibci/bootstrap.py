@@ -39,16 +39,21 @@ logger = logging.getLogger(__name__)
 Subscription = Tuple[EventType, Callable]
 
 
-def create_backend_logging() -> BackendLogging:
-    """Configure backend logging from host settings, outside BCI activation."""
+def load_host_settings() -> dict:
+    """Capture saved inputs once for all backend startup consumers."""
     from omnibci.conf import settings
 
-    return BackendLogging(settings.snapshot())
+    return settings.saved_snapshot()
+
+
+def create_backend_logging(host_settings: dict) -> BackendLogging:
+    """Configure backend logging from the same snapshot as backend assembly."""
+    return BackendLogging(host_settings)
 
 
 def _effective_backend_startup_settings(snapshot: dict) -> dict:
     values = backend_startup_settings(snapshot)
-    directory = user_plugins_dir()
+    directory = user_plugins_dir(host_settings=snapshot)
     values["PLUGINS.user_dir"] = str(directory.resolve()) if directory is not None else None
     return values
 
@@ -155,18 +160,19 @@ def assemble(
 # Full construction (performs engine startup)
 # ---------------------------------------------------------------------------
 
-async def build_container() -> AppContainer:
+async def build_container(*, host_settings: dict | None = None) -> AppContainer:
     """Wire services; resolve configuration and build workers on engine start."""
     from omnibci.conf import settings
 
+    host_settings = load_host_settings() if host_settings is None else dict(host_settings)
     repository = _build_session_repository(
-        settings.get("PERSISTENCE.session_repository", "in_memory"))
-    auto_spawn = bool(settings.get("STIMULATION.auto_spawn", True))
+        host_settings.get("PERSISTENCE.session_repository", "in_memory"))
+    auto_spawn = bool(host_settings.get("STIMULATION.auto_spawn", True))
     # Actuation subprocess management: disabled subsystem → auto_spawn=False,
     # making every lifecycle hook a no-op (multi-machine runs the script).
     actuation_auto_spawn = (
-        bool(settings.get("ACTUATION.enabled", False))
-        and bool(settings.get("ACTUATION.auto_spawn", True))
+        bool(host_settings.get("ACTUATION.enabled", False))
+        and bool(host_settings.get("ACTUATION.auto_spawn", True))
     )
     actuation_manager = ActuationProcessManager(auto_spawn=actuation_auto_spawn)
     stimulation_manager = StimulationProcessManager(auto_spawn=auto_spawn)
@@ -196,14 +202,15 @@ async def build_container() -> AppContainer:
     )
     plugin_profiles = PluginProfileService(
         TomlPluginProfileRepository(), CatalogConfigurationAdapter(),
-        settings_source=settings.snapshot,
+        settings_source=settings.saved_snapshot,
         change_guard=engine_service.configuration_change,
         startup_settings_resolver=_effective_backend_startup_settings,
+        loaded_startup_settings=host_settings,
     )
     try:
         initializer = SettingsPluginConfigInitializer(plugin_profiles)
         if initializer.existing() is None:
-            result = initializer.initialize(settings.snapshot())
+            result = initializer.initialize(host_settings)
             for warning in result.warnings:
                 logger.warning("Plugin configuration initialization: %s", warning)
     except (ValueError, KeyError, RuntimeError, OSError):
@@ -212,7 +219,7 @@ async def build_container() -> AppContainer:
         logger.exception("Plugin configuration initialization requires attention")
     await engine_service.startup()
     container = assemble(engine_service, repository,
-                         settings=settings, acquisition_settings=_RuntimeSettings(engine_service, plugin_profiles),
+                         settings=host_settings, acquisition_settings=_RuntimeSettings(engine_service, plugin_profiles),
                          auto_spawn=auto_spawn,
                          actuation_process_manager=actuation_manager,
                          stimulation_process_manager=stimulation_manager,
