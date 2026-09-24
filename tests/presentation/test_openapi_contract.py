@@ -55,15 +55,9 @@ EXPECTED_OPERATIONS = {
     # recording (session + stream orchestration)
     ("/api/v1/recording/start", "post"),
     ("/api/v1/recording/stop", "post"),
-    # config (stage 4: defaults + named profiles)
+    # Host configuration.
     ("/api/v1/config", "get"),
     ("/api/v1/config", "patch"),
-    ("/api/v1/config/profiles", "get"),
-    ("/api/v1/config/profiles/{name}", "get"),
-    ("/api/v1/config/profiles/{name}", "put"),
-    ("/api/v1/config/profiles/{name}", "delete"),
-    ("/api/v1/config/profiles/{name}/activate", "post"),
-    ("/api/v1/config/profiles/deactivate", "post"),
     # Plugin profiles and accepted activation.
     ("/api/v1/config/plugin-catalog/{kind}", "get"),
     ("/api/v1/config/plugin-profiles", "get"),
@@ -136,6 +130,19 @@ def _schema(spec, name):
 
 
 class TestResponseDtos:
+    def test_host_configuration_has_no_application_profile_contract(self, spec):
+        assert not any(path.startswith("/api/v1/config/profiles") for path in spec["paths"])
+        assert set(_schema(spec, "ConfigResponse")["properties"]) == {"entries"}
+        assert set(_schema(spec, "ConfigEntry")["properties"]) == {
+            "key", "value", "type", "requires", "description",
+        }
+        request = _schema(spec, "PatchConfigRequest")
+        assert set(request["properties"]) == {"updates"}
+        assert request["additionalProperties"] is False
+        assert set(_schema(spec, "PatchConfigResponse")["properties"]) == {
+            "saved", "engine_restart_required",
+        }
+
     def test_session_response_fields(self, spec):
         props = _schema(spec, "SessionResponse")["properties"]
         assert set(props) == {
@@ -182,8 +189,8 @@ class TestErrorContract:
             "ENGINE_NOT_READY", "SESSION_NOT_FOUND", "NO_ACTIVE_SESSION", "NO_TRIALS",
             "ALREADY_RECORDING", "NO_ACTIVE_RECORDING",
             "COMMAND_REJECTED", "COMMAND_EXECUTION_FAILED", "COMMAND_TIMEOUT",
-            # layered configuration (stage 4)
-            "CONFIG_KEY_NOT_ALLOWED", "CONFIG_PROFILE_NOT_FOUND", "CONFIG_PROFILE_IN_USE",
+            # Host configuration and Plugin Profiles.
+            "CONFIG_KEY_NOT_ALLOWED", "CONFIG_PROFILE_NOT_FOUND",
         }
 
     def test_endpoints_document_error_responses(self, spec):

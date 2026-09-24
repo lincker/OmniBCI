@@ -5,12 +5,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from omnibci.application.commands.engine_commands import StartEngineCommand, StopEngineCommand
-from omnibci.application.config_errors import ConfigProfileConflictError
+from omnibci.application.commands.engine_commands import StartEngineCommand
+from omnibci.application.plugin_profiles import ProfileRevisionConflict
 from omnibci.application.services.config_service import ConfigService
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.conf import OmniBCISettings
-from omnibci.shared.events import EventType
 
 
 @pytest.fixture
@@ -20,82 +19,82 @@ def application_config(tmp_path):
                     'channel_number = 10\ndata_file_path = "recordings/demo.cnt"\n'
                     'file_reader_chunk_size = 100\ntrigger = ""\n'
                     '[ALGORITHM]\ndecoder = "THUBCI_SSVEP_classic40FBCCA"\n'
-                    'epoch_detector = "DEFAULT_EPOCH_DETECTOR"\nfilters = []\n'
+                    'epoch_detector = "DEFAULT_EPOCH_DETECTOR"\nfilters = []\nbaseline_duration = 1.0\n'
+                    '[NEUROENGINE]\nqueue_size = 32\n'
                     '[STIMULATION]\nparadigm = "STIMULATION_THUBCI_SSVEP_classic40"\n'
                     'auto_spawn = false\n[ACTUATION]\neffector = ""\nenabled = false\n',
                     encoding="utf-8")
     return ConfigService(OmniBCISettings(path))
 
 
-@pytest.mark.asyncio
-async def test_first_start_uses_application_profile_selected_after_api_startup(application_config):
-    captured = []
-    engine = MagicMock()
+def test_host_settings_can_be_saved_while_running_without_applying(application_config):
+    builder = MagicMock()
+    engine = NeuroEngineService(engine_factory=builder)
+    application_config._change_guard = engine.configuration_change
+    engine._running = True
+    engine._applied_snapshot = application_config._settings.snapshot()
 
-    def build(snapshot):
-        captured.append(snapshot)
-        return engine
+    saved, restart = application_config.save({"ALGORITHM.baseline_duration": 2.0})
 
-    svc = NeuroEngineService(engine_factory=build, snapshot_provider=application_config._settings.snapshot)
-    await svc.startup()
-    handler = MagicMock()
-    svc.subscribe(EventType.TrialCompleted, handler)
-    assert captured == []
-    application_config.put_profile("Lab", {"ACQUISITION.sample_rate": 500})
-    application_config.activate("Lab")
-    with patch("omnibci.application.services.engine_service.Thread") as thread:
-        thread.return_value.is_alive.return_value = False
-        await svc.handle_start_engine(StartEngineCommand())
-        assert captured[0]["ACQUISITION.sample_rate"] == 500
-        engine.event_bus.register_event_listener.assert_called_once_with(EventType.TrialCompleted, handler)
-        await svc.handle_stop_engine(StopEngineCommand())
-        application_config.deactivate()
-        await svc.handle_start_engine(StartEngineCommand())
-    assert captured[1]["ACQUISITION.sample_rate"] == 1000
+    assert saved == ["ALGORITHM.baseline_duration"]
+    assert restart is True
+    assert application_config._settings.get("ALGORITHM.baseline_duration") == 2.0
+    assert engine.applied_snapshot["ALGORITHM.baseline_duration"] == 1.0
+    builder.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_transition_blocks_active_changes_but_allows_inactive_saves(application_config):
-    entered, release = threading.Event(), threading.Event()
-    engine = MagicMock()
+async def test_runtime_apply_blocks_host_save_without_partial_write(application_config, tmp_path):
+    entered, release = asyncio.Event(), asyncio.Event()
+    engine = NeuroEngineService(engine_factory=MagicMock())
+    application_config._change_guard = engine.configuration_change
+    path = tmp_path / "settings.toml"
+    before = path.read_bytes()
 
-    def ready(_timeout):
-        entered.set()
-        assert release.wait(3)
+    async def apply_configuration():
+        async with engine.runtime_transition():
+            entered.set()
+            await release.wait()
 
-    engine.wait_until_started.side_effect = ready
-    svc = NeuroEngineService(engine_factory=lambda: engine)
-    application_config._change_guard = svc.configuration_change
-    await svc.startup()
-    application_config.put_profile("Lab", {"ACQUISITION.sample_rate": 500})
-    application_config.activate("Lab")
-    task = asyncio.create_task(svc.handle_start_engine(StartEngineCommand()))
-    assert await asyncio.to_thread(entered.wait, 3)
+    task = asyncio.create_task(apply_configuration())
     try:
-        application_config.put_profile("Spare", {"ACQUISITION.sample_rate": 250})
-        with pytest.raises(ConfigProfileConflictError):
-            application_config.deactivate()
-        with pytest.raises(ConfigProfileConflictError):
-            application_config.apply({"ACQUISITION.sample_rate": 250}, scope="Lab")
-        with pytest.raises(ConfigProfileConflictError):
-            application_config.apply({"ACQUISITION.sample_rate": 250})
-        assert application_config.profile_detail("Lab")["entries"] == {"ACQUISITION.sample_rate": 500}
-        assert application_config.profile_detail("Spare")["entries"] == {"ACQUISITION.sample_rate": 250}
+        await asyncio.wait_for(entered.wait(), 3)
+        with pytest.raises(ProfileRevisionConflict):
+            application_config.save({"NEUROENGINE.queue_size": 64})
+        assert application_config._settings.get("NEUROENGINE.queue_size") == 32
+        assert path.read_bytes() == before
     finally:
         release.set()
         await task
-        await svc.handle_stop_engine(StopEngineCommand())
+    application_config.save({"NEUROENGINE.queue_size": 64})
+    assert OmniBCISettings(path).get("NEUROENGINE.queue_size") == 64
 
 
-def test_application_profile_replacement_cannot_remove_acquisition_parameters_while_running(application_config):
-    application_config.put_profile("Lab", {"ACQUISITION.sample_rate": 250})
-    application_config.activate("Lab")
+@pytest.mark.asyncio
+async def test_host_save_excludes_runtime_apply_until_persisted(application_config, monkeypatch, tmp_path):
+    entered, release = threading.Event(), threading.Event()
     engine = NeuroEngineService(engine_factory=MagicMock())
     application_config._change_guard = engine.configuration_change
-    engine._running = True
-    with pytest.raises(ConfigProfileConflictError):
-        application_config.put_profile("Lab", {"ALGORITHM.window_duration": 4.0})
-    assert application_config._settings.snapshot()["ACQUISITION.sample_rate"] == 250
+    save = application_config._settings.save
+
+    def persist():
+        entered.set()
+        assert release.wait(3)
+        save()
+
+    monkeypatch.setattr(application_config._settings, "save", persist)
+    thread = threading.Thread(target=lambda: application_config.save({"NEUROENGINE.queue_size": 64}))
+    thread.start()
+    try:
+        assert await asyncio.to_thread(entered.wait, 3)
+        with pytest.raises(ProfileRevisionConflict):
+            async with engine.runtime_transition():
+                pytest.fail("Apply entered before the settings save completed")
+    finally:
+        release.set()
+        await asyncio.to_thread(thread.join, 3)
+    assert not thread.is_alive()
+    assert OmniBCISettings(tmp_path / "settings.toml").get("NEUROENGINE.queue_size") == 64
 
 
 @pytest.mark.asyncio

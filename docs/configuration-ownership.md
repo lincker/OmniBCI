@@ -1,10 +1,11 @@
 # Configuration ownership and consolidation
 
-Status: step 1, proposed for review. Playback speed, unused project metadata,
-unused command-server settings, and the unused shared sleep setting have been
-removed as requested. The first logging batch now uses the retained settings for
-the backend process; real-time worker integration remains deferred.
-Steps 2 through 6 require separate review; no automatic commits are authorized.
+Status: step 1 and the backend logging batch are committed. Step 2 is implemented
+for review: Settings has one host editor, and the old named Application Profile
+editing/activation and file overlay have been removed. Playback speed and the
+reviewed unused settings have also been removed. Real-time worker logging remains
+deferred. Steps 3 through 6 require separate review; no automatic commits are
+authorized.
 
 The inventory covers all 38 leaf keys currently declared in
 [`settings.toml`](../omnibci/conf/settings.toml), all ten bundled plugin schemas,
@@ -155,7 +156,7 @@ The table records implemented removals and the remaining decisions separately.
 | Existing key | Observed behavior | Proposed disposition |
 | --- | --- | --- |
 | `ACQUISITION.file_reader_play_speed` (removed) | The former `speed` value and setter never affected `read_chunk()` | Removed the default, API/editor entry, translations, unused attribute/setter, and obsolete tests. Existing stored copies are not rewritten and cannot be edited through the config API. A real playback-speed feature requires separate implementation and timing tests |
-| `PROFILES.active` | Selects the old named Application Profile overlay | Retire with old Application Profile APIs; retain Plugin Profiles and accepted activation |
+| `PROFILES.active` (retired) | No longer selects or loads an Application Profile; excluded from new host snapshots | Old profile files and existing accepted activations are left intact; the pointer is inert if still present in a saved TOML file |
 | `project_name`, `version` (removed) | No production consumer found for these settings entries; package/application metadata exists separately | Removed only these settings entries; package, plugin, and API versions are unchanged |
 | `LOGGING.level`, `LOGGING.file_path` | Read when the API server lifespan starts | Backend-only file logging, outside BCI activation; details below |
 | `CONSTANT.ASYNC_SLEEP_TIME` (removed) | No production reader found; loops have their own timing | Removed the unused entry and empty section. Existing loop waits and scheduling are unchanged |
@@ -164,6 +165,40 @@ The table records implemented removals and the remaining decisions separately.
 For the unused-key classification, inspect consumers rather than configuration
 comments. Discovery, tests, or copying an entire settings dictionary do not make
 a key an effective runtime control.
+
+### Step 2: one configuration editor per owner
+
+Settings / General retains console preferences and the two previously editable
+host parameters, `ALGORITHM.baseline_duration` and `NEUROENGINE.queue_size`.
+Other host parameters are not newly exposed. Plugin selection and parameters
+are edited through Setup / Plugin Profiles. Advanced and all named Application
+Profile controls have been removed.
+
+`GET /api/v1/config` returns `entries` with a saved `value`, not a claim about
+the currently running value. `PATCH /api/v1/config` accepts only `updates` and
+returns `saved` keys plus `engine_restart_required`. Plugin keys and mixed
+host/plugin writes are rejected before mutation. Removed `scope` and
+`description` fields are rejected; `/api/v1/config/profiles` routes no longer
+exist. Plugin Profile APIs and accepted activation remain separate and intact.
+
+Saving host settings does not apply them. Review retains the existing plugin
+bindings (`refresh_slots: []`) and includes the saved host settings in the
+candidate. Configuration apply and host persistence remain mutually exclusive.
+
+`OmniBCISettings` now reads the settings file or an installed worker snapshot;
+it never reads the old `conf/profiles/` directory. Existing accepted values and
+revisions are preserved. Fresh initialization uses the flat defaults still
+present in `settings.toml`; removing duplicated plugin inputs and refining host
+candidate merging remain steps 3 and 4. Retired files are not deleted or migrated.
+Browser verification confirmed that the existing Review can still list
+`CONFIG.initialization_warnings` as a changed host field alongside a real edit.
+Removing diagnostic metadata from change detection belongs to step 4.
+
+An existing Application Profile can contain values different from the raw
+settings file. Those values must be reviewed before choosing the saved host
+values for the next Apply. In this workspace, the old profile contains queue
+capacity 90 while the raw settings file contains 100; that value decision is
+separate from removing the editor and does not rewrite the accepted activation.
 
 ### Backend logging: first implementation batch
 
@@ -253,8 +288,8 @@ it must not silently select a different legacy alias.
 
 | Step | Deliverable | Validation before review |
 | --- | --- | --- |
-| 1 | This ownership inventory and the boundary decisions above | Cover all 38 remaining declared keys, all ten schemas, and additional runtime inputs; check actual consumers |
-| 2 | Restrict the old settings writer to host-owned values; remove old Application Profile editing/activation and duplicate UI entry points | Legacy writes of plugin keys are rejected; Profile CRUD still works; host settings remain editable; fresh initialization still works |
+| 1 (committed) | This ownership inventory and the boundary decisions above | Cover all 38 declared keys, all ten schemas, and additional runtime inputs; check actual consumers |
+| 2 (implemented, awaiting review) | Restrict the settings writer to host-owned values; remove old Application Profile editing/activation, file overlays, and duplicate UI entry points | Legacy plugin writes and scope fields are rejected; Plugin Profile CRUD still works; host settings remain editable; fresh initialization and existing accepted values remain correct |
 | 3 | Remove independently editable plugin values from activation host settings; retain any necessary flat fields only as derived runtime values | Source/decoder/context agree; accepted values survive saved Profile edits; fresh startup and existing valid activation handling are explicit |
 | 4 | Unify candidate construction and application semantics for all activation routes | The same input produces the same candidate; changes to ineffective legacy/diagnostic fields cannot cause a rebuild; startup-only settings cannot falsely report runtime success; preserve snapshot-driven Actuation topology and external-peer restrictions |
 | 5 | Store editable host settings in the user configuration directory with revision checks and atomic writes | Cross-platform paths, concurrent edits, interrupted writes, and backend restart persistence |

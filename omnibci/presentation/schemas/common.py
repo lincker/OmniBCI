@@ -43,10 +43,9 @@ class ErrorCode(str, Enum):
     COMMAND_EXECUTION_FAILED = "COMMAND_EXECUTION_FAILED"  # device/plugin/internal fault
     COMMAND_TIMEOUT = "COMMAND_TIMEOUT"          # no terminal consumer result in time
 
-    # Layered configuration (stage 4): defaults + named profiles
+    # Host configuration and Plugin Profiles.
     CONFIG_KEY_NOT_ALLOWED = "CONFIG_KEY_NOT_ALLOWED"      # key outside the whitelist
-    CONFIG_PROFILE_NOT_FOUND = "CONFIG_PROFILE_NOT_FOUND"  # unknown profile name
-    CONFIG_PROFILE_IN_USE = "CONFIG_PROFILE_IN_USE"        # deleting the active profile
+    CONFIG_PROFILE_NOT_FOUND = "CONFIG_PROFILE_NOT_FOUND"  # unknown Plugin Profile
 
 
 class ErrorResponse(BaseModel):

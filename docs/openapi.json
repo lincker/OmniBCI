@@ -1975,7 +1975,7 @@
         "tags": [
           "Config"
         ],
-        "summary": "Effective configuration",
+        "summary": "Saved host settings",
         "operationId": "get_config_api_v1_config_get",
         "responses": {
           "200": {
@@ -2054,7 +2054,7 @@
         "tags": [
           "Config"
         ],
-        "summary": "Update defaults or a profile (all-or-nothing)",
+        "summary": "Save host settings without applying them",
         "operationId": "patch_config_api_v1_config_patch",
         "requestBody": {
           "content": {
@@ -2073,542 +2073,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponse_PatchConfigResponse_"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Service unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/config/profiles": {
-      "get": {
-        "tags": [
-          "Config"
-        ],
-        "summary": "List configuration profiles",
-        "operationId": "list_profiles_api_v1_config_profiles_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ProfileListResponse_"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Service unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/config/profiles/deactivate": {
-      "post": {
-        "tags": [
-          "Config"
-        ],
-        "summary": "Back to defaults only",
-        "operationId": "deactivate_profile_api_v1_config_profiles_deactivate_post",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Service unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/config/profiles/{name}": {
-      "get": {
-        "tags": [
-          "Config"
-        ],
-        "summary": "One profile's overrides",
-        "operationId": "get_profile_api_v1_config_profiles__name__get",
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Name"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ProfileDetailResponse_"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Service unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "Config"
-        ],
-        "summary": "Create or replace a profile",
-        "operationId": "put_profile_api_v1_config_profiles__name__put",
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Name"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PutProfileRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_PatchConfigResponse_"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Service unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Config"
-        ],
-        "summary": "Delete a profile (409 if active)",
-        "operationId": "delete_profile_api_v1_config_profiles__name__delete",
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Name"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Service unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/config/profiles/{name}/activate": {
-      "post": {
-        "tags": [
-          "Config"
-        ],
-        "summary": "Activate a profile",
-        "operationId": "activate_profile_api_v1_config_profiles__name__activate_post",
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Name"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
                 }
               }
             }
@@ -5066,58 +4530,6 @@
         "type": "object",
         "title": "ApiResponse[PluginProfileResponse]"
       },
-      "ApiResponse_ProfileDetailResponse_": {
-        "properties": {
-          "success": {
-            "type": "boolean",
-            "title": "Success",
-            "default": true
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "ok"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ProfileDetailResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[ProfileDetailResponse]"
-      },
-      "ApiResponse_ProfileListResponse_": {
-        "properties": {
-          "success": {
-            "type": "boolean",
-            "title": "Success",
-            "default": true
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "ok"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ProfileListResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[ProfileListResponse]"
-      },
       "ApiResponse_ProfileVersionProposalResponse_": {
         "properties": {
           "success": {
@@ -5477,29 +4889,21 @@
           "key": {
             "type": "string",
             "title": "Key",
-            "description": "Dotted settings key, e.g. 'ALGORITHM.decoder'"
+            "description": "Dotted host settings key"
           },
-          "default_value": {
-            "title": "Default Value",
-            "description": "Value in settings.toml"
-          },
-          "profile_value": {
-            "title": "Profile Value",
-            "description": "Override from the active profile (null = none)"
-          },
-          "effective_value": {
-            "title": "Effective Value",
-            "description": "What the system actually uses"
+          "value": {
+            "title": "Value",
+            "description": "Saved value; runtime application is separate"
           },
           "type": {
             "type": "string",
             "title": "Type",
-            "description": "str | int | float | bool | list[str]"
+            "description": "int | float"
           },
           "requires": {
             "type": "string",
             "title": "Requires",
-            "description": "hot | engine-restart"
+            "description": "engine-restart"
           },
           "description": {
             "type": "string",
@@ -5509,6 +4913,7 @@
         "type": "object",
         "required": [
           "key",
+          "value",
           "type",
           "requires",
           "description"
@@ -5523,17 +4928,6 @@
             },
             "type": "array",
             "title": "Entries"
-          },
-          "active_profile": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Active Profile"
           }
         },
         "type": "object",
@@ -5702,8 +5096,7 @@
           "COMMAND_EXECUTION_FAILED",
           "COMMAND_TIMEOUT",
           "CONFIG_KEY_NOT_ALLOWED",
-          "CONFIG_PROFILE_NOT_FOUND",
-          "CONFIG_PROFILE_IN_USE"
+          "CONFIG_PROFILE_NOT_FOUND"
         ],
         "title": "ErrorCode",
         "description": "Stable, machine-readable error codes for clients to branch on instead of\nguessing from the HTTP status.  The string value is the wire format."
@@ -6147,27 +5540,10 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Updates",
-            "description": "Dotted key → new value"
-          },
-          "scope": {
-            "type": "string",
-            "title": "Scope",
-            "description": "'default' writes settings.toml; any other value names a profile (created on first write)",
-            "default": "default"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description",
-            "description": "Profile description (profile scope only)"
+            "description": "Dotted host settings key to saved value"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "updates"
@@ -6176,27 +5552,22 @@
       },
       "PatchConfigResponse": {
         "properties": {
-          "applied": {
+          "saved": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Applied"
-          },
-          "scope": {
-            "type": "string",
-            "title": "Scope"
+            "title": "Saved"
           },
           "engine_restart_required": {
             "type": "boolean",
             "title": "Engine Restart Required",
-            "description": "True → stop/start the engine for changes to take effect"
+            "description": "Whether applying these saved changes requires an engine restart"
           }
         },
         "type": "object",
         "required": [
-          "applied",
-          "scope",
+          "saved",
           "engine_restart_required"
         ],
         "title": "PatchConfigResponse"
@@ -6433,100 +5804,6 @@
         ],
         "title": "ProfileBindingResponse"
       },
-      "ProfileDetailResponse": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "entries": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Entries"
-          },
-          "off_whitelist_keys": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Off Whitelist Keys",
-            "description": "Keys present in the file but outside the API whitelist (hand-edited; read-only here)"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "entries"
-        ],
-        "title": "ProfileDetailResponse"
-      },
-      "ProfileListResponse": {
-        "properties": {
-          "profiles": {
-            "items": {
-              "$ref": "#/components/schemas/ProfileSummary"
-            },
-            "type": "array",
-            "title": "Profiles"
-          },
-          "active_profile": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Active Profile"
-          }
-        },
-        "type": "object",
-        "required": [
-          "profiles"
-        ],
-        "title": "ProfileListResponse"
-      },
-      "ProfileSummary": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "key_count": {
-            "type": "integer",
-            "title": "Key Count"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Updated At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "key_count"
-        ],
-        "title": "ProfileSummary"
-      },
       "ProfileVersionProposalResponse": {
         "properties": {
           "source_profile_id": {
@@ -6629,31 +5906,6 @@
           "target_version"
         ],
         "title": "ProfileVersionRequest"
-      },
-      "PutProfileRequest": {
-        "properties": {
-          "updates": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Updates"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          }
-        },
-        "type": "object",
-        "required": [
-          "updates"
-        ],
-        "title": "PutProfileRequest"
       },
       "RecordingResponse": {
         "properties": {

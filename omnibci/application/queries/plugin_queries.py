@@ -1,17 +1,11 @@
 """
 Plugin discovery read model — application-layer DTO.
 
-``PluginInfo`` 是插件发现（infrastructure/plugins/plugin_catalog）的返回类型。
-它放在 application 层，因为它是跨层共享的查询结果契约：
-
-  - infrastructure 生产它（catalog 扫描 manifest.toml 后填充）；
-  - application 消费它（config_service 对 plugin_type 做软校验）；
-  - presentation 将它映射为 wire schema（schemas.stimulation.ParadigmInfo）。
-
-此前 catalog 直接返回 presentation 的 pydantic wire 契约，构成
-infrastructure → presentation 的反向依赖（见重构报告 P0-2）。
-本 DTO 与 wire schema 字段一一对应，但相互独立演化：改 HTTP 契约
-不再波及插件发现，反之亦然。
+``PluginInfo`` is the plugin catalog's discovery result. Infrastructure creates
+it from manifests, and presentation maps it to its independent wire schema.
+Keeping this query contract in application avoids a dependency from the catalog
+on presentation. Host settings no longer use discovery to validate plugin edits;
+plugin selection and parameter validation belong to the Plugin Profile services.
 """
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional

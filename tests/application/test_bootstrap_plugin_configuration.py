@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from omnibci import bootstrap
+from omnibci.application.plugin_profiles import ActivationSnapshot
 from omnibci.bootstrap import _RuntimeSettings, build_container
 from omnibci.conf import OmniBCISettings
 from omnibci.infrastructure.config_paths import config_root
@@ -146,8 +147,9 @@ async def test_retired_profiles_do_not_affect_initialization(bootstrap_settings,
     assert old_id not in {profile.profile_id for profile in repository.list_profiles()}
     assert source.parameters["sample_rate"] == 256
     assert container.acquisition_service._device_metadata() == ("file_reader", 256, 5)
-    entries, _ = container.config_service.list_entries()
-    assert next(entry for entry in entries if entry["key"] == "ACQUISITION.sample_rate")["effective_value"] == 256
+    entries = container.config_service.list_entries()
+    assert {entry["key"] for entry in entries} == {"ALGORITHM.baseline_duration", "NEUROENGINE.queue_size"}
+    assert next(entry for entry in entries if entry["key"] == "NEUROENGINE.queue_size")["value"] == 29
     assert {path: path.read_bytes() for path in original_files} == original_files
     assert bootstrap_settings._config_path.read_bytes() == original_settings
 
@@ -169,6 +171,50 @@ async def test_existing_activation_ignores_damaged_legacy_files(bootstrap_settin
     assert _toml_files(root) == original_files
     assert bootstrap_settings._config_path.read_bytes() == original_settings
     assert not [record for record in caplog.records if record.levelname == "ERROR"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("profile_state", ["valid", "missing", "corrupt"])
+async def test_retired_application_overlay_cannot_change_accepted_or_initial_configuration(
+    bootstrap_settings, existing, profile_state,
+):
+    accepted = None
+    if existing:
+        first = await build_container()
+        repository = first.plugin_profile_service.repository
+        original = repository.get_activation()
+        accepted = ActivationSnapshot(
+            {**original.settings, "NEUROENGINE.queue_size": 99, "PROFILES.active": "old-profile"},
+            original.bindings,
+        )
+        repository.save_activation(accepted, expected_revision=original.revision)
+
+    bootstrap_settings.set("PROFILES.active", "old-profile")
+    bootstrap_settings.save()
+    directory = bootstrap_settings._config_path.parent / "profiles"
+    directory.mkdir()
+    if profile_state != "missing":
+        (directory / "old-profile.toml").write_text(
+            '[NEUROENGINE]\nqueue_size = 88\n' if profile_state == "valid" else 'broken = "',
+            encoding="utf-8",
+        )
+    original_files = _toml_files(bootstrap_settings._config_path.parent)
+    accepted_files = _toml_files(config_root()) if existing else None
+    bootstrap_settings.load_config()
+
+    container = await build_container()
+
+    current = container.plugin_profile_service.repository.get_activation()
+    assert container.engine_service._snapshot_provider()["NEUROENGINE.queue_size"] == (99 if existing else 29)
+    if existing:
+        assert current == accepted
+        assert _toml_files(config_root()) == accepted_files
+    else:
+        assert "PROFILES.active" not in current.settings
+    entries = container.config_service.list_entries()
+    assert next(entry for entry in entries if entry["key"] == "NEUROENGINE.queue_size")["value"] == 29
+    assert {path: path.read_bytes() for path in original_files} == original_files
 
 
 @pytest.mark.asyncio

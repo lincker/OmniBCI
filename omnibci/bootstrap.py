@@ -26,7 +26,6 @@ from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.plugins.plugin_catalog import list_plugins
 from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
 from omnibci.infrastructure.plugins.market_adapter import configured_market_service
 from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
@@ -183,7 +182,7 @@ async def build_container() -> AppContainer:
         stimulation_process_manager=stimulation_manager,
     )
     config_service = ConfigService(
-        settings, plugin_catalog=list_plugins,
+        settings,
         change_guard=engine_service.configuration_change,
     )
     plugin_profiles = PluginProfileService(

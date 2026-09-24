@@ -18,7 +18,7 @@ const setupPages = [
   ["acquisition", "Acquisition", "signal"], ["processing", "Processing", "workflow"],
   ["stimulation", "Stimulation", "system"], ["actuation", "Actuation", "plug"],
 ] as const;
-const settingsPages = [["general", "General", "settings"], ["advanced", "Advanced", "profile"]] as const;
+const settingsPages = [["general", "General", "settings"]] as const;
 type SetupPage = typeof setupPages[number][0];
 type SettingsPage = typeof settingsPages[number][0];
 type View = SetupPage | SettingsPage | "run" | "results" | "extensions";
@@ -36,7 +36,6 @@ export default function App() {
   const { language, setLanguage } = useI18n();
   const [view, setView] = useState<View>(initialView);
   const [lastSetup, setLastSetup] = useState<SetupPage>("acquisition");
-  const [lastSettings, setLastSettings] = useState<SettingsPage>("general");
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pendingView, setPendingView] = useState<View | null>(null);
@@ -49,9 +48,8 @@ export default function App() {
   const acquisition = usePoll(api.acquisitionStatus);
   const runtime = useRuntimeConfiguration();
   const engineRunning = engine.data?.running ?? false;
-  const engineLocked = engine.data === null || engine.error !== null || engineRunning;
   const isSetup = setupPages.some(([page]) => page === view);
-  const isSettings = view === "general" || view === "advanced";
+  const isSettings = view === "general";
   const space = isSetup ? "Setup" : isSettings ? "Settings" : view === "run" ? "Run" : view === "extensions" ? "Extensions" : "Results";
 
   useEffect(() => {
@@ -61,7 +59,6 @@ export default function App() {
   useEffect(() => {
     window.history.replaceState(null, "", `#${view}`);
     if (setupPages.some(([page]) => page === view)) setLastSetup(view as SetupPage);
-    if (view === "general" || view === "advanced") setLastSettings(view);
   }, [view]);
   useEffect(() => {
     if (!dirty && !busy) return;
@@ -118,7 +115,7 @@ export default function App() {
             aria-current={space === label ? "page" : undefined} disabled={busy} onClick={() => navigate(page)}><Icon name={icon} /></button>)}
         <div className="activity-bottom"><button className={`activity-item ${isSettings ? "selected" : ""}`}
           aria-label="Settings" title="Settings" aria-current={isSettings ? "page" : undefined} disabled={busy}
-          onClick={() => navigate(lastSettings)}><Icon name="gear" /></button></div>
+          onClick={() => navigate("general")}><Icon name="gear" /></button></div>
       </nav>
       <main className="editor-workspace">
         <RuntimeConfigurationStatus runtime={runtime} />
@@ -137,8 +134,8 @@ export default function App() {
               <SessionSummary session={feed.session} trialCount={feed.trials.length} />
               <section className="card"><h2>Results <span className="count">{feed.trials.length}</span></h2><TrialResults trials={feed.trials} /></section>
             </div>
-            : <ConfigCard key={view} view={view as SettingsPage} engineRunning={engineLocked} navigation={navigation}
-              preferences={view === "general" ? preferences : undefined} onDirtyChange={setDirty} onBusyChange={setBusy}
+            : <ConfigCard navigation={navigation}
+              preferences={preferences} onDirtyChange={setDirty} onBusyChange={setBusy}
               runtime={runtime} />}
         </div>
       </main>

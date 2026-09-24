@@ -1,4 +1,4 @@
-/** Settings load and save without the retired Acquisition profile API. */
+/** Host settings save independently of plugin profiles and runtime application. */
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import React from "react";
@@ -14,7 +14,6 @@ function harness(props) {
   let cursor = 0, pending = true, tree;
   let effects = [];
   const dispatcher = {
-    useContext: () => ({ t: (key) => key }),
     useState(initial) {
       const i = cursor++;
       if (!hooks[i]) hooks[i] = { value: typeof initial === "function" ? initial() : initial };
@@ -72,58 +71,167 @@ function button(tree, label) {
   return found;
 }
 
-for (const view of ["general", "advanced"]) for (const running of [false, true]) {
-  test(`${view} settings load without legacy profiles while engine running=${running}`, async () => {
-    const cfg = { active_profile: null, entries: [
-      { key: "NEUROENGINE.queue_size", type: "int", default_value: 32, effective_value: 32, description: "Queue capacity" },
-      { key: "ACQUISITION.sample_rate", type: "int", default_value: 1000, effective_value: 1000, description: "Sample rate" },
-      { key: "ALGORITHM.decoder", type: "str", default_value: "decoder", effective_value: "decoder", description: "Decoder" },
-    ] };
-    const calls = [], reviews = [];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = async (path, options = {}) => {
-      const method = options.method ?? "GET";
-      const body = options.body ? JSON.parse(options.body) : undefined;
-      calls.push({ path, method, body });
-      let data;
-      if (path === "/api/v1/config" && method === "GET") data = cfg;
-      else if (path === "/api/v1/config/profiles") data = { profiles: [], active_profile: null };
-      else if (path.startsWith("/api/v1/plugins/")) data = { paradigms: [{ plugin_type: "decoder", display_name: "Decoder" }] };
-      else if (path === "/api/v1/config/activation") data = { revision: "accepted", bindings: [{ slot: "acquisition.source", profile_id: "saved" }] };
-      else if (path === "/api/v1/config" && method === "PATCH") {
-        cfg.entries[0].default_value = body.updates["NEUROENGINE.queue_size"];
-        data = {};
-      } else return { ok: false, status: 404, json: async () => ({ code: "NOT_FOUND", message: "Endpoint retired" }) };
-      return { ok: true, json: async () => ({ success: true, data: structuredClone(data) }) };
-    };
-    const component = harness({ view, engineRunning: running, navigation: null, onDirtyChange() {}, onBusyChange() {},
-      runtime: { blocked: false, review: async (request) => { reviews.push(request); } } });
-    try {
-      await component.settle();
-      const input = elements(component.tree).find((item) => item.type === "input" && item.props.id === "setting-NEUROENGINE.queue_size");
-      assert.ok(input, "Settings must remain available when the retired endpoint returns 404");
-      assert.equal(input.props.disabled, false);
-      assert.doesNotMatch(text(component.tree), /Profile managed|selected acquisition profile manages/);
-      if (view === "advanced") {
-        const source = elements(component.tree).find((item) => item.type === "input" && item.props.id === "setting-ACQUISITION.sample_rate");
-        assert.equal(source.props.disabled, running, "The existing engine-running lock remains intact");
-        assert.ok(elements(component.tree).some((item) => item.type === "datalist" && item.props.id === "options-ALGORITHM.decoder"));
-      }
-      input.props.onChange({ target: { value: "64" } });
-      await component.settle();
+function input(component, key) {
+  const found = elements(component.tree).find((item) => item.type === "input" && item.props.id === `setting-${key}`);
+  assert.ok(found, `Missing setting: ${key}`);
+  return found;
+}
+async function change(component, key, value) {
+  const control = input(component, key);
+  assert.equal(control.props.disabled, false);
+  control.props.onChange({ target: { value } });
+  await component.settle();
+}
+async function click(component, label) {
+  const target = button(component.tree, label);
+  assert.equal(target.props.disabled, false);
+  target.props.onClick();
+  await component.settle();
+}
+const dialog = (component) => elements(component.tree).find((item) => item.type.name === "ConfigDialog");
+
+async function withSettings(action, overrides = {}) {
+  const cfg = { entries: [
+    { key: "ALGORITHM.baseline_duration", type: "float", value: 0.5, requires: "engine_restart", description: "Baseline duration in seconds" },
+    { key: "NEUROENGINE.queue_size", type: "int", value: 32, requires: "engine_restart", description: "Queue capacity" },
+  ] };
+  const activation = { revision: "accepted", bindings: [
+    { slot: "acquisition.source", profile_id: "source", profile_revision: 3 },
+    { slot: "processing.filter.first", profile_id: "filter", profile_revision: 2 },
+    { slot: "processing.filter.second", profile_id: "filter", profile_revision: 2 },
+  ] };
+  const calls = [], reviews = [], applied = [], dirty = [], busy = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (path, options = {}) => {
+    const method = options.method ?? "GET";
+    const body = options.body ? JSON.parse(options.body) : undefined;
+    calls.push({ path, method, body });
+    let data;
+    if (path === "/api/v1/config" && method === "GET") {
+      if (overrides.reloadError && calls.some((call) => call.method === "PATCH")) throw new Error("Settings refresh failed");
+      data = cfg;
+    }
+    else if (path === "/api/v1/config/activation" && method === "GET") data = activation;
+    else if (path === "/api/v1/config" && method === "PATCH") {
+      if (overrides.patchError) return { ok: false, status: 422, json: async () => ({ code: "VALIDATION_ERROR", message: "Value is invalid" }) };
+      for (const entry of cfg.entries) if (entry.key in body.updates) entry.value = body.updates[entry.key];
+      data = { saved: Object.keys(body.updates), engine_restart_required: true };
+    } else throw new Error(`Unexpected request: ${method} ${path}`);
+    return { ok: true, json: async () => ({ success: true, data: structuredClone(data) }) };
+  };
+  const runtime = { blocked: false, status: { running: overrides.running ?? false },
+    review: async (request) => { reviews.push(request); }, apply: async () => { applied.push(true); },
+    ...overrides.runtime };
+  const component = harness({ navigation: null, preferences: React.createElement("p", null, "Console preferences"),
+    onDirtyChange: (value) => dirty.push(value), onBusyChange: (value) => busy.push(value), runtime });
+  try { await component.settle(); await action({ component, calls, reviews, applied, dirty, busy, cfg, activation }); }
+  finally { component.dispose(); globalThis.fetch = originalFetch; }
+}
+
+for (const running of [false, true]) {
+  test(`General exposes both host settings while the engine running=${running}`, async () => {
+    await withSettings(async ({ component, calls, dirty }) => {
+      assert.deepEqual(calls, [{ path: "/api/v1/config", method: "GET", body: undefined }]);
+      const fields = elements(component.tree).filter((item) => item.type === "input");
+      assert.deepEqual(fields.map((item) => item.props.id), ["setting-ALGORITHM.baseline_duration", "setting-NEUROENGINE.queue_size"]);
+      assert.equal(input(component, "ALGORITHM.baseline_duration").props.value, "0.5");
+      assert.equal(input(component, "NEUROENGINE.queue_size").props.value, "32");
+      assert.match(text(component.tree), /Console preferences/);
+      assert.doesNotMatch(text(component.tree), /Advanced|Default configuration|Edit configuration|Active configuration|Save as|Delete|Category|Saved resolved/);
+      assert.equal(elements(component.tree).some((item) => item.type === "select" || item.type === "datalist"), false);
+      await change(component, "ALGORITHM.baseline_duration", "0.75");
+      await change(component, "NEUROENGINE.queue_size", "64");
+      assert.equal(dirty.at(-1), true);
       assert.equal(button(component.tree, "Review and apply host settings").props.disabled, true);
-      button(component.tree, "Save settings").props.onClick();
-      await component.settle();
-      assert.deepEqual(calls.filter((call) => call.method === "PATCH").map((call) => call.body), [
-        { updates: { "NEUROENGINE.queue_size": 64 }, scope: "default" },
-      ]);
-      assert.equal(reviews.length, 0, "Saving settings must not apply them");
-      assert.equal(button(component.tree, "Review and apply host settings").props.disabled, false);
-      button(component.tree, "Review and apply host settings").props.onClick();
-      await component.settle();
-      assert.deepEqual(reviews, [{ bindings: [{ slot: "acquisition.source", profile_id: "saved" }],
-        expected_revision: "accepted", refresh_slots: [], include_host_settings: true }]);
-      assert.equal(calls.some((call) => call.path.includes("/config/modules/")), false);
-    } finally { component.dispose(); globalThis.fetch = originalFetch; }
+    }, { running });
   });
 }
+
+test("Save sends host updates only and Review retains every selected plugin binding", async () => {
+  await withSettings(async ({ component, calls, reviews, applied, dirty, busy }) => {
+    await change(component, "ALGORITHM.baseline_duration", "0.75");
+    await change(component, "NEUROENGINE.queue_size", "64");
+    await click(component, "Save settings");
+    assert.deepEqual(calls.filter((call) => call.method === "PATCH"), [{ path: "/api/v1/config", method: "PATCH", body: {
+      updates: { "ALGORITHM.baseline_duration": 0.75, "NEUROENGINE.queue_size": 64 },
+    } }]);
+    assert.deepEqual(reviews, []);
+    assert.deepEqual(applied, []);
+    assert.equal(dirty.at(-1), false);
+    assert.deepEqual(busy, [true, false, true, false]);
+    assert.equal(input(component, "ALGORITHM.baseline_duration").props.value, "0.75");
+    await click(component, "Review and apply host settings");
+    assert.deepEqual(reviews, [{ bindings: [
+      { slot: "acquisition.source", profile_id: "source" },
+      { slot: "processing.filter.first", profile_id: "filter" },
+      { slot: "processing.filter.second", profile_id: "filter" },
+    ], expected_revision: "accepted", refresh_slots: [], include_host_settings: true }]);
+    assert.deepEqual(applied, [], "Only the runtime review dialog may apply the saved settings");
+    assert.deepEqual([...new Set(calls.map((call) => call.path))], ["/api/v1/config", "/api/v1/config/activation"]);
+  });
+});
+
+test("invalid numeric input stays editable without sending updates", async () => {
+  await withSettings(async ({ component, calls, dirty }) => {
+    for (const value of ["", "invalid", "1.5"]) {
+      await change(component, "NEUROENGINE.queue_size", value);
+      await click(component, "Save settings");
+      assert.match(text(component.tree), /Queue capacity: Enter a valid integer/);
+      assert.equal(input(component, "NEUROENGINE.queue_size").props.value, value);
+      assert.equal(dirty.at(-1), true);
+    }
+    assert.equal(calls.some((call) => call.method === "PATCH"), false);
+  });
+});
+
+test("a rejected save preserves the draft and dirty navigation protection", async () => {
+  await withSettings(async ({ component, dirty, busy, reviews }) => {
+    await change(component, "NEUROENGINE.queue_size", "0");
+    await click(component, "Save settings");
+    assert.match(text(component.tree), /VALIDATION_ERROR.*Value is invalid/);
+    assert.equal(input(component, "NEUROENGINE.queue_size").props.value, "0");
+    assert.equal(dirty.at(-1), true);
+    assert.equal(busy.at(-1), false);
+    assert.equal(button(component.tree, "Review and apply host settings").props.disabled, true);
+    assert.deepEqual(reviews, []);
+  }, { patchError: true });
+});
+
+test("a failed refresh after saving keeps the visible draft until saved settings are confirmed", async () => {
+  await withSettings(async ({ component, cfg, dirty, busy }) => {
+    await change(component, "NEUROENGINE.queue_size", "64");
+    await click(component, "Save settings");
+    assert.equal(cfg.entries.find((entry) => entry.key === "NEUROENGINE.queue_size").value, 64);
+    assert.match(text(component.tree), /Settings refresh failed/);
+    assert.equal(input(component, "NEUROENGINE.queue_size").props.value, "64");
+    assert.equal(dirty.at(-1), true);
+    assert.equal(busy.at(-1), false);
+    assert.equal(button(component.tree, "Review and apply host settings").props.disabled, true);
+  }, { reloadError: true });
+});
+
+test("Discard confirms unsaved host changes and restores the saved values", async () => {
+  await withSettings(async ({ component, calls, dirty }) => {
+    await change(component, "ALGORITHM.baseline_duration", "2");
+    await click(component, "Discard");
+    assert.equal(dialog(component).props.message, "Discard unsaved host settings?");
+    dialog(component).props.onCancel(); await component.settle();
+    assert.equal(input(component, "ALGORITHM.baseline_duration").props.value, "2");
+    assert.equal(dirty.at(-1), true);
+    await click(component, "Discard");
+    dialog(component).props.onConfirm(); await component.settle();
+    assert.equal(input(component, "ALGORITHM.baseline_duration").props.value, "0.5");
+    assert.equal(dirty.at(-1), false);
+    assert.equal(calls.length, 1);
+  });
+});
+
+test("runtime recovery blocks Review while host settings remain editable", async () => {
+  await withSettings(async ({ component, reviews }) => {
+    assert.equal(button(component.tree, "Review and apply host settings").props.disabled, true);
+    await change(component, "NEUROENGINE.queue_size", "64");
+    await click(component, "Save settings");
+    assert.equal(button(component.tree, "Review and apply host settings").props.disabled, true);
+    assert.deepEqual(reviews, []);
+  }, { runtime: { blocked: true } });
+});

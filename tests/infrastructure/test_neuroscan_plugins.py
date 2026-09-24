@@ -113,7 +113,7 @@ def test_scan45_trigger_rejects_invalid_address_before_opening_port(
     open_port.assert_not_called()
 
 
-def test_scan45_trigger_uses_active_profile_after_settings_reload(monkeypatch, tmp_path):
+def test_scan45_trigger_uses_installed_worker_snapshot(monkeypatch, tmp_path):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "no-user-plugins"))
     descriptor = PluginCatalog().resolve("acquisition", "neuroscan_scan45_reader")
     reader_class = PluginLoader.load_entrypoint(descriptor, SignalSource)
@@ -123,9 +123,8 @@ def test_scan45_trigger_uses_active_profile_after_settings_reload(monkeypatch, t
         '[ACQUISITION]\nparallel_port_address = "0x3100"\n', encoding="utf-8"
     )
     settings = OmniBCISettings(config_path)
-    settings.write_profile("hardware", {"ACQUISITION.parallel_port_address": "0x378"})
-    settings.set_active_profile("hardware")
-    monkeypatch.setattr(driver_module, "settings", OmniBCISettings(config_path))
+    settings.use_snapshot({"ACQUISITION.parallel_port_address": "0x378"})
+    monkeypatch.setattr(driver_module, "settings", settings)
     open_port = Mock()
     monkeypatch.setattr(driver_module.Scan45Trigger, "_set_parallel_port", open_port)
     monkeypatch.setattr(driver_module.Scan45Trigger, "clear", Mock())

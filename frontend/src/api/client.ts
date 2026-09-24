@@ -15,7 +15,6 @@ export type Trial = S["TrialResponse"];
 export type ConfigEntry = S["ConfigEntry"];
 export type ConfigData = S["ConfigResponse"];
 export type PatchConfigResult = S["PatchConfigResponse"];
-export type ProfileList = S["ProfileListResponse"];
 export type ParadigmInfo = S["ParadigmInfo"];
 export type ParadigmsResponse = S["ParadigmsResponse"];
 export interface StimulationStatus {
@@ -66,7 +65,6 @@ async function send<T>(method: "POST" | "DELETE" | "PATCH" | "PUT", path: string
 }
 
 const post = <T = unknown,>(path: string, body?: unknown) => send<T>("POST", path, body);
-const del = <T = unknown,>(path: string) => send<T>("DELETE", path);
 
 export const api = {
   engineStatus: () => get<EngineStatus>("/api/v1/engine/status"),
@@ -106,20 +104,8 @@ export const api = {
   /** List plugins by category: "paradigm" | "decoder" | "acquisition" | "effector" */
   listPlugins: (category: string) => get<ParadigmsResponse>(`/api/v1/plugins/${encodeURIComponent(category)}`),
 
-  // ---- layered config (stage 4) ------------------------------------------
+  // ---- host settings ------------------------------------------------------
   getConfig: () => get<ConfigData>("/api/v1/config"),
-  patchConfig: (updates: Record<string, unknown>, scope = "default", description?: string) =>
-    send<PatchConfigResult>("PATCH", "/api/v1/config", { updates, scope, description }),
-  listProfiles: () => get<ProfileList>("/api/v1/config/profiles"),
-  getProfile: (name: string) =>
-    get<S["ProfileDetailResponse"]>(`/api/v1/config/profiles/${encodeURIComponent(name)}`),
-  putProfile: (name: string, updates: Record<string, unknown>, description?: string) =>
-    send<PatchConfigResult>("PUT", `/api/v1/config/profiles/${encodeURIComponent(name)}`,
-      { updates, description }),
-  deleteProfile: (name: string) =>
-    del(`/api/v1/config/profiles/${encodeURIComponent(name)}`),
-  activateProfile: (name: string) =>
-    post(`/api/v1/config/profiles/${encodeURIComponent(name)}/activate`),
-  deactivateProfile: () => post("/api/v1/config/profiles/deactivate"),
-
+  patchConfig: (updates: Record<string, unknown>) =>
+    send<PatchConfigResult>("PATCH", "/api/v1/config", { updates }),
 };

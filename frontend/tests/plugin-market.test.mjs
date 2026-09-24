@@ -25,6 +25,19 @@ test("Extensions hash opens the library without a routine configuration status b
   assert.doesNotMatch(html, /<h1>New profile<\/h1>/);
 });
 
+test("Settings has a single General page and retains console preferences", () => {
+  const previousHash = window.location.hash;
+  window.location.hash = "#general";
+  try {
+    const html = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(App)));
+    assert.match(html, /aria-label="Settings"[^>]*aria-current="page"/);
+    assert.match(html, /<h1>General settings<\/h1>/);
+    assert.match(html, /aria-label="Interface language"/);
+    assert.match(html, /aria-label="Appearance"/);
+    assert.doesNotMatch(html, /Advanced|Active application configuration|Edit application configuration|Save as/);
+  } finally { window.location.hash = previousHash; }
+});
+
 test("an unsettled runtime blocks installation while the library remains readable", () => {
   const html = render(PluginMarket, { runtimeBusy: true });
   assert.match(html, /Package changes are temporarily unavailable/);
