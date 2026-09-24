@@ -14,6 +14,7 @@ from omnibci.application.services.command_result_service import CommandResultBro
 from omnibci.application.services.config_service import ConfigService
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.application.services.plugin_config_migration import LegacyPluginConfigMigration
+from omnibci.application.services.plugin_config_initialization import SettingsPluginConfigInitializer
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.plugin_installation_service import PluginInstallationService
@@ -182,10 +183,15 @@ async def build_container() -> AppContainer:
     )
     try:
         if plugin_profiles.repository.get_activation() is None:
-            migrated = LegacyPluginConfigMigration(plugin_profiles).migrate(
-                config_service.resolve_snapshot(), legacy_profiles.list("acquisition"),
-                legacy_profiles.get_active("acquisition"),
-            )
+            initial_settings = config_service.resolve_snapshot()
+            historical_profiles = legacy_profiles.list("acquisition")
+            active_acquisition_id = legacy_profiles.get_active("acquisition")
+            if historical_profiles or active_acquisition_id is not None:
+                migrated = LegacyPluginConfigMigration(plugin_profiles).migrate(
+                    initial_settings, historical_profiles, active_acquisition_id,
+                )
+            else:
+                migrated = SettingsPluginConfigInitializer(plugin_profiles).initialize(initial_settings)
             for warning in migrated.warnings:
                 logger.warning("Plugin configuration migration: %s", warning)
     except (ValueError, KeyError, RuntimeError, OSError):

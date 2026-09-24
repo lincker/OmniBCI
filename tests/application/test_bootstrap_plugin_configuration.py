@@ -1,9 +1,66 @@
 """Composition selects accepted configuration instead of mutable saved profiles."""
 from unittest.mock import Mock
+from uuid import uuid4
 
 import pytest
 
+from omnibci import bootstrap
+from omnibci.application.configuration import ConfigProfile, ConfigProfileNotFoundError
 from omnibci.bootstrap import _RuntimeSettings, build_container
+from omnibci.conf import OmniBCISettings
+from omnibci.infrastructure.repositories.config_profile_repository import TomlConfigProfileRepository
+from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+
+
+@pytest.fixture
+def bootstrap_settings(tmp_path, monkeypatch):
+    import omnibci.conf as conf
+
+    path = tmp_path / "settings.toml"
+    path.write_text('''[ACQUISITION]
+signal_source = "file_reader"
+data_file_path = "recordings/custom.cnt"
+sample_rate = 256
+channel_number = 5
+file_reader_chunk_size = 17
+trigger = ""
+[ALGORITHM]
+decoder = "THUBCI_SSVEP_classic40FBCCA"
+epoch_detector = "DEFAULT_EPOCH_DETECTOR"
+window_duration = 4.25
+offset_time = 0.15
+baseline_duration = 0.4
+filters = []
+[STIMULATION]
+paradigm = "STIMULATION_THUBCI_SSVEP_classic40"
+auto_spawn = false
+[ACTUATION]
+enabled = false
+auto_spawn = false
+effector = ""
+[NEUROENGINE]
+queue_size = 29
+[custom]
+retain = ["settings-only", "user-value"]
+''', encoding="utf-8")
+    settings = OmniBCISettings(path)
+    monkeypatch.setattr(conf, "settings", settings)
+    monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
+    builder = Mock(side_effect=AssertionError("Bootstrap must not construct a worker graph"))
+    monkeypatch.setattr(bootstrap, "NeuroEngineBuilder", builder)
+    yield settings
+    builder.assert_not_called()
+
+
+def _legacy_profile():
+    return ConfigProfile(str(uuid4()), "Existing acquisition", "acquisition", "file_reader", {
+        "data_file_path": "recordings/legacy.cnt", "sample_rate": 512,
+        "channel_number": 7, "file_reader_chunk_size": 32,
+    })
+
+
+def _toml_files(root):
+    return {path: path.read_bytes() for path in root.rglob("*.toml")}
 
 
 @pytest.mark.asyncio
@@ -33,3 +90,99 @@ def test_status_reads_applied_values_while_engine_running():
     profiles.resolve_settings.assert_not_called()
     engine.is_engine_ready = False
     assert view.get("ACQUISITION.sample_rate") == 1000
+
+
+@pytest.mark.asyncio
+async def test_settings_only_initialization_preserves_nondefault_values(bootstrap_settings, monkeypatch):
+    legacy_migration = Mock(side_effect=AssertionError("No legacy profiles need importing"))
+    monkeypatch.setattr(bootstrap, "LegacyPluginConfigMigration", legacy_migration)
+    original_settings = bootstrap_settings._config_path.read_bytes()
+
+    container = await build_container()
+
+    accepted = container.plugin_profile_service.repository.get_activation()
+    bindings = {binding.slot: binding for binding in accepted.bindings}
+    assert bindings["acquisition.source"].parameters == {
+        "data_file_path": "recordings/custom.cnt", "sample_rate": 256,
+        "channel_number": 5, "file_reader_chunk_size": 17,
+    }
+    assert bindings["processing.decoder"].parameters == {"window_duration": 4.25, "offset_time": 0.15}
+    assert "stimulation.trigger" not in bindings
+    assert "actuation.effector" not in bindings
+    assert accepted.settings == bootstrap_settings.snapshot()
+    assert bootstrap_settings._config_path.read_bytes() == original_settings
+    assert TomlConfigProfileRepository().list("acquisition") == []
+    legacy_migration.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("active", [False, True])
+async def test_bootstrap_imports_existing_profiles_without_rewriting_them(bootstrap_settings, active):
+    legacy = TomlConfigProfileRepository()
+    profile = _legacy_profile()
+    legacy.save(profile)
+    if active:
+        legacy.set_active("acquisition", profile.profile_id)
+    original_files = _toml_files(legacy.root)
+    original_settings = bootstrap_settings._config_path.read_bytes()
+
+    container = await build_container()
+
+    repository = container.plugin_profile_service.repository
+    imported = repository.get_profile(profile.profile_id)
+    assert imported.name == profile.name
+    assert imported.parameters == profile.parameters
+    source = next(binding for binding in repository.get_activation().bindings if binding.kind == "acquisition")
+    if active:
+        assert source.profile_id == profile.profile_id
+        assert source.parameters == profile.parameters
+    else:
+        assert source.profile_id != profile.profile_id
+        assert source.parameters["sample_rate"] == 256
+    assert {path: path.read_bytes() for path in original_files} == original_files
+    assert bootstrap_settings._config_path.read_bytes() == original_settings
+
+
+@pytest.mark.asyncio
+async def test_existing_activation_ignores_damaged_legacy_files(bootstrap_settings, caplog):
+    first = await build_container()
+    repository = first.plugin_profile_service.repository
+    accepted = repository.get_activation()
+    legacy = TomlConfigProfileRepository()
+    profile = _legacy_profile()
+    legacy.save(profile)
+    legacy.set_active("acquisition", profile.profile_id)
+    profile_path = next((legacy.root / "profiles").rglob("*.toml"))
+    profile_path.write_text('name = "unterminated', encoding="utf-8")
+    (legacy.root / "active.toml").write_text('active = "unterminated', encoding="utf-8")
+    original_files = _toml_files(legacy.root)
+    original_settings = bootstrap_settings._config_path.read_bytes()
+    caplog.clear()
+
+    restarted = await build_container()
+
+    assert restarted.plugin_profile_service.repository.get_activation() == accepted
+    assert restarted.engine_service._snapshot_provider() == first.engine_service._snapshot_provider()
+    assert _toml_files(legacy.root) == original_files
+    assert bootstrap_settings._config_path.read_bytes() == original_settings
+    assert not [record for record in caplog.records if record.levelname == "ERROR"]
+
+
+@pytest.mark.asyncio
+async def test_missing_active_legacy_profile_does_not_initialize_replacement(bootstrap_settings):
+    legacy = TomlConfigProfileRepository()
+    profile = _legacy_profile()
+    legacy.save(profile)
+    legacy.set_active("acquisition", profile.profile_id)
+    legacy.delete("acquisition", profile.profile_id)
+    original_files = _toml_files(legacy.root)
+    original_settings = bootstrap_settings._config_path.read_bytes()
+
+    with pytest.raises(ConfigProfileNotFoundError):
+        await build_container()
+
+    repository = TomlPluginProfileRepository()
+    assert repository.get_activation() is None
+    assert repository.list_profiles() == []
+    assert _toml_files(legacy.root) == original_files
+    assert bootstrap_settings._config_path.read_bytes() == original_settings

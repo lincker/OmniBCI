@@ -45,7 +45,7 @@ def load_configured_plugin(snapshot: dict, slot: str, kind: str, expected_base,
             raise PluginLoadError(f"{slot}: configuration schema migration required")
         parameters = deepcopy(binding.parameters)
     else:
-        from omnibci.application.services.plugin_config_migration import legacy_parameters
+        from omnibci.application.legacy_plugin_config import legacy_parameters
         alias = legacy_alias if legacy_alias is not None else snapshot.get(legacy_key)
         if not isinstance(alias, str) or not alias:
             raise PluginLoadError(f"No {kind} selected for {slot}")

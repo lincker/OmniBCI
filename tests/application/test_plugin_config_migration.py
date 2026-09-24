@@ -10,6 +10,7 @@ from omnibci.application.plugin_profiles import ProfileRevisionConflict
 from omnibci.application.services.plugin_config_migration import (
     LegacyPluginConfigMigration, PluginConfigMigrationError, legacy_parameters,
 )
+from omnibci.application.services.plugin_config_initialization import SettingsPluginConfigInitializer
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
@@ -39,6 +40,13 @@ def service(tmp_path, monkeypatch, settings):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
     return PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
                                 CatalogConfigurationAdapter(), settings_source=lambda: settings)
+
+
+@pytest.fixture(params=["migration", "settings"])
+def initialize(service, request):
+    if request.param == "settings":
+        return SettingsPluginConfigInitializer(service).initialize
+    return lambda snapshot: LegacyPluginConfigMigration(service).migrate(snapshot, [], None)
 
 
 def _legacy(settings, **changes):
@@ -73,9 +81,9 @@ def test_migration_preserves_actual_cca_values_ids_and_unrelated_settings(servic
     assert profile == original_profile
 
 
-def test_fbcca_uses_algorithm_settings_and_scalar_defaults_only_when_absent(service, settings):
+def test_fbcca_uses_algorithm_settings_and_scalar_defaults_only_when_absent(initialize, service, settings):
     settings["ALGORITHM.decoder"] = "THUBCI_SSVEP_classic40FBCCA"
-    result = LegacyPluginConfigMigration(service).migrate(settings, [], None)
+    result = initialize(settings)
     assert _bindings(result)["processing.decoder"].parameters == {
         "window_duration": 4.0, "offset_time": 0.14,
     }
@@ -103,15 +111,15 @@ def test_filter_instances_keep_order_unique_identity_and_idempotence(service, se
     assert {path: path.read_bytes() for path in files} == files
 
 
-def test_optional_empty_aliases_are_not_replaced_with_guessed_plugins(service, settings):
+def test_optional_empty_aliases_are_not_replaced_with_guessed_plugins(initialize, settings):
     settings["ACQUISITION.trigger"] = ""
     settings["ACTUATION.effector"] = ""
-    result = LegacyPluginConfigMigration(service).migrate(settings, [], None)
+    result = initialize(settings)
     assert "stimulation.trigger" not in _bindings(result)
     assert "actuation.effector" not in _bindings(result)
 
 
-def test_unavailable_platform_preserves_selection_with_warning(service, settings, monkeypatch):
+def test_unavailable_platform_preserves_selection_with_warning(initialize, service, settings, monkeypatch):
     original = service.catalog.get
 
     def get(kind, selection):
@@ -119,13 +127,12 @@ def test_unavailable_platform_preserves_selection_with_warning(service, settings
         return replace(definition, available=False) if kind == "trigger" else definition
 
     monkeypatch.setattr(service.catalog, "get", get)
-    result = LegacyPluginConfigMigration(service).migrate(settings, [], None)
+    result = initialize(settings)
     assert "stimulation.trigger" in _bindings(result)
     assert any("stimulation.trigger" in warning and "unavailable" in warning for warning in result.warnings)
 
 
-def test_interrupted_profile_writes_resume_without_duplicate_or_revised_profiles(service, settings, monkeypatch):
-    migration = LegacyPluginConfigMigration(service)
+def test_interrupted_profile_writes_resume_without_duplicate_or_revised_profiles(initialize, service, settings, monkeypatch):
     original = service.repository.save_profile
     calls = 0
 
@@ -138,13 +145,13 @@ def test_interrupted_profile_writes_resume_without_duplicate_or_revised_profiles
 
     monkeypatch.setattr(service.repository, "save_profile", interrupted)
     with pytest.raises(OSError, match="interrupted"):
-        migration.migrate(settings, [], None)
+        initialize(settings)
     partial = service.repository.list_profiles()
     assert len(partial) == 1
     assert service.repository.get_activation() is None
 
     monkeypatch.setattr(service.repository, "save_profile", original)
-    result = migration.migrate(settings, [], None)
+    result = initialize(settings)
 
     profiles = service.repository.list_profiles()
     assert len(profiles) == len(result.snapshot.bindings)
@@ -152,8 +159,7 @@ def test_interrupted_profile_writes_resume_without_duplicate_or_revised_profiles
     assert service.repository.get_profile(partial[0].profile_id) == partial[0]
 
 
-def test_interrupted_activation_write_keeps_durable_profiles_for_retry(service, settings, monkeypatch):
-    migration = LegacyPluginConfigMigration(service)
+def test_interrupted_activation_write_keeps_durable_profiles_for_retry(initialize, service, settings, monkeypatch):
     original = service.repository.save_activation
 
     def interrupted(*args, **kwargs):
@@ -161,37 +167,36 @@ def test_interrupted_activation_write_keeps_durable_profiles_for_retry(service, 
 
     monkeypatch.setattr(service.repository, "save_activation", interrupted)
     with pytest.raises(OSError, match="interrupted"):
-        migration.migrate(settings, [], None)
+        initialize(settings)
     profiles = service.repository.list_profiles()
     assert profiles
     assert service.repository.get_activation() is None
     monkeypatch.setattr(service.repository, "save_activation", original)
 
-    migration.migrate(settings, [], None)
+    initialize(settings)
 
     assert service.repository.list_profiles() == profiles
 
 
-def test_partial_migration_never_overwrites_user_edits(service, settings, monkeypatch):
-    migration = LegacyPluginConfigMigration(service)
+def test_partial_migration_never_overwrites_user_edits(initialize, service, settings, monkeypatch):
     original = service.repository.save_activation
     monkeypatch.setattr(service.repository, "save_activation",
                         lambda *args, **kwargs: (_ for _ in ()).throw(OSError("interrupted")))
     with pytest.raises(OSError):
-        migration.migrate(settings, [], None)
+        initialize(settings)
     previous = service.repository.list_profiles()[0]
     edited = service.repository.save_profile(replace(previous, name="User edited"),
                                               expected_revision=previous.revision)
     monkeypatch.setattr(service.repository, "save_activation", original)
 
     with pytest.raises(ProfileRevisionConflict, match="differs"):
-        migration.migrate(settings, [], None)
+        initialize(settings)
     assert service.repository.get_profile(edited.profile_id) == edited
     assert service.repository.get_activation() is None
 
 
 @pytest.mark.parametrize("failure", ["missing_plugin", "missing_version", "missing_schema", "missing_alias"])
-def test_unresolvable_selected_plugins_leave_activation_untouched(service, settings, monkeypatch, failure):
+def test_unresolvable_selected_plugins_leave_activation_untouched(initialize, service, settings, monkeypatch, failure):
     if failure == "missing_plugin":
         settings["ALGORITHM.decoder"] = "unknown_decoder"
     elif failure == "missing_alias":
@@ -209,7 +214,7 @@ def test_unresolvable_selected_plugins_leave_activation_untouched(service, setti
 
         monkeypatch.setattr(service.catalog, "get", get)
     with pytest.raises(PluginConfigMigrationError):
-        LegacyPluginConfigMigration(service).migrate(settings, [], None)
+        initialize(settings)
     assert service.repository.get_activation() is None
     assert service.repository.list_profiles() == []
 
@@ -247,3 +252,18 @@ def test_missing_or_inconsistent_active_profile_does_not_create_activation(servi
         migration.migrate(settings, [profile], profile.profile_id)
     assert service.repository.get_activation() is None
     assert service.repository.list_profiles() == []
+
+
+def test_existing_settings_initialization_ignores_invalid_inputs(service, settings):
+    initializer = SettingsPluginConfigInitializer(service)
+    first = initializer.initialize(settings)
+    files = {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")}
+
+    repeated = initializer.initialize(
+        None, imported_profiles=(object(),), active_acquisition_id="invalid",
+    )
+
+    assert repeated.already_migrated
+    assert repeated.snapshot == first.snapshot
+    assert repeated.warnings == first.warnings
+    assert {path: path.read_bytes() for path in files} == files
