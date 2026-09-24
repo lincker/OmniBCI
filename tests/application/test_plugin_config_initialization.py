@@ -64,6 +64,16 @@ def test_initialization_preserves_actual_cca_values_and_unrelated_settings(initi
     assert settings == original_settings
 
 
+def test_initialization_keeps_logging_out_of_engine_activation(initialize, settings):
+    settings.update({"LOGGING.level": "DEBUG", "LOGGING.file_path": "backend.log"})
+    original = deepcopy(settings)
+
+    result = initialize(settings)
+
+    assert not any(key.startswith("LOGGING.") for key in result.snapshot.settings)
+    assert settings == original
+
+
 def test_fbcca_uses_algorithm_settings_and_scalar_defaults_only_when_absent(initialize, service, settings):
     settings["ALGORITHM.decoder"] = "THUBCI_SSVEP_classic40FBCCA"
     result = initialize(settings)

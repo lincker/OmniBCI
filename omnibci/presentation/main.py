@@ -36,7 +36,7 @@ from omnibci.presentation.routers import engine, acquisition, stimulation, sessi
 from omnibci.presentation.routers import plugin_config, runtime_config, plugin_packages
 from omnibci.presentation.routers import plugin_package_lifecycle, plugin_market
 from omnibci.presentation.websockets.results import results_broadcaster, results_ws_endpoint
-from omnibci.bootstrap import build_container, register_engine_listeners
+from omnibci.bootstrap import build_container, create_backend_logging, register_engine_listeners
 from omnibci.presentation.errors import register_exception_handlers
 from omnibci.presentation.schemas.common import ErrorResponse
 from omnibci.shared.events import EventType
@@ -57,6 +57,15 @@ ERROR_RESPONSES = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Keep logging available throughout startup and service shutdown."""
+    with create_backend_logging() as backend_logging:
+        app.state.backend_logging = backend_logging
+        async with _services_lifespan(app):
+            yield
+
+
+@asynccontextmanager
+async def _services_lifespan(app: FastAPI):
     """
     Startup / shutdown lifecycle.
 
@@ -101,13 +110,15 @@ async def lifespan(app: FastAPI):
     registered = register_engine_listeners(container, broadcaster_subscriptions)
 
     logger.info("OmniBCI API server started (engine listeners registered: %d)", registered)
-    yield
-    results_broadcaster.stop_heartbeat()
-    if container.runtime_configuration is not None:
-        await container.runtime_configuration.wait_for_idle()
-    container.stimulation_process_manager.stop()
-    await container.engine_service.shutdown()
-    logger.info("OmniBCI API server stopped")
+    try:
+        yield
+    finally:
+        results_broadcaster.stop_heartbeat()
+        if container.runtime_configuration is not None:
+            await container.runtime_configuration.wait_for_idle()
+        container.stimulation_process_manager.stop()
+        await container.engine_service.shutdown()
+        logger.info("OmniBCI API server stopped")
 
 
 def create_app() -> FastAPI:

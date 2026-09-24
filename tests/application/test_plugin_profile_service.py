@@ -101,6 +101,24 @@ def test_profile_parameters_are_validated_by_the_selected_package(service):
         create_source(service, invented=42)
 
 
+def test_new_activation_and_worker_settings_exclude_backend_logging(service):
+    host = {"host": "original", "LOGGING.level": "INFO", "LOGGING.file_path": "backend.log"}
+    service.settings_source = lambda: host
+    selections = complete_selections(service)
+
+    proposed = service.propose(selections)
+    assert proposed.settings == {"host": "original"}
+
+    previous = ActivationSnapshot(host, proposed.bindings)
+    restored = ActivationSnapshot.from_dict(previous.to_dict())
+    assert restored.revision == previous.revision
+    assert restored.settings == host
+    worker_settings = service.materialize(restored)
+    assert not any(key.startswith("LOGGING.") for key in worker_settings)
+    assert worker_settings["CONFIG.revision"] == previous.revision
+    assert host["LOGGING.level"] == "INFO"
+
+
 @pytest.mark.parametrize("channels", [2, 9, 10, 33, 65])
 def test_scan45_profile_resolves_its_configured_channel_count(service, channels):
     plugin = service.catalog.legacy("acquisition", "neuroscan_scan45_reader")

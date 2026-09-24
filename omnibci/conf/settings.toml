@@ -1,8 +1,10 @@
 debug = false
 
 [LOGGING]
+# Backend process only; applied when the API server starts.
 level = "INFO"
-file_path = "logs/omnibci.log"
+# Relative to the platform user log directory; the filename includes the backend PID.
+file_path = "omnibci.log"
 
 [ACQUISITION]
 signal_source = "file_reader"

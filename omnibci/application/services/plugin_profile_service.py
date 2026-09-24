@@ -63,6 +63,10 @@ class PluginProfileService:
         base = deepcopy(current.settings if current is not None else self.settings_source())
         if settings is not None:
             base = deepcopy(settings)
+        base = {key: value for key, value in base.items() if not key.startswith("LOGGING.")}
+        if current is not None:
+            # Retain old inert values so backend-only edits never change a running revision.
+            base.update({key: value for key, value in current.settings.items() if key.startswith("LOGGING.")})
         if refresh_slots is not None and (
             not isinstance(refresh_slots, list) or any(not isinstance(slot, str) for slot in refresh_slots)
             or len(set(refresh_slots)) != len(refresh_slots)
@@ -134,7 +138,7 @@ class PluginProfileService:
     def materialize(self, snapshot: ActivationSnapshot) -> dict:
         """Project compatibility keys while retaining exact pinned inputs."""
         # Keep host configuration and plugin inputs together through spawn.
-        result = deepcopy(snapshot.settings)
+        result = {key: value for key, value in snapshot.settings.items() if not key.startswith("LOGGING.")}
         aliases = {
             "acquisition.source": "ACQUISITION.signal_source",
             "processing.decoder": "ALGORITHM.decoder",

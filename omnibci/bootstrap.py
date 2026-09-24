@@ -21,6 +21,7 @@ from omnibci.application.services.plugin_package_service import PluginPackageSer
 from omnibci.application.services.plugin_market_service import PluginMarketService
 from omnibci.application.plugin_packages import package_references_from_settings
 from omnibci.domain.repositories import SessionRepository
+from omnibci.infrastructure.backend_logging import BackendLogging
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
@@ -35,6 +36,13 @@ logger = logging.getLogger(__name__)
 
 # A single EventBus subscription: (event type, handler callable).
 Subscription = Tuple[EventType, Callable]
+
+
+def create_backend_logging() -> BackendLogging:
+    """Configure backend logging from host settings, outside BCI activation."""
+    from omnibci.conf import settings
+
+    return BackendLogging(settings.snapshot())
 
 
 @dataclass

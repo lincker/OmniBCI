@@ -1,9 +1,10 @@
 """Configuration remains repairable through the real application lifespan."""
+import logging
 from dataclasses import replace
 from threading import Event
 from time import monotonic, sleep
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -326,3 +327,73 @@ def test_inactive_output_plugins_can_retain_portable_selections(startup_environm
         assert started.status_code == 200, started.text
         startup_environment.builder.assert_called_once()
         assert client.post("/api/v1/engine/stop").status_code == 200
+
+
+def test_backend_logging_covers_startup_and_shutdown(startup_environment, tmp_path):
+    startup_environment.settings.set("LOGGING.level", "INFO")
+    startup_environment.settings.set("LOGGING.file_path", str(tmp_path / "backend.log"))
+    app = create_app()
+
+    with TestClient(app) as client:
+        runtime = app.state.backend_logging
+        assert runtime.is_running
+        assert client.get("/healthz").json() == {"status": "ok"}
+        logging.getLogger("omnibci.test_backend").info("Backend logging probe")
+
+    assert not runtime.is_running
+    content = runtime.file_path.read_text(encoding="utf-8")
+    assert "OmniBCI API server started" in content
+    assert "Backend logging probe" in content
+    assert "OmniBCI API server stopped" in content
+
+
+def test_backend_logging_closes_when_startup_fails(startup_environment, tmp_path, monkeypatch):
+    from omnibci.presentation import main
+
+    startup_environment.settings.set("LOGGING.file_path", str(tmp_path / "failed-startup.log"))
+
+    async def failed_container():
+        logging.getLogger("omnibci.test_backend").error("Container startup failed")
+        raise RuntimeError("Container unavailable")
+
+    monkeypatch.setattr(main, "build_container", failed_container)
+    app = create_app()
+    with pytest.raises(RuntimeError, match="Container unavailable"), TestClient(app):
+        pass
+
+    runtime = app.state.backend_logging
+    assert not runtime.is_running
+    assert "Container startup failed" in runtime.file_path.read_text(encoding="utf-8")
+
+
+def test_backend_logging_closes_when_shutdown_fails(startup_environment, tmp_path, monkeypatch):
+    startup_environment.settings.set("LOGGING.file_path", str(tmp_path / "failed-shutdown.log"))
+
+    async def failed_shutdown():
+        logging.getLogger("omnibci.test_backend").error("Engine shutdown failed")
+        raise RuntimeError("Shutdown unavailable")
+
+    app = create_app()
+    with pytest.raises(RuntimeError, match="Shutdown unavailable"), TestClient(app):
+        runtime = app.state.backend_logging
+        monkeypatch.setattr(app.state.engine_service, "shutdown", failed_shutdown)
+
+    assert not runtime.is_running
+    assert "Engine shutdown failed" in runtime.file_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_lifespan_error_stops_services_before_logging(startup_environment, monkeypatch):
+    app = create_app()
+
+    async def shutdown():
+        assert app.state.backend_logging.is_running
+
+    stop = AsyncMock(side_effect=shutdown)
+    with pytest.raises(RuntimeError, match="Lifespan interrupted"):
+        async with app.router.lifespan_context(app):
+            monkeypatch.setattr(app.state.engine_service, "shutdown", stop)
+            raise RuntimeError("Lifespan interrupted")
+
+    stop.assert_awaited_once()
+    assert not app.state.backend_logging.is_running

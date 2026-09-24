@@ -76,7 +76,8 @@ class SettingsPluginConfigInitializer:
             return existing
         if not isinstance(settings_snapshot, dict):
             raise PluginConfigMigrationError("settings_snapshot must be an object")
-        settings = deepcopy(settings_snapshot)
+        settings = {key: deepcopy(value) for key, value in settings_snapshot.items()
+                    if not key.startswith("LOGGING.")}
         warnings: list[str] = []
         drafts: dict[str, PluginProfile] = {}
         bindings: list[tuple[str, str]] = []

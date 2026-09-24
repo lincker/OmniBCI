@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.plugin_profiles import ActivationSnapshot, ProfileRevisionConflict
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
@@ -86,6 +86,44 @@ def test_no_semantic_change_does_not_restart(runtime):
     plan = service.plan(selections, expected_revision=before.revision)
     assert plan.strategy == "no_change"
     assert plan.target_revision == before.revision
+
+
+@pytest.mark.parametrize("previous_logging", [
+    {},
+    {"LOGGING.level": "INFO", "LOGGING.file_path": "original.log"},
+])
+def test_logging_changes_do_not_change_running_revision_or_rebuild(runtime, previous_logging):
+    service, selections, before = runtime
+    accepted = ActivationSnapshot({**before.settings, **previous_logging}, before.bindings)
+    service.profiles.accept(accepted, expected_revision=before.revision)
+    service.engine.applied_revision = accepted.revision
+    service.engine.applied_snapshot = service.profiles.materialize(accepted)
+    host = {**accepted.settings, "LOGGING.level": "DEBUG", "LOGGING.file_path": "changed.log"}
+    service.profiles.settings_source = lambda: host
+
+    direct = service.profiles.propose(selections, settings=host)
+    plan = service.plan(selections, expected_revision=accepted.revision, include_host_settings=True)
+
+    assert direct.revision == accepted.revision
+    assert direct.settings == accepted.settings
+    assert plan.strategy == "no_change"
+    assert plan.changed_settings == ()
+    assert plan.target_revision == accepted.revision
+    assert not plan.errors
+    assert service.resolve_plan(plan.plan_id).snapshot == accepted
+    assert service.profiles.repository.get_activation() == accepted
+
+
+def test_logging_exclusion_does_not_hide_runtime_host_changes(runtime):
+    service, selections, before = runtime
+    service.profiles.settings_source = lambda: {
+        **before.settings, "LOGGING.level": "DEBUG", "NEUROENGINE.queue_size": 256,
+    }
+
+    plan = service.plan(selections, expected_revision=before.revision, include_host_settings=True)
+
+    assert plan.strategy == "rebuild"
+    assert plan.changed_settings == ("NEUROENGINE.queue_size",)
 
 
 @pytest.mark.parametrize("changed", ["generation", "applied_revision", "is_engine_ready"])

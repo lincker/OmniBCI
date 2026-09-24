@@ -19,6 +19,14 @@ def isolated_module_config_directory(monkeypatch, tmp_path):
     monkeypatch.setenv("OMNIBCI_CONFIG_DIR", str(tmp_path / "module-config"))
 
 
+@pytest.fixture(autouse=True)
+def isolated_backend_log_directory(monkeypatch, tmp_path):
+    """Keep API lifespan logs out of the real platform user log directory."""
+    from omnibci.infrastructure import backend_logging
+
+    monkeypatch.setattr(backend_logging, "user_log_path", lambda *args, **kwargs: tmp_path / "logs")
+
+
 class ImmediateCommandExecutor:
     """Explicit test double: dispatches once and confirms immediately."""
 

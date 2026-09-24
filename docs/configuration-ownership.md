@@ -2,7 +2,8 @@
 
 Status: step 1, proposed for review. Playback speed, unused project metadata,
 unused command-server settings, and the unused shared sleep setting have been
-removed as requested. Logging settings are retained for an integration proposal.
+removed as requested. The first logging batch now uses the retained settings for
+the backend process; real-time worker integration remains deferred.
 Steps 2 through 6 require separate review; no automatic commits are authorized.
 
 The inventory covers all 38 leaf keys currently declared in
@@ -156,7 +157,7 @@ The table records implemented removals and the remaining decisions separately.
 | `ACQUISITION.file_reader_play_speed` (removed) | The former `speed` value and setter never affected `read_chunk()` | Removed the default, API/editor entry, translations, unused attribute/setter, and obsolete tests. Existing stored copies are not rewritten and cannot be edited through the config API. A real playback-speed feature requires separate implementation and timing tests |
 | `PROFILES.active` | Selects the old named Application Profile overlay | Retire with old Application Profile APIs; retain Plugin Profiles and accepted activation |
 | `project_name`, `version` (removed) | No production consumer found for these settings entries; package/application metadata exists separately | Removed only these settings entries; package, plugin, and API versions are unchanged |
-| `LOGGING.level`, `LOGGING.file_path` | No production reader of these settings keys found | Retained for the logging integration proposal below; they are not yet effective |
+| `LOGGING.level`, `LOGGING.file_path` | Read when the API server lifespan starts | Backend-only file logging, outside BCI activation; details below |
 | `CONSTANT.ASYNC_SLEEP_TIME` (removed) | No production reader found; loops have their own timing | Removed the unused entry and empty section. Existing loop waits and scheduling are unchanged |
 | `NEUROENGINE.COMMAND_SERVER_IP`, `NEUROENGINE.COMMAND_SERVER_PORT` (removed) | No production reader found | Removed the unused entries; actual message/Actuation transport settings are unchanged |
 
@@ -164,42 +165,66 @@ For the unused-key classification, inspect consumers rather than configuration
 comments. Discovery, tests, or copying an entire settings dictionary do not make
 a key an effective runtime control.
 
-### Logging integration proposal
+### Backend logging: first implementation batch
 
-`LOGGING.level` can control severity filtering and `LOGGING.file_path` can select
-a file destination. Both are host settings, not plugin parameters. Initial
-integration should read them at process startup; runtime logger replacement is
-a separate change and must not be reported as an engine configuration update.
-Exclude logging settings from activation change detection so that a logging
-change cannot trigger a BCI engine rebuild.
+`LOGGING.level` and `LOGGING.file_path` are host settings read from
+`settings.toml` when the API server starts. They are not plugin parameters or
+live controls. Supported levels are `DEBUG`, `INFO`, `WARNING`, `ERROR`, and
+`CRITICAL`; the default is `INFO`. Editing either key takes effect after a backend
+restart, not an engine restart. No new web editor is introduced in this batch.
 
-Current entry points are inconsistent: the independent output scripts configure
-console logging at INFO, the backend runs under Uvicorn, and spawned workers do
-not share an application file-logging lifecycle. Adding a synchronous file
-handler globally would put disk I/O on threads that run application code.
+New activations omit `LOGGING.*`. Previously accepted snapshots retain their
+original logging values as inert metadata so their hashes remain valid. Proposals
+ignore new host logging values, and materialization excludes all logging keys
+from worker settings. A logging-only edit therefore leaves the BCI revision and
+runtime apply plan unchanged.
 
-Before enabling file logging:
+#### Files and ownership
 
-1. Validate the configured level and destination before installing handlers;
-   use a user-writable location on each supported operating system.
-2. Send records through a bounded queue without waiting for free capacity. File
-   writes and rotation belong to a background consumer; a full queue must not
-   block acquisition, processing, rendering, or command dispatch. Track dropped
-   records without recursively logging the overflow.
-3. Define ownership across processes. Prefer process-local queues/listeners and
-   distinct per-process files for the initial implementation; do not independently
-   rotate the same file. Do not introduce a collector protocol or reuse the BCI
-   event/command queues for logging.
-4. Install handlers once, and close the logging consumer after producers stop.
-   Keep existing server-console behavior explicit and avoid duplicate records.
-5. Verify level filtering, file paths, queue saturation, slow output, process
-   startup/shutdown, and cleanup. Measure latency under load before extending
-   file logging to real-time workers; a background writer alone is not evidence
-   of zero real-time overhead. Account for formatting on the calling thread and
-   avoid synchronous stderr output from queue-overflow/error handling.
+- Relative paths resolve under `platformdirs.user_log_path("OmniBCI",
+  appauthor=False)`, the operating system's user-writable log directory. The
+  default configured filename is `omnibci.log`; `../` paths escaping this
+  directory are rejected. Absolute paths are supported.
+- The actual filename includes the backend role and PID, for example
+  `omnibci-backend-12345.log`. Each file rotates at 5 MiB with three backups.
+  This limit is per process filename; old PID files are not automatically pruned.
+- The application installs one owned file-queue handler on the `omnibci` logger. Existing
+  handlers, propagation, and root/Uvicorn logging configuration remain intact.
+  When no handler is reachable at startup, the existing `logging.lastResort`
+  warning output is temporarily forwarded and removed on shutdown. Records that
+  already reach another handler do not receive this fallback. The configured
+  level applies to the `omnibci` logger and the file sink, including records from
+  child loggers with explicit levels. Root/third-party messages are outside this
+  file sink.
+- Invalid configuration or a destination that cannot be opened fails startup
+  explicitly. Importing modules does not open files or start a writer.
 
-This is a proposal only. Logging initialization and execution loops have not
-been changed by the configuration cleanup.
+#### Queue and lifecycle
+
+The producer shallow-copies each enabled record and calls `put_nowait()` on a
+bounded, process-local queue (1,024 records). A daemon thread formats, writes,
+and rotates files. Queue overflow drops the new record. Overflow and write errors
+increment counters without recursively logging or writing synchronously to
+stderr. Existing external handlers may still format/write synchronously; the
+application does not replace them. Callers should use lazy logging arguments
+instead of eagerly building expensive strings.
+
+Logging encloses container construction and service teardown, with logger cleanup
+on exceptional exits. Shutdown detaches the owned handler, restores the
+previous logger level, and waits up to one second to drain. If a file operation
+remains blocked, shutdown returns with the daemon still alive; undrained records
+can be lost on process exit. The consumer closes its own file when it finishes.
+Global `logging.shutdown()` does not flush or close the file while the writer
+still owns it; it also cannot wait on this sink's file I/O lock.
+`app.state.backend_logging` exposes `file_path`, `is_running`, `dropped_records`,
+and `write_errors` for diagnostics; this batch adds no public diagnostic endpoint.
+
+Only the backend process enables this sink. Acquisition, processing, stimulation,
+Actuation, and standalone entry points are unchanged. Queue operations still
+consume CPU and briefly synchronize, so this is not a claim of zero real-time
+overhead. Before enabling file logging in real-time workers, measure latency
+under normal and saturated logging load, verify hardware timing, and retain
+separate process queues/files without reusing BCI event or command queues.
 
 ## 5. Additional inputs and derived values
 
