@@ -119,8 +119,3 @@ class TestFileReaderLifecycle:
     def test_get_metadata_returns_adapter_metadata(self):
         r = self._reader()
         assert _run(r.get_metadata()) == "fake-device"
-
-    def test_set_speed_rejects_non_positive(self):
-        r = FileReader()
-        with pytest.raises(ValueError):
-            r.set_speed(0)

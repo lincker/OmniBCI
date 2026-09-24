@@ -43,6 +43,23 @@ class TestGetConfig:
 
 
 class TestPatchConfig:
+    def test_playback_speed_is_not_exposed_or_writable(self, config_client, tmp_path):
+        key = "ACQUISITION.file_reader_play_speed"
+        settings = config_client.app.state.config_service._settings
+        settings.set(key, 2.0)
+        settings.save()
+        path = tmp_path / "settings.toml"
+        before = path.read_bytes()
+
+        entries = config_client.get("/api/v1/config").json()["data"]["entries"]
+        assert key not in {entry["key"] for entry in entries}
+        response = config_client.patch("/api/v1/config", json={"updates": {key: 3.0}})
+
+        assert response.status_code == 400
+        assert response.json()["code"] == "CONFIG_KEY_NOT_ALLOWED"
+        assert response.json()["detail"]["keys"] == [key]
+        assert path.read_bytes() == before
+
     def test_parallel_port_address_can_be_updated(self, config_client):
         key = "ACQUISITION.parallel_port_address"
         response = config_client.patch("/api/v1/config", json={

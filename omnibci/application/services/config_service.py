@@ -37,7 +37,6 @@ _PLUGIN_SOFT_VALIDATE: Dict[str, str] = {
 CONFIG_WHITELIST: Dict[str, ConfigPolicy] = {
     "ACQUISITION.signal_source": ConfigPolicy("str", "engine-restart", "数据源插件 id"),
     "ACQUISITION.data_file_path": ConfigPolicy("str", "engine-restart", "file_reader 回放文件路径"),
-    "ACQUISITION.file_reader_play_speed": ConfigPolicy("float", "engine-restart", "回放速度倍率"),
     "ACQUISITION.sample_rate": ConfigPolicy("int", "engine-restart", "采样率 (Hz)"),
     "ACQUISITION.channel_number": ConfigPolicy("int", "engine-restart", "通道数"),
     "ACQUISITION.parallel_port_address": ConfigPolicy(

@@ -33,7 +33,6 @@ def test_file_reader_uses_explicit_path_and_chunk_size(tmp_path):
     assert reader.file_path == str(path)
     assert reader._chunk_size == 37
     assert reader.file_pointer == 0
-    assert reader.speed == 1.0
     assert not reader.is_connected
 
 

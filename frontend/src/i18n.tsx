@@ -26,7 +26,6 @@ const zh = {
   "control.targetCue": "目标提示",
   "configDescription.signalSource": "数据源插件 ID",
   "configDescription.dataFilePath": "文件回放数据路径",
-  "configDescription.playSpeed": "文件回放速度倍率",
   "configDescription.sampleRate": "采样率 (Hz)",
   "configDescription.channelCount": "通道数",
   "configDescription.decoder": "解码器插件 ID",
@@ -59,7 +58,6 @@ const en: Record<TranslationKey, string> = {
   "control.targetCue": "Target cue",
   "configDescription.signalSource": "Data source plugin ID",
   "configDescription.dataFilePath": "File playback data path",
-  "configDescription.playSpeed": "File playback speed multiplier",
   "configDescription.sampleRate": "Sample rate (Hz)",
   "configDescription.channelCount": "Channel count",
   "configDescription.decoder": "Decoder plugin ID",
@@ -92,7 +90,6 @@ const CONTROL_LABEL_KEYS: Record<string, TranslationKey> = {
 const CONFIG_DESCRIPTION_KEYS: Record<string, TranslationKey> = {
   "ACQUISITION.signal_source": "configDescription.signalSource",
   "ACQUISITION.data_file_path": "configDescription.dataFilePath",
-  "ACQUISITION.file_reader_play_speed": "configDescription.playSpeed",
   "ACQUISITION.sample_rate": "configDescription.sampleRate",
   "ACQUISITION.channel_number": "configDescription.channelCount",
   "ALGORITHM.decoder": "configDescription.decoder",
