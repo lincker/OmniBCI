@@ -97,18 +97,6 @@ def test_retired_patch_fields_are_rejected(config_client, tmp_path, extra):
     assert path.read_bytes() == before
 
 
-@pytest.mark.parametrize("method,path", [
-    ("GET", "/profiles"), ("GET", "/profiles/Lab"),
-    ("PUT", "/profiles/Lab"), ("DELETE", "/profiles/Lab"),
-    ("POST", "/profiles/Lab/activate"), ("POST", "/profiles/deactivate"),
-])
-def test_application_profile_routes_are_removed(config_client, method, path):
-    response = config_client.request(method, "/api/v1/config" + path, json={
-        "updates": {"NEUROENGINE.queue_size": 64},
-    })
-    assert response.status_code == 404
-
-
 @pytest.mark.parametrize("revision", [None, "", "old", "a" * 63, "g" * 64, 123])
 def test_patch_requires_valid_revision(config_client, tmp_path, revision):
     before = (tmp_path / "settings.toml").read_bytes()

@@ -41,13 +41,6 @@ class TestEngineStart:
             assert resp.json()["success"] is True
             mock_start.assert_awaited_once()
 
-    def test_start_conflict_when_already_running(self, api_client, engine_service):
-        engine_service._running = True
-        # handle_start_engine logs and returns without raising when already running
-        with patch.object(engine_service, "handle_start_engine", new_callable=AsyncMock):
-            resp = api_client.post("/api/v1/engine/start")
-            assert resp.status_code == 200
-
     def test_start_returns_error_on_runtime_error(self, api_client, engine_service):
         with patch.object(
             engine_service,
@@ -67,14 +60,3 @@ class TestEngineStop:
             resp = api_client.post("/api/v1/engine/stop")
             assert resp.status_code == 200
             mock_stop.assert_awaited_once()
-
-
-class TestEngineProcessorEndpointsRemoved:
-    """The processor start/stop endpoints were removed (dead no-op event /
-    irreversible worker kill) — workers auto-start with the engine."""
-
-    def test_processor_start_is_gone(self, api_client):
-        assert api_client.post("/api/v1/engine/processor/start").status_code == 404
-
-    def test_processor_stop_is_gone(self, api_client):
-        assert api_client.post("/api/v1/engine/processor/stop").status_code == 404

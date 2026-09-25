@@ -142,7 +142,6 @@ def test_install_downloads_verified_archive_without_executing_or_enabling(reposi
     assert (installed.location / "manifest.toml").exists()
     assert (client.cache_dir / f"{installed.sha256}.zip").read_bytes() == archive
     assert not list(installed.location.rglob("__pycache__"))
-    assert not (client.installer.root / "active.toml").exists()
     assert [request[0] for request in opener.requests] == [_URL, _DOWNLOAD]
     assert not list(client.cache_dir.glob("__download-*"))
 

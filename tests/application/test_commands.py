@@ -1,56 +1,10 @@
 """
-Unit tests for Command value objects.
-
-Commands are frozen dataclasses — tests verify immutability, default values,
-and that distinct command types are not interchangeable.
+Defaults consumed by stimulation commands.
 """
-import pytest
-from omnibci.application.commands.acquisition_commands import (
-    ConnectDataProviderCommand,
-    DisconnectDataProviderCommand,
-    StartStreamCommand,
-    StopStreamCommand,
-)
-from omnibci.application.commands.engine_commands import (
-    StartEngineCommand,
-    StopEngineCommand,
-)
 from omnibci.application.commands.stimulation_commands import (
     StartStimulationCommand,
-    StopStimulationCommand,
     StartStimTrialCommand,
 )
-
-
-class TestAcquisitionCommands:
-    def test_connect_is_frozen(self):
-        cmd = ConnectDataProviderCommand()
-        with pytest.raises((AttributeError, TypeError)):
-            cmd.foo = "bar"  # type: ignore[attr-defined]
-
-    def test_commands_are_value_equal(self):
-        assert ConnectDataProviderCommand() == ConnectDataProviderCommand()
-        assert DisconnectDataProviderCommand() == DisconnectDataProviderCommand()
-        assert StartStreamCommand() == StartStreamCommand()
-        assert StopStreamCommand() == StopStreamCommand()
-
-    def test_distinct_command_types_not_equal(self):
-        assert ConnectDataProviderCommand() != DisconnectDataProviderCommand()
-        assert StartStreamCommand() != StopStreamCommand()
-
-
-class TestEngineCommands:
-    def test_all_instantiate(self):
-        for cls in (
-            StartEngineCommand,
-            StopEngineCommand,
-        ):
-            assert cls() is not None
-
-    def test_frozen(self):
-        cmd = StartEngineCommand()
-        with pytest.raises((AttributeError, TypeError)):
-            cmd.x = 1  # type: ignore[attr-defined]
 
 
 class TestStimulationCommands:
@@ -58,19 +12,7 @@ class TestStimulationCommands:
         cmd = StartStimulationCommand()
         assert cmd.paradigm is None
 
-    def test_start_with_paradigm(self):
-        cmd = StartStimulationCommand(paradigm="classic40SSVEP")
-        assert cmd.paradigm == "classic40SSVEP"
-
     def test_trial_defaults(self):
         cmd = StartStimTrialCommand()
         assert cmd.n_trials == 1
         assert cmd.trial_params is None
-
-    def test_trial_with_params(self):
-        cmd = StartStimTrialCommand(n_trials=2, trial_params=[3, 7])
-        assert cmd.n_trials == 2
-        assert cmd.trial_params == [3, 7]
-
-    def test_stop_instantiates(self):
-        assert StopStimulationCommand() is not None

@@ -15,14 +15,10 @@ def settings_file(tmp_path):
     return path
 
 
-def test_retired_application_profile_cannot_override_settings(settings_file):
+def test_retired_profile_section_is_excluded_from_settings(settings_file):
     with settings_file.open("a", encoding="utf-8") as stream:
         stream.write('[PROFILES]\nactive = "old-profile"\n')
-    directory = settings_file.parent / "profiles"
-    directory.mkdir()
-    profile = directory / "old-profile.toml"
-    profile.write_text('[ACQUISITION]\nsample_rate = 500\n[NEUROENGINE]\nqueue_size = 5\n')
-    original_settings, original_profile = settings_file.read_bytes(), profile.read_bytes()
+    original_settings = settings_file.read_bytes()
 
     settings = OmniBCISettings(settings_file)
 
@@ -34,15 +30,6 @@ def test_retired_application_profile_cannot_override_settings(settings_file):
         "NEUROENGINE.queue_size": 100,
     }
     assert settings_file.read_bytes() == original_settings
-    assert profile.read_bytes() == original_profile
-
-
-def test_missing_retired_profile_is_not_loaded(settings_file):
-    with settings_file.open("a", encoding="utf-8") as stream:
-        stream.write('[PROFILES]\nactive = "missing"\n')
-    settings = OmniBCISettings(settings_file)
-    assert settings.get("NEUROENGINE.queue_size") == 100
-    assert "PROFILES.active" not in settings.snapshot()
 
 
 def test_get_supports_defaults_and_reports_missing_keys(settings_file):

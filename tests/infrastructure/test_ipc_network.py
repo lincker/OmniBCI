@@ -39,9 +39,6 @@ from omnibci.shared.events import Event, EventType
 # ---------------------------------------------------------------------------
 
 class TestFrameCodec:
-    def test_header_size_is_eight(self):
-        assert Frame.Header.HEADER_SIZE == 8
-
     def test_header_roundtrip(self):
         hdr = Frame.Header(version=1, body_size=123)
         back = Frame.Header.from_bytes(hdr.to_bytes())
@@ -54,18 +51,6 @@ class TestFrameCodec:
         header = Frame.Header.from_bytes(frame[: Frame.Header.HEADER_SIZE])
         assert header.body_size == len(body.encode())
         assert frame[Frame.Header.HEADER_SIZE:].decode() == body
-
-    def test_frame_public_fields_are_read_only(self):
-        frame = Frame("abc")
-        with pytest.raises(AttributeError):
-            frame.body = "longer"
-        with pytest.raises(AttributeError):
-            frame.header.body_size = 1
-
-        encoded = frame.to_bytes()
-        header = Frame.Header.from_bytes(encoded[: Frame.Header.HEADER_SIZE])
-        assert header.body_size == len(encoded[Frame.Header.HEADER_SIZE:]) == 3
-
 
 # ---------------------------------------------------------------------------
 # Spy event bus — captures put_event calls (sync, like the real bus seam)

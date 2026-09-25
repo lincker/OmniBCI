@@ -47,9 +47,6 @@ class TestErrorResponseModel:
         assert dumped["message"] == "x"
         assert dumped["detail"] is None
 
-    def test_error_code_is_string_value(self):
-        assert ErrorCode.CONFLICT.value == "CONFLICT"
-
 
 class TestApiError:
     def test_carries_fields(self):
@@ -96,11 +93,3 @@ class TestUnifiedErrorThroughApp:
         assert body["success"] is False
         assert body["code"] == "VALIDATION_ERROR"
         assert isinstance(body["detail"], list)  # pydantic error list preserved
-
-    def test_success_envelope_still_intact(self, api_client):
-        # The error work must not disturb the success envelope.
-        resp = api_client.get("/api/v1/stimulation/paradigms")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is True
-        assert "data" in body

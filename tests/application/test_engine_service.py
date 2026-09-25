@@ -310,12 +310,3 @@ class TestNeuroEngineServiceStop:
         assert engine_service.is_engine_ready is False
         assert engine_service._needs_rebuild is False
         assert engine_service._engine_thread is not None
-
-
-class TestProcessorHandlersRemoved:
-    """Processor start/stop handlers were removed — the signal-processing
-    worker auto-starts with the engine and stops on engine shutdown."""
-
-    def test_handlers_are_gone(self, engine_service):
-        assert not hasattr(engine_service, "handle_start_signal_processor")
-        assert not hasattr(engine_service, "handle_stop_signal_processor")

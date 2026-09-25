@@ -7,7 +7,7 @@ import numpy as np
 
 from omnibci.infrastructure.stimulation.creator.stim_config import SSVEPConfig
 from omnibci.infrastructure.stimulation.creator.ssvep_target_rect import (
-    StimTargetRect,
+    SSVEPRectView,
 )
 
 
@@ -66,14 +66,14 @@ class TestSSVEPBrightnessContract:
 
     @staticmethod
     def _target(frequency=10.0, fs=60, start_phase=0.0):
-        return StimTargetRect(
-            rectINX=0,
-            site_point=(0, 0),
-            rect_size=(140, 140),
-            fs=fs,
+        return SSVEPRectView(
+            width=140,
+            height=140,
+            position_x=0,
+            position_y=0,
+            refresh_rate=fs,
             frequency=frequency,
             start_phase=start_phase,
-            max_amplitude=1.0,
         )
 
     def test_brightness_bounds(self):

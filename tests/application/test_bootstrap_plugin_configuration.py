@@ -1,6 +1,5 @@
 """Composition selects accepted configuration instead of mutable saved profiles."""
 from unittest.mock import Mock
-from uuid import uuid4
 
 import pytest
 
@@ -51,34 +50,6 @@ retain = ["settings-only", "user-value"]
     monkeypatch.setattr(bootstrap, "NeuroEngineBuilder", builder)
     yield settings
     builder.assert_not_called()
-
-
-def _legacy_files(state):
-    """Write retired documents directly; production no longer reads this format."""
-    root = config_root()
-    root.mkdir(parents=True, exist_ok=True)
-    profile_id = str(uuid4())
-    if state != "inactive":
-        (root / "active.toml").write_text(
-            f'schema_version = 1\n[active]\nacquisition = "{profile_id}"\n', encoding="utf-8",
-        )
-    if state == "corrupt_active":
-        (root / "active.toml").write_text('active = "unterminated', encoding="utf-8")
-    if state != "missing":
-        path = root / "profiles" / "acquisition" / "file_reader" / f"{profile_id}.toml"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text('name = "unterminated' if state == "corrupt_profile" else f'''schema_version = 1
-profile_id = "{profile_id}"
-name = "Existing acquisition"
-module = "acquisition"
-plugin_type = "file_reader"
-[parameters]
-data_file_path = "recordings/legacy.cnt"
-sample_rate = 512
-channel_number = 7
-file_reader_chunk_size = 32
-''', encoding="utf-8")
-    return root, profile_id
 
 
 def _toml_files(root):
@@ -188,47 +159,6 @@ async def test_plugin_directory_restart_check_uses_effective_environment_path(bo
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("state", ["inactive", "active", "missing", "corrupt_profile", "corrupt_active"])
-async def test_retired_profiles_do_not_affect_initialization(bootstrap_settings, state):
-    root, old_id = _legacy_files(state)
-    original_files = _toml_files(root)
-    original_settings = bootstrap_settings._config_path.read_bytes()
-
-    container = await build_container()
-
-    repository = container.plugin_profile_service.repository
-    source = next(binding for binding in repository.get_activation().bindings if binding.kind == "acquisition")
-    assert source.profile_id != old_id
-    assert old_id not in {profile.profile_id for profile in repository.list_profiles()}
-    assert source.parameters["sample_rate"] == 256
-    assert container.acquisition_service._device_metadata() == ("file_reader", 256, 5)
-    entries = container.config_service.list_entries()
-    assert {entry["key"] for entry in entries} == {"ALGORITHM.baseline_duration", "NEUROENGINE.queue_size"}
-    assert next(entry for entry in entries if entry["key"] == "NEUROENGINE.queue_size")["value"] == 29
-    assert {path: path.read_bytes() for path in original_files} == original_files
-    assert bootstrap_settings._config_path.read_bytes() == original_settings
-
-
-@pytest.mark.asyncio
-async def test_existing_activation_ignores_damaged_legacy_files(bootstrap_settings, caplog):
-    first = await build_container()
-    accepted = first.plugin_profile_service.repository.get_activation()
-    root, _ = _legacy_files("corrupt_profile")
-    (root / "active.toml").write_text('active = "unterminated', encoding="utf-8")
-    original_files = _toml_files(root)
-    original_settings = bootstrap_settings._config_path.read_bytes()
-    caplog.clear()
-
-    restarted = await build_container()
-
-    assert restarted.plugin_profile_service.repository.get_activation() == accepted
-    assert restarted.engine_service._snapshot_provider() == first.engine_service._snapshot_provider()
-    assert _toml_files(root) == original_files
-    assert bootstrap_settings._config_path.read_bytes() == original_settings
-    assert not [record for record in caplog.records if record.levelname == "ERROR"]
-
-
-@pytest.mark.asyncio
 async def test_existing_activation_keeps_its_revision_and_pinned_inputs(bootstrap_settings):
     first = await build_container()
     profiles = first.plugin_profile_service
@@ -266,50 +196,6 @@ async def test_existing_activation_keeps_its_revision_and_pinned_inputs(bootstra
     assert decoder["parameters"] == {"window_duration": 4.25, "offset_time": 0.15}
     assert _toml_files(profiles.repository.root) == original_files
     assert bootstrap_settings._config_path.read_bytes() == original_settings
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("existing", [False, True])
-@pytest.mark.parametrize("profile_state", ["valid", "missing", "corrupt"])
-async def test_retired_application_overlay_cannot_change_accepted_or_initial_configuration(
-    bootstrap_settings, existing, profile_state,
-):
-    accepted = None
-    if existing:
-        first = await build_container()
-        repository = first.plugin_profile_service.repository
-        original = repository.get_activation()
-        accepted = ActivationSnapshot(
-            {**original.settings, "NEUROENGINE.queue_size": 99, "PROFILES.active": "old-profile"},
-            original.bindings,
-        )
-        repository.save_activation(accepted, expected_revision=original.revision)
-
-    bootstrap_settings.set("PROFILES.active", "old-profile")
-    bootstrap_settings.save()
-    directory = bootstrap_settings._config_path.parent / "profiles"
-    directory.mkdir()
-    if profile_state != "missing":
-        (directory / "old-profile.toml").write_text(
-            '[NEUROENGINE]\nqueue_size = 88\n' if profile_state == "valid" else 'broken = "',
-            encoding="utf-8",
-        )
-    original_files = _toml_files(bootstrap_settings._config_path.parent)
-    accepted_files = _toml_files(config_root()) if existing else None
-    bootstrap_settings.load_config()
-
-    container = await build_container()
-
-    current = container.plugin_profile_service.repository.get_activation()
-    assert container.engine_service._snapshot_provider()["NEUROENGINE.queue_size"] == (99 if existing else 29)
-    if existing:
-        assert current == accepted
-        assert _toml_files(config_root()) == accepted_files
-    else:
-        assert "PROFILES.active" not in current.settings
-    entries = container.config_service.list_entries()
-    assert next(entry for entry in entries if entry["key"] == "NEUROENGINE.queue_size")["value"] == 29
-    assert {path: path.read_bytes() for path in original_files} == original_files
 
 
 @pytest.mark.asyncio

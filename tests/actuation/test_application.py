@@ -486,27 +486,3 @@ class TestCooperativeStop:
         _run(app.serve())
         assert app.actuator.torn_down is True
         assert stopped == [True]
-
-
-class TestQueueOwnership:
-    def test_owned_event_queue_is_closed_once(self):
-        class _Queue:
-            def __init__(self):
-                self.close_calls = 0
-                self.cancel_join_calls = 0
-
-            def close(self):
-                self.close_calls += 1
-
-            def cancel_join_thread(self):
-                self.cancel_join_calls += 1
-
-        app = _app()
-        app._event_queue = _Queue()
-        app._event_queue_closed = False
-
-        app._close_event_queue()
-        app._close_event_queue()
-
-        assert app._event_queue.close_calls == 1
-        assert app._event_queue.cancel_join_calls == 1

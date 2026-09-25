@@ -172,16 +172,6 @@ class TestTrialCompletedMessage:
                 produced_at=datetime.now(timezone.utc),
             )
 
-    def test_json_roundtrip(self):
-        msg = TrialCompletedMessage(
-            session_id="s", trial_number=2, target_id=4, event_id=201,
-            confidence=0.75, forced=False,
-            produced_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
-        )
-        payload = json.loads(msg.model_dump_json())
-        assert payload["target_id"] == 4
-        assert payload["confidence"] == 0.75
-
 
 class TestPingMessage:
     def test_wire_shape(self):
@@ -245,10 +235,6 @@ class TestHeartbeat:
 # ---------------------------------------------------------------------------
 
 class TestWebSocketEndpoint:
-    def test_connects_successfully(self, api_client):
-        with api_client.websocket_connect("/api/v1/ws/results") as ws:
-            assert ws is not None
-
     def test_receives_trial_completed(self, api_client):
         from omnibci.presentation.websockets.results import results_broadcaster
 

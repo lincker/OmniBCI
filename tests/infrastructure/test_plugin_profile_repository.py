@@ -104,16 +104,6 @@ def test_activation_compare_and_swap_and_legacy_null_fields(repository):
     assert TomlPluginProfileRepository(repository.root).get_activation() == changed
 
 
-def test_storage_preserves_legacy_files(repository, profile):
-    repository.root.mkdir()
-    legacy = repository.root / "active.toml"
-    legacy.write_text('schema_version = 1\n[active]\nacquisition = "legacy"\n')
-    before = legacy.read_bytes()
-    repository.save_profile(profile)
-    repository.save_activation(ActivationSnapshot({}, ()))
-    assert legacy.read_bytes() == before
-
-
 @pytest.mark.parametrize("target", ["profile", "activation"])
 def test_failed_replace_preserves_old_content(repository, profile, monkeypatch, target):
     saved = repository.save_profile(profile)

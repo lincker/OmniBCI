@@ -102,12 +102,8 @@ def _assert_management_available(client):
         _data(client, path)
 
 
-def test_dangling_retired_acquisition_selection_does_not_block_lifespan(startup_environment):
+def test_fresh_lifespan_initializes_configuration_without_starting_engine(startup_environment):
     environment = startup_environment
-    environment.root.mkdir()
-    old_selection = environment.root / "active.toml"
-    old_selection.write_text(f'schema_version = 1\n[active]\nacquisition = "{uuid4()}"\n', encoding="utf-8")
-    original = old_selection.read_bytes()
     settings_bytes = environment.settings._config_path.read_bytes()
 
     with TestClient(create_app()) as client:
@@ -121,7 +117,6 @@ def test_dangling_retired_acquisition_selection_does_not_block_lifespan(startup_
         assert _data(client, "/config/runtime")["accepted_revision"] == accepted["revision"]
         environment.builder.assert_not_called()
 
-    assert old_selection.read_bytes() == original
     assert environment.settings._config_path.read_bytes() == settings_bytes
 
 

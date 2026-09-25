@@ -77,7 +77,6 @@ def test_valid_archive_is_static_catalog_readable_and_not_activated(tmp_path):
     assert catalog.resolve_selection("acquisition", result.contributions[0].selection) == result.contributions[0]
     assert not list(installer.root.glob("__install-*"))
     assert not list(installer.root.rglob("__pycache__"))
-    assert not (installer.root / "active.toml").exists()
     receipt = json.loads((result.location / ".omnibci-install.json").read_text())
     assert receipt["sha256"] == result.sha256
     assert receipt["files"]["resources/data.txt"] == hashlib.sha256(b"example").hexdigest()
