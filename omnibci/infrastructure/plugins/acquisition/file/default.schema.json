@@ -1,0 +1,44 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "data_file_path": {
+      "type": "string",
+      "title": "Recording path",
+      "default": "tests/fixture/train.cnt",
+      "x-scope": "machine",
+      "x-apply": "module",
+      "minLength": 1
+    },
+    "file_reader_chunk_size": {
+      "type": "integer",
+      "title": "Chunk size (samples)",
+      "default": 100,
+      "x-scope": "portable",
+      "x-apply": "module",
+      "minimum": 1
+    },
+    "sample_rate": {
+      "type": "integer",
+      "title": "Sample rate (Hz)",
+      "default": 1000,
+      "x-scope": "portable",
+      "x-apply": "module",
+      "minimum": 1
+    },
+    "channel_number": {
+      "type": "integer",
+      "title": "Output channels including event row",
+      "default": 10,
+      "x-scope": "portable",
+      "x-apply": "module",
+      "minimum": 2
+    }
+  },
+  "required": [
+    "data_file_path",
+    "file_reader_chunk_size",
+    "sample_rate",
+    "channel_number"
+  ]
+}

@@ -10,6 +10,7 @@ from omnibci.application.events import (
     CommandFailureKind,
     CommandRequest,
     CommandResult,
+    StreamBarrier,
 )
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.domain.signal import SignalChunk
@@ -31,7 +32,7 @@ class CommandQueue(Protocol):
 class DataSink(Protocol):
     """Minimal downstream sink contract for acquired signal chunks."""
 
-    def put_data(self, chunk: SignalChunk) -> None: ...
+    def put_data(self, chunk: SignalChunk | StreamBarrier) -> None: ...
 
 
 class AcquisitionCommand(Enum):
@@ -41,7 +42,11 @@ class AcquisitionCommand(Enum):
     connect           = 'connect'
     start_stream      = 'start stream'
     stop_stream       = 'stop stream'
+    stop_and_drain    = 'stop and drain'
     disconnect        = 'disconnect'
+    get_checkpoint    = 'get checkpoint'
+    restore_checkpoint = 'restore checkpoint'
+    update_revision   = 'update revision'
 
 
 class AcquisitionState(Enum):
@@ -63,6 +68,10 @@ _COMMAND_RESULT_NAMES = {
     AcquisitionCommand.disconnect: EventType.DisconnectDataProvider.name,
     AcquisitionCommand.start_stream: EventType.StartStream.name,
     AcquisitionCommand.stop_stream: EventType.StopStream.name,
+    AcquisitionCommand.stop_and_drain: EventType.StopAndDrain.name,
+    AcquisitionCommand.get_checkpoint: EventType.GetSourceCheckpoint.name,
+    AcquisitionCommand.restore_checkpoint: EventType.RestoreSourceCheckpoint.name,
+    AcquisitionCommand.update_revision: EventType.UpdateAcquisitionRevision.name,
 }
 
 
@@ -78,6 +87,8 @@ class Acquisition:
         command_queue: CommandQueue,
         data_manager: DataSink,
         event_bus=None,
+        generation: str | None = None,
+        config_revision: str | None = None,
     ) -> None:
         self.data_source = data_source
         self.command_queue = command_queue
@@ -87,14 +98,20 @@ class Acquisition:
         self.data_manager = data_manager
         self.event_bus = event_bus  # Optional for projection-free unit tests.
         self.should_exit = False
+        self.generation = generation
+        self.config_revision = config_revision
+        self._last_sequence = -1
+        self._fetch_failure: str | None = None
 
     def run(self) -> None:
         asyncio.run(self.serve())
 
     async def serve(self) -> None:
-        await self.startup()
-        await self.main_loop()
-        await self.shutdown()
+        try:
+            await self.startup()
+            await self.main_loop()
+        finally:
+            await self.shutdown()
 
     async def startup(self) -> None:
         logger.info('Acquisition started')
@@ -121,11 +138,16 @@ class Acquisition:
             command, raw_request = item, None
         request = CommandRequest.from_value(raw_request)
         logger.debug('Acquisition command: %s', command)
+        if command in (AcquisitionCommand.get_checkpoint, AcquisitionCommand.restore_checkpoint,
+                       AcquisitionCommand.update_revision):
+            self._configuration_command(command, request)
+            return
         handler = {
             AcquisitionCommand.connect:          self._on_connect,
             AcquisitionCommand.disconnect:       self._on_disconnect,
             AcquisitionCommand.start_stream:     self._on_start_stream,
             AcquisitionCommand.stop_stream:      self._on_stop_stream,
+            AcquisitionCommand.stop_and_drain:   self._on_stop_stream,
             AcquisitionCommand.stop_acquisition: self._on_stop_acquisition,
             AcquisitionCommand.get_metadata:     self._on_get_metadata,
         }.get(command)
@@ -142,7 +164,28 @@ class Acquisition:
                 )
             return
         try:
+            if command is AcquisitionCommand.stop_and_drain and request is None:
+                raise AcquisitionCommandRejected("CORRELATION_REQUIRED", "StopAndDrain requires a command ID")
             await handler()
+            if command is AcquisitionCommand.stop_and_drain:
+                self._require_healthy_stream()
+                payload = request.payload
+                session_id = payload.get("session_id") if isinstance(payload, dict) else None
+                if session_id is not None and (not isinstance(session_id, str) or not session_id):
+                    raise AcquisitionCommandRejected("INVALID_SESSION_COMMAND", "Invalid drain session ID")
+                self.data_manager.put_data(StreamBarrier(
+                    request.command_id, self.generation, self.config_revision,
+                    self._last_sequence, session_id,
+                ))
+                # The processor alone can confirm consumption of prior data.
+                return
+        except asyncio.CancelledError:
+            if request is not None:
+                self._emit_command_result(
+                    request, command, ok=False, message="Command interrupted by acquisition shutdown",
+                    error_code="ACQUISITION_CANCELLED", failure_kind=CommandFailureKind.EXECUTION_FAILED,
+                )
+            raise
         except AcquisitionCommandRejected as exc:
             if request is None:
                 return
@@ -171,6 +214,43 @@ class Acquisition:
             return
         if request is not None:
             self._emit_command_result(request, command, ok=True)
+
+    def _configuration_command(self, command, request) -> None:
+        if request is None:
+            return
+        try:
+            payload = request.payload
+            if (not isinstance(payload, dict) or payload.get("generation") != self.generation
+                    or payload.get("expected_revision") != self.config_revision):
+                raise ValueError("Acquisition command belongs to a different runtime generation or revision")
+            if command is AcquisitionCommand.update_revision:
+                revision = payload.get("target_revision")
+                if not isinstance(revision, str) or len(revision) != 64:
+                    raise ValueError("A pinned target revision is required")
+                self.config_revision = revision
+                data = {}
+            else:
+                self._require_healthy_stream()
+                if self.data_source.is_streaming or self.fetch_task is not None:
+                    raise ValueError("Stop and join acquisition before accessing a source checkpoint")
+                if command is AcquisitionCommand.get_checkpoint:
+                    supported = self.data_source.supports_checkpoint
+                    data = {"supported": supported,
+                            "checkpoint": self.data_source.checkpoint() if supported else None,
+                            "resume_without_checkpoint_safe": getattr(
+                                self.data_source, "resume_without_checkpoint_safe", False,
+                            ) is True}
+                else:
+                    if not self.data_source.supports_checkpoint:
+                        raise ValueError("The source does not support replay checkpoints")
+                    self.data_source.restore_checkpoint(payload.get("checkpoint"))
+                    data = {"restored": True}
+            data.update(generation=self.generation, config_revision=self.config_revision)
+            self._emit_command_result(request, command, ok=True, data=data)
+        except Exception as exc:
+            self._emit_command_result(request, command, ok=False, message=str(exc),
+                                      error_code="ACQUISITION_CONFIGURATION_FAILED",
+                                      failure_kind=CommandFailureKind.EXECUTION_FAILED)
 
     async def _on_connect(self) -> None:
         if self.data_source.is_connected:
@@ -205,6 +285,7 @@ class Acquisition:
         self._emit_state()
 
     async def _on_start_stream(self) -> None:
+        self._require_healthy_stream()
         # start_stream is only honoured once connected (status == running);
         # otherwise it is dropped — but the truth (not streaming) is still
         # pushed to the projection so the API cannot report a phantom stream.
@@ -234,15 +315,16 @@ class Acquisition:
             await self._cancel_fetch_task()
             self._emit_state()
             return
-        await self.data_source.stop_stream()
+        try:
+            await self.data_source.stop_stream()
+        finally:
+            await self._cancel_fetch_task()
         if self.data_source.is_streaming:
             self._emit_state()
             raise AcquisitionCommandRejected(
                 "STREAM_STOP_FAILED",
                 "Data source remained in the streaming state after stop",
             )
-        if self.fetch_task:
-            await self._cancel_fetch_task()
         logger.info('Fetch task stopped')
         self._emit_state()
 
@@ -256,7 +338,9 @@ class Acquisition:
         try:
             await task
         except asyncio.CancelledError:
-            pass
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
         finally:
             if self.fetch_task is task:
                 self.fetch_task = None
@@ -282,16 +366,25 @@ class Acquisition:
                 chunk = SignalChunk(
                     timestamp=time.time_ns(),
                     raw_data=raw_data,
-                    sequence_id=packets_counter,
+                    sequence_id=self._last_sequence + 1,
                 )
                 chunk = self.preprocess(chunk)
                 self.data_manager.put_data(chunk)
+                self._last_sequence = chunk.sequence_id
                 packets_counter += 1
         except asyncio.CancelledError:
             logger.info('Fetch task cancelled')
         except Exception as exc:
+            self._fetch_failure = f"{type(exc).__name__}: {exc}"
             logger.error('Error in fetch task: %s', exc)
             await self._finish_stream()
+
+    def _require_healthy_stream(self) -> None:
+        if self._fetch_failure is not None:
+            raise RuntimeError(
+                "Acquisition lost stream continuity; rebuild the source before resuming "
+                f"or creating a checkpoint ({self._fetch_failure})"
+            )
 
     def preprocess(self, data: SignalChunk) -> SignalChunk:
         # TODO: channel mapping per selected algorithm
@@ -303,6 +396,7 @@ class Acquisition:
         try:
             await self.data_source.stop_stream()
         except Exception as exc:
+            self._fetch_failure = self._fetch_failure or f"{type(exc).__name__}: {exc}"
             logger.error('stop_stream during fetch teardown failed: %s', exc)
         self._emit_state()
 
@@ -331,6 +425,7 @@ class Acquisition:
         message: str | None = None,
         error_code: str | None = None,
         failure_kind: CommandFailureKind | None = None,
+        data=None,
     ) -> None:
         if self.event_bus is None:
             return
@@ -347,5 +442,6 @@ class Acquisition:
                 message=message,
                 error_code=error_code,
                 failure_kind=failure_kind,
+                data=data,
             ),
         ))

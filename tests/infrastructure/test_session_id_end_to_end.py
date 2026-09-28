@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from omnibci.bootstrap import assemble
-from omnibci.conf import settings
+from omnibci.conf import OmniBCISettings
 from omnibci.infrastructure.neuroengine.builder import (
     NeuroEngineBuilder,
     NeuroEngineConfig,
@@ -22,15 +22,6 @@ from omnibci.application.services.engine_service import NeuroEngineService
 
 _ROOT = Path(__file__).parents[2]
 _CNT_FIXTURE = _ROOT / "tests" / "fixture" / "train.cnt"
-
-
-class _AcceptanceSettings:
-    """Use production settings with a longer cold-start command deadline."""
-
-    def get(self, key, default=None):
-        if key == "NEUROENGINE.command_timeout_s":
-            return 90.0
-        return settings.get(key, default)
 
 
 def _assert_success(response, expected_status: int = 200):
@@ -63,15 +54,26 @@ def test_file_reader_session_id_matches_websocket_and_rest(
         actuation_enabled=False,
     )
 
-    async def build_acceptance_container():
+    from omnibci.application.services.plugin_config_initialization import SettingsPluginConfigInitializer
+    from omnibci.application.services.plugin_profile_service import PluginProfileService
+    from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+    from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+    seed = {**OmniBCISettings().saved_snapshot(), "ACQUISITION.signal_source": "file_reader",
+            "ACQUISITION.data_file_path": str(_CNT_FIXTURE), "ACQUISITION.sample_rate": 1000}
+    profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
+                                    CatalogConfigurationAdapter(), settings_source=lambda: seed)
+    accepted = SettingsPluginConfigInitializer(profiles).initialize(seed).snapshot
+    snapshot = profiles.materialize(accepted)
+
+    async def build_acceptance_container(**kwargs):
         engine_service = NeuroEngineService(
-            engine_factory=lambda: NeuroEngineBuilder(engine_config).build()
+            engine_factory=lambda: NeuroEngineBuilder(engine_config, settings_snapshot=snapshot).build()
         )
         await engine_service.startup()
         return assemble(
             engine_service,
             InMemorySessionRepository(),
-            settings=_AcceptanceSettings(),
+            settings={**snapshot, "NEUROENGINE.command_timeout_s": 90.0},
             auto_spawn=False,
         )
 

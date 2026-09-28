@@ -1,9 +1,5 @@
-"""
-/api/v1/config endpoints — layered configuration (stage 4).
+"""Host settings API rejects plugin fields and retired application profiles."""
 
-api_client's real ConfigService (wired to the real settings singleton) is
-replaced per test with one over a temp settings.toml.
-"""
 import pytest
 
 from omnibci.application.services.config_service import ConfigService
@@ -12,140 +8,146 @@ from omnibci.conf import OmniBCISettings
 
 @pytest.fixture()
 def config_client(api_client, tmp_path):
-    toml = tmp_path / "settings.toml"
-    toml.write_text(
-        "[ACQUISITION]\n"
-        "signal_source = \"file_reader\"\n"
-        "sample_rate = 1000\n"
-        "[ALGORITHM]\n"
-        "window_duration = 3.0\n"
-        "[STIMULATION]\n"
-        "paradigm = \"classic40\"\n",
-        encoding="utf-8",
+    path = tmp_path / "settings.toml"
+    path.write_text(
+        '[ACQUISITION]\nsignal_source = "file_reader"\nsample_rate = 1000\n'
+        '[ALGORITHM]\nbaseline_duration = 1.0\n'
+        '[NEUROENGINE]\nqueue_size = 32\n', encoding="utf-8",
     )
-    api_client.app.state.config_service = ConfigService(OmniBCISettings(toml_file=toml))
+    api_client.app.state.config_service = ConfigService(OmniBCISettings(path))
     return api_client
 
 
-class TestGetConfig:
-    def test_shape_and_whitelist(self, config_client):
-        resp = config_client.get("/api/v1/config")
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert data["active_profile"] is None
-        keys = {e["key"] for e in data["entries"]}
-        assert "ACQUISITION.sample_rate" in keys
-        assert "LOGGING.level" not in keys  # whitelist only
-        entry = next(e for e in data["entries"] if e["key"] == "ACQUISITION.sample_rate")
-        assert entry["default_value"] == 1000
-        assert entry["effective_value"] == 1000
-        assert entry["requires"] == "engine-restart"
+def test_get_saved_settings_shape(config_client):
+    response = config_client.get("/api/v1/config")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert set(data) == {"entries", "revision"}
+    assert len(data["revision"]) == 64
+    assert {entry["key"]: entry["value"] for entry in data["entries"]} == {
+        "ALGORITHM.baseline_duration": 1.0,
+        "NEUROENGINE.queue_size": 32,
+    }
+    assert all(set(entry) == {"key", "value", "type", "requires", "description"}
+               for entry in data["entries"])
 
 
-class TestPatchConfig:
-    def test_parallel_port_address_can_be_updated(self, config_client):
-        key = "ACQUISITION.parallel_port_address"
-        response = config_client.patch("/api/v1/config", json={
-            "updates": {key: "0x378"},
-        })
-
-        assert response.status_code == 200
-        assert response.json()["data"]["engine_restart_required"] is True
-        entries = config_client.get("/api/v1/config").json()["data"]["entries"]
-        entry = next(item for item in entries if item["key"] == key)
-        assert entry["default_value"] == "0x378"
-        assert entry["effective_value"] == "0x378"
-        assert entry["type"] == "str"
-
-    def test_patch_default(self, config_client):
-        resp = config_client.patch("/api/v1/config", json={
-            "updates": {"ACQUISITION.sample_rate": 500}})
-        assert resp.status_code == 200
-        body = resp.json()["data"]
-        assert body["applied"] == ["ACQUISITION.sample_rate"]
-        assert body["engine_restart_required"] is True
-        get = config_client.get("/api/v1/config").json()["data"]
-        e = next(x for x in get["entries"] if x["key"] == "ACQUISITION.sample_rate")
-        assert e["default_value"] == 500
-
-    def test_patch_hot_key_no_restart(self, config_client):
-        resp = config_client.patch("/api/v1/config", json={
-            "updates": {"STIMULATION.paradigm": "p2"}})
-        assert resp.json()["data"]["engine_restart_required"] is False
-
-    def test_unknown_key_400_config_key_not_allowed(self, config_client):
-        resp = config_client.patch("/api/v1/config", json={
-            "updates": {"LOGGING.level": "DEBUG"}})
-        assert resp.status_code == 400
-        body = resp.json()
-        assert body["code"] == "CONFIG_KEY_NOT_ALLOWED"
-        assert body["detail"]["keys"] == ["LOGGING.level"]
-
-    def test_bad_type_422_with_key_detail(self, config_client):
-        resp = config_client.patch("/api/v1/config", json={
-            "updates": {"ACQUISITION.sample_rate": "fast"}})
-        assert resp.status_code == 422
-        assert resp.json()["code"] == "VALIDATION_ERROR"
-        assert "ACQUISITION.sample_rate" in resp.json()["detail"]
-
-    def test_patch_profile_scope_creates_profile(self, config_client):
-        resp = config_client.patch("/api/v1/config", json={
-            "updates": {"ACQUISITION.sample_rate": 250}, "scope": "实采",
-            "description": "设备实采"})
-        assert resp.status_code == 200
-        listed = config_client.get("/api/v1/config/profiles").json()["data"]
-        assert [p["name"] for p in listed["profiles"]] == ["实采"]
-        assert listed["profiles"][0]["description"] == "设备实采"
+def test_patch_saves_host_settings(config_client, tmp_path):
+    revision = config_client.get("/api/v1/config").json()["data"]["revision"]
+    response = config_client.patch("/api/v1/config", json={"expected_revision": revision, "updates": {
+        "NEUROENGINE.queue_size": 64,
+        "ALGORITHM.baseline_duration": 2.5,
+    }})
+    assert response.status_code == 200
+    assert response.json()["data"] == {
+        "revision": config_client.get("/api/v1/config").json()["data"]["revision"],
+        "saved": ["ALGORITHM.baseline_duration", "NEUROENGINE.queue_size"],
+        "engine_restart_required": True,
+    }
+    fresh = OmniBCISettings(tmp_path / "settings.toml")
+    assert fresh.get("NEUROENGINE.queue_size") == 64
+    assert fresh.get("ALGORITHM.baseline_duration") == 2.5
 
 
-class TestProfileEndpoints:
-    def _mk(self, client, name="p1", rate=500):
-        client.put(f"/api/v1/config/profiles/{name}", json={
-            "updates": {"ACQUISITION.sample_rate": rate}})
+@pytest.mark.parametrize("key,value", [
+    ("ACQUISITION.sample_rate", 500),
+    ("ACQUISITION.parallel_port_address", "0x378"),
+    ("ACQUISITION.file_reader_play_speed", 2.0),
+    ("ALGORITHM.decoder", "other"),
+    ("ALGORITHM.filters", []),
+    ("STIMULATION.paradigm", "other"),
+    ("ACTUATION.effector", "logger"),
+    ("LOGGING.level", "DEBUG"),
+])
+def test_plugin_and_internal_keys_cannot_partially_write(config_client, tmp_path, key, value):
+    path = tmp_path / "settings.toml"
+    before = path.read_bytes()
+    revision = config_client.get("/api/v1/config").json()["data"]["revision"]
+    response = config_client.patch("/api/v1/config", json={"expected_revision": revision, "updates": {
+        "NEUROENGINE.queue_size": 64, key: value,
+    }})
+    assert response.status_code == 400
+    assert response.json()["code"] == "CONFIG_KEY_NOT_ALLOWED"
+    assert response.json()["detail"]["keys"] == [key]
+    assert path.read_bytes() == before
+    assert config_client.app.state.config_service._settings.get("NEUROENGINE.queue_size") == 32
 
-    def test_put_then_detail(self, config_client):
-        self._mk(config_client)
-        resp = config_client.get("/api/v1/config/profiles/p1")
-        assert resp.status_code == 200
-        assert resp.json()["data"]["entries"] == {"ACQUISITION.sample_rate": 500}
 
-    def test_detail_404(self, config_client):
-        resp = config_client.get("/api/v1/config/profiles/ghost")
-        assert resp.status_code == 404
-        assert resp.json()["code"] == "CONFIG_PROFILE_NOT_FOUND"
+def test_invalid_host_value_has_key_detail(config_client):
+    response = config_client.patch("/api/v1/config", json={
+        "expected_revision": config_client.get("/api/v1/config").json()["data"]["revision"],
+        "updates": {"NEUROENGINE.queue_size": "large"},
+    })
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"
+    assert "NEUROENGINE.queue_size" in response.json()["detail"]
 
-    def test_activate_changes_effective(self, config_client):
-        self._mk(config_client)
-        resp = config_client.post("/api/v1/config/profiles/p1/activate")
-        assert resp.status_code == 200
-        data = config_client.get("/api/v1/config").json()["data"]
-        assert data["active_profile"] == "p1"
-        e = next(x for x in data["entries"] if x["key"] == "ACQUISITION.sample_rate")
-        assert (e["default_value"], e["profile_value"], e["effective_value"]) == (1000, 500, 500)
 
-    def test_activate_missing_404(self, config_client):
-        resp = config_client.post("/api/v1/config/profiles/ghost/activate")
-        assert resp.status_code == 404
-        assert resp.json()["code"] == "CONFIG_PROFILE_NOT_FOUND"
+@pytest.mark.parametrize("extra", [
+    {"scope": "default"}, {"scope": "Lab"}, {"description": "Old profile"},
+])
+def test_retired_patch_fields_are_rejected(config_client, tmp_path, extra):
+    path = tmp_path / "settings.toml"
+    before = path.read_bytes()
+    response = config_client.patch("/api/v1/config", json={
+        "expected_revision": config_client.get("/api/v1/config").json()["data"]["revision"],
+        "updates": {"NEUROENGINE.queue_size": 64}, **extra,
+    })
+    assert response.status_code == 422
+    assert path.read_bytes() == before
 
-    def test_delete_active_409_in_use(self, config_client):
-        self._mk(config_client)
-        config_client.post("/api/v1/config/profiles/p1/activate")
-        resp = config_client.delete("/api/v1/config/profiles/p1")
-        assert resp.status_code == 409
-        assert resp.json()["code"] == "CONFIG_PROFILE_IN_USE"
 
-    def test_deactivate_then_delete(self, config_client):
-        self._mk(config_client)
-        config_client.post("/api/v1/config/profiles/p1/activate")
-        assert config_client.post("/api/v1/config/profiles/deactivate").status_code == 200
-        assert config_client.delete("/api/v1/config/profiles/p1").status_code == 200
-        assert config_client.get("/api/v1/config/profiles").json()["data"]["profiles"] == []
+@pytest.mark.parametrize("revision", [None, "", "old", "a" * 63, "g" * 64, 123])
+def test_patch_requires_valid_revision(config_client, tmp_path, revision):
+    before = (tmp_path / "settings.toml").read_bytes()
+    body = {"updates": {"NEUROENGINE.queue_size": 64}}
+    if revision is not None:
+        body["expected_revision"] = revision
+    response = config_client.patch("/api/v1/config", json=body)
+    assert response.status_code == 422
+    assert (tmp_path / "settings.toml").read_bytes() == before
 
-    def test_invalid_name_422(self, config_client):
-        # "a.b" reaches the handler (valid path segment) but fails name policy;
-        # path-separator attempts (%2F) never even match the route → 404.
-        resp = config_client.put("/api/v1/config/profiles/a.b", json={
-            "updates": {"ACQUISITION.sample_rate": 1}})
-        assert resp.status_code == 422
-        assert resp.json()["code"] == "VALIDATION_ERROR"
+
+def test_stale_browser_save_returns_conflict_and_preserves_newer_values(config_client):
+    revision = config_client.get("/api/v1/config").json()["data"]["revision"]
+    first = config_client.patch("/api/v1/config", json={
+        "expected_revision": revision, "updates": {"NEUROENGINE.queue_size": 64}})
+    assert first.status_code == 200
+    updated_revision = first.json()["data"]["revision"]
+    assert updated_revision != revision
+    stale = config_client.patch("/api/v1/config", json={
+        "expected_revision": revision, "updates": {"ALGORITHM.baseline_duration": 3.0}})
+    assert stale.status_code == 409
+    assert stale.json()["code"] == "CONFLICT"
+    data = config_client.get("/api/v1/config").json()["data"]
+    assert data["revision"] == updated_revision
+    assert {entry["key"]: entry["value"] for entry in data["entries"]} == {
+        "ALGORITHM.baseline_duration": 1.0, "NEUROENGINE.queue_size": 64}
+
+
+@pytest.mark.parametrize("method", ["GET", "PATCH"])
+def test_unavailable_storage_returns_service_error(config_client, monkeypatch, method):
+    settings = config_client.app.state.config_service._settings
+    revision = config_client.get("/api/v1/config").json()["data"]["revision"]
+
+    def fail(*args, **kwargs):
+        raise OSError("disk is unavailable")
+
+    monkeypatch.setattr(settings, "read_saved" if method == "GET" else "update", fail)
+    response = config_client.request(method, "/api/v1/config", json={
+        "expected_revision": revision, "updates": {"NEUROENGINE.queue_size": 64}})
+    assert response.status_code == 503
+    assert response.json()["code"] == "SERVICE_UNAVAILABLE"
+
+
+@pytest.mark.parametrize("key,value", [
+    ("NEUROENGINE.queue_size", 0), ("NEUROENGINE.queue_size", -10),
+    ("ALGORITHM.baseline_duration", -1),
+])
+def test_invalid_numeric_ranges_are_rejected(config_client, key, value):
+    revision = config_client.get("/api/v1/config").json()["data"]["revision"]
+    response = config_client.patch("/api/v1/config", json={
+        "expected_revision": revision, "updates": {key: value}})
+    assert response.status_code == 422
+    assert key in response.json()["detail"]
+    assert config_client.get("/api/v1/config").json()["data"]["revision"] == revision

@@ -397,18 +397,20 @@ class TestSpawnMode:
 
 class TestChildEntryPoint:
     @patch("omnibci.infrastructure.actuation.application.Actuation")
-    def test_forwards_stop_event_to_application(self, mock_actuation_cls):
+    def test_forwards_stop_event_to_application(self, mock_actuation_cls, monkeypatch):
+        monkeypatch.setattr("omnibci.conf.settings.use_snapshot", lambda _: None)
         stop_event = object()
 
-        _run_actuation(stop_event=stop_event)
+        _run_actuation(stop_event=stop_event, settings_snapshot={})
 
-        mock_actuation_cls.assert_called_once_with(stop_event=stop_event)
+        mock_actuation_cls.assert_called_once_with(stop_event=stop_event, settings_snapshot={})
         mock_actuation_cls.return_value.run.assert_called_once_with()
 
     @patch("omnibci.infrastructure.actuation.application.Actuation")
     def test_entrypoint_reports_constructor_or_run_failure(
-        self, mock_actuation_cls
+        self, mock_actuation_cls, monkeypatch
     ):
+        monkeypatch.setattr("omnibci.conf.settings.use_snapshot", lambda _: None)
         connection = MagicMock()
         mock_actuation_cls.return_value.run.side_effect = RuntimeError(
             "configuration failed"
@@ -417,7 +419,7 @@ class TestChildEntryPoint:
         with pytest.raises(RuntimeError, match="configuration failed"):
             _run_actuation(
                 stop_event=object(),
-                startup_connection=connection,
+                startup_connection=connection, settings_snapshot={},
             )
 
         report = connection.send.call_args.args[0]
@@ -426,15 +428,11 @@ class TestChildEntryPoint:
         assert report.message == "configuration failed"
         connection.close.assert_called_once_with()
 
-    @patch("omnibci.conf.settings.set")
     @patch("omnibci.infrastructure.actuation.application.Actuation")
-    def test_empty_effector_is_an_explicit_override(
-        self, mock_actuation_cls, mock_settings_set
-    ):
-        _run_actuation(effector="", stop_event=object())
-
-        mock_settings_set.assert_called_once_with("ACTUATION.effector", "")
-        mock_actuation_cls.return_value.run.assert_called_once_with()
+    def test_alias_without_snapshot_is_rejected(self, mock_actuation_cls):
+        with pytest.raises(RuntimeError, match="pinned settings snapshot"):
+            _run_actuation(effector="logger", stop_event=object())
+        mock_actuation_cls.assert_not_called()
 
 
 class TestEngineLifecycleHook:

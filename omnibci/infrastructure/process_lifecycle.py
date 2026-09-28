@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 import logging
+import math
 import time
 from typing import Any
 
@@ -24,7 +25,7 @@ _POLL_INTERVAL_S = 0.05
 
 
 class ChildProcessState(StrEnum):
-    """Lifecycle state exposed by managed stimulation/actuation processes."""
+    """Lifecycle state exposed by managed child processes."""
 
     STARTING = "starting"
     READY = "ready"
@@ -42,13 +43,18 @@ class StartupReport:
     stage: str
     error_type: str | None = None
     message: str | None = None
+    config_revision: str | None = None
+    generation: str | None = None
 
     @classmethod
-    def ready(cls, component: str) -> "StartupReport":
+    def ready(cls, component: str, *, config_revision: str | None = None,
+              generation: str | None = None) -> "StartupReport":
         return cls(
             component=component,
             state=ChildProcessState.READY,
             stage="ready",
+            config_revision=config_revision,
+            generation=generation,
         )
 
     @classmethod
@@ -58,6 +64,8 @@ class StartupReport:
         *,
         stage: str,
         error: BaseException,
+        config_revision: str | None = None,
+        generation: str | None = None,
     ) -> "StartupReport":
         return cls(
             component=component,
@@ -65,6 +73,8 @@ class StartupReport:
             stage=stage,
             error_type=type(error).__name__,
             message=str(error),
+            config_revision=config_revision,
+            generation=generation,
         )
 
 
@@ -93,17 +103,22 @@ class ChildProcessStartupTimeout(TimeoutError):
 class StartupReporter:
     """Child-side exactly-once sender for a startup result."""
 
-    def __init__(self, connection: Any, *, component: str) -> None:
+    def __init__(self, connection: Any, *, component: str,
+                 config_revision: str | None = None, generation: str | None = None) -> None:
         self._connection = connection
         self._component = component
         self._reported = False
+        self._config_revision = config_revision
+        self._generation = generation
 
     @property
     def reported(self) -> bool:
         return self._reported
 
     def ready(self) -> bool:
-        return self._send(StartupReport.ready(self._component))
+        return self._send(StartupReport.ready(
+            self._component, config_revision=self._config_revision, generation=self._generation,
+        ))
 
     def failed(self, stage: str, error: BaseException) -> bool:
         return self._send(
@@ -111,11 +126,13 @@ class StartupReporter:
                 self._component,
                 stage=stage,
                 error=error,
+                config_revision=self._config_revision,
+                generation=self._generation,
             )
         )
 
     def _send(self, report: StartupReport) -> bool:
-        if self._reported:
+        if self._reported or self._connection is None:
             return False
         self._reported = True
         connection = self._connection
@@ -151,20 +168,33 @@ class StartupReporter:
             pass
 
 
+@dataclass(frozen=True, slots=True)
+class StartupChannel:
+    """Parent-owned handles for one worker's dedicated startup pipe."""
+
+    component: str
+    process: Any
+    receiver: Any
+    reporter: StartupReporter
+
+
 def wait_for_startup_report(
     receiver: Any,
     process: Any,
     *,
     component: str,
     timeout_s: float,
+    expected_revision: str | None = None,
+    expected_generation: str | None = None,
 ) -> StartupReport:
     """Wait boundedly for one valid READY/FAILED report.
 
     Process liveness is sampled while waiting so an early child exit is
     reported immediately instead of being mislabelled as a timeout.
     """
-    if timeout_s <= 0:
-        raise ValueError("startup timeout must be greater than zero")
+    if (isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float))
+            or not math.isfinite(timeout_s) or timeout_s <= 0):
+        raise ValueError("startup timeout must be finite and greater than zero")
 
     deadline = time.monotonic() + timeout_s
     while True:
@@ -198,6 +228,15 @@ def wait_for_startup_report(
                     f"{component} subprocess sent a report for "
                     f"{report.component!r}"
                 )
+            for label, expected, actual in (
+                ("configuration revision", expected_revision, report.config_revision),
+                ("generation", expected_generation, report.generation),
+            ):
+                if expected is not None and actual != expected:
+                    raise ChildProcessStartupError(
+                        f"{component} startup {label} mismatch: expected {expected!r}, "
+                        f"received {actual!r}", report=report,
+                    )
             if report.state is ChildProcessState.FAILED:
                 raise ChildProcessStartupError.from_report(report)
             if report.state is not ChildProcessState.READY:

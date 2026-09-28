@@ -37,6 +37,7 @@ class TrialRecord:
     confidence: Optional[float]
     forced: bool
     produced_at: datetime
+    config_revision: Optional[str] = None
 
 
 @dataclass
@@ -55,6 +56,9 @@ class SessionRecord:
     started_at: datetime
     ended_at: Optional[datetime] = None
     trials: List[TrialRecord] = field(default_factory=list)
+    continuation_of: Optional[str] = None
+    config_revision: Optional[str] = None
+    interruption_reason: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Mutations (guarded by invariants)
@@ -68,11 +72,13 @@ class SessionRecord:
             )
         self.trials.append(trial)
 
-    def mark_ended(self) -> None:
+    def mark_ended(self, *, interruption_reason: Optional[str] = None) -> None:
         """Transition to ENDED; idempotent."""
         if self.state != SessionRecordState.ENDED:
             self.state = SessionRecordState.ENDED
             self.ended_at = datetime.now(timezone.utc)
+        if interruption_reason is not None:
+            self.interruption_reason = interruption_reason
 
     # ------------------------------------------------------------------
     # Queries

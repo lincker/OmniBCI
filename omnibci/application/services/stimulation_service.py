@@ -6,6 +6,7 @@ Manages stimulation paradigm lifecycle through domain events.
 from __future__ import annotations
 
 import logging
+from omnibci.application.runtime_admission import admitted
 from typing import TYPE_CHECKING
 
 from omnibci.shared.events import EventType, Event
@@ -39,20 +40,29 @@ class StimulationAppService:
         engine: EnginePort,
         process_manager: "StimulationProcessManager | None" = None,
         command_results: "CommandResultBroker | None" = None,
+        admission=None,
     ) -> None:
+        self._admission = admission
         self._engine          = engine
         self._process_manager = process_manager
         self._command_results = command_results
         self._active          = False
 
-    def handle_start_stimulation(self, cmd: StartStimulationCommand) -> None:
+    @admitted
+    def handle_start_stimulation(self, cmd: StartStimulationCommand, *, settings_snapshot=None) -> None:
         process_ready = False
         self._active = False
         try:
             if self._process_manager is not None:
                 # Managed mode blocks here until IPC + renderer/paradigm setup
                 # has reported READY.  External mode remains an immediate no-op.
-                self._process_manager.start(paradigm=cmd.paradigm)
+                snapshot = self._engine.applied_snapshot if settings_snapshot is None else settings_snapshot
+                if isinstance(snapshot, dict):
+                    self._process_manager.start(
+                        paradigm=cmd.paradigm, settings_snapshot=snapshot,
+                    )
+                else:
+                    self._process_manager.start(paradigm=cmd.paradigm)
                 process_ready = True
                 if not self._process_manager.auto_spawn:
                     if cmd.paradigm is not None:
@@ -82,6 +92,7 @@ class StimulationAppService:
         self._active = True
         logger.info("StartStimulation event dispatched (paradigm=%s)", cmd.paradigm)
 
+    @admitted(recovery=True)
     def handle_stop_stimulation(self, cmd: StopStimulationCommand) -> None:
         try:
             if (
@@ -123,6 +134,7 @@ class StimulationAppService:
                 self._active = False
         logger.info("StopStimulation event dispatched")
 
+    @admitted
     def handle_start_trial(self, cmd: StartStimTrialCommand) -> None:
         # JSON-friendly payload: it crosses the engine→stimulation socket, where
         # body_to_event reconstructs only plain JSON (no dataclass), so the
@@ -138,6 +150,8 @@ class StimulationAppService:
 
     @property
     def is_active(self) -> bool:
+        if self._process_manager is not None and self._process_manager.auto_spawn:
+            return self._active and self._process_manager.is_alive
         return self._active
 
     @property

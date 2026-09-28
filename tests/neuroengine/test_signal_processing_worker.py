@@ -1,21 +1,17 @@
 """Tests for SignalProcessingWorker plugin loading and processor wiring."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock, call, patch
 
-import numpy as np
 import pytest
 
-import omnibci
 import omnibci.conf as conf_module
 import omnibci.infrastructure.neuroengine.processing.worker as worker_module
-import omnibci.infrastructure.plugins.registry as registry_module
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter
 from omnibci.infrastructure.neuroengine.processing.worker import (
     SignalProcessingWorker,
 )
 from omnibci.infrastructure.plugins.loader import PluginLoader
-from omnibci.infrastructure.plugins.registry import ObjectFactory
 
 
 def _worker(**overrides) -> SignalProcessingWorker:
@@ -30,99 +26,62 @@ def _worker(**overrides) -> SignalProcessingWorker:
     return SignalProcessingWorker(**defaults)
 
 
-def _settings(monkeypatch, *, return_value=None, side_effect=None):
-    settings = MagicMock()
-    settings.get.return_value = return_value
-    settings.get.side_effect = side_effect
-    monkeypatch.setattr(conf_module, "settings", settings)
-    return settings
-
-
-class _FirstFilter(Filter):
-    def apply(self, data, ctx):
-        return np.asarray(data)
-
-
-class _SecondFilter(Filter):
-    def apply(self, data, ctx):
-        return np.asarray(data)
-
-
 class TestFilterLoading:
-    def test_settings_failure_falls_back_to_no_filters(self, monkeypatch):
-        _settings(monkeypatch, side_effect=RuntimeError("settings unavailable"))
+    @staticmethod
+    def snapshot(count=1, *, missing=False):
+        from dataclasses import replace
+        from omnibci.application.plugin_profiles import ProfileBinding
+        from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+        from uuid import uuid4
+        descriptor = PluginCatalog().resolve("filter", "BASELINE_CORRECTION")
+        selection = replace(descriptor.selection, package_id="missing") if missing else descriptor.selection
+        return {"PLUGINS.bindings": [ProfileBinding(
+            f"processing.filter.{uuid4()}", "filter", None, selection, {},
+        ).to_dict() for _ in range(count)]}
 
-        assert _worker()._load_filters() == []
+    def test_empty_configuration_returns_no_filters(self):
+        assert _worker(settings_snapshot=self.snapshot(0))._load_filters() == []
 
-    @pytest.mark.parametrize("configured", [None, []])
-    def test_missing_or_empty_configuration_returns_no_filters(
-        self,
-        monkeypatch,
-        configured,
-    ):
-        _settings(monkeypatch, return_value=configured)
+    def test_unknown_filter_blocks_pipeline(self):
+        from omnibci.infrastructure.plugins.plugin_catalog import PluginNotFoundError
+        with pytest.raises(PluginNotFoundError):
+            _worker(settings_snapshot=self.snapshot(missing=True))._load_filters()
 
-        assert _worker()._load_filters() == []
-
-    def test_loads_known_filters_in_order_and_skips_unknown(
-        self,
-        monkeypatch,
-        caplog,
-    ):
-        _settings(monkeypatch, return_value=["SECOND", "MISSING", "FIRST"])
-        monkeypatch.setattr(
-            registry_module,
-            "registry_for",
-            MagicMock(
-                return_value={
-                    "FIRST": _FirstFilter,
-                    "SECOND": _SecondFilter,
-                }
-            ),
-        )
-
-        filters = _worker()._load_filters()
-
-        assert [type(filter_) for filter_ in filters] == [
-            _SecondFilter,
-            _FirstFilter,
-        ]
-        assert "Unknown filter 'MISSING'" in caplog.text
+    def test_repeated_filters_construct_separate_instances_in_order(self):
+        filters = _worker(settings_snapshot=self.snapshot(2))._load_filters()
+        assert len(filters) == 2
+        assert filters[0] is not filters[1]
+        assert all(item.plugin_type == "BASELINE_CORRECTION" for item in filters)
 
 
 class TestAlgorithmLoading:
-    def test_loads_plugins_and_resolves_configured_algorithm(self, monkeypatch):
-        settings = _settings(monkeypatch)
-        settings.get.side_effect = {
-            "ALGORITHM.decoder": "decoder-type",
-            "ALGORITHM.epoch_detector": "detector-type",
-        }.__getitem__
-        monkeypatch.setattr(omnibci, "__path__", ["/package/omnibci"])
-
-        load_from_dir = MagicMock()
-        expected_decoder = MagicMock()
-        expected_detector = MagicMock()
-        create = MagicMock(side_effect=[expected_decoder, expected_detector])
-        monkeypatch.setattr(PluginLoader, "load_from_dir", load_from_dir)
-        monkeypatch.setattr(ObjectFactory, "create", create)
-
-        worker = _worker()
-        filters = [MagicMock(spec=Filter)]
-        worker._load_filters = MagicMock(return_value=filters)
-
-        decoder, detector, loaded_filters = worker._load_algorithm()
-
-        load_from_dir.assert_called_once_with(
-            "/package/omnibci/infrastructure/plugins/algorithms",
-            base_package="omnibci.infrastructure.plugins.algorithms",
-        )
-        assert create.call_args_list == [
-            call(Decoder, "decoder-type"),
-            call(EpochDetector, "detector-type"),
+    def test_explicit_pipeline_uses_host_sample_rate_without_global_reads(self, monkeypatch):
+        from omnibci.application.plugin_profiles import ProfileBinding
+        from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+        snapshot = {"ACQUISITION.sample_rate": 250, "CONFIG.revision": "test-revision"}
+        bindings = []
+        descriptors = []
+        for slot, kind, alias, parameters in (
+            ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA", {"window_duration": 1.5, "offset_time": 0.2}),
+            ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
+        ):
+            descriptor = PluginCatalog().resolve(kind, alias)
+            descriptors.append(descriptor)
+            bindings.append(ProfileBinding(slot, kind, None, descriptor.selection, parameters).to_dict())
+        snapshot["PLUGINS.bindings"] = bindings
+        monkeypatch.setattr(conf_module.settings, "get", lambda *a, **k: pytest.fail("global settings read"))
+        with patch.object(
+            PluginLoader, "load_entrypoint", wraps=PluginLoader.load_entrypoint
+        ) as load_entrypoint:
+            decoder, detector, filters = _worker(settings_snapshot=snapshot)._load_algorithm()
+        assert load_entrypoint.call_args_list == [
+            call(descriptors[0], Decoder),
+            call(descriptors[1], EpochDetector),
         ]
-        assert decoder is expected_decoder
-        assert detector is expected_detector
-        assert loaded_filters is filters
+        assert decoder.SAMPLE_COUNT == 375
+        assert decoder.OFFSET_LENGTH == 50
+        assert detector.plugin_type == "DEFAULT_EPOCH_DETECTOR"
+        assert filters == []
 
 
 class TestProcessorWiring:
@@ -149,6 +108,9 @@ class TestProcessorWiring:
             baseline_duration=0.3,
             filters=filters,
             auto_start_session=False,
+            generation=None,
+            config_revision=None,
+            settings_snapshot=worker._snapshot(),
         )
         assert worker.signal_processor is processor
         processor.run.assert_called_once_with()

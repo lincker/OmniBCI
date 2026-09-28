@@ -102,10 +102,6 @@ class TestAcquisitionUsesPort:
         svc.handle_start_stream(StartStreamCommand())
         assert port.dispatched[0].type == EventType.StartStream
 
-    def test_no_private_engine_svc_attribute_remains(self):
-        svc = _acquisition_service(FakeEnginePort())
-        assert not hasattr(svc, "_engine_svc")
-
     def test_propagates_engine_not_ready(self):
         svc = _acquisition_service(RaisingEnginePort())
         with pytest.raises(RuntimeError):
@@ -130,7 +126,3 @@ class TestStimulationUsesPort:
         svc.handle_start_trial(StartStimTrialCommand(n_trials=1, trial_params=[7]))
         assert port.dispatched[0].type == EventType.StartStimTrial
         assert port.dispatched[0].data == {"n_trials": 1, "trial_params": [7]}
-
-    def test_no_private_engine_svc_attribute_remains(self):
-        svc = StimulationAppService(FakeEnginePort())
-        assert not hasattr(svc, "_engine_svc")

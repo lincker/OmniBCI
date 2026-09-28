@@ -1,0 +1,9 @@
+.configuration-status { flex: none; padding: 9px 24px; border-bottom: 1px solid var(--border-soft); background: var(--sidebar-bg); font-size: 12px; }
+.configuration-status p { margin: 7px 0; line-height: 1.5; }
+.configuration-status [role="alert"] { color: var(--err); }
+.configuration-review { width: min(620px, calc(100vw - 32px)); }
+.configuration-review dl { display: grid; grid-template-columns: 125px 1fr; gap: 12px; font-size: 13px; line-height: 1.6; }
+.configuration-review dt { color: var(--muted); }
+.configuration-review dd { margin: 0; overflow-wrap: anywhere; }
+.configuration-review ul { padding-left: 20px; font-size: 13px; line-height: 1.6; }
+@media (max-width: 640px) { .configuration-review dl { grid-template-columns: 1fr; gap: 6px; } }

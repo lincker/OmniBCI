@@ -2,7 +2,6 @@
 PyOpenGL adapter — implements Renderer protocol by wrapping UIWindow
 and raw PyOpenGL calls.
 
-Existing ui/window.py and ui/image.py are left completely untouched.
 This adapter is intentionally the "no-optimisation" path: VAO/VBO are
 created and destroyed per draw call, which is acceptable at BCI frame
 rates (≤ 60 Hz, ≤ 40 rects/frame).  Performance-critical work lives in
@@ -40,7 +39,7 @@ from OpenGL.GL import (
 )
 from OpenGL.GL.shaders import compileShader, compileProgram
 
-from omnibci.infrastructure.stimulation.ports.renderer import (
+from omnibci.domain.ports.renderer import (
     Color, Rect, TextureHandle,
 )
 from omnibci.infrastructure.stimulation.ui.window import UIWindow

@@ -1,13 +1,10 @@
-project_name = "OmniBCI"
-version = "0.1.0"
 debug = false
 
 [LOGGING]
+# Backend process only; applied when the API server starts.
 level = "INFO"
-file_path = "logs/omnibci.log"
-
-[CONSTANT]
-ASYNC_SLEEP_TIME=0.01
+# Relative to the platform user log directory; the filename includes the backend PID.
+file_path = "omnibci.log"
 
 [ACQUISITION]
 signal_source = "file_reader"
@@ -18,7 +15,6 @@ channel_number = 10
 sample_rate = 1000
 
 file_reader_chunk_size = 100
-file_reader_play_speed = 1.0
 # Relative paths use platform-neutral "/" separators and the project root.
 data_file_path = "tests/fixture/train.cnt"
 
@@ -45,9 +41,6 @@ queue_size = 100
 command_timeout_s = 10.0
 message_server_ip = '127.0.0.1'
 message_server_port = 8765   # must differ from uvicorn HTTP port (8000)
-
-COMMAND_SERVER_IP = '127.0.0.1'
-COMMAND_SERVER_PORT = 8080
 
 [ACTUATION]
 # Actuation (external-device control) subsystem. The engine listens on

@@ -14,7 +14,7 @@ from omnibci.application.services.recording_service import (
     RecordingConflictError,
     NoActiveRecordingError,
 )
-from omnibci.application.events import CommandResult
+from omnibci.application.events import CommandResult, StreamDrainReceipt
 from omnibci.application.services.command_result_service import CommandRejectedError
 from omnibci.application.services.command_result_service import CommandTimeoutError
 
@@ -42,6 +42,9 @@ class _FakeSessions:
         if self.active == cmd.session_id:
             self.active = None
 
+    def handle_get_trials(self, query):
+        return []
+
 
 class _FakeAcquisition:
     def __init__(self, fail_start=False):
@@ -53,14 +56,15 @@ class _FakeAcquisition:
             raise RuntimeError("engine not ready")
         self.events.append("start")
 
-    def handle_stop_stream(self, cmd):
+    def handle_stop_and_drain(self, *, session_id):
         self.events.append("stop")
+        return StreamDrainReceipt(None, None, -1, session_id, 0, False)
 
 
 def _svc(fail_start=False):
     sessions = _FakeSessions()
     acq = _FakeAcquisition(fail_start=fail_start)
-    rec = RecordingService(sessions, acq, stop_drain_seconds=0)
+    rec = RecordingService(sessions, acq)
     return rec, sessions, acq
 
 

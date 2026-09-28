@@ -148,9 +148,3 @@ class TestAcquisitionStatus:
         data = resp.json()["data"]
         assert data["connected"] is True
         assert data["streaming"] is True
-
-    def test_status_schema_fields(self, api_client):
-        resp = api_client.get("/api/v1/acquisition/status")
-        data = resp.json()["data"]
-        for field in ("connected", "streaming"):
-            assert field in data

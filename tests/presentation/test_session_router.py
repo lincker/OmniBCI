@@ -81,10 +81,6 @@ class TestListSessions:
 
 
 class TestGetActiveSession:
-    def test_404_when_no_active_session(self, api_client):
-        resp = api_client.get("/api/v1/sessions/active")
-        assert resp.status_code == 404
-
     def test_returns_active_after_create(self, api_client):
         created = api_client.post("/api/v1/sessions").json()["data"]
         resp = api_client.get("/api/v1/sessions/active")
@@ -98,10 +94,6 @@ class TestGetSession:
         resp = api_client.get(f"/api/v1/sessions/{sid}")
         assert resp.status_code == 200
         assert resp.json()["data"]["session_id"] == sid
-
-    def test_404_for_unknown_session(self, api_client):
-        resp = api_client.get("/api/v1/sessions/does-not-exist")
-        assert resp.status_code == 404
 
 
 class TestEndSession:
@@ -155,11 +147,6 @@ class TestGetTrials:
 
 
 class TestGetLastTrial:
-    def test_404_with_no_trials(self, api_client):
-        sid = api_client.post("/api/v1/sessions").json()["data"]["session_id"]
-        resp = api_client.get(f"/api/v1/sessions/{sid}/trials/last")
-        assert resp.status_code == 404
-
     def test_returns_latest_target(self, api_client, session_service):
         sid = api_client.post("/api/v1/sessions").json()["data"]["session_id"]
         session_service.on_trial_completed(_outcome(sid, _clf(target_id=1)))

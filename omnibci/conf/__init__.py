@@ -2,256 +2,210 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-04-28 10:39
-"""
-Settings with layered profiles.
+"""Host defaults, user overrides, and isolated in-memory worker snapshots."""
 
-    effective = active profile overlay ⊕ default (settings.toml)
-
-Profiles are named key-subsets stored as TOML files under ``profiles/`` next
-to settings.toml.  The active selection persists in ``[PROFILES] active`` of
-settings.toml itself.  Resolution happens *inside* this module, so spawned
-worker processes — which re-import ``omnibci.conf`` and reload from disk —
-see exactly the same effective configuration as the API process.
-"""
-import logging
+import hashlib
 import re
-from datetime import datetime, timezone
+from copy import deepcopy
 from pathlib import Path
-from typing import List, Optional
+from threading import RLock
 
 import tomlkit
 
-logger = logging.getLogger(__name__)
-
-# Reserved section in settings.toml holding the active-profile pointer.
-# Never part of any profile file and never exposed through the config API.
-_ACTIVE_KEY = "PROFILES.active"
-# Reserved metadata section inside profile files.
-_META_SECTION = "META"
-
-# Filenames are the user-facing profile names (Chinese OK).  Reject anything
-# that could escape the profiles dir or surprise the filesystem.
-_NAME_RE = re.compile(r"^[\w\- ]{1,64}$")  # \w is unicode: CJK, latin, digits, _
-
-
-class ProfileNameError(ValueError):
-    """Profile name fails filesystem-safety validation."""
-
-
-class ProfileNotFoundError(KeyError):
-    """No profile file with that name."""
+from omnibci.application.activation_settings import BACKEND_STARTUP_DEFAULTS, RUNTIME_HOST_SETTING_KEYS
+from omnibci.application.config_errors import ConfigProfileConflictError, ConfigProfileValidationError
+from omnibci.conf.paths import config_root
+from omnibci.conf.storage import atomic_write, file_lock
 
 
 class OmniBCISettings:
-    def __init__(self, toml_file: str | Path = 'settings.toml'):
-        self._config_path = Path(toml_file)
-        self._profiles_dir = self._config_path.parent / "profiles"
-        self._data = tomlkit.document()
-        self._overlay = tomlkit.document()   # active profile content (or empty)
-        self.load_config()
-
-    # ------------------------------------------------------------------
-    # Loading
-    # ------------------------------------------------------------------
-
-    def load_config(self):
-        """动态加载配置(默认 + 激活的 profile 叠加层)"""
-        if not self._config_path.exists():
-            raise FileNotFoundError(f"配置文件 {self._config_path} 不存在")
-        with open(self._config_path, "r", encoding="utf-8") as f:
-            self._data = tomlkit.load(f)
-        self._load_overlay()
-
-    def _load_overlay(self) -> None:
-        """(Re)load the active profile; degrade to default-only on any problem."""
-        self._overlay = tomlkit.document()
-        name = self._raw_get(self._data, _ACTIVE_KEY)
-        if not name:
-            return
-        path = self._profile_path(name, validate=False)
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                self._overlay = tomlkit.load(f)
-        except FileNotFoundError:
-            logger.warning("Active profile %r missing (%s) — using defaults only", name, path)
-        except Exception as exc:  # malformed toml etc.
-            logger.warning("Active profile %r unreadable (%s) — using defaults only", name, exc)
-
-    # ------------------------------------------------------------------
-    # Reads
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _raw_get(doc, key: str):
-        value = doc
-        try:
-            for k in key.split('.'):
-                value = value[k]
-        except (KeyError, TypeError):
-            return None
-        return value.unwrap() if hasattr(value, 'unwrap') else value
-
-    #: get() 的"未提供默认值"哨兵——用于区分 get(key)（缺键抛错）与
-    #: get(key, None)（缺键返回 None）。
-    _MISSING = object()
-
-    def get(self, key: str, default=_MISSING):
-        """获取**生效**配置值(profile 覆盖优先),支持点分隔符 'section.key'。
-
-        P2-9 修复：default 参数原先形同虚设（缺键无条件抛 NameError）。
-        现在语义为——
-          get(key)          缺键抛 NameError（原行为，供必填配置 fail-fast）
-          get(key, 默认值)  缺键返回默认值，不记错误日志（可选配置）
-        """
-        overlaid = self._raw_get(self._overlay, key)
-        if overlaid is not None:
-            return overlaid
-        value = self._raw_get(self._data, key)
-        if value is not None:
-            return value
-        if default is not self._MISSING:
-            return default
-        logging.error(f'settings can not find key: {key}')
-        raise NameError(f'settings key not found: {key}')
-
-    def get_default(self, key: str):
-        """获取默认配置值(忽略 profile 覆盖);键缺失返回 None"""
-        return self._raw_get(self._data, key)
-
-    def get_override(self, key: str):
-        """获取激活 profile 的覆盖值;无覆盖返回 None"""
-        return self._raw_get(self._overlay, key)
-
-    # ------------------------------------------------------------------
-    # Writes (default config)
-    # ------------------------------------------------------------------
-
-    def set(self, key: str, value):
-        """设置**默认**配置值，支持点分隔符"""
-        keys = key.split('.')
-        data_ref = self._data
-        for k in keys[:-1]:
-            if k not in data_ref:
-                data_ref[k] = tomlkit.table()
-            data_ref = data_ref[k]
-        data_ref[keys[-1]] = value
-
-    def save(self):
-        """保存默认配置到文件，保留所有格式和注释"""
-        self._config_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self._config_path, "w", encoding="utf-8") as f:
-            tomlkit.dump(self._data, f)
-
-    # ------------------------------------------------------------------
-    # Profiles — storage primitives (policy/whitelist lives in ConfigService)
-    # ------------------------------------------------------------------
-
-    def _profile_path(self, name: str, validate: bool = True) -> Path:
-        if validate and not _NAME_RE.match(name or ""):
-            raise ProfileNameError(
-                f"非法配置名 {name!r}:仅限中英文、数字、下划线、连字符、空格,≤64 字符")
-        return self._profiles_dir / f"{name}.toml"
-
-    def list_profiles(self) -> List[dict]:
-        """[{name, description, key_count, updated_at}],按名称排序"""
-        if not self._profiles_dir.is_dir():
-            return []
-        out = []
-        for path in sorted(self._profiles_dir.glob("*.toml")):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    doc = tomlkit.load(f)
-            except Exception:
-                continue
-            keys = self._flatten(doc)
-            out.append({
-                "name": path.stem,
-                "description": self._raw_get(doc, f"{_META_SECTION}.description"),
-                "key_count": len(keys),
-                "updated_at": self._raw_get(doc, f"{_META_SECTION}.updated_at"),
-            })
-        return out
-
-    def read_profile(self, name: str) -> dict:
-        """profile 的覆盖键平铺 {'SECTION.key': value};不存在抛 ProfileNotFoundError"""
-        path = self._profile_path(name)
-        if not path.exists():
-            raise ProfileNotFoundError(name)
-        with open(path, "r", encoding="utf-8") as f:
-            doc = tomlkit.load(f)
-        return self._flatten(doc)
-
-    def write_profile(self, name: str, updates: dict, description: Optional[str] = None,
-                      replace: bool = False) -> None:
-        """创建/更新 profile(merge 语义;replace=True 整体替换)并刷新叠加层"""
-        path = self._profile_path(name)
-        doc = tomlkit.document()
-        if path.exists() and not replace:
-            with open(path, "r", encoding="utf-8") as f:
-                doc = tomlkit.load(f)
-        for key, value in updates.items():
-            keys = key.split('.')
-            ref = doc
-            for k in keys[:-1]:
-                if k not in ref:
-                    ref[k] = tomlkit.table()
-                ref = ref[k]
-            ref[keys[-1]] = value
-        if _META_SECTION not in doc:
-            doc[_META_SECTION] = tomlkit.table()
-        if description is not None:
-            doc[_META_SECTION]["description"] = description
-        doc[_META_SECTION]["updated_at"] = datetime.now(timezone.utc).isoformat()
-        self._profiles_dir.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            tomlkit.dump(doc, f)
-        if self.active_profile == name:
-            self._load_overlay()
-
-    def delete_profile(self, name: str) -> None:
-        """删除 profile 文件;不存在抛 ProfileNotFoundError(激活检查由服务层做)"""
-        path = self._profile_path(name)
-        if not path.exists():
-            raise ProfileNotFoundError(name)
-        path.unlink()
-
-    # ------------------------------------------------------------------
-    # Profiles — activation
-    # ------------------------------------------------------------------
+    def __init__(self, toml_file: str | Path | None = None, *, defaults_file: str | Path | None = None):
+        if toml_file is not None and defaults_file is not None:
+            raise ValueError("Use either an explicit settings file or defaults with user overrides")
+        self._explicit_path = Path(toml_file) if toml_file is not None else None
+        self._defaults_path = Path(defaults_file) if defaults_file is not None else Path(__file__).with_name("settings.toml")
+        self._data: dict = {}
+        self._pending: dict = {}
+        self._revision: str | None = None
+        self._loaded_path: Path | None = None
+        self._runtime_snapshot: dict | None = None
+        self._lock = RLock()
+        # Importing the global adapter must not read user files in a spawned worker.
+        if self._explicit_path is not None:
+            self.load_config()
 
     @property
-    def active_profile(self) -> Optional[str]:
-        name = self._raw_get(self._data, _ACTIVE_KEY)
-        return name or None  # "" (deactivated) normalises to None
+    def _config_path(self) -> Path:
+        return self._explicit_path if self._explicit_path is not None else config_root() / "settings.toml"
 
-    def set_active_profile(self, name: Optional[str]) -> None:
-        """激活(name=None 表示回到仅默认);持久化指针并刷新叠加层"""
-        if name is not None:
-            if not self._profile_path(name).exists():
-                raise ProfileNotFoundError(name)
-        self.set(_ACTIVE_KEY, name if name is not None else "")
-        self.save()
-        self._load_overlay()
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
+    @staticmethod
+    def _parse(content: bytes, path: Path):
+        try:
+            return tomlkit.parse(content.decode("utf-8"))
+        except (ValueError, TypeError) as exc:
+            raise ConfigProfileValidationError(f"Invalid host settings in {path}: {exc}") from exc
 
     @classmethod
     def _flatten(cls, doc, prefix: str = "") -> dict:
-        """嵌套 toml → {'SECTION.key': value} 平铺;跳过 META 段"""
         flat = {}
-        for k, v in doc.items():
-            if not prefix and k == _META_SECTION:
+        for key, value in doc.items():
+            if not prefix and key in {"META", "PROFILES"}:
                 continue
-            dotted = f"{prefix}{k}"
-            if hasattr(v, "items") and not isinstance(v, (str, list)):
-                flat.update(cls._flatten(v, prefix=f"{dotted}."))
+            dotted = f"{prefix}{key}"
+            if hasattr(value, "items") and not isinstance(value, (str, list)):
+                flat.update(cls._flatten(value, prefix=f"{dotted}."))
             else:
-                flat[dotted] = v.unwrap() if hasattr(v, "unwrap") else v
+                flat[dotted] = value.unwrap() if hasattr(value, "unwrap") else value
         return flat
 
+    @staticmethod
+    def _validate_host_keys(values: dict) -> None:
+        unknown = set(values) - RUNTIME_HOST_SETTING_KEYS - BACKEND_STARTUP_DEFAULTS.keys()
+        if unknown:
+            raise ConfigProfileValidationError(
+                "User host settings contain unsupported keys; configure plugins through Profiles: "
+                + ", ".join(sorted(unknown)))
 
-settings = OmniBCISettings(
-    toml_file=Path(__file__).parent.joinpath('settings.toml')
-)
+    @staticmethod
+    def _hash(defaults: bytes, override: bytes | None) -> str:
+        # Include file presence and defaults so deletion or a defaults update invalidates old edits.
+        digest = hashlib.sha256(defaults)
+        digest.update(b"\0missing" if override is None else b"\0present\0" + override)
+        return digest.hexdigest()
+
+    def _read(self, path: Path):
+        if self._explicit_path is None and path.resolve() == self._defaults_path.resolve():
+            raise ConfigProfileValidationError("User host settings must not overwrite bundled defaults")
+        if path.is_symlink():
+            raise ConfigProfileValidationError("Host settings must not be a symlink")
+        defaults = b""
+        base = {}
+        if self._explicit_path is None:
+            defaults = self._defaults_path.read_bytes()
+            base = self._flatten(self._parse(defaults, self._defaults_path))
+        content = path.read_bytes() if path.exists() else None
+        if content is None and self._explicit_path is not None:
+            raise FileNotFoundError(f"Settings file does not exist: {path}")
+        document = self._parse(content, path) if content is not None else tomlkit.document()
+        overrides = self._flatten(document)
+        if self._explicit_path is None:
+            self._validate_host_keys(overrides)
+            if {"META", "PROFILES"} & document.keys():
+                raise ConfigProfileValidationError("Retired profile metadata is not a host setting")
+        return {**base, **overrides}, self._hash(defaults, content), document, defaults
+
+    def _publish(self, values: dict, revision: str, path: Path) -> None:
+        self._data = values
+        self._revision = revision
+        self._loaded_path = path
+        self._pending.clear()
+
+    def read_saved(self) -> tuple[dict, str]:
+        """Read saved values and their revision together, outside worker loops."""
+        with self._lock:
+            path = self._config_path
+            # An absent directory has no cooperating writer or saved overrides yet.
+            if path.parent.exists():
+                with file_lock(path.parent / ".host-settings.lock"):
+                    values, revision, _, _ = self._read(path)
+            else:
+                values, revision, _, _ = self._read(path)
+            self._publish(values, revision, path)
+            return deepcopy(values), revision
+
+    def saved_snapshot(self) -> dict:
+        return self.read_saved()[0]
+
+    def load_config(self):
+        """Refresh saved host values; never load retired Application Profiles."""
+        self.read_saved()
+
+    def _ensure_loaded(self):
+        if self._loaded_path != self._config_path:
+            self.load_config()
+
+    _MISSING = object()
+
+    def host_get(self, key: str, default=None):
+        """Read deployment values even when a worker snapshot is installed."""
+        with self._lock:
+            self._ensure_loaded()
+            return deepcopy(self._pending.get(key, self._data.get(key, default)))
+
+    def get(self, key: str, default=_MISSING):
+        """Read only the installed snapshot in workers, otherwise cached host values."""
+        if self._runtime_snapshot is not None:
+            if key in self._runtime_snapshot:
+                return deepcopy(self._runtime_snapshot[key])
+            if default is not self._MISSING:
+                return default
+            raise NameError(f"settings key not found: {key}")
+        with self._lock:
+            self._ensure_loaded()
+            values = {**self._data, **self._pending}
+            if key in values:
+                return deepcopy(values[key])
+            if default is not self._MISSING:
+                return default
+            raise NameError(f"settings key not found: {key}")
+
+    @staticmethod
+    def _set(document, key: str, value) -> None:
+        parts = key.split(".")
+        target = document
+        for part in parts[:-1]:
+            if part not in target:
+                target[part] = tomlkit.table()
+            target = target[part]
+        target[parts[-1]] = value
+
+    def update(self, updates: dict, *, expected_revision: str) -> str:
+        """Compare, persist atomically, then publish the committed host values."""
+        if not isinstance(expected_revision, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_revision):
+            raise ConfigProfileValidationError("expected_revision must be a SHA-256 revision")
+        if self._explicit_path is None:
+            self._validate_host_keys(updates)
+        with self._lock:
+            path = self._config_path
+            with file_lock(path.parent / ".host-settings.lock"):
+                values, revision, document, defaults = self._read(path)
+                if revision != expected_revision:
+                    raise ConfigProfileConflictError("Host settings changed; refresh before saving again")
+                for key, value in updates.items():
+                    self._set(document, key, value)
+                content = tomlkit.dumps(document)
+                values.update(deepcopy(updates))
+                new_revision = self._hash(defaults, content.encode("utf-8"))
+                atomic_write(path, content)
+                self._publish(values, new_revision, path)
+                return new_revision
+
+    def set(self, key: str, value):
+        """Stage an explicit local edit; API callers use the atomic update method."""
+        with self._lock:
+            self._ensure_loaded()
+            if self._explicit_path is None:
+                self._validate_host_keys({key: value})
+            self._pending[key] = deepcopy(value)
+
+    def save(self):
+        """Save staged edits using the revision from the last load."""
+        with self._lock:
+            self._ensure_loaded()
+            return self.update(dict(self._pending), expected_revision=self._revision)
+
+    def snapshot(self) -> dict:
+        """Copy cached host settings or the installed worker configuration."""
+        if self._runtime_snapshot is not None:
+            return deepcopy(self._runtime_snapshot)
+        with self._lock:
+            self._ensure_loaded()
+            return deepcopy({**self._data, **self._pending})
+
+    def use_snapshot(self, snapshot: dict) -> None:
+        """Install resolved worker settings without reading or changing saved files."""
+        with self._lock:
+            self._runtime_snapshot = deepcopy(snapshot)
+
+
+settings = OmniBCISettings()

@@ -1,0 +1,20 @@
+# OmniBCI Plugin Manifest — schema version 2
+
+manifest_version = 2
+
+[package]
+id = "default_epoch_detector"
+publisher = "omnibci"
+version = "0.1.0"
+api_version = "2"
+
+[[contributions]]
+id = "default"
+kind = "epoch_detector"
+plugin_type = "DEFAULT_EPOCH_DETECTOR"
+entrypoint = "detector:DefaultEpochDetector"
+display_name = "Default Epoch Detector"
+
+[contributions.configuration]
+schema = "default.schema.json"
+schema_version = 1

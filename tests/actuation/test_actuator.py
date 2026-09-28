@@ -61,8 +61,6 @@ class TestExecute:
 
 class TestLifecycle:
     def test_user_effector_descriptor_drives_full_lifecycle(self, monkeypatch, tmp_path):
-        from omnibci.conf import settings
-
         plugin_root = tmp_path / "plugins"
         package_dir = plugin_root / "effectors" / "user-device"
         package_dir.mkdir(parents=True)
@@ -106,16 +104,11 @@ class TestLifecycle:
             encoding="utf-8",
         )
         monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(plugin_root))
-        original_get = settings.get
-        monkeypatch.setattr(
-            settings,
-            "get",
-            lambda key, *args: "user_device"
-            if key == "ACTUATION.effector"
-            else original_get(key, *args),
-        )
-
-        actuator = Actuator()
+        from omnibci.application.plugin_profiles import ProfileBinding
+        from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+        descriptor = PluginCatalog().resolve("effector", "user_device")
+        binding = ProfileBinding("actuation.effector", "effector", None, descriptor.selection, {})
+        actuator = Actuator(settings_snapshot={"PLUGINS.bindings": [binding.to_dict()]})
         actuator.setup()
         loaded = actuator.effector
         actuator.execute({"target_id": 7})
@@ -169,12 +162,14 @@ class TestLifecycle:
                 raise ValueError("secondary teardown failure")
 
         a = Actuator()
-        monkeypatch.setattr(a, "_load_effector", _BrokenRollbackEffector)
+        effector = _BrokenRollbackEffector()
+        monkeypatch.setattr(a, "_load_effector", lambda: effector)
 
-        with pytest.raises(RuntimeError, match="original setup failure"):
+        with pytest.raises(RuntimeError, match="original setup failure") as raised:
             a.setup()
 
-        assert a.effector is None
+        assert isinstance(raised.value.__cause__, ValueError)
+        assert a.effector is effector
 
     def test_teardown_releases_and_clears(self):
         eff = _FakeEffector()
@@ -182,19 +177,21 @@ class TestLifecycle:
         a.teardown()
         assert "teardown" in eff.calls and a.effector is None
 
-    def test_teardown_swallows_effector_error(self):
+    def test_failed_teardown_retains_ownership_until_success(self):
         class _BadTeardown(_FakeEffector):
             plugin_type = "bad_teardown_for_actuator_test"
-            def teardown(self):
-                raise RuntimeError("stuck valve")
-        a = _actuator_with(_BadTeardown())
-        a.teardown()               # must not raise
-        assert a.effector is None
 
-    def test_registry_loading_via_factory(self):
-        # Legacy registry/factory remains available to subsystems not yet
-        # migrated to selected-entrypoint descriptors.
-        from omnibci.infrastructure.plugins.registry import ObjectFactory, register_plugin
-        register_plugin(Effector)(_FakeEffector)
-        instance = ObjectFactory.create(Effector, "fake_for_actuator_test")
-        assert isinstance(instance, _FakeEffector)
+            def teardown(self):
+                self.calls.append("teardown")
+                if len(self.calls) == 1:
+                    raise RuntimeError("stuck valve")
+
+        effector = _BadTeardown()
+        a = _actuator_with(effector)
+        with pytest.raises(RuntimeError, match="stuck valve"):
+            a.teardown()
+        assert a.effector is effector
+        with pytest.raises(RuntimeError, match="still owns resources"):
+            a.setup()
+        a.teardown()
+        assert a.effector is None

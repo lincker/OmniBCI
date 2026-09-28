@@ -20,7 +20,7 @@ import numpy as np
 import moderngl as mgl
 import glfw
 
-from omnibci.infrastructure.stimulation.ports.renderer import (
+from omnibci.domain.ports.renderer import (
     Color, Rect, TextureHandle,
 )
 

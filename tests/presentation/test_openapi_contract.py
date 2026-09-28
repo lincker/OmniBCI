@@ -55,15 +55,31 @@ EXPECTED_OPERATIONS = {
     # recording (session + stream orchestration)
     ("/api/v1/recording/start", "post"),
     ("/api/v1/recording/stop", "post"),
-    # config (stage 4: defaults + named profiles)
+    # Host configuration.
     ("/api/v1/config", "get"),
     ("/api/v1/config", "patch"),
-    ("/api/v1/config/profiles", "get"),
-    ("/api/v1/config/profiles/{name}", "get"),
-    ("/api/v1/config/profiles/{name}", "put"),
-    ("/api/v1/config/profiles/{name}", "delete"),
-    ("/api/v1/config/profiles/{name}/activate", "post"),
-    ("/api/v1/config/profiles/deactivate", "post"),
+    # Plugin profiles and accepted activation.
+    ("/api/v1/config/plugin-catalog/{kind}", "get"),
+    ("/api/v1/config/plugin-profiles", "get"),
+    ("/api/v1/config/plugin-profiles", "post"),
+    ("/api/v1/config/plugin-profiles/{profile_id}", "get"),
+    ("/api/v1/config/plugin-profiles/{profile_id}", "put"),
+    ("/api/v1/config/plugin-profiles/{profile_id}", "delete"),
+    ("/api/v1/config/activation", "get"),
+    ("/api/v1/config/activation", "put"),
+    ("/api/v1/config/runtime", "get"),
+    ("/api/v1/config/nodes/{role}", "get"),
+    ("/api/v1/config/apply-plan", "post"),
+    ("/api/v1/config/apply", "post"),
+    ("/api/v1/config/operations/{operation_id}", "get"),
+    ("/api/v1/plugin-packages", "get"),
+    ("/api/v1/plugin-packages/install", "post"),
+    ("/api/v1/plugin-packages/{package_id}/{version}/enabled", "put"),
+    ("/api/v1/plugin-packages/{package_id}/{version}", "delete"),
+    ("/api/v1/plugin-packages/profile-version-proposals", "post"),
+    ("/api/v1/plugin-packages/version-profiles", "post"),
+    ("/api/v1/market/catalog", "get"),
+    ("/api/v1/market/install", "post"),
 }
 
 
@@ -115,16 +131,33 @@ def _schema(spec, name):
 
 
 class TestResponseDtos:
+    def test_host_configuration_has_no_application_profile_contract(self, spec):
+        assert not any(path.startswith("/api/v1/config/profiles") for path in spec["paths"])
+        assert set(_schema(spec, "ConfigResponse")["properties"]) == {"entries", "revision"}
+        assert set(_schema(spec, "ConfigEntry")["properties"]) == {
+            "key", "value", "type", "requires", "description",
+        }
+        request = _schema(spec, "PatchConfigRequest")
+        assert set(request["properties"]) == {"updates", "expected_revision"}
+        assert set(request["required"]) == {"updates", "expected_revision"}
+        assert request["properties"]["expected_revision"]["pattern"] == "^[0-9a-f]{64}$"
+        assert request["additionalProperties"] is False
+        assert set(_schema(spec, "PatchConfigResponse")["properties"]) == {
+            "saved", "engine_restart_required", "revision",
+        }
+
     def test_session_response_fields(self, spec):
         props = _schema(spec, "SessionResponse")["properties"]
         assert set(props) == {
             "session_id", "paradigm", "state", "trial_count", "started_at", "ended_at",
+            "continuation_of", "config_revision", "interruption_reason",
         }
 
     def test_trial_response_fields(self, spec):
         props = _schema(spec, "TrialResponse")["properties"]
         assert set(props) == {
             "trial_number", "target_id", "event_id", "confidence", "forced", "produced_at",
+            "config_revision",
         }
 
     def test_engine_status_fields(self, spec):
@@ -159,8 +192,8 @@ class TestErrorContract:
             "ENGINE_NOT_READY", "SESSION_NOT_FOUND", "NO_ACTIVE_SESSION", "NO_TRIALS",
             "ALREADY_RECORDING", "NO_ACTIVE_RECORDING",
             "COMMAND_REJECTED", "COMMAND_EXECUTION_FAILED", "COMMAND_TIMEOUT",
-            # layered configuration (stage 4)
-            "CONFIG_KEY_NOT_ALLOWED", "CONFIG_PROFILE_NOT_FOUND", "CONFIG_PROFILE_IN_USE",
+            # Host configuration and Plugin Profiles.
+            "CONFIG_KEY_NOT_ALLOWED", "CONFIG_PROFILE_NOT_FOUND",
         }
 
     def test_endpoints_document_error_responses(self, spec):

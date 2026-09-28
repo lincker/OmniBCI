@@ -133,9 +133,10 @@ class TestActuationPeerConfig:
         assert cfg.name == ACTUATION
         assert isinstance(cfg.transport, ListenTransport)
         assert cfg.transport._server.max_clients == 1
-        assert cfg.routes.outbound == frozenset({EventType.ActuationCommand})
+        assert cfg.routes.outbound == frozenset({EventType.ActuationCommand, EventType.SettleActuation})
         assert cfg.routes.inbound == frozenset({
             EventType.ActuationAck, EventType.ActuationState, EventType.ActuationFault,
+            EventType.CommandResult,
         })
 
 
@@ -146,7 +147,7 @@ class TestBuilderActuationOptIn:
             patch("omnibci.infrastructure.neuroengine.builder.AcquisitionWorker", return_value=MagicMock()),
             patch("omnibci.infrastructure.neuroengine.builder.SignalProcessingWorker", return_value=MagicMock()),
         ):
-            return NeuroEngineBuilder(NeuroEngineConfig(**cfg_kwargs)).build()
+            return NeuroEngineBuilder(NeuroEngineConfig(**cfg_kwargs), settings_snapshot={}).build()
 
     def test_disabled_by_default(self):
         eng = self._build(actuation_enabled=False)

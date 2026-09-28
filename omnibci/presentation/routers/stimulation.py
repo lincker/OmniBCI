@@ -1,6 +1,7 @@
 """
 /api/v1/stimulation — Stimulation paradigm control endpoints.
 """
+from omnibci.application.plugin_profiles import ProfileRevisionConflict
 from fastapi import APIRouter, Depends, Request, status
 
 from omnibci.presentation.dependencies import get_stimulation_service
@@ -71,6 +72,8 @@ def start_stimulation(
     try:
         svc.handle_start_stimulation(StartStimulationCommand(paradigm=body.paradigm))
         return ApiResponse(message="Stimulation started")
+    except ProfileRevisionConflict:
+        raise
     except (RuntimeError, TimeoutError) as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
@@ -87,6 +90,8 @@ def stop_stimulation(svc: StimulationAppService = Depends(get_stimulation_servic
         return ApiResponse(message="Stimulation stopped")
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
         raise command_error_to_api_error(e)
+    except ProfileRevisionConflict:
+        raise
     except RuntimeError as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
@@ -109,5 +114,7 @@ def start_trial(
         return ApiResponse(message="Trial started")
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
         raise command_error_to_api_error(e)
+    except ProfileRevisionConflict:
+        raise
     except RuntimeError as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))

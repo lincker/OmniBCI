@@ -353,26 +353,26 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Effective configuration */
+        /** Saved host settings */
         get: operations["get_config_api_v1_config_get"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
-        /** Update defaults or a profile (all-or-nothing) */
+        /** Save host settings without applying them */
         patch: operations["patch_config_api_v1_config_patch"];
         trace?: never;
     };
-    "/api/v1/config/profiles": {
+    "/api/v1/config/plugin-catalog/{kind}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List configuration profiles */
-        get: operations["list_profiles_api_v1_config_profiles_get"];
+        /** Plugin Catalog */
+        get: operations["plugin_catalog_api_v1_config_plugin_catalog__kind__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -381,43 +381,96 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/config/profiles/deactivate": {
+    "/api/v1/config/plugin-profiles": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List Profiles */
+        get: operations["list_profiles_api_v1_config_plugin_profiles_get"];
         put?: never;
-        /** Back to defaults only */
-        post: operations["deactivate_profile_api_v1_config_profiles_deactivate_post"];
+        /** Create Profile */
+        post: operations["create_profile_api_v1_config_plugin_profiles_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/config/profiles/{name}": {
+    "/api/v1/config/plugin-profiles/{profile_id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** One profile's overrides */
-        get: operations["get_profile_api_v1_config_profiles__name__get"];
-        /** Create or replace a profile */
-        put: operations["put_profile_api_v1_config_profiles__name__put"];
+        /** Get Profile */
+        get: operations["get_profile_api_v1_config_plugin_profiles__profile_id__get"];
+        /** Update Profile */
+        put: operations["update_profile_api_v1_config_plugin_profiles__profile_id__put"];
         post?: never;
-        /** Delete a profile (409 if active) */
-        delete: operations["delete_profile_api_v1_config_profiles__name__delete"];
+        /** Delete Profile */
+        delete: operations["delete_profile_api_v1_config_plugin_profiles__profile_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/config/profiles/{name}/activate": {
+    "/api/v1/config/activation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Activation */
+        get: operations["get_activation_api_v1_config_activation_get"];
+        /** Accept Activation */
+        put: operations["accept_activation_api_v1_config_activation_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/nodes/{role}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Node Configuration */
+        get: operations["node_configuration_api_v1_config_nodes__role__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/runtime": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Runtime Status */
+        get: operations["runtime_status_api_v1_config_runtime_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/apply-plan": {
         parameters: {
             query?: never;
             header?: never;
@@ -426,8 +479,178 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Activate a profile */
-        post: operations["activate_profile_api_v1_config_profiles__name__activate_post"];
+        /** Plan Configuration */
+        post: operations["plan_configuration_api_v1_config_apply_plan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply Configuration */
+        post: operations["apply_configuration_api_v1_config_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/operations/{operation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Configuration Operation */
+        get: operations["configuration_operation_api_v1_config_operations__operation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plugin-packages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Packages */
+        get: operations["list_packages_api_v1_plugin_packages_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plugin-packages/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Install Package */
+        post: operations["install_package_api_v1_plugin_packages_install_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plugin-packages/{package_id}/{version}/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Enabled */
+        put: operations["set_enabled_api_v1_plugin_packages__package_id___version__enabled_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plugin-packages/{package_id}/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove */
+        delete: operations["remove_api_v1_plugin_packages__package_id___version__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plugin-packages/profile-version-proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Propose Profile */
+        post: operations["propose_profile_api_v1_plugin_packages_profile_version_proposals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plugin-packages/version-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Version Profile */
+        post: operations["create_version_profile_api_v1_plugin_packages_version_profiles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/market/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Catalog */
+        get: operations["catalog_api_v1_market_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/market/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Install */
+        post: operations["install_api_v1_market_install_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -445,7 +668,8 @@ export interface paths {
          * List plugins by category
          * @description Return discovered plugins for *category*.
          *
-         *     Valid categories: ``paradigm``, ``decoder``, ``acquisition``, ``effector``.
+         *     Valid categories: ``paradigm``, ``decoder``, ``acquisition``, ``effector``,
+         *     ``trigger``, ``filter``, ``epoch_detector``.
          */
         get: operations["list_plugins_by_category_api_v1_plugins__category__get"];
         put?: never;
@@ -477,6 +701,20 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AcceptActivationRequest */
+        AcceptActivationRequest: {
+            /** Bindings */
+            bindings: components["schemas"]["SelectProfileBindingRequest"][];
+            /** Expected Revision */
+            expected_revision?: string | null;
+            /** Refresh Slots */
+            refresh_slots?: string[] | null;
+            /**
+             * Include Host Settings
+             * @default false
+             */
+            include_host_settings: boolean;
+        };
         /** AcquisitionStatusResponse */
         AcquisitionStatusResponse: {
             /** Connected */
@@ -489,6 +727,23 @@ export interface components {
             sample_rate?: number | null;
             /** Channel Count */
             channel_count?: number | null;
+        };
+        /** ActivationResponse */
+        ActivationResponse: {
+            /**
+             * Format Version
+             * @default 2
+             * @constant
+             */
+            format_version: 2;
+            /** Revision */
+            revision: string;
+            /** Settings */
+            settings: {
+                [key: string]: unknown;
+            };
+            /** Bindings */
+            bindings: components["schemas"]["ProfileBindingResponse"][];
         };
         /** ApiResponse */
         ApiResponse: {
@@ -518,6 +773,20 @@ export interface components {
              */
             message: string;
             data?: components["schemas"]["AcquisitionStatusResponse"] | null;
+        };
+        /** ApiResponse[ActivationResponse] */
+        ApiResponse_ActivationResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["ActivationResponse"] | null;
         };
         /** ApiResponse[ConfigResponse] */
         ApiResponse_ConfigResponse_: {
@@ -562,6 +831,48 @@ export interface components {
             /** Data */
             data?: components["schemas"]["TrialResponse"][] | null;
         };
+        /** ApiResponse[NodeConfigurationPublicationResponse] */
+        ApiResponse_NodeConfigurationPublicationResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["NodeConfigurationPublicationResponse"] | null;
+        };
+        /** ApiResponse[PackageInstallationResponse] */
+        ApiResponse_PackageInstallationResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["PackageInstallationResponse"] | null;
+        };
+        /** ApiResponse[PackageVersionResponse] */
+        ApiResponse_PackageVersionResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["PackageVersionResponse"] | null;
+        };
         /** ApiResponse[ParadigmsResponse] */
         ApiResponse_ParadigmsResponse_: {
             /**
@@ -590,8 +901,8 @@ export interface components {
             message: string;
             data?: components["schemas"]["PatchConfigResponse"] | null;
         };
-        /** ApiResponse[ProfileDetailResponse] */
-        ApiResponse_ProfileDetailResponse_: {
+        /** ApiResponse[PluginProfileResponse] */
+        ApiResponse_PluginProfileResponse_: {
             /**
              * Success
              * @default true
@@ -602,10 +913,10 @@ export interface components {
              * @default ok
              */
             message: string;
-            data?: components["schemas"]["ProfileDetailResponse"] | null;
+            data?: components["schemas"]["PluginProfileResponse"] | null;
         };
-        /** ApiResponse[ProfileListResponse] */
-        ApiResponse_ProfileListResponse_: {
+        /** ApiResponse[ProfileVersionProposalResponse] */
+        ApiResponse_ProfileVersionProposalResponse_: {
             /**
              * Success
              * @default true
@@ -616,7 +927,7 @@ export interface components {
              * @default ok
              */
             message: string;
-            data?: components["schemas"]["ProfileListResponse"] | null;
+            data?: components["schemas"]["ProfileVersionProposalResponse"] | null;
         };
         /** ApiResponse[RecordingResponse] */
         ApiResponse_RecordingResponse_: {
@@ -631,6 +942,48 @@ export interface components {
              */
             message: string;
             data?: components["schemas"]["RecordingResponse"] | null;
+        };
+        /** ApiResponse[RuntimeConfigurationResponse] */
+        ApiResponse_RuntimeConfigurationResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["RuntimeConfigurationResponse"] | null;
+        };
+        /** ApiResponse[RuntimeOperationResponse] */
+        ApiResponse_RuntimeOperationResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["RuntimeOperationResponse"] | null;
+        };
+        /** ApiResponse[RuntimePlanResponse] */
+        ApiResponse_RuntimePlanResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["RuntimePlanResponse"] | null;
         };
         /** ApiResponse[SessionListResponse] */
         ApiResponse_SessionListResponse_: {
@@ -688,36 +1041,86 @@ export interface components {
             message: string;
             data?: components["schemas"]["TrialResponse"] | null;
         };
+        /** ApiResponse[list[MarketPackageResponse]] */
+        ApiResponse_list_MarketPackageResponse__: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            /** Data */
+            data?: components["schemas"]["MarketPackageResponse"][] | null;
+        };
+        /** ApiResponse[list[PackageVersionResponse]] */
+        ApiResponse_list_PackageVersionResponse__: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            /** Data */
+            data?: components["schemas"]["PackageVersionResponse"][] | null;
+        };
+        /** ApiResponse[list[PluginConfigurationResponse]] */
+        ApiResponse_list_PluginConfigurationResponse__: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            /** Data */
+            data?: components["schemas"]["PluginConfigurationResponse"][] | null;
+        };
+        /** ApiResponse[list[PluginProfileResponse]] */
+        ApiResponse_list_PluginProfileResponse__: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            /** Data */
+            data?: components["schemas"]["PluginProfileResponse"][] | null;
+        };
         /** ConfigEntry */
         ConfigEntry: {
             /**
              * Key
-             * @description Dotted settings key, e.g. 'ALGORITHM.decoder'
+             * @description Dotted host settings key
              */
             key: string;
             /**
-             * Default Value
-             * @description Value in settings.toml
+             * Value
+             * @description Saved value; runtime application is separate
              */
-            default_value?: unknown;
-            /**
-             * Profile Value
-             * @description Override from the active profile (null = none)
-             */
-            profile_value?: unknown;
-            /**
-             * Effective Value
-             * @description What the system actually uses
-             */
-            effective_value?: unknown;
+            value: unknown;
             /**
              * Type
-             * @description str | int | float | bool | list[str]
+             * @description int | float
              */
             type: string;
             /**
              * Requires
-             * @description hot | engine-restart
+             * @description engine-restart
              */
             requires: string;
             /** Description */
@@ -727,8 +1130,26 @@ export interface components {
         ConfigResponse: {
             /** Entries */
             entries: components["schemas"]["ConfigEntry"][];
-            /** Active Profile */
-            active_profile?: string | null;
+            /**
+             * Revision
+             * @description Revision of the saved host settings
+             */
+            revision: string;
+        };
+        /** CreatePluginProfileRequest */
+        CreatePluginProfileRequest: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector";
+            selection: components["schemas"]["PluginSelectionResponse"];
+            /** Name */
+            name: string;
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            };
         };
         /** CreateSessionRequest */
         CreateSessionRequest: {
@@ -737,6 +1158,21 @@ export interface components {
              * @description Paradigm name; defaults to config value
              */
             paradigm?: string | null;
+        };
+        /** CreateVersionProfileRequest */
+        CreateVersionProfileRequest: {
+            /** Source Profile Id */
+            source_profile_id: string;
+            /** Target Version */
+            target_version: string;
+            /** Name */
+            name?: string | null;
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            } | null;
+            /** Expected Source Revision */
+            expected_source_revision: number;
         };
         /** EngineStatusResponse */
         EngineStatusResponse: {
@@ -755,7 +1191,7 @@ export interface components {
          *     guessing from the HTTP status.  The string value is the wire format.
          * @enum {string}
          */
-        ErrorCode: "BAD_REQUEST" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "VALIDATION_ERROR" | "SERVICE_UNAVAILABLE" | "GATEWAY_TIMEOUT" | "INTERNAL_ERROR" | "ERROR" | "ENGINE_NOT_READY" | "SESSION_NOT_FOUND" | "NO_ACTIVE_SESSION" | "NO_TRIALS" | "ALREADY_RECORDING" | "NO_ACTIVE_RECORDING" | "COMMAND_REJECTED" | "COMMAND_EXECUTION_FAILED" | "COMMAND_TIMEOUT" | "CONFIG_KEY_NOT_ALLOWED" | "CONFIG_PROFILE_NOT_FOUND" | "CONFIG_PROFILE_IN_USE";
+        ErrorCode: "BAD_REQUEST" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "VALIDATION_ERROR" | "SERVICE_UNAVAILABLE" | "GATEWAY_TIMEOUT" | "INTERNAL_ERROR" | "ERROR" | "ENGINE_NOT_READY" | "SESSION_NOT_FOUND" | "NO_ACTIVE_SESSION" | "NO_TRIALS" | "ALREADY_RECORDING" | "NO_ACTIVE_RECORDING" | "COMMAND_REJECTED" | "COMMAND_EXECUTION_FAILED" | "COMMAND_TIMEOUT" | "CONFIG_KEY_NOT_ALLOWED" | "CONFIG_PROFILE_NOT_FOUND";
         /**
          * ErrorResponse
          * @description Unified error envelope — mirrors ApiResponse so clients see one consistent
@@ -773,6 +1209,136 @@ export interface components {
             message: string;
             /** Detail */
             detail?: unknown | null;
+        };
+        /** InstallMarketPackageRequest */
+        InstallMarketPackageRequest: {
+            /** Package Id */
+            package_id: string;
+            /** Version */
+            version: string;
+        };
+        /** MarketContributionResponse */
+        MarketContributionResponse: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector";
+            selection: components["schemas"]["PluginSelectionResponse"];
+        };
+        /** MarketPackageResponse */
+        MarketPackageResponse: {
+            /** Repository Id */
+            repository_id: string;
+            /** Package Id */
+            package_id: string;
+            /** Version */
+            version: string;
+            /** Display Name */
+            display_name: string;
+            /** Description */
+            description: string;
+            /** Download Url */
+            download_url: string;
+            /** Sha256 */
+            sha256: string;
+            /** Size */
+            size: number;
+            /** Contributions */
+            contributions: components["schemas"]["MarketContributionResponse"][];
+            /** Api Version */
+            api_version: string | null;
+            /** Platforms */
+            platforms: string[];
+            /** Host Version */
+            host_version: string | null;
+            /** Requires */
+            requires: [
+                string,
+                string
+            ][];
+        };
+        /** NodeConfigurationPublicationResponse */
+        NodeConfigurationPublicationResponse: {
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "selected" | "running";
+            configuration: components["schemas"]["NodeConfigurationResponse"];
+        };
+        /** NodeConfigurationResponse */
+        NodeConfigurationResponse: {
+            /**
+             * Format Version
+             * @constant
+             */
+            format_version: 1;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "stimulation" | "actuation";
+            /** Revision */
+            revision: string;
+            /** Generation */
+            generation: string | null;
+            /** Settings */
+            settings: {
+                [key: string]: unknown;
+            };
+            /** Bindings */
+            bindings: components["schemas"]["ProfileBindingResponse"][];
+        };
+        /** PackageContributionResponse */
+        PackageContributionResponse: {
+            selection: components["schemas"]["PluginSelectionResponse"];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector";
+            /** Label */
+            label: string;
+            /** Available */
+            available: boolean;
+        };
+        /** PackageInstallationResponse */
+        PackageInstallationResponse: {
+            package: components["schemas"]["PackageVersionResponse"];
+            /** Already Installed */
+            already_installed: boolean;
+        };
+        /** PackageReferenceResponse */
+        PackageReferenceResponse: {
+            /** Scope */
+            scope: string;
+            /** Identifier */
+            identifier: string;
+            selection: components["schemas"]["PluginSelectionResponse"];
+        };
+        /** PackageVersionResponse */
+        PackageVersionResponse: {
+            /** Package Id */
+            package_id: string;
+            /** Version */
+            version: string;
+            /** Label */
+            label: string;
+            /** Description */
+            description: string | null;
+            /** Sha256 */
+            sha256: string | null;
+            /** Contributions */
+            contributions: components["schemas"]["PackageContributionResponse"][];
+            /** Enabled */
+            enabled: boolean;
+            /** Available */
+            available: boolean;
+            /** Error */
+            error: string | null;
+            /** References */
+            references?: components["schemas"]["PackageReferenceResponse"][];
         };
         /**
          * ParadigmInfo
@@ -832,75 +1398,153 @@ export interface components {
         PatchConfigRequest: {
             /**
              * Updates
-             * @description Dotted key → new value
+             * @description Dotted host settings key to saved value
              */
             updates: {
                 [key: string]: unknown;
             };
             /**
-             * Scope
-             * @description 'default' writes settings.toml; any other value names a profile (created on first write)
-             * @default default
+             * Expected Revision
+             * @description Saved revision returned by GET /config
              */
-            scope: string;
-            /**
-             * Description
-             * @description Profile description (profile scope only)
-             */
-            description?: string | null;
+            expected_revision: string;
         };
         /** PatchConfigResponse */
         PatchConfigResponse: {
-            /** Applied */
-            applied: string[];
-            /** Scope */
-            scope: string;
+            /** Saved */
+            saved: string[];
+            /**
+             * Revision
+             * @description Revision after saving the host settings
+             */
+            revision: string;
             /**
              * Engine Restart Required
-             * @description True → stop/start the engine for changes to take effect
+             * @description Whether applying these saved changes requires an engine restart
              */
             engine_restart_required: boolean;
         };
-        /** ProfileDetailResponse */
-        ProfileDetailResponse: {
-            /** Name */
-            name: string;
-            /** Entries */
-            entries: {
-                [key: string]: unknown;
-            };
+        /** PluginConfigurationResponse */
+        PluginConfigurationResponse: {
+            selection: components["schemas"]["PluginSelectionResponse"];
             /**
-             * Off Whitelist Keys
-             * @description Keys present in the file but outside the API whitelist (hand-edited; read-only here)
+             * Kind
+             * @enum {string}
              */
-            off_whitelist_keys?: string[];
+            kind: "acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector";
+            /** Plugin Type */
+            plugin_type: string;
+            /** Label */
+            label: string;
+            /** Description */
+            description: string | null;
+            /** Schema */
+            schema: {
+                [key: string]: unknown;
+            } | null;
+            /** Configuration Version */
+            configuration_version: number | null;
+            /** Available */
+            available: boolean;
+            /** Controls */
+            controls?: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
         };
-        /** ProfileListResponse */
-        ProfileListResponse: {
-            /** Profiles */
-            profiles: components["schemas"]["ProfileSummary"][];
-            /** Active Profile */
-            active_profile?: string | null;
-        };
-        /** ProfileSummary */
-        ProfileSummary: {
+        /** PluginProfileResponse */
+        PluginProfileResponse: {
+            /**
+             * Format Version
+             * @default 2
+             * @constant
+             */
+            format_version: 2;
+            /** Profile Id */
+            profile_id: string;
             /** Name */
             name: string;
-            /** Description */
-            description?: string | null;
-            /** Key Count */
-            key_count: number;
-            /** Updated At */
-            updated_at?: string | null;
-        };
-        /** PutProfileRequest */
-        PutProfileRequest: {
-            /** Updates */
-            updates: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector";
+            selection: components["schemas"]["PluginSelectionResponse"];
+            /** Parameters */
+            parameters: {
                 [key: string]: unknown;
             };
-            /** Description */
-            description?: string | null;
+            /** Configuration Version */
+            configuration_version: number;
+            /** Revision */
+            revision: number;
+        };
+        /** PluginSelectionResponse */
+        PluginSelectionResponse: {
+            /** Package Id */
+            package_id: string;
+            /** Contribution Id */
+            contribution_id: string;
+            /** Version */
+            version?: string | null;
+        };
+        /** ProfileBindingResponse */
+        ProfileBindingResponse: {
+            /** Slot */
+            slot: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector";
+            /** Profile Id */
+            profile_id?: string | null;
+            selection: components["schemas"]["PluginSelectionResponse"];
+            /** Parameters */
+            parameters: {
+                [key: string]: unknown;
+            };
+            /** Configuration Version */
+            configuration_version: number;
+            /** Profile Revision */
+            profile_revision: number;
+        };
+        /** ProfileVersionProposalResponse */
+        ProfileVersionProposalResponse: {
+            /** Source Profile Id */
+            source_profile_id: string;
+            /** Source Revision */
+            source_revision: number;
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector";
+            selection: components["schemas"]["PluginSelectionResponse"];
+            /** Parameters */
+            parameters: {
+                [key: string]: unknown;
+            };
+            /** Configuration Version */
+            configuration_version: number;
+            /** Target Enabled */
+            target_enabled: boolean;
+        };
+        /** ProfileVersionRequest */
+        ProfileVersionRequest: {
+            /** Source Profile Id */
+            source_profile_id: string;
+            /** Target Version */
+            target_version: string;
+            /** Name */
+            name?: string | null;
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** RecordingResponse */
         RecordingResponse: {
@@ -909,6 +1553,103 @@ export interface components {
              * @description The session created/ended for this recording
              */
             session_id: string;
+        };
+        /** RuntimeApplyRequest */
+        RuntimeApplyRequest: {
+            /** Plan Id */
+            plan_id: string;
+            /** Operation Id */
+            operation_id: string;
+        };
+        /** RuntimeConfigurationResponse */
+        RuntimeConfigurationResponse: {
+            /** Running */
+            running: boolean;
+            /** Recovery Required */
+            recovery_required: boolean;
+            /** Accepted Revision */
+            accepted_revision: string | null;
+            /** Applied Revision */
+            applied_revision: string | null;
+            /** Generation */
+            generation: string | null;
+            operation: components["schemas"]["RuntimeOperationResponse"] | null;
+        };
+        /** RuntimeOperationResponse */
+        RuntimeOperationResponse: {
+            /** Operation Id */
+            operation_id: string;
+            /** Plan Id */
+            plan_id: string;
+            /** Target Revision */
+            target_revision: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "applying" | "succeeded" | "failed" | "recovery_required";
+            /** Stage */
+            stage: string;
+            /** Error */
+            error: string | null;
+            /** Rolled Back */
+            rolled_back: boolean;
+            /** Result */
+            result: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** RuntimePlanRequest */
+        RuntimePlanRequest: {
+            /** Bindings */
+            bindings: components["schemas"]["SelectProfileBindingRequest"][];
+            /** Expected Revision */
+            expected_revision?: string | null;
+            /** Refresh Slots */
+            refresh_slots?: string[] | null;
+            /**
+             * Include Host Settings
+             * @default false
+             */
+            include_host_settings: boolean;
+        };
+        /** RuntimePlanResponse */
+        RuntimePlanResponse: {
+            /** Plan Id */
+            plan_id: string;
+            /** Expected Revision */
+            expected_revision: string | null;
+            /** Target Revision */
+            target_revision: string;
+            /** Applied Revision */
+            applied_revision: string | null;
+            /** Generation */
+            generation: string | null;
+            /** Running */
+            running: boolean;
+            /**
+             * Strategy
+             * @enum {string}
+             */
+            strategy: "select_on_start" | "no_change" | "trial_boundary" | "module" | "rebuild";
+            /** Changed Slots */
+            changed_slots: string[];
+            /** Changed Settings */
+            changed_settings: string[];
+            /**
+             * Session Effect
+             * @enum {string}
+             */
+            session_effect: "preserve" | "continuation";
+            /** Errors */
+            errors: string[];
+        };
+        /** SelectProfileBindingRequest */
+        SelectProfileBindingRequest: {
+            /** Slot */
+            slot: string;
+            /** Profile Id */
+            profile_id: string;
         };
         /** SessionListResponse */
         SessionListResponse: {
@@ -930,12 +1671,23 @@ export interface components {
             started_at: string | null;
             /** Ended At */
             ended_at: string | null;
+            /** Continuation Of */
+            continuation_of?: string | null;
+            /** Config Revision */
+            config_revision?: string | null;
+            /** Interruption Reason */
+            interruption_reason?: string | null;
         };
         /**
          * SessionStateDTO
          * @enum {string}
          */
         SessionStateDTO: "idle" | "running" | "ended";
+        /** SetPackageEnabledRequest */
+        SetPackageEnabledRequest: {
+            /** Enabled */
+            enabled: boolean;
+        };
         /** StartRecordingRequest */
         StartRecordingRequest: {
             /**
@@ -1001,6 +1753,19 @@ export interface components {
              * Format: date-time
              */
             produced_at: string;
+            /** Config Revision */
+            config_revision?: string | null;
+        };
+        /** UpdatePluginProfileRequest */
+        UpdatePluginProfileRequest: {
+            /** Name */
+            name: string;
+            /** Parameters */
+            parameters: {
+                [key: string]: unknown;
+            };
+            /** Expected Revision */
+            expected_revision: number;
         };
     };
     responses: never;
@@ -2905,9 +3670,87 @@ export interface operations {
             };
         };
     };
-    list_profiles_api_v1_config_profiles_get: {
+    plugin_catalog_api_v1_config_plugin_catalog__kind__get: {
         parameters: {
             query?: never;
+            header?: never;
+            path: {
+                kind: "acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_PluginConfigurationResponse__"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_profiles_api_v1_config_plugin_profiles_get: {
+        parameters: {
+            query?: {
+                kind?: ("acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector") | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2920,7 +3763,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse_ProfileListResponse_"];
+                    "application/json": components["schemas"]["ApiResponse_list_PluginProfileResponse__"];
                 };
             };
             /** @description Bad request */
@@ -2979,22 +3822,26 @@ export interface operations {
             };
         };
     };
-    deactivate_profile_api_v1_config_profiles_deactivate_post: {
+    create_profile_api_v1_config_plugin_profiles_post: {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePluginProfileRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
-            200: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse"];
+                    "application/json": components["schemas"]["ApiResponse_PluginProfileResponse_"];
                 };
             };
             /** @description Bad request */
@@ -3053,12 +3900,12 @@ export interface operations {
             };
         };
     };
-    get_profile_api_v1_config_profiles__name__get: {
+    get_profile_api_v1_config_plugin_profiles__profile_id__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: string;
+                profile_id: string;
             };
             cookie?: never;
         };
@@ -3070,7 +3917,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse_ProfileDetailResponse_"];
+                    "application/json": components["schemas"]["ApiResponse_PluginProfileResponse_"];
                 };
             };
             /** @description Bad request */
@@ -3129,18 +3976,18 @@ export interface operations {
             };
         };
     };
-    put_profile_api_v1_config_profiles__name__put: {
+    update_profile_api_v1_config_plugin_profiles__profile_id__put: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: string;
+                profile_id: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PutProfileRequest"];
+                "application/json": components["schemas"]["UpdatePluginProfileRequest"];
             };
         };
         responses: {
@@ -3150,7 +3997,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse_PatchConfigResponse_"];
+                    "application/json": components["schemas"]["ApiResponse_PluginProfileResponse_"];
                 };
             };
             /** @description Bad request */
@@ -3209,12 +4056,14 @@ export interface operations {
             };
         };
     };
-    delete_profile_api_v1_config_profiles__name__delete: {
+    delete_profile_api_v1_config_plugin_profiles__profile_id__delete: {
         parameters: {
-            query?: never;
+            query: {
+                expected_revision: number;
+            };
             header?: never;
             path: {
-                name: string;
+                profile_id: string;
             };
             cookie?: never;
         };
@@ -3285,12 +4134,781 @@ export interface operations {
             };
         };
     };
-    activate_profile_api_v1_config_profiles__name__activate_post: {
+    get_activation_api_v1_config_activation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_ActivationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    accept_activation_api_v1_config_activation_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptActivationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_ActivationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    node_configuration_api_v1_config_nodes__role__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: string;
+                role: "stimulation" | "actuation";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_NodeConfigurationPublicationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    runtime_status_api_v1_config_runtime_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_RuntimeConfigurationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    plan_configuration_api_v1_config_apply_plan_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimePlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_RuntimePlanResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    apply_configuration_api_v1_config_apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_RuntimeOperationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    configuration_operation_api_v1_config_operations__operation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_RuntimeOperationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_packages_api_v1_plugin_packages_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_PackageVersionResponse__"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    install_package_api_v1_plugin_packages_install_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/zip": string;
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PackageInstallationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    set_enabled_api_v1_plugin_packages__package_id___version__enabled_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                package_id: string;
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetPackageEnabledRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PackageVersionResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    remove_api_v1_plugin_packages__package_id___version__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                package_id: string;
+                version: string;
             };
             cookie?: never;
         };
@@ -3303,6 +4921,314 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    propose_profile_api_v1_plugin_packages_profile_version_proposals_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileVersionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_ProfileVersionProposalResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_version_profile_api_v1_plugin_packages_version_profiles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateVersionProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PluginProfileResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    catalog_api_v1_market_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_MarketPackageResponse__"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    install_api_v1_market_install_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstallMarketPackageRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PackageInstallationResponse_"];
                 };
             };
             /** @description Bad request */

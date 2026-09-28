@@ -74,10 +74,11 @@ def test_builtin_descriptor_retains_exact_location_and_publisher(monkeypatch, tm
 
 
 def test_builtin_logger_descriptor_is_directly_loadable(monkeypatch, tmp_path):
+    from omnibci.sdk import PluginContext
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "no-user-plugins"))
     descriptor = PluginCatalog().resolve("effector", "logger")
 
-    instance = PluginLoader.instantiate(descriptor, Effector)
+    instance = PluginLoader.instantiate(descriptor, Effector, parameters={}, context=PluginContext())
 
     assert type(instance).__name__ == "LogEffector"
     assert instance.plugin_type == "logger"

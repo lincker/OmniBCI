@@ -1,12 +1,21 @@
-# OmniBCI Plugin Manifest — schema version 1
+# OmniBCI Plugin Manifest — schema version 2
+
+manifest_version = 2
 
 [package]
-id           = "classic40_fbcca"
-version      = "0.1.0"
-kind         = "decoder"
-api_version  = "1"
-plugin_type  = "THUBCI_SSVEP_classic40FBCCA"
+id = "classic40_fbcca"
+version = "0.1.0"
+api_version = "2"
+publisher = "OmniBCI"
+
+[[contributions]]
+id = "default"
+kind = "decoder"
+plugin_type = "THUBCI_SSVEP_classic40FBCCA"
+entrypoint = "classic_40_fbcca:Classic40FBCCA"
 display_name = "Classic 40 FBCCA"
-description  = "40目标 SSVEP — Filter Bank CCA 解码"
-author       = "OmniBCI"
-source       = "builtin"
+description = "40-target SSVEP filter-bank canonical correlation decoder."
+
+[contributions.configuration]
+schema = "default.schema.json"
+schema_version = 1

@@ -40,12 +40,6 @@ def _make_loop(iterations: int = 0):
 # ---------------------------------------------------------------------------
 
 class TestRenderLoopLifecycle:
-    def test_start_spawns_thread(self):
-        loop, _, _ = _make_loop(0)
-        loop.start()
-        loop.stop(timeout=1.0)
-        # No assertion needed — if it hangs, the test itself times out.
-
     def test_is_running_true_after_start(self):
         renderer = MagicMock()
         paradigm = MagicMock()

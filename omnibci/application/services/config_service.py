@@ -1,68 +1,42 @@
-"""
-ConfigService — layered configuration management (默认配置 + 个性化 profile).
+"""Whitelist-governed host settings, saved separately from runtime activation."""
 
-Policy lives here (whitelist, types, effect-on); storage primitives live in
-``omnibci.conf.OmniBCISettings``.  See docs/frontend-separation.md §五.8 and
-the stage-4 design discussion.
-
-    effective = active profile overlay ⊕ default (settings.toml)
-"""
-import logging
+import math
 import threading
+from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
-from omnibci.conf import OmniBCISettings, ProfileNameError, ProfileNotFoundError
+from omnibci.conf import OmniBCISettings
 
 
 @dataclass(frozen=True)
 class ConfigPolicy:
-    type: str           # "str" | "int" | "float" | "bool" | "list[str]"
-    requires: str       # "hot" | "engine-restart"
+    type: str
+    requires: str
     description: str
 
 
-#: Config keys that map to a plugin_type and can be soft-validated against
-#: the discovered plugin catalog (warn-only, never block a write).
-_PLUGIN_SOFT_VALIDATE: Dict[str, str] = {
-    "STIMULATION.paradigm":      "paradigm",
-    "ACTUATION.effector":        "effector",
-    "ACQUISITION.signal_source": "acquisition",
-    "ALGORITHM.decoder":         "decoder",
+# Plugin selections and parameters are edited through Plugin Profiles only.
+CONFIG_WHITELIST: Dict[str, ConfigPolicy] = {
+    "ALGORITHM.baseline_duration": ConfigPolicy("float", "engine-restart", "Baseline duration (s)"),
+    "NEUROENGINE.queue_size": ConfigPolicy("int", "engine-restart", "Inter-process queue capacity"),
 }
 
-#: The only keys readable/writable through the config API — for defaults AND
-#: profiles alike.  Everything else in settings.toml stays internal.
-CONFIG_WHITELIST: Dict[str, ConfigPolicy] = {
-    "ACQUISITION.signal_source": ConfigPolicy("str", "engine-restart", "数据源插件 id"),
-    "ACQUISITION.data_file_path": ConfigPolicy("str", "engine-restart", "file_reader 回放文件路径"),
-    "ACQUISITION.file_reader_play_speed": ConfigPolicy("float", "engine-restart", "回放速度倍率"),
-    "ACQUISITION.sample_rate": ConfigPolicy("int", "engine-restart", "采样率 (Hz)"),
-    "ACQUISITION.channel_number": ConfigPolicy("int", "engine-restart", "通道数"),
-    "ACQUISITION.parallel_port_address": ConfigPolicy(
-        "str", "engine-restart",
-        "Trigger parallel-port I/O base address in hex (e.g. 0x3100); "
-        "restart stimulation to apply",
-    ),
-    "ALGORITHM.decoder": ConfigPolicy("str", "engine-restart", "解码器插件 id"),
-    "ALGORITHM.window_duration": ConfigPolicy("float", "engine-restart", "解码窗长 (s)"),
-    "ALGORITHM.offset_time": ConfigPolicy("float", "engine-restart", "触发偏移 (s)"),
-    "ALGORITHM.baseline_duration": ConfigPolicy("float", "engine-restart", "基线时长 (s)"),
-    "ALGORITHM.filters": ConfigPolicy("list[str]", "engine-restart", "预处理滤波器链"),
-    "STIMULATION.paradigm": ConfigPolicy("str", "hot", "刺激范式 plugin_type"),
-    "ACTUATION.effector": ConfigPolicy("str", "engine-restart", "控制输出 plugin_type"),
-    "NEUROENGINE.queue_size": ConfigPolicy("int", "engine-restart", "进程间队列容量"),
-}
+
+def _valid_baseline(value: Any) -> bool:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value) and value >= 0
+    except OverflowError:
+        return False
+
 
 _CHECKS = {
-    "str": lambda v: isinstance(v, str),
-    "int": lambda v: isinstance(v, int) and not isinstance(v, bool),
-    "float": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
-    "bool": lambda v: isinstance(v, bool),
-    "list[str]": lambda v: isinstance(v, list) and all(isinstance(i, str) for i in v),
+    "int": lambda v: isinstance(v, int) and not isinstance(v, bool) and v > 0,
+    "float": _valid_baseline,
 }
-
-DEFAULT_SCOPE = "default"
+_EXPECTATIONS = {"int": "positive integer", "float": "finite nonnegative number"}
 
 
 class ConfigKeyNotAllowedError(KeyError):
@@ -72,143 +46,55 @@ class ConfigKeyNotAllowedError(KeyError):
 
 
 class ConfigValidationError(ValueError):
-    def __init__(self, bad_keys: Dict[str, str]):  # key → reason
+    def __init__(self, bad_keys: Dict[str, str]):
         self.bad_keys = bad_keys
         super().__init__(f"Invalid config values: {sorted(bad_keys)}")
 
 
-class ProfileInUseError(RuntimeError):
-    def __init__(self, name: str):
-        self.name = name
-        super().__init__(f"Profile {name!r} is active")
-
-
 class ConfigService:
-    """Whitelist-governed reads/writes over the layered settings."""
+    """Save host settings without changing accepted or running configuration."""
 
-    def __init__(
-        self,
-        settings: OmniBCISettings,
-        plugin_catalog: Optional[Callable[[str], List[Any]]] = None,
-    ) -> None:
-        """*plugin_catalog*: ``category -> [PluginInfo]`` 查询函数，用于对
-        plugin_type 类配置键做警告级软校验。由组合侧注入（presentation/main
-        传 infrastructure 的 list_plugins）；None = 跳过软校验（单测默认）。
-        P0-1：替代原先在方法内延迟 import infrastructure.plugin_catalog。"""
+    def __init__(self, settings: OmniBCISettings, *, change_guard: Callable | None = None) -> None:
         self._settings = settings
-        self._plugin_catalog = plugin_catalog
-        self._write_lock = threading.Lock()
+        self._change_guard = change_guard or (lambda requires_idle: nullcontext())
+        self._write_lock = threading.RLock()
 
-    # ------------------------------------------------------------------
-    # Reads
-    # ------------------------------------------------------------------
+    def read(self) -> Tuple[List[dict], str]:
+        with self._write_lock:
+            snapshot, revision = self._settings.read_saved()
+        return [{
+            "key": key,
+            "value": snapshot.get(key),
+            "type": policy.type,
+            "requires": policy.requires,
+            "description": policy.description,
+        } for key, policy in CONFIG_WHITELIST.items()], revision
 
-    def list_entries(self) -> Tuple[List[dict], Optional[str]]:
-        entries = []
-        for key, pol in CONFIG_WHITELIST.items():
-            default = self._settings.get_default(key)
-            override = self._settings.get_override(key)
-            entries.append({
-                "key": key,
-                "default_value": default,
-                "profile_value": override,
-                "effective_value": override if override is not None else default,
-                "type": pol.type,
-                "requires": pol.requires,
-                "description": pol.description,
-            })
-        return entries, self._settings.active_profile
-
-    def list_profiles(self) -> Tuple[List[dict], Optional[str]]:
-        return self._settings.list_profiles(), self._settings.active_profile
-
-    def profile_detail(self, name: str) -> dict:
-        entries = self._settings.read_profile(name)  # ProfileNotFoundError propagates
-        unknown = [k for k in entries if k not in CONFIG_WHITELIST]
-        # Hand-edited files may carry off-whitelist keys; expose them read-only
-        # so the UI can show (and the user can clean) them.
-        return {"name": name, "entries": entries, "off_whitelist_keys": sorted(unknown)}
-
-    # ------------------------------------------------------------------
-    # Writes
-    # ------------------------------------------------------------------
+    def list_entries(self) -> List[dict]:
+        return self.read()[0]
 
     def _validate(self, updates: Dict[str, Any]) -> Dict[str, Any]:
         if not updates:
             raise ConfigValidationError({"<body>": "updates must not be empty"})
-        unknown = sorted(k for k in updates if k not in CONFIG_WHITELIST)
+        unknown = sorted(key for key in updates if key not in CONFIG_WHITELIST)
         if unknown:
             raise ConfigKeyNotAllowedError(unknown)
         bad = {
-            k: f"expected {CONFIG_WHITELIST[k].type}"
-            for k, v in updates.items()
-            if not _CHECKS[CONFIG_WHITELIST[k].type](v)
+            key: f"expected {_EXPECTATIONS[CONFIG_WHITELIST[key].type]}"
+            for key, value in updates.items()
+            if not _CHECKS[CONFIG_WHITELIST[key].type](value)
         }
         if bad:
             raise ConfigValidationError(bad)
-        # Soft-validate plugin_type keys against discovered plugin lists (warn only).
-        if self._plugin_catalog is not None:
-            for key, category in _PLUGIN_SOFT_VALIDATE.items():
-                if key in updates:
-                    self._soft_validate_plugin(str(updates[key]), category, key)
-        # Normalise int→float for float keys so the toml type stays stable.
+        # Normalize integer inputs for float settings before TOML serialization.
         return {
-            k: (float(v) if CONFIG_WHITELIST[k].type == "float" else v)
-            for k, v in updates.items()
+            key: float(value) if CONFIG_WHITELIST[key].type == "float" else value
+            for key, value in updates.items()
         }
 
-    def _soft_validate_plugin(self, plugin_type: str, category: str, config_key: str) -> None:
-        """Warn (never raise) if plugin_type is not in the discovered list for category."""
-        try:
-            known = [p.plugin_type for p in self._plugin_catalog(category)]
-            if known and plugin_type not in known:
-                logging.getLogger(__name__).warning(
-                    "%s %r not in discovered %s list %s — "
-                    "saved anyway (may be a user-area plugin not yet installed).",
-                    config_key, plugin_type, category, known,
-                )
-        except Exception:
-            pass  # discovery failure must never block a config write
-
-    def apply(self, updates: Dict[str, Any], scope: str = DEFAULT_SCOPE,
-              description: Optional[str] = None) -> Tuple[List[str], bool]:
-        """All-or-nothing PATCH. scope='default' → settings.toml;
-        scope=<profile name> → that profile file (created if absent)."""
+    def save(self, updates: Dict[str, Any], *, expected_revision: str) -> Tuple[List[str], bool, str]:
         clean = self._validate(updates)
-        with self._write_lock:
-            if scope == DEFAULT_SCOPE:
-                for k, v in clean.items():
-                    self._settings.set(k, v)
-                self._settings.save()
-            else:
-                # ProfileNameError propagates (422 at the router).
-                self._settings.write_profile(scope, clean, description)
-        restart = any(
-            CONFIG_WHITELIST[k].requires == "engine-restart" for k in clean
-        )
-        return sorted(clean), restart
-
-    def put_profile(self, name: str, updates: Dict[str, Any],
-                    description: Optional[str] = None) -> Tuple[List[str], bool]:
-        """Create/replace a profile wholesale (PUT semantics)."""
-        clean = self._validate(updates)
-        with self._write_lock:
-            self._settings.write_profile(name, clean, description, replace=True)
-        restart = any(
-            CONFIG_WHITELIST[k].requires == "engine-restart" for k in clean
-        )
-        return sorted(clean), restart
-
-    def delete_profile(self, name: str) -> None:
-        with self._write_lock:
-            if self._settings.active_profile == name:
-                raise ProfileInUseError(name)
-            self._settings.delete_profile(name)  # ProfileNotFoundError propagates
-
-    def activate(self, name: str) -> None:
-        with self._write_lock:
-            self._settings.set_active_profile(name)  # ProfileNotFoundError propagates
-
-    def deactivate(self) -> None:
-        with self._write_lock:
-            self._settings.set_active_profile(None)
+        with self._write_lock, self._change_guard(False):
+            revision = self._settings.update(clean, expected_revision=expected_revision)
+        restart = any(CONFIG_WHITELIST[key].requires == "engine-restart" for key in clean)
+        return sorted(clean), restart, revision

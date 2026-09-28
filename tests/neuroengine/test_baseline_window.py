@@ -223,14 +223,6 @@ class TestBaselineCorrectionFilter:
         out = flt.apply(window, self._ctx(np.zeros((2, 0))))
         np.testing.assert_array_equal(out, window)
 
-    def test_registered_under_plugin_type(self):
-        from omnibci.domain.ports.algorithm import Filter
-        from omnibci.infrastructure.plugins.algorithms.filters.baseline_correction import (
-            BaselineCorrection,
-        )
-        from omnibci.infrastructure.plugins.registry import registry_for
-        assert registry_for(Filter).get("BASELINE_CORRECTION") is BaselineCorrection
-
 
 class TestBaselineCorrectionInPipeline:
     def test_decoder_receives_corrected_window(self):

@@ -14,7 +14,7 @@ _CNT_FIXTURE = Path(__file__).parents[1] / "fixture" / "train.cnt"
 @pytest.mark.integration
 def test_real_cnt_lifecycle_and_first_chunk():
     async def scenario():
-        reader = FileReader()
+        reader = FileReader(parameters={})
         reader.set_file_path(str(_CNT_FIXTURE))
 
         try:

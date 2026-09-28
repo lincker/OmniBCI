@@ -117,3 +117,45 @@ def test_wait_times_out_boundedly() -> None:
             component="Stimulation",
             timeout_s=0.001,
         )
+
+
+def test_reporter_preserves_configuration_identity() -> None:
+    connection = MagicMock()
+    reporter = StartupReporter(connection, component="Acquisition",
+                               config_revision="revision", generation="run-2")
+    reporter.ready()
+    report = connection.send.call_args.args[0]
+    assert report.config_revision == "revision"
+    assert report.generation == "run-2"
+
+
+@pytest.mark.parametrize("revision,generation", [("old", "run-2"), ("revision", "run-1"), (None, None)])
+def test_wait_rejects_stale_or_unidentified_report(revision, generation) -> None:
+    receiver = MagicMock()
+    receiver.poll.return_value = True
+    receiver.recv.return_value = StartupReport.ready(
+        "Acquisition", config_revision=revision, generation=generation,
+    )
+    with pytest.raises(ChildProcessStartupError, match="mismatch"):
+        wait_for_startup_report(receiver, _process(), component="Acquisition",
+                                timeout_s=1, expected_revision="revision",
+                                expected_generation="run-2")
+
+
+@pytest.mark.parametrize("timeout", [0, -1, True, float("nan"), float("inf")])
+def test_wait_rejects_invalid_deadlines(timeout) -> None:
+    with pytest.raises(ValueError, match="timeout"):
+        wait_for_startup_report(MagicMock(), _process(), component="Acquisition",
+                                timeout_s=timeout)
+
+
+@pytest.mark.parametrize("report", [
+    "ready", StartupReport.ready("other"),
+    StartupReport("Acquisition", ChildProcessState.STARTING, "plugins"),
+])
+def test_wait_rejects_invalid_acknowledgements(report) -> None:
+    receiver = MagicMock()
+    receiver.poll.return_value = True
+    receiver.recv.return_value = report
+    with pytest.raises(ChildProcessStartupError):
+        wait_for_startup_report(receiver, _process(), component="Acquisition", timeout_s=1)

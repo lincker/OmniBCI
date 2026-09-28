@@ -1,12 +1,21 @@
-# OmniBCI Plugin Manifest — schema version 1
+# OmniBCI Plugin Manifest — schema version 2
+
+manifest_version = 2
 
 [package]
-id           = "classic40_cca"
-version      = "0.1.0"
-kind         = "decoder"
-api_version  = "1"
-plugin_type  = "THUBCI_SSVEP_classic40CCA"
+id = "classic40_cca"
+version = "0.1.0"
+api_version = "2"
+publisher = "OmniBCI"
+
+[[contributions]]
+id = "default"
+kind = "decoder"
+plugin_type = "THUBCI_SSVEP_classic40CCA"
+entrypoint = "classic_40_cca:Classic40CCA"
 display_name = "Classic 40 CCA"
-description  = "40目标 SSVEP — 标准 CCA 解码"
-author       = "OmniBCI"
-source       = "builtin"
+description = "40-target SSVEP canonical correlation decoder."
+
+[contributions.configuration]
+schema = "default.schema.json"
+schema_version = 1

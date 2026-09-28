@@ -15,6 +15,7 @@ waiter.
 from __future__ import annotations
 
 import logging
+from omnibci.application.runtime_admission import admitted
 import threading
 import uuid
 from dataclasses import dataclass
@@ -84,14 +85,16 @@ class _PendingCommand:
 class CommandResultBroker:
     """Dispatch commands with correlation and wait boundedly for their result."""
 
-    def __init__(self, engine: EnginePort, timeout_s: float = 10.0) -> None:
+    def __init__(self, engine: EnginePort, timeout_s: float = 10.0, *, admission=None) -> None:
         if timeout_s <= 0:
             raise ValueError("command timeout must be greater than zero")
         self._engine = engine
+        self._admission = admission
         self._timeout_s = float(timeout_s)
         self._pending: dict[str, _PendingCommand] = {}
         self._lock = threading.Lock()
 
+    @admitted
     def request(
         self,
         event_type: EventType,

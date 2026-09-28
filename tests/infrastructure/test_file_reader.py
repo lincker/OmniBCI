@@ -1,4 +1,4 @@
-"""Unit tests for FileReader lifecycle and acquisition plugin registration."""
+"""Unit tests for FileReader lifecycle."""
 from __future__ import annotations
 
 import asyncio
@@ -6,8 +6,6 @@ import asyncio
 import numpy as np
 import pytest
 
-from omnibci.domain.ports.acquisition import SignalSource
-from omnibci.infrastructure.plugins.registry import ObjectFactory, registry_for
 from omnibci.infrastructure.plugins.acquisition.file.reader import FileReader
 
 
@@ -38,42 +36,18 @@ class _FakeAdapter:
 
 
 # ---------------------------------------------------------------------------
-# Plugin registry / factory mechanism
-# ---------------------------------------------------------------------------
-
-class TestDataSourceRegistry:
-    def test_filereader_is_registered_under_its_plugin_type(self):
-        assert "file_reader" in registry_for(SignalSource)
-        assert registry_for(SignalSource)["file_reader"] is FileReader
-
-    def test_factory_resolves_configured_data_source(self):
-        # settings.toml ships ACQUISITION.signal_source = "file_reader"
-        from omnibci.conf import settings
-        instance = ObjectFactory.create(SignalSource, settings.get("ACQUISITION.signal_source"))
-        assert isinstance(instance, FileReader)
-
-    def test_factory_returns_none_for_unknown_type(self):
-        assert ObjectFactory.create(SignalSource, "does_not_exist") is None
-
-    def test_factory_returns_none_for_missing_target(self):
-        # Configuration is resolved upstream, so missing config reaches the
-        # factory as target_id=None.
-        assert ObjectFactory.create(SignalSource, None) is None
-
-
-# ---------------------------------------------------------------------------
 # FileReader port lifecycle
 # ---------------------------------------------------------------------------
 
 class TestFileReaderLifecycle:
     def _reader(self, chunk_size: int = 100) -> FileReader:
-        r = FileReader()
+        r = FileReader(parameters={})
         r.reader_adapter = _FakeAdapter()
         r._chunk_size = chunk_size
         return r
 
     def test_initial_flags(self):
-        r = FileReader()
+        r = FileReader(parameters={})
         assert r.is_connected is False
         assert r._is_streaming is False
         assert r.file_pointer == 0
@@ -87,7 +61,7 @@ class TestFileReaderLifecycle:
         file_path = tmp_path / "sample.cnt"
         file_path.touch()
 
-        r = FileReader()
+        r = FileReader(parameters={})
         r.set_file_path(str(file_path))
 
         assert _run(r.connect()) is True
@@ -103,7 +77,7 @@ class TestFileReaderLifecycle:
         assert r._is_streaming is True
 
     def test_start_stream_requires_adapter(self):
-        r = FileReader()
+        r = FileReader(parameters={})
         r.reader_adapter = None
         with pytest.raises(ValueError):
             _run(r.start_stream())
@@ -145,8 +119,3 @@ class TestFileReaderLifecycle:
     def test_get_metadata_returns_adapter_metadata(self):
         r = self._reader()
         assert _run(r.get_metadata()) == "fake-device"
-
-    def test_set_speed_rejects_non_positive(self):
-        r = FileReader()
-        with pytest.raises(ValueError):
-            r.set_speed(0)

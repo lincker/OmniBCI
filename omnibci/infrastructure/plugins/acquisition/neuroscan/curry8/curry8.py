@@ -14,9 +14,8 @@ from enum import IntEnum
 
 import numpy as np
 
-from omnibci.conf import settings
 from omnibci.domain.ports.acquisition import SignalSource
-from omnibci.infrastructure.plugins.registry import register_plugin
+from omnibci.sdk import PluginContext, PluginParameters
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +173,6 @@ class Curry8Event:
         )
 
 
-@register_plugin(SignalSource)
 class Curry8DataReader(SignalSource):
     """Receive uncompressed EEG and event packets from CURRY 8."""
 
@@ -190,31 +188,38 @@ class Curry8DataReader(SignalSource):
         host: str | None = None,
         port: int | None = None,
         timeout: float = 5.0,
+        *,
+        parameters: PluginParameters,
+        context: PluginContext | None = None,
     ) -> None:
         super().__init__()
-        self.data_provider_ip = host or settings.get(
-            "ACQUISITION.DATA_PROVIDER_IP", "127.0.0.1"
-        )
+        self.data_provider_ip = host or parameters.get("DATA_PROVIDER_IP", "127.0.0.1")
         self.data_provider_port = int(
-            port
-            if port is not None
-            else settings.get("ACQUISITION.DATA_PROVIDER_PORT", self.DEFAULT_PORT)
+            port if port is not None
+            else parameters.get("DATA_PROVIDER_PORT", self.DEFAULT_PORT)
         )
         if timeout <= 0:
             raise ValueError("timeout must be positive")
         self.timeout = timeout
         self.reader: asyncio.StreamReader | None = None
         self.writer: asyncio.StreamWriter | None = None
+        self._pending_header: tuple[asyncio.StreamReader, Curry8Header] | None = None
         self._protocol_version: int | None = None
         self._metadata: Curry8Metadata | None = None
         self._pending_events: list[Curry8Event] = []
         self._buffered_eeg: tuple[int, np.ndarray] | None = None
+
+    @property
+    def resume_without_checkpoint_safe(self) -> bool:
+        """NetStreaming starts live EEG delivery without a replay request."""
+        return True
 
     async def connect(self) -> bool:
         if self._is_connected:
             return True
         self._protocol_version = None
         self._metadata = None
+        self._pending_header = None
         try:
             self.reader, self.writer = await asyncio.wait_for(
                 asyncio.open_connection(
@@ -397,15 +402,23 @@ class Curry8DataReader(SignalSource):
         await self.writer.drain()
 
     async def _read_packet(self) -> tuple[Curry8Header, bytes]:
-        if self.reader is None:
+        reader = self.reader
+        if reader is None:
             raise ConnectionError("CURRY NetStreaming socket is not connected")
-        raw_header = await self.reader.readexactly(Curry8Header.SIZE)
-        header = Curry8Header.from_bytes(raw_header)
-        if header.body_size > self.MAX_BODY_SIZE:
-            raise Curry8ProtocolError(
-                f"CURRY packet body is too large: {header.body_size} bytes"
-            )
-        body = await self.reader.readexactly(header.body_size)
+        if self._pending_header is None or self._pending_header[0] is not reader:
+            self._pending_header = None
+            raw_header = await reader.readexactly(Curry8Header.SIZE)
+            header = Curry8Header.from_bytes(raw_header)
+            if header.body_size > self.MAX_BODY_SIZE:
+                raise Curry8ProtocolError(
+                    f"CURRY packet body is too large: {header.body_size} bytes"
+                )
+            # Retain framing until readexactly finishes, including cancellation.
+            self._pending_header = (reader, header)
+        else:
+            header = self._pending_header[1]
+        body = await reader.readexactly(header.body_size)
+        self._pending_header = None
         return header, body
 
     def _handle_control(self, header: Curry8Header) -> None:
@@ -514,6 +527,7 @@ class Curry8DataReader(SignalSource):
 
     async def _close_writer(self) -> None:
         writer = self.writer
+        self._pending_header = None
         self.reader = None
         self.writer = None
         if writer is None:

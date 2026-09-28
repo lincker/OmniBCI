@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from omnibci.presentation.schemas.common import ErrorCode, ErrorResponse
+from omnibci.application.config_errors import ConfigProfileConflictError, ConfigProfileValidationError
 from omnibci.application.services.command_result_service import (
     CommandExecutionError,
     CommandRejectedError,
@@ -126,6 +127,19 @@ def _json_error(status_code: int, code: ErrorCode, message: str, detail=None) ->
 
 def register_exception_handlers(app: FastAPI) -> None:
     """Install handlers that render every error as a unified ErrorResponse."""
+    from omnibci.application.plugin_profiles import ProfileRevisionConflict
+
+    @app.exception_handler(ProfileRevisionConflict)
+    async def runtime_conflict_handler(request, exc):
+        return _json_error(409, ErrorCode.CONFLICT, str(exc))
+
+    @app.exception_handler(ConfigProfileValidationError)
+    async def _handle_config_validation(_: Request, exc: ConfigProfileValidationError):
+        return _json_error(422, ErrorCode.VALIDATION_ERROR, str(exc))
+
+    @app.exception_handler(ConfigProfileConflictError)
+    async def _handle_config_conflict(_: Request, exc: ConfigProfileConflictError):
+        return _json_error(409, ErrorCode.CONFLICT, str(exc))
 
     @app.exception_handler(ApiError)
     async def _handle_api_error(_: Request, exc: ApiError) -> JSONResponse:

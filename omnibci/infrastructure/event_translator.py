@@ -1,31 +1,12 @@
 """
 DomainEventPublisher — Anti-Corruption Layer (ACL).
 
-职责：将领域层的富事件对象（domain/events.py）翻译成基础设施 EventBus
-所使用的轻量 Event(EventType, data) 并投递。
+Translates rich domain events into lightweight Event(EventType, data)
+envelopes for the infrastructure EventBus. The domain stays independent of
+IPC transports, while pickle-safe application payloads cross process boundaries.
 
-为什么需要这一层
------------------
-领域层（domain/）与基础设施 IPC 层（core/events/）各自有独立的事件表示：
-
-  domain/events.py       → 富值对象（TrialCompleted、SessionStarted…）
-  core/events/types.py   → 轻量 IPC 信封（Event + EventType IntEnum）
-
-两者不能合并：领域层不应依赖 mp.Queue / EventType 这类基础设施概念；
-IPC 信封需要跨进程序列化，不适合携带复杂领域对象（除 payload 以外）。
-
-DomainEventPublisher 是唯一知道"如何翻译"的地方，消除了原来散落在
-processor.py / state.py 中的自由函数 _publish_domain_event 及
-state.py 里的延迟循环 import。
-
-依赖方向
----------
-infrastructure.event_translator
-    → domain.events          (知道哪些领域事件存在)
-    → core.events.types      (知道基础设施 EventType)
-    → core.events.bus        (仅用于类型注解)
-
-processor.py 和 state.py 只依赖本模块，不再互相依赖。
+This module owns the translation table. Processing states and their processor
+share this publisher without importing one another.
 """
 
 import logging
@@ -93,6 +74,7 @@ class DomainEventPublisher:
                     session_id=domain_event.session_id,
                     trial_number=domain_event.trial_number,
                     classification=domain_event.classification,
+                    config_revision=domain_event.config_revision,
                 ),
             )
 
@@ -104,6 +86,8 @@ class DomainEventPublisher:
                 SessionSummary(
                     session_id=domain_event.session_id,
                     total_trials=domain_event.total_trials,
+                    config_revision=domain_event.config_revision,
+                    interruption_reason=domain_event.interruption_reason,
                 ),
             )
 

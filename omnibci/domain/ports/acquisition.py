@@ -30,6 +30,34 @@ class SignalSource(ABC):
     def is_streaming(self) -> bool:
         return self._is_streaming
 
+    @property
+    def supports_checkpoint(self) -> bool:
+        """Whether a stopped source can resume its next undelivered sample."""
+        return False
+
+    @property
+    def resume_without_checkpoint_safe(self) -> bool:
+        """Whether start after stop/reconnect never replays delivered samples.
+
+        Live sources may opt in when their protocol starts current acquisition
+        without a seek or replay operation. A pause may still lose live samples;
+        this capability does not promise gap-free acquisition.
+        """
+        return False
+
+    def checkpoint(self) -> dict[str, Any]:
+        """Capture a stopped source after its acquisition fetch task has joined.
+
+        An optional source_identity envelope has string resource_id and revision
+        fields. It distinguishes a new input from changed content at the same
+        input, while the remaining checkpoint state stays opaque to the host.
+        """
+        raise NotImplementedError("This signal source does not support checkpoints")
+
+    def restore_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        """Stage a checkpoint for the next start; unsupported for live sources."""
+        raise NotImplementedError("This signal source does not support checkpoints")
+
     @abstractmethod
     async def get_metadata(self):
         """get metadata"""

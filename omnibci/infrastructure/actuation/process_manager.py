@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import multiprocessing as mp
+from copy import deepcopy
 from threading import RLock
 from typing import Any
 
@@ -37,24 +38,32 @@ def _run_actuation(
     effector: str | None = None,
     stop_event: Any = None,
     startup_connection: Any = None,
+    *,
+    settings_snapshot: dict | None = None,
 ) -> None:
     """Actuation subprocess entry point.  Runs in the spawned child process.
 
-    *effector* — when provided, overrides ``ACTUATION.effector`` in the
-    subprocess's in-memory settings before the Actuator loads plugins.
-    The override is subprocess-local: the settings file on disk is unchanged.
+    A pinned snapshot is required and installed before runtime imports.
     """
     reporter = (
-        StartupReporter(startup_connection, component="Actuation")
+        StartupReporter(
+            startup_connection, component="Actuation",
+            config_revision=(settings_snapshot or {}).get("CONFIG.revision"),
+            generation=(settings_snapshot or {}).get("CONFIG.generation"),
+        )
         if startup_connection is not None
         else None
     )
     try:
-        if effector is not None:
-            from omnibci.conf import settings
-            settings.set("ACTUATION.effector", effector)
+        if settings_snapshot is None:
+            raise RuntimeError("Actuation requires a pinned settings snapshot")
+        from omnibci.conf import settings
+        selected = settings_snapshot.get("ACTUATION.effector")
+        if effector is not None and effector != selected:
+            raise RuntimeError("Apply the effector configuration before starting Actuation")
+        settings.use_snapshot(settings_snapshot)
         from omnibci.infrastructure.actuation.application import Actuation
-        kwargs = {"stop_event": stop_event}
+        kwargs = {"stop_event": stop_event, "settings_snapshot": settings_snapshot}
         if reporter is not None:
             kwargs["startup_reporter"] = reporter
         Actuation(**kwargs).run()
@@ -89,7 +98,9 @@ class ActuationProcessManager:
     ) -> None:
         if startup_timeout_s <= 0:
             raise ValueError("startup_timeout_s must be greater than zero")
+        self._default_auto_spawn = auto_spawn
         self._auto_spawn = auto_spawn
+        self._settings_snapshot: dict | None = None
         self._startup_timeout_s = float(startup_timeout_s)
         self._process: mp.Process | None = None
         self._stop_event: Any = None
@@ -101,19 +112,37 @@ class ActuationProcessManager:
 
     # ── Public API ─────────────────────────────────────────────────────────
 
-    def start(self, effector: str | None = None) -> None:
+    def start(
+        self, effector: str | None = None, *, settings_snapshot: dict | None = None,
+    ) -> None:
         """Spawn the Actuation subprocess (no-op if auto_spawn=False or already running).
 
-        *effector* is forwarded to the subprocess and overrides the
-        ``ACTUATION.effector`` config value in-process only.
+        A snapshot pins every setting and determines the selected effector and
+        managed mode. A differing legacy override requires a configuration apply.
         """
         with self._lifecycle_lock:
-            self._start_locked(effector)
+            self._start_locked(effector, settings_snapshot=settings_snapshot)
 
-    def _start_locked(self, effector: str | None = None) -> None:
-        if not self._auto_spawn:
+    def _start_locked(
+        self, effector: str | None = None, *, settings_snapshot: dict | None = None,
+    ) -> None:
+        snapshot = deepcopy(settings_snapshot)
+        if snapshot is not None:
+            selected = snapshot.get("ACTUATION.effector")
+            if effector is not None and effector != selected:
+                raise RuntimeError("Apply the effector configuration before starting Actuation")
+            effector = selected
+            auto_spawn = bool(snapshot.get("ACTUATION.enabled", self._default_auto_spawn)) and bool(
+                snapshot.get("ACTUATION.auto_spawn", self._default_auto_spawn)
+            )
+        else:
+            auto_spawn = self._default_auto_spawn
+        if not auto_spawn:
+            self._stop_locked()
+            self._auto_spawn = False
             logger.debug("auto_spawn=False — Actuation process must be started manually")
             return
+        self._auto_spawn = True
         self._refresh_state_locked()
         if self._process is not None:
             process_alive = self._process.is_alive()
@@ -121,6 +150,7 @@ class ActuationProcessManager:
                 process_alive
                 and self._state is ChildProcessState.READY
                 and effector == self._effector
+                and snapshot == self._settings_snapshot
             ):
                 logger.debug(
                     "Actuation process already running requested effector (pid=%s, effector=%s)",
@@ -145,11 +175,16 @@ class ActuationProcessManager:
 
         stop_event = mp.Event()
         startup_receiver, startup_sender = mp.Pipe(duplex=False)
+        process_kwargs = (
+            {"kwargs": {"settings_snapshot": deepcopy(snapshot)}}
+            if snapshot is not None else {}
+        )
         process = mp.Process(
             target=_run_actuation,
             args=(effector, stop_event, startup_sender),
             name="ActuationProcess",
             daemon=True,
+            **process_kwargs,
         )
         self._state = ChildProcessState.STARTING
         try:
@@ -173,6 +208,7 @@ class ActuationProcessManager:
         self._stop_event = stop_event
         self._startup_receiver = startup_receiver
         self._effector = effector
+        self._settings_snapshot = snapshot
         # The parent must not retain the write end; otherwise a child that exits
         # before sending a report can leave the receive end looking live.
         try:
@@ -189,11 +225,16 @@ class ActuationProcessManager:
             effector or "<config>",
         )
         try:
+            expected_identity = ({
+                "expected_revision": snapshot.get("CONFIG.revision"),
+                "expected_generation": snapshot.get("CONFIG.generation"),
+            } if snapshot is not None else {})
             wait_for_startup_report(
                 startup_receiver,
                 process,
                 component="Actuation",
                 timeout_s=self._startup_timeout_s,
+                **expected_identity,
             )
         except BaseException as startup_exc:
             self._state = ChildProcessState.FAILED
@@ -230,9 +271,6 @@ class ActuationProcessManager:
         *,
         final_state: ChildProcessState = ChildProcessState.STOPPED,
     ) -> None:
-        if not self._auto_spawn:
-            self._state = ChildProcessState.STOPPED
-            return
         process = self._process
         if process is None:
             self._close_startup_receiver()
@@ -293,6 +331,7 @@ class ActuationProcessManager:
         self._stop_event = None
         self._close_startup_receiver()
         self._effector = None
+        self._settings_snapshot = None
         self._state = final_state
 
     def _close_startup_receiver(self) -> None:
@@ -315,6 +354,12 @@ class ActuationProcessManager:
             and not self._process.is_alive()
         ):
             self._state = ChildProcessState.FAILED
+
+    @property
+    def auto_spawn(self) -> bool:
+        """Whether the selected configuration requests a managed subprocess."""
+        with self._lifecycle_lock:
+            return self._auto_spawn
 
     @property
     def is_alive(self) -> bool:

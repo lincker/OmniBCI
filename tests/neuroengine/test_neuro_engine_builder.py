@@ -15,7 +15,7 @@ from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder, Neuro
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.ipc.data_manager import DataManager
-from omnibci.infrastructure.acquisition.service import AcquisitionWorker
+from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
 from omnibci.infrastructure.neuroengine.processing.worker import SignalProcessingWorker
 from omnibci.infrastructure.neuroengine.gateway import PeerGateway
 
@@ -41,7 +41,7 @@ def patched_builder():
             return_value=MagicMock(spec=PeerGateway),
         ),
     ):
-        yield NeuroEngineBuilder()
+        yield NeuroEngineBuilder(settings_snapshot={})
 
 
 class TestNeuroEngineConfig:
@@ -53,6 +53,12 @@ class TestNeuroEngineConfig:
 
 
 class TestNeuroEngineBuilder:
+    def test_missing_runtime_snapshot_fails_before_constructing_resources(self):
+        with patch("omnibci.infrastructure.neuroengine.builder.mp.Queue") as queue:
+            with pytest.raises(ValueError, match="pinned settings snapshot"):
+                NeuroEngineBuilder()
+        queue.assert_not_called()
+
     def test_build_returns_neuro_engine(self, patched_builder):
         eng = patched_builder.build()
         assert isinstance(eng, NeuroEngine)
@@ -90,7 +96,7 @@ class TestNeuroEngineBuilder:
             patch("omnibci.infrastructure.neuroengine.builder.SignalProcessingWorker", return_value=MagicMock()),
             patch("omnibci.infrastructure.neuroengine.builder.PeerGateway", return_value=MagicMock()),
         ):
-            eng = NeuroEngineBuilder(NeuroEngineConfig(queue_size=5)).build()
+            eng = NeuroEngineBuilder(NeuroEngineConfig(queue_size=5), settings_snapshot={}).build()
         assert eng.acquisition_command_queue._maxsize == 5
         assert eng.processor_command_queue._maxsize == 5
 
@@ -113,7 +119,7 @@ class TestNeuroEngineBuilder:
             ),
             patch("omnibci.infrastructure.neuroengine.builder.PeerGateway", return_value=MagicMock()),
         ):
-            NeuroEngineBuilder().build()
+            NeuroEngineBuilder(settings_snapshot={}).build()
 
         assert captured["acq_dm"] is captured["sp_dm"]
 
@@ -130,6 +136,6 @@ class TestNeuroEngineBuilder:
             ),
             patch("omnibci.infrastructure.neuroengine.builder.PeerGateway", return_value=MagicMock()),
         ):
-            eng = NeuroEngineBuilder().build()
+            eng = NeuroEngineBuilder(settings_snapshot={}).build()
 
         assert captured["sp_eb"] is eng.event_bus

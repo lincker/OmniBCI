@@ -1,182 +1,167 @@
-"""
-ConfigService unit tests — whitelist policy over layered settings.
+"""ConfigService exposes saved host settings, separate from plugin profiles."""
 
-Temp settings.toml per test; the real config file is never touched.
-"""
 import pytest
 
+from omnibci.application.config_errors import ConfigProfileConflictError
 from omnibci.application.services.config_service import (
-    CONFIG_WHITELIST,
     ConfigKeyNotAllowedError,
     ConfigService,
     ConfigValidationError,
-    ProfileInUseError,
 )
-from omnibci.conf import OmniBCISettings, ProfileNotFoundError
+from omnibci.conf import OmniBCISettings
 
 
 @pytest.fixture()
 def svc(tmp_path):
-    toml = tmp_path / "settings.toml"
-    toml.write_text(
-        "[ACQUISITION]\n"
-        "signal_source = \"file_reader\"\n"
-        "sample_rate = 1000\n"
-        "parallel_port_address = \"0x3100\"\n"
-        "[ALGORITHM]\n"
-        "window_duration = 3.0\n"
-        "filters = []\n"
-        "[STIMULATION]\n"
-        "paradigm = \"classic40\"\n"
-        "[ACTUATION]\n"
-        "effector = \"\"\n",
-        encoding="utf-8",
+    path = tmp_path / "settings.toml"
+    path.write_text(
+        '[ACQUISITION]\nsignal_source = "file_reader"\nsample_rate = 1000\n'
+        '[ALGORITHM]\nbaseline_duration = 1.0\nwindow_duration = 3.0\n'
+        '[NEUROENGINE]\nqueue_size = 32\n', encoding="utf-8",
     )
-    return ConfigService(OmniBCISettings(toml_file=toml))
+    return ConfigService(OmniBCISettings(toml_file=path))
 
 
-class TestListEntries:
-    def test_covers_whole_whitelist(self, svc):
-        entries, active = svc.list_entries()
-        assert {e["key"] for e in entries} == set(CONFIG_WHITELIST)
-        assert active is None
-
-    def test_effective_equals_default_without_profile(self, svc):
-        entries, _ = svc.list_entries()
-        e = next(x for x in entries if x["key"] == "ACQUISITION.sample_rate")
-        assert e["default_value"] == 1000
-        assert e["profile_value"] is None
-        assert e["effective_value"] == 1000
-
-    def test_overlay_reflected(self, svc):
-        svc.apply({"ACQUISITION.sample_rate": 500}, scope="实采")
-        svc.activate("实采")
-        entries, active = svc.list_entries()
-        e = next(x for x in entries if x["key"] == "ACQUISITION.sample_rate")
-        assert (e["default_value"], e["profile_value"], e["effective_value"]) == (1000, 500, 500)
-        assert active == "实采"
+def test_lists_only_saved_host_settings(svc):
+    entries = svc.list_entries()
+    assert {entry["key"]: entry["value"] for entry in entries} == {
+        "ALGORITHM.baseline_duration": 1.0,
+        "NEUROENGINE.queue_size": 32,
+    }
+    assert all(set(entry) == {"key", "value", "type", "requires", "description"}
+               for entry in entries)
+    assert all(entry["requires"] == "engine-restart" for entry in entries)
 
 
-class TestApplyValidation:
-    @pytest.mark.parametrize("value", [0x3100, True, None, 1.5])
-    def test_parallel_port_address_requires_hexadecimal_text(self, svc, value):
-        with pytest.raises(ConfigValidationError) as exc:
-            svc.apply({"ACQUISITION.parallel_port_address": value})
-        assert "ACQUISITION.parallel_port_address" in exc.value.bad_keys
-
-    def test_unknown_key_rejected(self, svc):
-        with pytest.raises(ConfigKeyNotAllowedError) as exc:
-            svc.apply({"LOGGING.level": "DEBUG"})
-        assert exc.value.keys == ["LOGGING.level"]
-
-    def test_type_mismatch_rejected(self, svc):
-        with pytest.raises(ConfigValidationError) as exc:
-            svc.apply({"ACQUISITION.sample_rate": "fast"})
-        assert "ACQUISITION.sample_rate" in exc.value.bad_keys
-
-    def test_bool_not_accepted_as_int(self, svc):
-        with pytest.raises(ConfigValidationError):
-            svc.apply({"ACQUISITION.sample_rate": True})
-
-    def test_list_str_checked_elementwise(self, svc):
-        with pytest.raises(ConfigValidationError):
-            svc.apply({"ALGORITHM.filters": ["ok", 42]})
-
-    def test_effector_key_is_allowed_and_type_checked(self, svc):
-        applied, restart = svc.apply({"ACTUATION.effector": "logger"})
-        assert applied == ["ACTUATION.effector"]
-        assert restart is True
-        assert svc._settings.get_default("ACTUATION.effector") == "logger"
-
-        with pytest.raises(ConfigValidationError):
-            svc.apply({"ACTUATION.effector": 42})
-
-    def test_effector_is_soft_validated_against_effector_catalog(self, svc):
-        categories = []
-        svc._plugin_catalog = lambda category: categories.append(category) or []
-
-        svc.apply({"ACTUATION.effector": "logger"})
-
-        assert categories == ["effector"]
-
-    def test_empty_updates_rejected(self, svc):
-        with pytest.raises(ConfigValidationError):
-            svc.apply({})
-
-    def test_all_or_nothing(self, svc):
-        with pytest.raises(ConfigValidationError):
-            svc.apply({"ACQUISITION.sample_rate": 250, "ALGORITHM.window_duration": "x"})
-        # the valid key must NOT have been written
-        assert svc._settings.get_default("ACQUISITION.sample_rate") == 1000
+@pytest.mark.parametrize("key,value", [
+    ("ACQUISITION.signal_source", "neuroscan_scan45_reader"),
+    ("ACQUISITION.sample_rate", 500),
+    ("ACQUISITION.channel_number", 32),
+    ("ACQUISITION.data_file_path", "recording.cnt"),
+    ("ACQUISITION.parallel_port_address", "0x378"),
+    ("ALGORITHM.decoder", "other"),
+    ("ALGORITHM.window_duration", 4.0),
+    ("ALGORITHM.offset_time", 0.5),
+    ("ALGORITHM.filters", ["bandpass"]),
+    ("STIMULATION.paradigm", "other"),
+    ("ACTUATION.effector", "logger"),
+    ("LOGGING.level", "DEBUG"),
+])
+def test_plugin_and_internal_keys_rejected_without_partial_write(svc, tmp_path, key, value):
+    path = tmp_path / "settings.toml"
+    before = path.read_bytes()
+    with pytest.raises(ConfigKeyNotAllowedError) as raised:
+        svc.save({"NEUROENGINE.queue_size": 64, key: value}, expected_revision=svc.read()[1])
+    assert raised.value.keys == [key]
+    assert svc._settings.get("NEUROENGINE.queue_size") == 32
+    assert path.read_bytes() == before
 
 
-class TestApplyScopes:
-    @pytest.mark.parametrize("scope", ["default", "hardware"])
-    def test_parallel_port_address_is_editable_and_survives_reload(
-        self, svc, tmp_path, scope,
-    ):
-        key = "ACQUISITION.parallel_port_address"
-
-        applied, restart = svc.apply({key: "0x378"}, scope=scope)
-        if scope != "default":
-            svc.activate(scope)
-        settings = OmniBCISettings(tmp_path / "settings.toml")
-        entries, _ = ConfigService(settings).list_entries()
-        entry = next(item for item in entries if item["key"] == key)
-
-        assert applied == [key]
-        assert restart is True
-        assert settings.get(key) == "0x378"
-        assert entry["type"] == "str"
-        assert entry["effective_value"] == "0x378"
-        if scope != "default":
-            assert entry["default_value"] == "0x3100"
-
-    def test_default_scope_persists(self, svc, tmp_path):
-        applied, restart = svc.apply({"ACQUISITION.sample_rate": 2000})
-        assert applied == ["ACQUISITION.sample_rate"]
-        assert restart is True
-        fresh = OmniBCISettings(toml_file=tmp_path / "settings.toml")
-        assert fresh.get("ACQUISITION.sample_rate") == 2000
-
-    def test_hot_key_reports_no_restart(self, svc):
-        _, restart = svc.apply({"STIMULATION.paradigm": "other"})
-        assert restart is False
-
-    def test_profile_scope_does_not_touch_default(self, svc):
-        svc.apply({"ACQUISITION.sample_rate": 500}, scope="p1")
-        assert svc._settings.get_default("ACQUISITION.sample_rate") == 1000
-        assert svc._settings.read_profile("p1") == {"ACQUISITION.sample_rate": 500}
-
-    def test_int_normalised_for_float_keys(self, svc):
-        svc.apply({"ALGORITHM.window_duration": 4}, scope="p")
-        assert svc._settings.read_profile("p") == {"ALGORITHM.window_duration": 4.0}
+@pytest.mark.parametrize("key,value", [
+    ("NEUROENGINE.queue_size", "large"),
+    ("NEUROENGINE.queue_size", True),
+    ("NEUROENGINE.queue_size", 3.5),
+    ("ALGORITHM.baseline_duration", "long"),
+    ("ALGORITHM.baseline_duration", False),
+])
+def test_wrong_types_are_rejected_before_any_write(svc, tmp_path, key, value):
+    path = tmp_path / "settings.toml"
+    before = path.read_bytes()
+    with pytest.raises(ConfigValidationError) as raised:
+        svc.save({"NEUROENGINE.queue_size": 64, key: value}, expected_revision=svc.read()[1])
+    assert key in raised.value.bad_keys
+    assert svc._settings.get("NEUROENGINE.queue_size") == 32
+    assert path.read_bytes() == before
 
 
-class TestProfileLifecycle:
-    def test_put_replaces(self, svc):
-        svc.apply({"ACQUISITION.sample_rate": 500}, scope="p")
-        svc.put_profile("p", {"ALGORITHM.window_duration": 5.0}, "长窗")
-        assert svc._settings.read_profile("p") == {"ALGORITHM.window_duration": 5.0}
+def test_empty_updates_are_rejected(svc):
+    with pytest.raises(ConfigValidationError):
+        svc.save({}, expected_revision=svc.read()[1])
 
-    def test_delete_active_raises_in_use(self, svc):
-        svc.apply({"ACQUISITION.sample_rate": 500}, scope="p")
-        svc.activate("p")
-        with pytest.raises(ProfileInUseError):
-            svc.delete_profile("p")
 
-    def test_delete_after_deactivate(self, svc):
-        svc.apply({"ACQUISITION.sample_rate": 500}, scope="p")
-        svc.activate("p")
-        svc.deactivate()
-        svc.delete_profile("p")
-        assert svc.list_profiles() == ([], None)
+def test_saves_both_host_settings_and_normalizes_float(svc, tmp_path):
+    saved, restart, revision = svc.save({
+        "NEUROENGINE.queue_size": 64,
+        "ALGORITHM.baseline_duration": 2,
+    }, expected_revision=svc.read()[1])
+    assert saved == ["ALGORITHM.baseline_duration", "NEUROENGINE.queue_size"]
+    assert restart is True
+    assert revision == svc.read()[1]
+    fresh = OmniBCISettings(tmp_path / "settings.toml")
+    assert fresh.get("NEUROENGINE.queue_size") == 64
+    assert fresh.get("ALGORITHM.baseline_duration") == 2.0
+    assert isinstance(fresh.get("ALGORITHM.baseline_duration"), float)
+    assert fresh.get("ACQUISITION.sample_rate") == 1000
 
-    def test_activate_missing_raises(self, svc):
-        with pytest.raises(ProfileNotFoundError):
-            svc.activate("ghost")
 
-    def test_profile_detail_flags_off_whitelist_keys(self, svc):
-        svc._settings.write_profile("p", {"LOGGING.level": "DEBUG"})  # 模拟手编文件
-        detail = svc.profile_detail("p")
-        assert detail["off_whitelist_keys"] == ["LOGGING.level"]
+def test_save_does_not_change_installed_runtime_snapshot(svc, tmp_path):
+    pinned = svc._settings.snapshot()
+    svc._settings.use_snapshot(pinned)
+    svc.save({"NEUROENGINE.queue_size": 64}, expected_revision=svc.read()[1])
+    assert svc._settings.snapshot() == pinned
+    assert OmniBCISettings(tmp_path / "settings.toml").get("NEUROENGINE.queue_size") == 64
+
+
+@pytest.mark.parametrize("key,value", [
+    ("NEUROENGINE.queue_size", 0),
+    ("NEUROENGINE.queue_size", -1),
+    ("ALGORITHM.baseline_duration", -0.1),
+    ("ALGORITHM.baseline_duration", float("nan")),
+    ("ALGORITHM.baseline_duration", float("inf")),
+    ("ALGORITHM.baseline_duration", float("-inf")),
+    ("ALGORITHM.baseline_duration", 10 ** 400),
+])
+def test_invalid_numeric_ranges_leave_disk_and_cache_unchanged(svc, tmp_path, key, value):
+    before = (tmp_path / "settings.toml").read_bytes()
+    original = svc.read()
+    with pytest.raises(ConfigValidationError) as raised:
+        svc.save({key: value}, expected_revision=original[1])
+    assert key in raised.value.bad_keys
+    assert (tmp_path / "settings.toml").read_bytes() == before
+    assert svc.read() == original
+
+
+def test_zero_baseline_is_valid(svc):
+    svc.save({"ALGORITHM.baseline_duration": 0}, expected_revision=svc.read()[1])
+    assert svc.list_entries()[0]["value"] == 0.0
+
+
+def test_stale_browser_cannot_overwrite_another_save(svc, tmp_path):
+    other = ConfigService(OmniBCISettings(tmp_path / "settings.toml"))
+    before_entries, revision = svc.read()
+    assert other.read()[1] == revision
+    _, _, new_revision = other.save({"NEUROENGINE.queue_size": 64}, expected_revision=revision)
+    assert new_revision != revision
+    with pytest.raises(ConfigProfileConflictError):
+        svc.save({"ALGORITHM.baseline_duration": 2.0}, expected_revision=revision)
+    entries, actual_revision = svc.read()
+    assert actual_revision == new_revision
+    assert entries[0] == before_entries[0]
+    assert entries[1]["value"] == 64
+
+
+def test_atomic_storage_failure_does_not_change_saved_values(svc, tmp_path, monkeypatch):
+    original = svc.read()
+    before = (tmp_path / "settings.toml").read_bytes()
+
+    def fail_update(updates, *, expected_revision):
+        assert updates == {"NEUROENGINE.queue_size": 64}
+        assert expected_revision == original[1]
+        raise OSError("disk full")
+
+    monkeypatch.setattr(svc._settings, "update", fail_update)
+    with pytest.raises(OSError, match="disk full"):
+        svc.save({"NEUROENGINE.queue_size": 64}, expected_revision=original[1])
+    assert svc.read() == original
+    assert (tmp_path / "settings.toml").read_bytes() == before
+
+
+def test_read_returns_saved_values_even_when_runtime_snapshot_is_pinned(svc):
+    original_revision = svc.read()[1]
+    pinned = svc._settings.snapshot()
+    svc._settings.use_snapshot(pinned)
+    _, _, revision = svc.save({"NEUROENGINE.queue_size": 64}, expected_revision=original_revision)
+    entries, actual_revision = svc.read()
+    assert entries[1]["value"] == 64
+    assert actual_revision == revision != original_revision
+    assert svc._settings.snapshot() == pinned

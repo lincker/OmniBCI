@@ -13,6 +13,7 @@ Dependency graph (follows DIP):
 """
 
 import logging
+from omnibci.application.runtime_admission import admitted
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional, TYPE_CHECKING
@@ -59,6 +60,7 @@ def _trial_record_to_dto(r: TrialRecord) -> TrialDTO:
         confidence=r.confidence,
         forced=r.forced,
         produced_at=r.produced_at,
+        config_revision=r.config_revision,
     )
 
 
@@ -73,6 +75,9 @@ def _session_record_to_dto(r: SessionRecord, include_trials: bool = False) -> Se
         started_at=r.started_at,
         ended_at=r.ended_at,
         trials=[_trial_record_to_dto(t) for t in r.trials] if include_trials else [],
+        continuation_of=r.continuation_of,
+        config_revision=r.config_revision,
+        interruption_reason=r.interruption_reason,
     )
 
 
@@ -99,7 +104,9 @@ class SessionAppService:
         repository: SessionRepository,
         engine_port=None,
         command_results: "CommandResultBroker | None" = None,
+        admission=None,
     ) -> None:
+        self._admission = admission
         self._repo = repository
         self._engine = engine_port  # EnginePort | None
         self._command_results = command_results
@@ -108,15 +115,33 @@ class SessionAppService:
     # Command handlers
     # ------------------------------------------------------------------
 
+    @admitted
     def handle_create_session(self, cmd: CreateSessionCommand) -> str:
+        if cmd.continuation_of is not None:
+            previous = self._require(cmd.continuation_of)
+            if previous.state != SessionRecordState.ENDED:
+                raise RuntimeError("A continuation requires an ended previous session")
+            if self._repo.find_active() is not None:
+                raise RuntimeError("Cannot resume while another session is active")
+        config_revision = (
+            cmd.config_revision if cmd.config_revision is not None
+            else self._current_config_revision()
+        )
         session_id = str(uuid.uuid4())
         record = SessionRecord(
             session_id=session_id,
             paradigm=cmd.paradigm,
             state=SessionRecordState.RUNNING,
             started_at=datetime.now(timezone.utc),
+            continuation_of=cmd.continuation_of,
+            config_revision=config_revision,
         )
         self._repo.save(record)
+        payload = {"session_id": session_id, "paradigm": cmd.paradigm}
+        if cmd.continuation_of is not None:
+            payload["continuation_of"] = cmd.continuation_of
+        if config_revision is not None:
+            payload["config_revision"] = config_revision
 
         # Push the identity down into the signal-processing subprocess so its
         # BCISession aggregate uses the SAME id (see docs/session-id-unification.md).
@@ -126,7 +151,7 @@ class SessionAppService:
             try:
                 self._command_results.request(
                     EventType.StartSession,
-                    {"session_id": session_id, "paradigm": cmd.paradigm},
+                    payload,
                 )
             except CommandTimeoutError:
                 # Timeout is an unknown outcome, not a confirmed failure: the
@@ -140,7 +165,7 @@ class SessionAppService:
             try:
                 self._engine.dispatch(Event(
                     EventType.StartSession,
-                    {"session_id": session_id, "paradigm": cmd.paradigm},
+                    payload,
                 ))
             except RuntimeError:
                 self._repo.delete(session_id)
@@ -149,25 +174,45 @@ class SessionAppService:
         logger.info("Session created: %s (paradigm=%s)", session_id, cmd.paradigm)
         return session_id
 
+    @admitted
+    def create_continuation(
+        self, previous_id: str, *, config_revision: Optional[str] = None,
+        paradigm: Optional[str] = None,
+    ) -> str:
+        """Start a fresh session linked to a closed session; never replay trials."""
+        previous = self._require(previous_id)
+        return self.handle_create_session(CreateSessionCommand(
+            paradigm=previous.paradigm if paradigm is None else paradigm,
+            continuation_of=previous_id,
+            config_revision=config_revision,
+        ))
+
+    @admitted(recovery=True)
     def handle_end_session(self, cmd: EndSessionCommand) -> None:
         if self._repo.find_by_id(cmd.session_id) is None:
             raise KeyError(f"Session '{cmd.session_id}' not found")
+        payload = cmd.session_id if cmd.interruption_reason is None else {
+            "session_id": cmd.session_id,
+            "interruption_reason": cmd.interruption_reason,
+        }
 
         # Confirm the aggregate ended before the read model reports success.
         # SessionEnded is queued before CommandResult by the worker, so the
         # projection is normally already closed when request() returns; the
         # atomic mark below is an idempotent fallback.
         if self._command_results is not None:
-            self._command_results.request(EventType.EndSession, cmd.session_id)
+            self._command_results.request(EventType.EndSession, payload)
         elif self._engine is not None:
             # Projection-only/legacy constructions retain best-effort dispatch.
             try:
-                self._engine.dispatch(Event(EventType.EndSession, cmd.session_id))
+                self._engine.dispatch(Event(EventType.EndSession, payload))
             except RuntimeError as exc:
                 logger.warning("EndSession dispatch skipped (engine not ready): %s", exc)
 
         # Keep ending atomic with concurrent trial projection updates.
-        record = self._repo.update(cmd.session_id, lambda r: r.mark_ended())
+        record = self._repo.update(cmd.session_id, lambda r: r.mark_ended(
+            interruption_reason=cmd.interruption_reason,
+        ))
         if record is None:  # defensive: repository deletion raced the command
             raise KeyError(f"Session '{cmd.session_id}' not found")
         logger.info("Session ended: %s (%d trials)", cmd.session_id, record.trial_count)
@@ -221,6 +266,7 @@ class SessionAppService:
                 paradigm=None,
                 state=SessionRecordState.RUNNING,
                 started_at=datetime.now(timezone.utc),
+                config_revision=self._current_config_revision(),
             )
 
         self._repo.upsert(session_id, _create, lambda r: None)
@@ -255,6 +301,8 @@ class SessionAppService:
                 confidence=clf.confidence,
                 forced=clf.forced,
                 produced_at=clf.produced_at,
+                config_revision=(payload.config_revision if payload.config_revision is not None
+                                 else record.config_revision),
             ))
             logger.debug("Trial #%d recorded: session=%s target=%d",
                          trial_number, record.session_id, clf.target_id)
@@ -271,6 +319,7 @@ class SessionAppService:
                 paradigm=None,
                 state=SessionRecordState.RUNNING,
                 started_at=datetime.now(timezone.utc),
+                config_revision=payload.config_revision,
             )
 
         self._repo.upsert(session_id, _create, _append)
@@ -288,7 +337,9 @@ class SessionAppService:
                          type(payload).__name__)
             return
         # Keep ending atomic with concurrent trial projection updates.
-        record = self._repo.update(payload.session_id, lambda r: r.mark_ended())
+        record = self._repo.update(payload.session_id, lambda r: r.mark_ended(
+            interruption_reason=payload.interruption_reason,
+        ))
         if record is None:
             logger.warning(
                 "SessionEnded for unknown session %s; ignoring",
@@ -301,6 +352,13 @@ class SessionAppService:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    def _current_config_revision(self) -> Optional[str]:
+        snapshot = getattr(self._engine, "applied_snapshot", None)
+        if isinstance(snapshot, dict):
+            revision = snapshot.get("CONFIG.revision")
+            return revision if isinstance(revision, str) else None
+        return None
 
     def _require(self, session_id: str) -> SessionRecord:
         record = self._repo.find_by_id(session_id)

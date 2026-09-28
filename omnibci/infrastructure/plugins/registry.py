@@ -1,7 +1,7 @@
 import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Callable, Dict, Iterator, Optional, Type, TypeVar
+from typing import Callable, Dict, Iterator, Type, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -59,13 +59,13 @@ def register_plugin(base: type) -> Callable[[Type[T]], Type[T]]:
         existing = registry.get(plugin_type)
         if existing is not None:
             if existing is cls:
-                return cls  # 同一对象重复注册：幂等
+                return cls  # Registering the same class again is idempotent.
             if existing.__name__ != cls.__name__:
                 raise ValueError(
                     f"Duplicate plugin_type '{plugin_type}' for "
                     f"{base.__name__}: {existing.__name__} vs {cls.__name__}"
                 )
-            # 同名类（通常是测试重新加载）：允许覆盖
+            # Allow replacement of same-name classes, usually reloaded by tests.
 
         registry[plugin_type] = cls
         logger.info("[Registry] %s -> %s (%s registry size: %d)",
@@ -78,53 +78,6 @@ def register_plugin(base: type) -> Callable[[Type[T]], Type[T]]:
 def registry_for(base: type) -> Dict[str, type]:
     """Return the plugin registry for *base* (empty dict if none registered).
 
-    调用方只应读取；需要变更注册请走 :func:`register_plugin`。
+    Callers should only read this mapping; use :func:`register_plugin` to update it.
     """
     return _active_registries().get(base, {})
-
-
-class ObjectFactory:
-    """Legacy registry-backed constructor for subsystems not yet migrated.
-
-    New runtimes should resolve a descriptor and use ``PluginLoader``.  This
-    compatibility adapter remains here while acquisition, processing and
-    stimulation still use import-time registration.
-    """
-
-    @staticmethod
-    def create(
-        base_cls: Type[T],
-        target_id: Optional[str],
-        **kwargs,
-    ) -> Optional[T]:
-        """Instantiate a registered plugin, returning ``None`` on failure."""
-        if not target_id:
-            logger.error("[Factory] No plugin_type given for %s.", base_cls.__name__)
-            return None
-
-        registry = registry_for(base_cls)
-        if target_id not in registry:
-            logger.error(
-                "[Factory] Unknown %s type: '%s'. Available: %s",
-                base_cls.__name__,
-                target_id,
-                list(registry.keys()),
-            )
-            return None
-
-        try:
-            instance = registry[target_id](**kwargs)
-            logger.info(
-                "[Factory] Created %s instance: '%s'",
-                base_cls.__name__,
-                target_id,
-            )
-            return instance
-        except Exception as exc:
-            logger.error(
-                "[Factory] Failed to instantiate '%s': %s",
-                target_id,
-                exc,
-                exc_info=True,
-            )
-            return None

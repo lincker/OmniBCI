@@ -11,6 +11,7 @@ GET    /sessions/{id}/trials/last  Most recent classification result
 """
 from typing import List
 
+from omnibci.application.plugin_profiles import ProfileRevisionConflict
 from fastapi import APIRouter, Depends, status
 
 from omnibci.presentation.dependencies import get_session_service
@@ -60,6 +61,7 @@ def _trial_dto_to_response(t: TrialDTO) -> TrialResponse:
         confidence=t.confidence,
         forced=t.forced,
         produced_at=t.produced_at,
+        config_revision=t.config_revision,
     )
 
 
@@ -82,6 +84,8 @@ def create_session(
         session_id = svc.handle_create_session(CreateSessionCommand(paradigm=body.paradigm))
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as exc:
         raise command_error_to_api_error(exc)
+    except ProfileRevisionConflict:
+        raise
     except RuntimeError as exc:
         raise ApiError(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -98,6 +102,9 @@ def create_session(
             trial_count=dto.trial_count,
             started_at=dto.started_at,
             ended_at=dto.ended_at,
+            continuation_of=dto.continuation_of,
+            config_revision=dto.config_revision,
+            interruption_reason=dto.interruption_reason,
         ),
     )
 
@@ -117,6 +124,9 @@ def list_sessions(svc: SessionAppService = Depends(get_session_service)):
             trial_count=d.trial_count,
             started_at=d.started_at,
             ended_at=d.ended_at,
+            continuation_of=d.continuation_of,
+            config_revision=d.config_revision,
+            interruption_reason=d.interruption_reason,
         )
         for d in dtos
     ]
@@ -141,6 +151,9 @@ def get_active_session(svc: SessionAppService = Depends(get_session_service)):
             trial_count=dto.trial_count,
             started_at=dto.started_at,
             ended_at=dto.ended_at,
+            continuation_of=dto.continuation_of,
+            config_revision=dto.config_revision,
+            interruption_reason=dto.interruption_reason,
         )
     )
 
@@ -166,6 +179,9 @@ def get_session(
             trial_count=dto.trial_count,
             started_at=dto.started_at,
             ended_at=dto.ended_at,
+            continuation_of=dto.continuation_of,
+            config_revision=dto.config_revision,
+            interruption_reason=dto.interruption_reason,
         )
     )
 
@@ -186,6 +202,8 @@ def end_session(
         raise ApiError(status.HTTP_404_NOT_FOUND, ErrorCode.SESSION_NOT_FOUND, f"Session '{session_id}' not found")
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as exc:
         raise command_error_to_api_error(exc)
+    except ProfileRevisionConflict:
+        raise
     except RuntimeError as exc:
         raise ApiError(
             status.HTTP_503_SERVICE_UNAVAILABLE,

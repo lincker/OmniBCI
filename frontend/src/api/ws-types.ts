@@ -14,6 +14,7 @@ export interface TrialCompletedMessage {
   event: "TrialCompleted";
   session_id: string | null;
   trial_number: number;
+  config_revision?: string | null;
   target_id: number;
   event_id: number;
   confidence: number | null;

@@ -8,7 +8,6 @@ import struct
 import numpy as np
 import pytest
 
-from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8.curry8 import (
     BlockType,
     ClientRequest,
@@ -20,7 +19,6 @@ from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8.curry8 import (
     DataCode,
     InfoType,
 )
-from omnibci.infrastructure.plugins.registry import registry_for
 
 
 _HEADER = struct.Struct(">4sHHIII")
@@ -166,7 +164,7 @@ async def _run_fake_server_scenario(*, compressed: bool = False):
 
     server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
-    driver = Curry8DataReader(host="127.0.0.1", port=port, timeout=1.0)
+    driver = Curry8DataReader(host="127.0.0.1", port=port, timeout=1.0, parameters={})
 
     try:
         assert await driver.connect() is True
@@ -216,12 +214,8 @@ def test_header_uses_the_20_byte_network_order_layout():
     assert Curry8Header.from_bytes(header.to_bytes()) == header
 
 
-def test_driver_is_registered_as_a_signal_source():
-    assert registry_for(SignalSource)[Curry8DataReader.plugin_type] is Curry8DataReader
-
-
 def test_protocol_802_native_int16_samples_are_supported():
-    driver = Curry8DataReader(host="127.0.0.1", port=4455)
+    driver = Curry8DataReader(host="127.0.0.1", port=4455, parameters={})
     driver._metadata = Curry8Metadata(
         protocol_version=802,
         channel_count=2,

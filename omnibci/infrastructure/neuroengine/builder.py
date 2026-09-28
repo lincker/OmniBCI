@@ -1,5 +1,6 @@
 
 import multiprocessing as mp
+from copy import deepcopy
 from dataclasses import dataclass
 
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
@@ -14,13 +15,14 @@ from omnibci.infrastructure.neuroengine.gateway.peers import (
 )
 from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
 from omnibci.infrastructure.neuroengine.actuation_feedback import ActuationFeedbackHandler
+from omnibci.infrastructure.process_lifecycle import StartupChannel, StartupReporter
+from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
 
 
 @dataclass
 class NeuroEngineConfig:
     """
-    Configuration for NeuroEngineBuilder. Defaults mirror dataclass values; reads
-    them from settings.
+    Host controls for NeuroEngineBuilder, resolved from its runtime snapshot.
     """
     queue_size: int = 100                    # max items in each mp.Queue
     message_server_ip: str = "127.0.0.1"    # result-push server bind host
@@ -32,18 +34,15 @@ class NeuroEngineConfig:
     actuation_server_port: int = 8001        # actuation channel bind port
     actuation_watchdog_timeout_s: float = 1.0  # silent-link → failsafe (Phase 4)
     debug: bool = False                     # asyncio debug mode for the engine loop
+    startup_timeout_s: float = 5.0          # configured worker initialization deadline
 
     @classmethod
-    def from_settings(cls) -> "NeuroEngineConfig":
-        """Build config from settings.toml, falling back to dataclass defaults.
-
-        P2-9：改用 settings.get(key, default)（default 参数已修复）——
-        缺键走默认值是显式语义，异常吞噬移除，真故障不再被掩盖。
-        """
-        from omnibci.conf import settings
+    def from_settings(cls, settings_snapshot: dict) -> "NeuroEngineConfig":
+        """Build host controls from an explicitly supplied runtime snapshot."""
+        source = settings_snapshot
 
         def _get(key, default):
-            value = settings.get(key, default)
+            value = source.get(key, default)
             return default if value is None else value
 
         return cls(
@@ -58,6 +57,7 @@ class NeuroEngineConfig:
             actuation_watchdog_timeout_s=float(
                 _get("ACTUATION.watchdog_timeout_s", cls.actuation_watchdog_timeout_s)),
             debug=bool(_get("debug", cls.debug)),
+            startup_timeout_s=float(_get("NEUROENGINE.startup_timeout_s", cls.startup_timeout_s)),
         )
 
 
@@ -67,13 +67,16 @@ class NeuroEngineBuilder:
 
     Usage::
 
-        engine = NeuroEngineBuilder().build()                       # config from settings
-        engine = NeuroEngineBuilder(NeuroEngineConfig(queue_size=50)).build()  # explicit
+        engine = NeuroEngineBuilder(settings_snapshot=snapshot).build()
+        engine = NeuroEngineBuilder(config, settings_snapshot=snapshot).build()
     """
 
-    def __init__(self, config: NeuroEngineConfig | None = None) -> None:
-        # Default: read every tunable from settings ONCE, here.
-        self._config = config or NeuroEngineConfig.from_settings()
+    def __init__(self, config: NeuroEngineConfig | None = None,
+                 *, settings_snapshot: dict | None = None) -> None:
+        if settings_snapshot is None:
+            raise ValueError("NeuroEngineBuilder requires a pinned settings snapshot")
+        self._settings_snapshot = deepcopy(settings_snapshot)
+        self._config = config or NeuroEngineConfig.from_settings(self._settings_snapshot)
 
     def build(self) -> NeuroEngine:
         """
@@ -88,6 +91,13 @@ class NeuroEngineBuilder:
           6. NeuroEngine  (receives everything above)
         """
         cfg = self._config
+        snapshot = self._settings_snapshot
+        revision = snapshot.get("CONFIG.revision")
+        generation = snapshot.get("CONFIG.generation")
+        stimulation_identity = (PeerIdentity("stimulation", revision, generation)
+                                if not snapshot.get("STIMULATION.auto_spawn", True) else None)
+        actuation_identity = (PeerIdentity("actuation", revision, generation)
+                              if cfg.actuation_enabled and not snapshot.get("ACTUATION.auto_spawn", True) else None)
 
         # 1. EventBus — event_queue must be mp.Queue for cross-process delivery
         event_queue = mp.Queue()
@@ -102,10 +112,22 @@ class NeuroEngineBuilder:
         processor_command_queue = mp.Queue(cfg.queue_size)
 
         # 4. Sub-processes (not started yet — NeuroEngine._start() does that)
+        acquisition_receiver, acquisition_sender = mp.Pipe(duplex=False)
+        processor_receiver, processor_sender = mp.Pipe(duplex=False)
+        acquisition_reporter = StartupReporter(
+            acquisition_sender, component="Acquisition",
+            config_revision=revision, generation=generation,
+        )
+        processor_reporter = StartupReporter(
+            processor_sender, component="Processing",
+            config_revision=revision, generation=generation,
+        )
         acquisition_worker = AcquisitionWorker(
             command_queue=acquisition_command_queue,
             data_manager=data_manager,
             event_bus=event_bus,
+            settings_snapshot=self._settings_snapshot,
+            startup_reporter=acquisition_reporter,
         )
         signal_processing_worker = SignalProcessingWorker(
             command_queue=processor_command_queue,
@@ -113,6 +135,8 @@ class NeuroEngineBuilder:
             event_bus=event_bus,
             sample_rate=cfg.sample_rate,
             baseline_duration=cfg.baseline_duration,
+            settings_snapshot=self._settings_snapshot,
+            startup_reporter=processor_reporter,
         )
 
         # 5. Peer gateway — one routed channel per external peer (host/port
@@ -123,6 +147,7 @@ class NeuroEngineBuilder:
             stimulation_peer_config(
                 host=cfg.message_server_ip,
                 port=cfg.message_server_port,
+                identity=stimulation_identity,
             )
         )
 
@@ -137,6 +162,7 @@ class NeuroEngineBuilder:
                     host=cfg.actuation_server_ip,
                     port=cfg.actuation_server_port,
                     watchdog_timeout_s=cfg.actuation_watchdog_timeout_s,
+                    identity=actuation_identity,
                 )
             )
             actuation_translator = ActuationCommandTranslator(event_bus)
@@ -155,4 +181,11 @@ class NeuroEngineBuilder:
             actuation_translator=actuation_translator,
             actuation_feedback=actuation_feedback,
             debug=cfg.debug,
+            startup_channels=(
+                StartupChannel("Acquisition", acquisition_worker, acquisition_receiver, acquisition_reporter),
+                StartupChannel("Processing", signal_processing_worker, processor_receiver, processor_reporter),
+            ),
+            startup_timeout_s=cfg.startup_timeout_s,
+            config_revision=revision,
+            generation=generation,
         )

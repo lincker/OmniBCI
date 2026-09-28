@@ -1,6 +1,7 @@
 """
 /api/v1/acquisition — Data acquisition control endpoints.
 """
+from omnibci.application.plugin_profiles import ProfileRevisionConflict
 from fastapi import APIRouter, Depends, status
 
 from omnibci.presentation.dependencies import get_acquisition_service
@@ -40,6 +41,8 @@ def connect(svc: AcquisitionAppService = Depends(get_acquisition_service)):
         return ApiResponse(message="Data provider connected")
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
         raise command_error_to_api_error(e)
+    except ProfileRevisionConflict:
+        raise
     except RuntimeError as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
@@ -56,6 +59,8 @@ def disconnect(svc: AcquisitionAppService = Depends(get_acquisition_service)):
         return ApiResponse(message="Data provider disconnected")
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
         raise command_error_to_api_error(e)
+    except ProfileRevisionConflict:
+        raise
     except RuntimeError as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
@@ -72,6 +77,8 @@ def start_stream(svc: AcquisitionAppService = Depends(get_acquisition_service)):
         return ApiResponse(message="Stream started")
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
         raise command_error_to_api_error(e)
+    except ProfileRevisionConflict:
+        raise
     except RuntimeError as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
@@ -88,6 +95,8 @@ def stop_stream(svc: AcquisitionAppService = Depends(get_acquisition_service)):
         return ApiResponse(message="Stream stopped")
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
         raise command_error_to_api_error(e)
+    except ProfileRevisionConflict:
+        raise
     except RuntimeError as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 

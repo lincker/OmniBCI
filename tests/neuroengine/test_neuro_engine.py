@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from omnibci.infrastructure.acquisition.service import AcquisitionCommand
+from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.shared.events import EventType, Event
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
 from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessorCommand
@@ -53,6 +53,26 @@ def _mark_resources_started(eng: NeuroEngine) -> None:
 
 
 _COMMAND_ROUTES = [
+    (EventType.UpdateProcessingContext, "processor_command_queue", SignalProcessorCommand.update_context,
+     {"generation": "run", "expected_revision": "old", "settings_snapshot": {}}),
+    (EventType.GetSourceCheckpoint, "acquisition_command_queue", AcquisitionCommand.get_checkpoint,
+     {"generation": "run", "expected_revision": "old"}),
+    (EventType.RestoreSourceCheckpoint, "acquisition_command_queue", AcquisitionCommand.restore_checkpoint,
+     {"generation": "run", "expected_revision": "old", "checkpoint": {}}),
+    (EventType.UpdateAcquisitionRevision, "acquisition_command_queue", AcquisitionCommand.update_revision,
+     {"generation": "run", "expected_revision": "old", "target_revision": "new"}),
+    (
+        EventType.StageProcessingConfiguration,
+        "processor_command_queue",
+        SignalProcessorCommand.stage_configuration,
+        {"settings_snapshot": {}, "expected_revision": "old", "generation": "run"},
+    ),
+    (
+        EventType.CancelProcessingConfiguration,
+        "processor_command_queue",
+        SignalProcessorCommand.cancel_configuration,
+        {"command_id": "pending", "generation": "run"},
+    ),
     (
         EventType.ConnectDataProvider,
         "acquisition_command_queue",
@@ -76,6 +96,12 @@ _COMMAND_ROUTES = [
         "acquisition_command_queue",
         AcquisitionCommand.stop_stream,
         None,
+    ),
+    (
+        EventType.StopAndDrain,
+        "acquisition_command_queue",
+        AcquisitionCommand.stop_and_drain,
+        {"session_id": "session-1"},
     ),
     (
         EventType.StartSession,

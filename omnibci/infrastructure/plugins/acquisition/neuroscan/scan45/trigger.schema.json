@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "parallel_port_address": {
+      "type": "string",
+      "title": "Parallel port address",
+      "default": "0x3100",
+      "x-scope": "machine",
+      "x-apply": "module",
+      "minLength": 3
+    }
+  },
+  "required": [
+    "parallel_port_address"
+  ]
+}

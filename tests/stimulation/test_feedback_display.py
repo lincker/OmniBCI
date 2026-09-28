@@ -15,7 +15,7 @@ import pytest
 from omnibci.infrastructure.plugins.paradigms.classic40SSVEP.feedback_display import (
     FeedbackDisplay,
 )
-from omnibci.infrastructure.stimulation.ports.renderer import TextureHandle
+from omnibci.sdk import TextureHandle
 
 
 # ---------------------------------------------------------------------------

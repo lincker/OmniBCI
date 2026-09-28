@@ -85,7 +85,7 @@ point inward:
 | Domain | `omnibci/domain` | Sessions, signals, epochs, classification results, and core interfaces |
 | Infrastructure | `omnibci/infrastructure` | Acquisition, signal processing, IPC, process management, plugins, persistence, and external-device adapters |
 | Shared kernel | `omnibci/shared` | Cross-process event contracts and common utilities with no internal package dependencies |
-| Configuration | `omnibci/conf` | Base TOML settings and active-profile overlays |
+| Configuration | `omnibci/conf` | Read-only defaults, user host settings, and worker snapshots |
 | Composition root | `omnibci/bootstrap.py` | Selects concrete implementations from configuration and assembles the object graph |
 
 The Application layer does not depend directly on Infrastructure.
@@ -100,7 +100,8 @@ reads each plugin's `manifest.toml` without importing its Python code. Concrete
 implementations are loaded on demand at the relevant execution boundary.
 
 Configure the user plugin directory with the `OMNIBCI_PLUGIN_DIR` environment
-variable or `PLUGINS.user_dir` in `omnibci/conf/settings.toml`.
+variable or `PLUGINS.user_dir` in the user configuration directory's
+`settings.toml`. Restart the backend after changing this deployment setting.
 
 ## Getting Started
 
@@ -152,18 +153,23 @@ cd ..
 
 ### 3. Configure the Data Source
 
-The base configuration is stored in `omnibci/conf/settings.toml`. Values in
-the active `omnibci/conf/profiles/<name>.toml` profile override matching base
-settings.
+After starting the backend and console below, use **Setup → Acquisition** to
+choose an installed source plugin and a named Plugin Profile. Scan45, Curry8,
+and File Reader can each have multiple saved profiles. For File Reader, set
+`data_file_path` in the Profile to an EEG file available on the acquisition
+machine. Save, review, and apply the selection before starting the engine.
 
-For file playback, make sure the following configuration points to an EEG data
-file that exists on the local machine:
+Shared host controls are edited in **Settings → General**. They are saved in
+the backend user's `settings.toml`, separately from Plugin Profiles and the
+accepted `activation.toml`. Saving never changes an active experiment; use
+Review and Apply to apply supported changes. Conflicting edits require a
+refresh before saving again.
 
-```toml
-[ACQUISITION]
-signal_source = "file_reader"
-data_file_path = "/absolute/path/to/train.cnt"
-```
+The user directory defaults to `~/Library/Application Support/OmniBCI` on macOS,
+`~/.config/OmniBCI` on Linux (honoring `XDG_CONFIG_HOME`), and
+`%LOCALAPPDATA%/OmniBCI` on Windows. `OMNIBCI_CONFIG_DIR` can select an absolute
+directory. The packaged `omnibci/conf/settings.toml` supplies read-only defaults;
+retired named Application Profile overlays are not loaded.
 
 ### 4. Start the Backend
 
@@ -181,8 +187,9 @@ Useful endpoints:
 - OpenAPI schema: <http://127.0.0.1:8000/openapi.json>
 
 Append `--reload` during API development if automatic reloads are useful.
-Starting the API process initializes the engine graph but does not start EEG
-acquisition. Start NeuroEngine explicitly through the web console or API.
+Starting the API process initializes services and listeners. Start NeuroEngine
+explicitly through the web console or API to resolve the selected profile and
+build the engine graph.
 
 ### 5. Start the Web Console
 
@@ -195,7 +202,7 @@ npm run dev
 
 Open <http://localhost:5173> and perform these steps:
 
-1. Select a data source and decoder.
+1. Select source/decoder plugins and Profiles in Setup, then review and apply.
 2. Start the engine.
 3. Connect the data source.
 4. Start reading.
@@ -211,21 +218,44 @@ VITE_BACKEND=http://192.168.1.10:8000 npm run dev
 
 ### Distributed Stimulation and Actuation
 
-To run stimulation on another machine, set `STIMULATION.auto_spawn` to `false`,
-configure `NEUROENGINE.message_server_ip` and `message_server_port`, and run the
-following command on the stimulation machine:
+To run stimulation on another machine, save `STIMULATION.auto_spawn = false`
+and the engine's reachable `NEUROENGINE.message_server_ip` / `message_server_port`
+in the host settings file. Review and apply these host settings while the engine
+is stopped. Install the pinned Paradigm and Trigger packages on the stimulation
+node, then run (replace the example address with your backend):
 
 ```bash
-python scripts/run_stimulation.py
+python scripts/run_stimulation.py --backend http://192.168.1.10:8000
 ```
 
-To run actuation on another machine, set `ACTUATION.enabled` to `true` and
-`ACTUATION.auto_spawn` to `false`. Configure `server_ip`, `server_port`, and
-`effector`, then run the following command on the device machine:
+For Actuation, save `ACTUATION.enabled = true`, `ACTUATION.auto_spawn = false`,
+and its `server_ip` / `server_port` in host settings. Select the Effector Profile
+in Setup, review and apply the configuration, and install the pinned Effector
+package before running the following command on the device machine:
 
 ```bash
-python scripts/run_actuation.py
+python scripts/run_actuation.py --backend http://192.168.1.10:8000
 ```
 
-All nodes in a distributed deployment must use compatible configuration, and
-the corresponding TCP ports must be allowed through their firewalls.
+`OMNIBCI_BACKEND_URL` can supply the backend URL instead; the default is
+`http://127.0.0.1:8000`. Nodes wait for the backend engine to start, fetch their
+role-specific applied snapshot, and validate only their own plugins. No local
+Activation or Profile files are needed. The backend retains the complete
+configuration catalog for authoring; output platform checks run on their node.
+
+The HTTP address and both configured IPC addresses must be reachable from the
+respective nodes. Use the backend's LAN IP for the IPC settings when running
+across machines: `127.0.0.1` is local-only, and `0.0.0.0` is a listener address,
+not a remote destination. Allow the configured HTTP and TCP ports.
+
+After plugin initialization, a socket handshake verifies the node's role,
+Activation revision, and engine generation before accepting business events.
+On disconnection the node tears down, fetches configuration again, and starts a
+fresh instance only after cleanup succeeds. Stimulation clears its trigger;
+Actuation requires the Effector to confirm that physical outputs have stopped.
+Hardware/setup, output-settlement, or cleanup errors stop the script for inspection.
+Saving a Profile does not change a running
+node. To change configuration with external nodes, stop the engine, apply, then
+start the engine; waiting node scripts synchronize automatically. Coordinated
+live updates of external nodes remain a separate phase.
+See [configuration ownership](docs/configuration-ownership.md) for the boundaries.

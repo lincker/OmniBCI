@@ -1975,7 +1975,7 @@
         "tags": [
           "Config"
         ],
-        "summary": "Effective configuration",
+        "summary": "Saved host settings",
         "operationId": "get_config_api_v1_config_get",
         "responses": {
           "200": {
@@ -2054,7 +2054,7 @@
         "tags": [
           "Config"
         ],
-        "summary": "Update defaults or a profile (all-or-nothing)",
+        "summary": "Save host settings without applying them",
         "operationId": "patch_config_api_v1_config_patch",
         "requestBody": {
           "content": {
@@ -2140,183 +2140,319 @@
         }
       }
     },
-    "/api/v1/config/profiles": {
+    "/api/v1/config/plugin-catalog/{kind}": {
       "get": {
         "tags": [
-          "Config"
+          "Plugin configuration"
         ],
-        "summary": "List configuration profiles",
-        "operationId": "list_profiles_api_v1_config_profiles_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ProfileListResponse_"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Service unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/config/profiles/deactivate": {
-      "post": {
-        "tags": [
-          "Config"
-        ],
-        "summary": "Back to defaults only",
-        "operationId": "deactivate_profile_api_v1_config_profiles_deactivate_post",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Service unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/config/profiles/{name}": {
-      "get": {
-        "tags": [
-          "Config"
-        ],
-        "summary": "One profile's overrides",
-        "operationId": "get_profile_api_v1_config_profiles__name__get",
+        "summary": "Plugin Catalog",
+        "operationId": "plugin_catalog_api_v1_config_plugin_catalog__kind__get",
         "parameters": [
           {
-            "name": "name",
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "acquisition",
+                "decoder",
+                "epoch_detector",
+                "filter",
+                "paradigm",
+                "trigger",
+                "effector"
+              ],
+              "type": "string",
+              "title": "Kind"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_PluginConfigurationResponse__"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/plugin-profiles": {
+      "get": {
+        "tags": [
+          "Plugin configuration"
+        ],
+        "summary": "List Profiles",
+        "operationId": "list_profiles_api_v1_config_plugin_profiles_get",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "acquisition",
+                    "decoder",
+                    "epoch_detector",
+                    "filter",
+                    "paradigm",
+                    "trigger",
+                    "effector"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_PluginProfileResponse__"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Plugin configuration"
+        ],
+        "summary": "Create Profile",
+        "operationId": "create_profile_api_v1_config_plugin_profiles_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePluginProfileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PluginProfileResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/plugin-profiles/{profile_id}": {
+      "get": {
+        "tags": [
+          "Plugin configuration"
+        ],
+        "summary": "Get Profile",
+        "operationId": "get_profile_api_v1_config_plugin_profiles__profile_id__get",
+        "parameters": [
+          {
+            "name": "profile_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Name"
+              "title": "Profile Id"
             }
           }
         ],
@@ -2326,7 +2462,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ProfileDetailResponse_"
+                  "$ref": "#/components/schemas/ApiResponse_PluginProfileResponse_"
                 }
               }
             }
@@ -2395,18 +2531,18 @@
       },
       "put": {
         "tags": [
-          "Config"
+          "Plugin configuration"
         ],
-        "summary": "Create or replace a profile",
-        "operationId": "put_profile_api_v1_config_profiles__name__put",
+        "summary": "Update Profile",
+        "operationId": "update_profile_api_v1_config_plugin_profiles__profile_id__put",
         "parameters": [
           {
-            "name": "name",
+            "name": "profile_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Name"
+              "title": "Profile Id"
             }
           }
         ],
@@ -2415,7 +2551,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PutProfileRequest"
+                "$ref": "#/components/schemas/UpdatePluginProfileRequest"
               }
             }
           }
@@ -2426,7 +2562,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_PatchConfigResponse_"
+                  "$ref": "#/components/schemas/ApiResponse_PluginProfileResponse_"
                 }
               }
             }
@@ -2495,18 +2631,28 @@
       },
       "delete": {
         "tags": [
-          "Config"
+          "Plugin configuration"
         ],
-        "summary": "Delete a profile (409 if active)",
-        "operationId": "delete_profile_api_v1_config_profiles__name__delete",
+        "summary": "Delete Profile",
+        "operationId": "delete_profile_api_v1_config_plugin_profiles__profile_id__delete",
         "parameters": [
           {
-            "name": "name",
+            "name": "profile_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Name"
+              "title": "Profile Id"
+            }
+          },
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Expected Revision"
             }
           }
         ],
@@ -2584,21 +2730,941 @@
         }
       }
     },
-    "/api/v1/config/profiles/{name}/activate": {
-      "post": {
+    "/api/v1/config/activation": {
+      "get": {
         "tags": [
-          "Config"
+          "Plugin configuration"
         ],
-        "summary": "Activate a profile",
-        "operationId": "activate_profile_api_v1_config_profiles__name__activate_post",
+        "summary": "Get Activation",
+        "operationId": "get_activation_api_v1_config_activation_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ActivationResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Plugin configuration"
+        ],
+        "summary": "Accept Activation",
+        "operationId": "accept_activation_api_v1_config_activation_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptActivationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ActivationResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/nodes/{role}": {
+      "get": {
+        "tags": [
+          "Runtime configuration"
+        ],
+        "summary": "Node Configuration",
+        "operationId": "node_configuration_api_v1_config_nodes__role__get",
         "parameters": [
           {
-            "name": "name",
+            "name": "role",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "stimulation",
+                "actuation"
+              ],
+              "type": "string",
+              "title": "Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_NodeConfigurationPublicationResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/runtime": {
+      "get": {
+        "tags": [
+          "Runtime configuration"
+        ],
+        "summary": "Runtime Status",
+        "operationId": "runtime_status_api_v1_config_runtime_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_RuntimeConfigurationResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/apply-plan": {
+      "post": {
+        "tags": [
+          "Runtime configuration"
+        ],
+        "summary": "Plan Configuration",
+        "operationId": "plan_configuration_api_v1_config_apply_plan_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuntimePlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_RuntimePlanResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/apply": {
+      "post": {
+        "tags": [
+          "Runtime configuration"
+        ],
+        "summary": "Apply Configuration",
+        "operationId": "apply_configuration_api_v1_config_apply_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuntimeApplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_RuntimeOperationResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/operations/{operation_id}": {
+      "get": {
+        "tags": [
+          "Runtime configuration"
+        ],
+        "summary": "Configuration Operation",
+        "operationId": "configuration_operation_api_v1_config_operations__operation_id__get",
+        "parameters": [
+          {
+            "name": "operation_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Name"
+              "title": "Operation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_RuntimeOperationResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugin-packages": {
+      "get": {
+        "tags": [
+          "Plugin packages"
+        ],
+        "summary": "List Packages",
+        "operationId": "list_packages_api_v1_plugin_packages_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_PackageVersionResponse__"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugin-packages/install": {
+      "post": {
+        "tags": [
+          "Plugin packages"
+        ],
+        "summary": "Install Package",
+        "operationId": "install_package_api_v1_plugin_packages_install_post",
+        "requestBody": {
+          "content": {
+            "application/zip": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PackageInstallationResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugin-packages/{package_id}/{version}/enabled": {
+      "put": {
+        "tags": [
+          "Plugin packages"
+        ],
+        "summary": "Set Enabled",
+        "operationId": "set_enabled_api_v1_plugin_packages__package_id___version__enabled_put",
+        "parameters": [
+          {
+            "name": "package_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Package Id"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPackageEnabledRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PackageVersionResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugin-packages/{package_id}/{version}": {
+      "delete": {
+        "tags": [
+          "Plugin packages"
+        ],
+        "summary": "Remove",
+        "operationId": "remove_api_v1_plugin_packages__package_id___version__delete",
+        "parameters": [
+          {
+            "name": "package_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Package Id"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Version"
             }
           }
         ],
@@ -2609,6 +3675,360 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugin-packages/profile-version-proposals": {
+      "post": {
+        "tags": [
+          "Plugin packages"
+        ],
+        "summary": "Propose Profile",
+        "operationId": "propose_profile_api_v1_plugin_packages_profile_version_proposals_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileVersionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ProfileVersionProposalResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugin-packages/version-profiles": {
+      "post": {
+        "tags": [
+          "Plugin packages"
+        ],
+        "summary": "Create Version Profile",
+        "operationId": "create_version_profile_api_v1_plugin_packages_version_profiles_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateVersionProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PluginProfileResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/market/catalog": {
+      "get": {
+        "tags": [
+          "Plugin market"
+        ],
+        "summary": "Catalog",
+        "operationId": "catalog_api_v1_market_catalog_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_MarketPackageResponse__"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/market/install": {
+      "post": {
+        "tags": [
+          "Plugin market"
+        ],
+        "summary": "Install",
+        "operationId": "install_api_v1_market_install_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallMarketPackageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PackageInstallationResponse_"
                 }
               }
             }
@@ -2682,7 +4102,7 @@
           "Plugins"
         ],
         "summary": "List plugins by category",
-        "description": "Return discovered plugins for *category*.\n\nValid categories: ``paradigm``, ``decoder``, ``acquisition``, ``effector``.",
+        "description": "Return discovered plugins for *category*.\n\nValid categories: ``paradigm``, ``decoder``, ``acquisition``, ``effector``,\n``trigger``, ``filter``, ``epoch_detector``.",
         "operationId": "list_plugins_by_category_api_v1_plugins__category__get",
         "parameters": [
           {
@@ -2791,6 +4211,53 @@
   },
   "components": {
     "schemas": {
+      "AcceptActivationRequest": {
+        "properties": {
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/SelectProfileBindingRequest"
+            },
+            "type": "array",
+            "title": "Bindings"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          },
+          "refresh_slots": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Slots"
+          },
+          "include_host_settings": {
+            "type": "boolean",
+            "title": "Include Host Settings",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "bindings"
+        ],
+        "title": "AcceptActivationRequest"
+      },
       "AcquisitionStatusResponse": {
         "properties": {
           "connected": {
@@ -2842,6 +4309,39 @@
         ],
         "title": "AcquisitionStatusResponse"
       },
+      "ActivationResponse": {
+        "properties": {
+          "format_version": {
+            "type": "integer",
+            "const": 2,
+            "title": "Format Version",
+            "default": 2
+          },
+          "revision": {
+            "type": "string",
+            "title": "Revision"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Settings"
+          },
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileBindingResponse"
+            },
+            "type": "array",
+            "title": "Bindings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "revision",
+          "settings",
+          "bindings"
+        ],
+        "title": "ActivationResponse"
+      },
       "ApiResponse": {
         "properties": {
           "success": {
@@ -2892,6 +4392,32 @@
         },
         "type": "object",
         "title": "ApiResponse[AcquisitionStatusResponse]"
+      },
+      "ApiResponse_ActivationResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActivationResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ActivationResponse]"
       },
       "ApiResponse_ConfigResponse_": {
         "properties": {
@@ -2975,6 +4501,84 @@
         "type": "object",
         "title": "ApiResponse[List[TrialResponse]]"
       },
+      "ApiResponse_NodeConfigurationPublicationResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NodeConfigurationPublicationResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[NodeConfigurationPublicationResponse]"
+      },
+      "ApiResponse_PackageInstallationResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PackageInstallationResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[PackageInstallationResponse]"
+      },
+      "ApiResponse_PackageVersionResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PackageVersionResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[PackageVersionResponse]"
+      },
       "ApiResponse_ParadigmsResponse_": {
         "properties": {
           "success": {
@@ -3027,7 +4631,7 @@
         "type": "object",
         "title": "ApiResponse[PatchConfigResponse]"
       },
-      "ApiResponse_ProfileDetailResponse_": {
+      "ApiResponse_PluginProfileResponse_": {
         "properties": {
           "success": {
             "type": "boolean",
@@ -3042,7 +4646,7 @@
           "data": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/ProfileDetailResponse"
+                "$ref": "#/components/schemas/PluginProfileResponse"
               },
               {
                 "type": "null"
@@ -3051,9 +4655,9 @@
           }
         },
         "type": "object",
-        "title": "ApiResponse[ProfileDetailResponse]"
+        "title": "ApiResponse[PluginProfileResponse]"
       },
-      "ApiResponse_ProfileListResponse_": {
+      "ApiResponse_ProfileVersionProposalResponse_": {
         "properties": {
           "success": {
             "type": "boolean",
@@ -3068,7 +4672,7 @@
           "data": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/ProfileListResponse"
+                "$ref": "#/components/schemas/ProfileVersionProposalResponse"
               },
               {
                 "type": "null"
@@ -3077,7 +4681,7 @@
           }
         },
         "type": "object",
-        "title": "ApiResponse[ProfileListResponse]"
+        "title": "ApiResponse[ProfileVersionProposalResponse]"
       },
       "ApiResponse_RecordingResponse_": {
         "properties": {
@@ -3104,6 +4708,84 @@
         },
         "type": "object",
         "title": "ApiResponse[RecordingResponse]"
+      },
+      "ApiResponse_RuntimeConfigurationResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RuntimeConfigurationResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[RuntimeConfigurationResponse]"
+      },
+      "ApiResponse_RuntimeOperationResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RuntimeOperationResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[RuntimeOperationResponse]"
+      },
+      "ApiResponse_RuntimePlanResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RuntimePlanResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[RuntimePlanResponse]"
       },
       "ApiResponse_SessionListResponse_": {
         "properties": {
@@ -3209,34 +4891,146 @@
         "type": "object",
         "title": "ApiResponse[TrialResponse]"
       },
+      "ApiResponse_list_MarketPackageResponse__": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MarketPackageResponse"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[MarketPackageResponse]]"
+      },
+      "ApiResponse_list_PackageVersionResponse__": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PackageVersionResponse"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[PackageVersionResponse]]"
+      },
+      "ApiResponse_list_PluginConfigurationResponse__": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PluginConfigurationResponse"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[PluginConfigurationResponse]]"
+      },
+      "ApiResponse_list_PluginProfileResponse__": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PluginProfileResponse"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[PluginProfileResponse]]"
+      },
       "ConfigEntry": {
         "properties": {
           "key": {
             "type": "string",
             "title": "Key",
-            "description": "Dotted settings key, e.g. 'ALGORITHM.decoder'"
+            "description": "Dotted host settings key"
           },
-          "default_value": {
-            "title": "Default Value",
-            "description": "Value in settings.toml"
-          },
-          "profile_value": {
-            "title": "Profile Value",
-            "description": "Override from the active profile (null = none)"
-          },
-          "effective_value": {
-            "title": "Effective Value",
-            "description": "What the system actually uses"
+          "value": {
+            "title": "Value",
+            "description": "Saved value; runtime application is separate"
           },
           "type": {
             "type": "string",
             "title": "Type",
-            "description": "str | int | float | bool | list[str]"
+            "description": "int | float"
           },
           "requires": {
             "type": "string",
             "title": "Requires",
-            "description": "hot | engine-restart"
+            "description": "engine-restart"
           },
           "description": {
             "type": "string",
@@ -3246,6 +5040,7 @@
         "type": "object",
         "required": [
           "key",
+          "value",
           "type",
           "requires",
           "description"
@@ -3261,23 +5056,57 @@
             "type": "array",
             "title": "Entries"
           },
-          "active_profile": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Active Profile"
+          "revision": {
+            "type": "string",
+            "title": "Revision",
+            "description": "Revision of the saved host settings"
           }
         },
         "type": "object",
         "required": [
-          "entries"
+          "entries",
+          "revision"
         ],
         "title": "ConfigResponse"
+      },
+      "CreatePluginProfileRequest": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "acquisition",
+              "decoder",
+              "epoch_detector",
+              "filter",
+              "paradigm",
+              "trigger",
+              "effector"
+            ],
+            "title": "Kind"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/PluginSelectionResponse"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Parameters"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "selection",
+          "name"
+        ],
+        "title": "CreatePluginProfileRequest"
       },
       "CreateSessionRequest": {
         "properties": {
@@ -3296,6 +5125,58 @@
         },
         "type": "object",
         "title": "CreateSessionRequest"
+      },
+      "CreateVersionProfileRequest": {
+        "properties": {
+          "source_profile_id": {
+            "type": "string",
+            "title": "Source Profile Id"
+          },
+          "target_version": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Target Version"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "parameters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parameters"
+          },
+          "expected_source_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Source Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_profile_id",
+          "target_version",
+          "expected_source_revision"
+        ],
+        "title": "CreateVersionProfileRequest"
       },
       "EngineStatusResponse": {
         "properties": {
@@ -3348,8 +5229,7 @@
           "COMMAND_EXECUTION_FAILED",
           "COMMAND_TIMEOUT",
           "CONFIG_KEY_NOT_ALLOWED",
-          "CONFIG_PROFILE_NOT_FOUND",
-          "CONFIG_PROFILE_IN_USE"
+          "CONFIG_PROFILE_NOT_FOUND"
         ],
         "title": "ErrorCode",
         "description": "Stable, machine-readable error codes for clients to branch on instead of\nguessing from the HTTP status.  The string value is the wire format."
@@ -3385,6 +5265,395 @@
         ],
         "title": "ErrorResponse",
         "description": "Unified error envelope — mirrors ApiResponse so clients see one consistent\nshape across success and failure (`success` discriminates)."
+      },
+      "InstallMarketPackageRequest": {
+        "properties": {
+          "package_id": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 3,
+            "title": "Package Id"
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "package_id",
+          "version"
+        ],
+        "title": "InstallMarketPackageRequest"
+      },
+      "MarketContributionResponse": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "acquisition",
+              "decoder",
+              "epoch_detector",
+              "filter",
+              "paradigm",
+              "trigger",
+              "effector"
+            ],
+            "title": "Kind"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/PluginSelectionResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "selection"
+        ],
+        "title": "MarketContributionResponse"
+      },
+      "MarketPackageResponse": {
+        "properties": {
+          "repository_id": {
+            "type": "string",
+            "title": "Repository Id"
+          },
+          "package_id": {
+            "type": "string",
+            "title": "Package Id"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "download_url": {
+            "type": "string",
+            "title": "Download Url"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "contributions": {
+            "items": {
+              "$ref": "#/components/schemas/MarketContributionResponse"
+            },
+            "type": "array",
+            "title": "Contributions"
+          },
+          "api_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Version"
+          },
+          "platforms": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Platforms"
+          },
+          "host_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Version"
+          },
+          "requires": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "string"
+                }
+              ],
+              "type": "array",
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "type": "array",
+            "title": "Requires"
+          }
+        },
+        "type": "object",
+        "required": [
+          "repository_id",
+          "package_id",
+          "version",
+          "display_name",
+          "description",
+          "download_url",
+          "sha256",
+          "size",
+          "contributions",
+          "api_version",
+          "platforms",
+          "host_version",
+          "requires"
+        ],
+        "title": "MarketPackageResponse"
+      },
+      "NodeConfigurationPublicationResponse": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "selected",
+              "running"
+            ],
+            "title": "State"
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/NodeConfigurationResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state",
+          "configuration"
+        ],
+        "title": "NodeConfigurationPublicationResponse"
+      },
+      "NodeConfigurationResponse": {
+        "properties": {
+          "format_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Format Version"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "stimulation",
+              "actuation"
+            ],
+            "title": "Role"
+          },
+          "revision": {
+            "type": "string",
+            "title": "Revision"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Settings"
+          },
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileBindingResponse"
+            },
+            "type": "array",
+            "title": "Bindings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "format_version",
+          "role",
+          "revision",
+          "generation",
+          "settings",
+          "bindings"
+        ],
+        "title": "NodeConfigurationResponse"
+      },
+      "PackageContributionResponse": {
+        "properties": {
+          "selection": {
+            "$ref": "#/components/schemas/PluginSelectionResponse"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "acquisition",
+              "decoder",
+              "epoch_detector",
+              "filter",
+              "paradigm",
+              "trigger",
+              "effector"
+            ],
+            "title": "Kind"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          }
+        },
+        "type": "object",
+        "required": [
+          "selection",
+          "kind",
+          "label",
+          "available"
+        ],
+        "title": "PackageContributionResponse"
+      },
+      "PackageInstallationResponse": {
+        "properties": {
+          "package": {
+            "$ref": "#/components/schemas/PackageVersionResponse"
+          },
+          "already_installed": {
+            "type": "boolean",
+            "title": "Already Installed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "package",
+          "already_installed"
+        ],
+        "title": "PackageInstallationResponse"
+      },
+      "PackageReferenceResponse": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "title": "Scope"
+          },
+          "identifier": {
+            "type": "string",
+            "title": "Identifier"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/PluginSelectionResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope",
+          "identifier",
+          "selection"
+        ],
+        "title": "PackageReferenceResponse"
+      },
+      "PackageVersionResponse": {
+        "properties": {
+          "package_id": {
+            "type": "string",
+            "title": "Package Id"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "contributions": {
+            "items": {
+              "$ref": "#/components/schemas/PackageContributionResponse"
+            },
+            "type": "array",
+            "title": "Contributions"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/components/schemas/PackageReferenceResponse"
+            },
+            "type": "array",
+            "title": "References"
+          }
+        },
+        "type": "object",
+        "required": [
+          "package_id",
+          "version",
+          "label",
+          "description",
+          "sha256",
+          "contributions",
+          "enabled",
+          "available",
+          "error"
+        ],
+        "title": "PackageVersionResponse"
       },
       "ParadigmInfo": {
         "properties": {
@@ -3479,119 +5748,76 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Updates",
-            "description": "Dotted key → new value"
+            "description": "Dotted host settings key to saved value"
           },
-          "scope": {
+          "expected_revision": {
             "type": "string",
-            "title": "Scope",
-            "description": "'default' writes settings.toml; any other value names a profile (created on first write)",
-            "default": "default"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description",
-            "description": "Profile description (profile scope only)"
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Expected Revision",
+            "description": "Saved revision returned by GET /config"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
-          "updates"
+          "updates",
+          "expected_revision"
         ],
         "title": "PatchConfigRequest"
       },
       "PatchConfigResponse": {
         "properties": {
-          "applied": {
+          "saved": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Applied"
+            "title": "Saved"
           },
-          "scope": {
+          "revision": {
             "type": "string",
-            "title": "Scope"
+            "title": "Revision",
+            "description": "Revision after saving the host settings"
           },
           "engine_restart_required": {
             "type": "boolean",
             "title": "Engine Restart Required",
-            "description": "True → stop/start the engine for changes to take effect"
+            "description": "Whether applying these saved changes requires an engine restart"
           }
         },
         "type": "object",
         "required": [
-          "applied",
-          "scope",
+          "saved",
+          "revision",
           "engine_restart_required"
         ],
         "title": "PatchConfigResponse"
       },
-      "ProfileDetailResponse": {
+      "PluginConfigurationResponse": {
         "properties": {
-          "name": {
+          "selection": {
+            "$ref": "#/components/schemas/PluginSelectionResponse"
+          },
+          "kind": {
             "type": "string",
-            "title": "Name"
-          },
-          "entries": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Entries"
-          },
-          "off_whitelist_keys": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Off Whitelist Keys",
-            "description": "Keys present in the file but outside the API whitelist (hand-edited; read-only here)"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "entries"
-        ],
-        "title": "ProfileDetailResponse"
-      },
-      "ProfileListResponse": {
-        "properties": {
-          "profiles": {
-            "items": {
-              "$ref": "#/components/schemas/ProfileSummary"
-            },
-            "type": "array",
-            "title": "Profiles"
-          },
-          "active_profile": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "enum": [
+              "acquisition",
+              "decoder",
+              "epoch_detector",
+              "filter",
+              "paradigm",
+              "trigger",
+              "effector"
             ],
-            "title": "Active Profile"
-          }
-        },
-        "type": "object",
-        "required": [
-          "profiles"
-        ],
-        "title": "ProfileListResponse"
-      },
-      "ProfileSummary": {
-        "properties": {
-          "name": {
+            "title": "Kind"
+          },
+          "plugin_type": {
             "type": "string",
-            "title": "Name"
+            "title": "Plugin Type"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
           },
           "description": {
             "anyOf": [
@@ -3604,37 +5830,124 @@
             ],
             "title": "Description"
           },
-          "key_count": {
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema"
+          },
+          "configuration_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configuration Version"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "controls": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Controls"
+          }
+        },
+        "type": "object",
+        "required": [
+          "selection",
+          "kind",
+          "plugin_type",
+          "label",
+          "description",
+          "schema",
+          "configuration_version",
+          "available"
+        ],
+        "title": "PluginConfigurationResponse"
+      },
+      "PluginProfileResponse": {
+        "properties": {
+          "format_version": {
             "type": "integer",
-            "title": "Key Count"
+            "const": 2,
+            "title": "Format Version",
+            "default": 2
           },
-          "updated_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+          "profile_id": {
+            "type": "string",
+            "title": "Profile Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "acquisition",
+              "decoder",
+              "epoch_detector",
+              "filter",
+              "paradigm",
+              "trigger",
+              "effector"
             ],
-            "title": "Updated At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "key_count"
-        ],
-        "title": "ProfileSummary"
-      },
-      "PutProfileRequest": {
-        "properties": {
-          "updates": {
+            "title": "Kind"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/PluginSelectionResponse"
+          },
+          "parameters": {
             "additionalProperties": true,
             "type": "object",
-            "title": "Updates"
+            "title": "Parameters"
           },
-          "description": {
+          "configuration_version": {
+            "type": "integer",
+            "title": "Configuration Version"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          }
+        },
+        "type": "object",
+        "required": [
+          "profile_id",
+          "name",
+          "kind",
+          "selection",
+          "parameters",
+          "configuration_version",
+          "revision"
+        ],
+        "title": "PluginProfileResponse"
+      },
+      "PluginSelectionResponse": {
+        "properties": {
+          "package_id": {
+            "type": "string",
+            "title": "Package Id"
+          },
+          "contribution_id": {
+            "type": "string",
+            "title": "Contribution Id"
+          },
+          "version": {
             "anyOf": [
               {
                 "type": "string"
@@ -3643,14 +5956,177 @@
                 "type": "null"
               }
             ],
-            "title": "Description"
+            "title": "Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "package_id",
+          "contribution_id"
+        ],
+        "title": "PluginSelectionResponse"
+      },
+      "ProfileBindingResponse": {
+        "properties": {
+          "slot": {
+            "type": "string",
+            "title": "Slot"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "acquisition",
+              "decoder",
+              "epoch_detector",
+              "filter",
+              "paradigm",
+              "trigger",
+              "effector"
+            ],
+            "title": "Kind"
+          },
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/PluginSelectionResponse"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Parameters"
+          },
+          "configuration_version": {
+            "type": "integer",
+            "title": "Configuration Version"
+          },
+          "profile_revision": {
+            "type": "integer",
+            "title": "Profile Revision"
           }
         },
         "type": "object",
         "required": [
-          "updates"
+          "slot",
+          "kind",
+          "selection",
+          "parameters",
+          "configuration_version",
+          "profile_revision"
         ],
-        "title": "PutProfileRequest"
+        "title": "ProfileBindingResponse"
+      },
+      "ProfileVersionProposalResponse": {
+        "properties": {
+          "source_profile_id": {
+            "type": "string",
+            "title": "Source Profile Id"
+          },
+          "source_revision": {
+            "type": "integer",
+            "title": "Source Revision"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "acquisition",
+              "decoder",
+              "epoch_detector",
+              "filter",
+              "paradigm",
+              "trigger",
+              "effector"
+            ],
+            "title": "Kind"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/PluginSelectionResponse"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Parameters"
+          },
+          "configuration_version": {
+            "type": "integer",
+            "title": "Configuration Version"
+          },
+          "target_enabled": {
+            "type": "boolean",
+            "title": "Target Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_profile_id",
+          "source_revision",
+          "name",
+          "kind",
+          "selection",
+          "parameters",
+          "configuration_version",
+          "target_enabled"
+        ],
+        "title": "ProfileVersionProposalResponse"
+      },
+      "ProfileVersionRequest": {
+        "properties": {
+          "source_profile_id": {
+            "type": "string",
+            "title": "Source Profile Id"
+          },
+          "target_version": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Target Version"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "parameters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parameters"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_profile_id",
+          "target_version"
+        ],
+        "title": "ProfileVersionRequest"
       },
       "RecordingResponse": {
         "properties": {
@@ -3665,6 +6141,330 @@
           "session_id"
         ],
         "title": "RecordingResponse"
+      },
+      "RuntimeApplyRequest": {
+        "properties": {
+          "plan_id": {
+            "type": "string",
+            "title": "Plan Id"
+          },
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "plan_id",
+          "operation_id"
+        ],
+        "title": "RuntimeApplyRequest"
+      },
+      "RuntimeConfigurationResponse": {
+        "properties": {
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "recovery_required": {
+            "type": "boolean",
+            "title": "Recovery Required"
+          },
+          "accepted_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted Revision"
+          },
+          "applied_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Revision"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "operation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RuntimeOperationResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "running",
+          "recovery_required",
+          "accepted_revision",
+          "applied_revision",
+          "generation",
+          "operation"
+        ],
+        "title": "RuntimeConfigurationResponse"
+      },
+      "RuntimeOperationResponse": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "plan_id": {
+            "type": "string",
+            "title": "Plan Id"
+          },
+          "target_revision": {
+            "type": "string",
+            "title": "Target Revision"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "applying",
+              "succeeded",
+              "failed",
+              "recovery_required"
+            ],
+            "title": "Status"
+          },
+          "stage": {
+            "type": "string",
+            "title": "Stage"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "rolled_back": {
+            "type": "boolean",
+            "title": "Rolled Back"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id",
+          "plan_id",
+          "target_revision",
+          "status",
+          "stage",
+          "error",
+          "rolled_back",
+          "result"
+        ],
+        "title": "RuntimeOperationResponse"
+      },
+      "RuntimePlanRequest": {
+        "properties": {
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/SelectProfileBindingRequest"
+            },
+            "type": "array",
+            "title": "Bindings"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          },
+          "refresh_slots": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Slots"
+          },
+          "include_host_settings": {
+            "type": "boolean",
+            "title": "Include Host Settings",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "bindings"
+        ],
+        "title": "RuntimePlanRequest"
+      },
+      "RuntimePlanResponse": {
+        "properties": {
+          "plan_id": {
+            "type": "string",
+            "title": "Plan Id"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          },
+          "target_revision": {
+            "type": "string",
+            "title": "Target Revision"
+          },
+          "applied_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Revision"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "strategy": {
+            "type": "string",
+            "enum": [
+              "select_on_start",
+              "no_change",
+              "trial_boundary",
+              "module",
+              "rebuild"
+            ],
+            "title": "Strategy"
+          },
+          "changed_slots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Changed Slots"
+          },
+          "changed_settings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Changed Settings"
+          },
+          "session_effect": {
+            "type": "string",
+            "enum": [
+              "preserve",
+              "continuation"
+            ],
+            "title": "Session Effect"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Errors"
+          }
+        },
+        "type": "object",
+        "required": [
+          "plan_id",
+          "expected_revision",
+          "target_revision",
+          "applied_revision",
+          "generation",
+          "running",
+          "strategy",
+          "changed_slots",
+          "changed_settings",
+          "session_effect",
+          "errors"
+        ],
+        "title": "RuntimePlanResponse"
+      },
+      "SelectProfileBindingRequest": {
+        "properties": {
+          "slot": {
+            "type": "string",
+            "title": "Slot"
+          },
+          "profile_id": {
+            "type": "string",
+            "title": "Profile Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "slot",
+          "profile_id"
+        ],
+        "title": "SelectProfileBindingRequest"
       },
       "SessionListResponse": {
         "properties": {
@@ -3734,6 +6534,39 @@
               }
             ],
             "title": "Ended At"
+          },
+          "continuation_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Continuation Of"
+          },
+          "config_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Revision"
+          },
+          "interruption_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interruption Reason"
           }
         },
         "type": "object",
@@ -3755,6 +6588,20 @@
           "ended"
         ],
         "title": "SessionStateDTO"
+      },
+      "SetPackageEnabledRequest": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "title": "SetPackageEnabledRequest"
       },
       "StartRecordingRequest": {
         "properties": {
@@ -3885,6 +6732,17 @@
             "type": "string",
             "format": "date-time",
             "title": "Produced At"
+          },
+          "config_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Revision"
           }
         },
         "type": "object",
@@ -3896,6 +6754,34 @@
           "produced_at"
         ],
         "title": "TrialResponse"
+      },
+      "UpdatePluginProfileRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Parameters"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "parameters",
+          "expected_revision"
+        ],
+        "title": "UpdatePluginProfileRequest"
       }
     }
   }

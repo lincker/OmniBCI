@@ -11,8 +11,7 @@ from enum import IntEnum
 import numpy as np
 
 from omnibci.domain.ports.acquisition import SignalSource, TriggerEmitter
-from omnibci.infrastructure.plugins.registry import register_plugin
-from omnibci.conf import settings
+from omnibci.sdk import PluginContext, PluginParameters
 
 
 class Scan45Message:
@@ -136,21 +135,31 @@ class Scan45Message:
 scan45_message_manager = Scan45Message()
 
 
-@register_plugin(SignalSource)
 class Scan45DataReader(SignalSource):
     plugin_type = 'neuroscan_scan45_reader'
-    def __init__(self) -> None:
+    def __init__(
+        self, *, parameters: PluginParameters,
+        context: PluginContext | None = None,
+    ) -> None:
         super().__init__()
-        self.data_provider_ip = settings.get("ACQUISITION.DATA_PROVIDER_IP")
-        self.data_provider_port = settings.get("ACQUISITION.DATA_PROVIDER_PORT")
-        # self.n_channels = config.get('n_channels', 9) # refactor later
+        self.data_provider_ip = parameters.get("DATA_PROVIDER_IP", "127.0.0.1")
+        self.data_provider_port = parameters.get("DATA_PROVIDER_PORT", 4000)
+        self.channel_number = parameters.get("channel_number", 10)
+        if type(self.channel_number) is not int or self.channel_number < 2:
+            raise ValueError("channel_number must be an integer >= 2, including the event channel")
         # self.record_srate = config.get('record_srate', 1000)
         # self.srate # TODO: refactor later
         # self.info = None
         self.reader = None
         self.writer = None
+        self._pending_header = None
         self._previous_event = 0 # the integer events position
         self._packets_counter = 0
+
+    @property
+    def resume_without_checkpoint_safe(self) -> bool:
+        """Scan45 starts live network delivery without seeking recorded data."""
+        return True
 
     async def connect(self) -> bool:
         # TODO: if any connections to scan4.5, disconnect it
@@ -162,6 +171,7 @@ class Scan45DataReader(SignalSource):
     # TODO: refactor the return values
     async def _connect(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         print("connect to ", self.data_provider_ip, self.data_provider_port)
+        self._pending_header = None
         self.reader, self.writer = await asyncio.open_connection(self.data_provider_ip, self.data_provider_port)
         print("connected")
         return self.reader, self.writer
@@ -176,7 +186,8 @@ class Scan45DataReader(SignalSource):
         return True
 
     async def _disconnect(self):
-        self.writer.disconnect()
+        self._pending_header = None
+        self.writer.close()
         await self.writer.wait_closed()
 
     async def get_metadata(self):
@@ -220,16 +231,25 @@ class Scan45DataReader(SignalSource):
             raise Exception('header indicates body does not contain data, not implemented')
 
     async def _load_package(self):
-        header_bytes = await self.reader.readexactly(scan45_message_manager.Header.HEADER_SIZE)
-        # header = np.frombuffer(header, dtype=np.uint8)
-        header = scan45_message_manager.Header.create_from_bytes(header_bytes=header_bytes)
+        reader = self.reader
+        if self._pending_header is None or self._pending_header[0] is not reader:
+            self._pending_header = None
+            header_bytes = await reader.readexactly(scan45_message_manager.Header.HEADER_SIZE)
+            header = scan45_message_manager.Header.create_from_bytes(header_bytes=header_bytes)
+            # readexactly retains a partial body if cancellation pauses the stream.
+            self._pending_header = (reader, header)
+        else:
+            header = self._pending_header[1]
         if header.size_body == 0:
             print("body size is 0")
-        body = await self.reader.readexactly(header.size_body)
+        body = await reader.readexactly(header.size_body)
+        self._pending_header = None
         # TODO； check body data type
         return header, body
 
     def _parse_body_data(self, header: Scan45Message.Header, body: bytes):
+        if header.size_body != len(body):
+            raise ValueError("Scan45 packet body length does not match its header")
         if header.request == 2:
             # 32 bit data
             # data  = np.frombuffer(body, dtype=np.uint32)
@@ -239,18 +259,19 @@ class Scan45DataReader(SignalSource):
             # data = self._down_sample(data)
             return data
         elif header.request == 1:
-            raise '16 bit data parse method not implemented'
+            raise NotImplementedError('16 bit data parse method not implemented')
+        raise ValueError(f"Unsupported Scan45 data format: {header.request}")
 
     def _unpack_int32_eeg(self, data: bytes):
-        # TODO: change n_channels to config file
-        n_eeg_channels = 9
-        int32_count = int(len(data) / 4)
-        iterable = (int.from_bytes(data[4 * x: 4 * x + 4], byteorder='little') if x % 10 != 9 else
+        n_channels = self.channel_number
+        if not data or len(data) % (4 * n_channels):
+            raise ValueError(f"Scan45 packet must contain complete samples of {n_channels} channels")
+        int32_count = len(data) // 4
+        iterable = (int.from_bytes(data[4 * x: 4 * x + 4], byteorder='little') if x % n_channels != n_channels - 1 else
                     int.from_bytes(data[4 * x: 4 * x + 1], byteorder='little', signed=False)
                     for x in range(0, int32_count))
         int_data = np.fromiter(iterable, int)
-        n_channels = n_eeg_channels + 1  # n_channels = eeg number of channels + 1 events channel
-        n_samples = int(len(int_data) / n_channels)
+        n_samples = len(int_data) // n_channels
         packet = np.reshape(int_data, (n_channels, n_samples), order='F')
         packet_event = packet[-1, :]
         # remove duplicated events data
@@ -268,15 +289,18 @@ class Scan45DataReader(SignalSource):
         return packet
 
 
-@register_plugin(TriggerEmitter)
 class Scan45Trigger(TriggerEmitter):
     plugin_type = 'neuroscan_scan45_trigger'
-    def __init__(self, parallel_port_address:str=None): # parallel_port_address='0x3100'
+    def __init__(
+        self, parallel_port_address: str | None = None, *,
+        parameters: PluginParameters,
+        context: PluginContext | None = None,
+    ):
         super().__init__()
-        self.parallel_port_address = (
-            parallel_port_address if parallel_port_address is not None
-            else settings.get('ACQUISITION.parallel_port_address')
-        )
+        if parallel_port_address is not None:
+            self.parallel_port_address = parallel_port_address
+        else:
+            self.parallel_port_address = parameters.get('parallel_port_address', '0x3100')
         self.address = int(self.parallel_port_address, 16)
         self.port = self._set_parallel_port(self.address)
         self.clear()

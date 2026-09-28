@@ -3,19 +3,19 @@
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2026-01-28 05:58
 import hashlib
-import importlib
-import logging
+import json
 import sys
-from importlib.machinery import ModuleSpec
+from dataclasses import replace
+from importlib.machinery import ModuleSpec, NamespaceLoader, PathFinder
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import ModuleType
 from typing import Type, TypeVar
 
+from omnibci.application.plugin_schema import validate_parameters
 from omnibci.infrastructure.plugins.descriptors import PluginDescriptor
 from omnibci.infrastructure.plugins.registry import isolated_registry
-
-logger = logging.getLogger(__name__)
+from omnibci.sdk import PluginContext
 
 T = TypeVar("T")
 
@@ -31,6 +31,8 @@ class PluginLoader:
         identity = "\0".join((
             descriptor.category,
             descriptor.identifier,
+            descriptor.contribution_id,
+            descriptor.version or "",
             str(descriptor.location.resolve()),
         ))
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
@@ -51,7 +53,9 @@ class PluginLoader:
         package.__file__ = None
         package.__package__ = name
         package.__path__ = [str(location)]
-        package.__spec__ = ModuleSpec(name, loader=None, is_package=True)
+        namespace_loader = NamespaceLoader(name, [str(location)], PathFinder.find_spec)
+        package.__loader__ = namespace_loader
+        package.__spec__ = ModuleSpec(name, loader=namespace_loader, is_package=True)
         package.__spec__.submodule_search_locations = [str(location)]
         sys.modules[name] = package
 
@@ -159,6 +163,11 @@ class PluginLoader:
         intermediate package ``__init__.py`` files are intentionally skipped.
         """
         entrypoint = descriptor.entrypoint
+        if not descriptor.supports_platform(sys.platform):
+            raise PluginLoadError(
+                f"{descriptor.identifier}/{descriptor.contribution_id} is not supported "
+                f"on {sys.platform}"
+            )
         if entrypoint is None:
             raise PluginLoadError(
                 f"{descriptor.manifest_path}: plugin has no entrypoint"
@@ -198,7 +207,7 @@ class PluginLoader:
                         f"{expected_base.__name__}"
                     )
                 class_plugin_type = getattr(plugin_class, "plugin_type", None)
-                if class_plugin_type != descriptor.plugin_type:
+                if descriptor.api_version == "1" and class_plugin_type != descriptor.plugin_type:
                     raise TypeError(
                         f"entrypoint plugin_type {class_plugin_type!r} does not "
                         f"match manifest plugin_type {descriptor.plugin_type!r}"
@@ -222,10 +231,29 @@ class PluginLoader:
         expected_base: Type[T],
         **kwargs,
     ) -> T:
-        """Load the selected entrypoint class and construct one instance."""
+        """Construct using the declared API, never a constructor-error fallback."""
         prefix = cls._module_prefix(descriptor)
         modules_before = set(sys.modules)
         try:
+            if descriptor.api_version == "2":
+                if set(kwargs) != {"parameters", "context"}:
+                    raise ValueError("API 2 requires parameters and context keyword inputs")
+                if not isinstance(kwargs["parameters"], dict):
+                    raise ValueError("parameters must be an object")
+                if not isinstance(kwargs["context"], PluginContext):
+                    raise ValueError("context must be a PluginContext")
+                # JSON roundtrip prevents plugin mutations from reaching host state
+                # and rejects non-finite or non-serializable constructor values.
+                if descriptor.configuration_schema is not None:
+                    kwargs["parameters"] = validate_parameters(
+                        dict(descriptor.configuration_schema), kwargs["parameters"],
+                    )
+                kwargs = {
+                    "parameters": json.loads(json.dumps(kwargs["parameters"], allow_nan=False)),
+                    "context": replace(kwargs["context"], resource_root=str(descriptor.location)),
+                }
+            elif descriptor.api_version != "1":
+                raise ValueError(f"Unsupported plugin API: {descriptor.api_version}")
             plugin_class = cls.load_entrypoint(descriptor, expected_base)
             with isolated_registry():
                 return plugin_class(**kwargs)
@@ -239,60 +267,3 @@ class PluginLoader:
                 f"{descriptor.manifest_path}: failed to instantiate "
                 f"{descriptor.identifier}: {exc}"
             ) from exc
-
-    @staticmethod
-    def load_from_dir(
-        plugin_dir: str,
-        base_package: str = "omnibci.infrastructure.plugins",
-    ) -> None:
-        """Load legacy plugins without retaining a temporary import path."""
-        root_path = Path(plugin_dir).resolve()
-        if not root_path.exists():
-            logger.warning(f"[PluginLoader] Directory not found: {root_path}")
-            return
-
-        import_path = str(root_path.parent)
-        added_import_path = import_path not in sys.path
-        if added_import_path:
-            sys.path.insert(0, import_path)
-
-        try:
-            count = 0
-            for file_path in root_path.rglob("*.py"):
-                try:
-                    relative_path = file_path.relative_to(root_path)
-                except ValueError:
-                    continue
-
-                if file_path.name == "__init__.py":
-                    module_parts = relative_path.parent.parts
-                else:
-                    module_parts = relative_path.with_suffix("").parts
-
-                if not module_parts:
-                    continue
-
-                module_name = f"{base_package}.{'.'.join(module_parts)}"
-
-                if module_name in sys.modules:
-                    continue
-
-                try:
-                    importlib.import_module(module_name)
-                    count += 1
-                    logger.debug(f"Loaded plugin module: {module_name}")
-                except Exception as exc:
-                    logger.error(
-                        f"Failed to load module '{module_name}': {exc}",
-                        exc_info=True,
-                    )
-
-            logger.info(
-                f"[PluginLoader] Scanned '{plugin_dir}' - Loaded {count} modules."
-            )
-        finally:
-            if added_import_path:
-                try:
-                    sys.path.remove(import_path)
-                except ValueError:
-                    pass

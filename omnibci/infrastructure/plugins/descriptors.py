@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from omnibci.application.plugin_profiles import PluginSelection
+
 
 @dataclass(frozen=True, slots=True)
 class PluginEntrypoint:
@@ -49,27 +51,22 @@ class PluginEntrypoint:
 
 
 @dataclass(frozen=True, slots=True)
-class PluginDescriptor:
-    """Complete, trusted-location description of one plugin package.
+class PluginPackageDescriptor:
+    """Shared identity and trusted location of one installed package version.
 
     ``source``, ``location`` and ``precedence`` are derived from configured
     search roots.  A manifest cannot claim to be builtin or redirect loading
     to another directory.
     """
 
-    category: str
     name: str
-    plugin_type: str
     publisher: str
     source: str
     location: Path
-    entrypoint: PluginEntrypoint | None
     api_version: str
-    display_name: str
-    description: str | None = None
     version: str | None = None
-    params: Mapping[str, Any] = field(default_factory=dict)
-    controls: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    manifest_version: int = 1
+    platforms: tuple[str, ...] = ()
     # Catalog metadata: lower values have higher priority.  It is intentionally
     # excluded from equality/repr because it is not plugin identity.
     precedence: int = field(default=0, repr=False, compare=False)
@@ -86,3 +83,72 @@ class PluginDescriptor:
     @property
     def manifest_path(self) -> Path:
         return self.location / "manifest.toml"
+
+
+@dataclass(frozen=True, slots=True)
+class PluginDescriptor:
+    """One executable contribution, with shared package metadata.
+
+    The legacy package properties remain available to existing loader and DTO
+    callers. New selections use ``selection`` instead of the registry alias.
+    """
+
+    package: PluginPackageDescriptor
+    contribution_id: str
+    category: str
+    plugin_type: str
+    entrypoint: PluginEntrypoint | None
+    display_name: str
+    description: str | None = None
+    params: Mapping[str, Any] = field(default_factory=dict)
+    controls: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    platforms: tuple[str, ...] = ()
+
+    configuration_schema: Mapping[str, Any] | None = None
+    configuration_version: int | None = None
+
+    def supports_platform(self, platform_name: str) -> bool:
+        """Both package and contribution constraints must permit the host."""
+        return (not self.package.platforms or platform_name in self.package.platforms) and (
+            not self.platforms or platform_name in self.platforms
+        )
+
+    @property
+    def selection(self) -> PluginSelection:
+        return PluginSelection(self.identifier, self.contribution_id, self.version)
+
+    @property
+    def identifier(self) -> str:
+        return self.package.identifier
+
+    @property
+    def name(self) -> str:
+        return self.package.name
+
+    @property
+    def publisher(self) -> str:
+        return self.package.publisher
+
+    @property
+    def source(self) -> str:
+        return self.package.source
+
+    @property
+    def location(self) -> Path:
+        return self.package.location
+
+    @property
+    def api_version(self) -> str:
+        return self.package.api_version
+
+    @property
+    def version(self) -> str | None:
+        return self.package.version
+
+    @property
+    def precedence(self) -> int:
+        return self.package.precedence
+
+    @property
+    def manifest_path(self) -> Path:
+        return self.package.manifest_path

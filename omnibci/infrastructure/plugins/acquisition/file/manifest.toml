@@ -1,12 +1,21 @@
-# OmniBCI Plugin Manifest — schema version 1
+# OmniBCI Plugin Manifest — schema version 2
+
+manifest_version = 2
 
 [package]
-id           = "file_reader"
-version      = "0.1.0"
-kind         = "acquisition"
-api_version  = "1"
-plugin_type  = "file_reader"
-display_name = "文件回放"
-description  = "从 .cnt 等文件读取 EEG 数据，支持倍速回放"
-author       = "OmniBCI"
-source       = "builtin"
+id = "file_reader"
+version = "0.1.0"
+api_version = "2"
+publisher = "OmniBCI"
+
+[[contributions]]
+id = "default"
+kind = "acquisition"
+plugin_type = "file_reader"
+entrypoint = "reader:FileReader"
+display_name = "File Reader"
+description = "Replay EEG data from a CNT recording."
+
+[contributions.configuration]
+schema = "default.schema.json"
+schema_version = 1

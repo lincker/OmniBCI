@@ -46,9 +46,11 @@ class EpochProcessor:
         decoder: Decoder,
         sample_rate: int = 1000,
         filters: Optional[List[Filter]] = None,
+        config_revision: str | None = None,
     ) -> None:
         self.decoder = decoder
         self.sample_rate = sample_rate
+        self.config_revision = config_revision
         # Ordered preprocessing + terminal decoder. No filters configured yet,
         # so the pipeline is behaviourally identical to calling decoder.analyse.
         self.pipeline = ProcessingPipeline(
@@ -64,6 +66,7 @@ class EpochProcessor:
         self._baseline_data: np.ndarray = np.empty((0, 0))
         self._current_chunk_data: Optional[np.ndarray] = None
         self._event_id: Optional[int] = None
+        self._pending_decode = False
 
     # ------------------------------------------------------------------
     # Buffer management
@@ -101,6 +104,7 @@ class EpochProcessor:
         self._baseline_data = baseline
         self._event_id = event_id
         self._current_chunk_data = self._epoch_data
+        self._pending_decode = True
         logger.info(
             "Epoch initialised: event_id=%d, window_shape=%s, baseline_samples=%d",
             event_id, self._epoch_data.shape, self._baseline_data.shape[1],
@@ -110,6 +114,7 @@ class EpochProcessor:
         """Append all samples in *chunk* to the epoch buffer."""
         self._current_chunk_data = chunk.data
         self._epoch_data = np.append(self._epoch_data, chunk.data, axis=1)
+        self._pending_decode = True
 
     def append_until_index(self, chunk: SignalChunk, index: int) -> None:
         """
@@ -123,6 +128,7 @@ class EpochProcessor:
         data_slice = chunk.data[:, :index]
         self._current_chunk_data = data_slice
         self._epoch_data = np.append(self._epoch_data, data_slice, axis=1)
+        self._pending_decode = True
 
     # ------------------------------------------------------------------
     # Domain-object construction
@@ -150,7 +156,7 @@ class EpochProcessor:
         else:
             full = self._epoch_data
         return Epoch(
-            # Epoch 构造时自行拷贝并冻结（P2-10）；此处无需再防御性 copy。
+            # Epoch copies and freezes its array; no extra defensive copy is needed.
             data=full,
             event_id=self._event_id,
             sample_rate=self.sample_rate,
@@ -186,6 +192,12 @@ class EpochProcessor:
     def force_recognize(self) -> Tuple[bool, Optional[Classification]]:
         return self._run_pipeline(force_recognize=True)
 
+    def recognize_if_ready(self) -> Tuple[bool, Optional[Classification]]:
+        """Finish undecoded buffered samples without forcing an incomplete epoch."""
+        if not self._pending_decode or not self.should_decode():
+            return False, None
+        return self._run_pipeline()
+
     def _run_pipeline(self, force_recognize: bool = False) -> Tuple[bool, Optional[Classification]]:
         """
         Decode the current buffer. Used by marker-forced paths
@@ -193,6 +205,7 @@ class EpochProcessor:
         """
         if self._epoch_data.size == 0 or self._event_id is None:
             return False, None
+        self._pending_decode = False
         prediction = self.pipeline.run(
             self._epoch_data,
             event_id=self._event_id,

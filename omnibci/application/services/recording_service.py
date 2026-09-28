@@ -12,9 +12,8 @@ Ordering rules (see docs/frontend-separation.md / session discussion):
             first epochs decode with no session and their trials are dropped),
             THEN start the stream. If stream start fails, end the just-created
             session so we don't leave an orphan RUNNING record.
-  stop():   stop the stream FIRST (no new epochs), wait a short drain window so
-            in-flight epochs already in the processor queue still record, THEN
-            end the session.
+  stop():   stop the stream FIRST, wait for an ordered processing receipt and
+            verify all completed trials were projected, THEN end the session.
 
 This keeps the two primitives (POST /sessions, /acquisition/stream/*) available
 for advanced flows (calibration without recording, several sessions within one
@@ -23,7 +22,7 @@ continuous stream); RecordingService is the convenience path for the common
 """
 
 import logging
-import time
+from omnibci.application.runtime_admission import admitted
 from typing import Optional
 
 from omnibci.application.services.session_service import SessionAppService
@@ -35,8 +34,8 @@ from omnibci.application.commands.session_commands import (
 )
 from omnibci.application.commands.acquisition_commands import (
     StartStreamCommand,
-    StopStreamCommand,
 )
+from omnibci.application.queries.session_queries import GetSessionTrialsQuery
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +48,10 @@ class NoActiveRecordingError(RuntimeError):
     """Raised by stop() when there is no active recording."""
 
 
+class RecordingDrainError(RuntimeError):
+    """Drain evidence or persisted trials do not justify ending the session."""
+
+
 class RecordingService:
     """Coordinates Session + Acquisition for the 'record a run' use case."""
 
@@ -56,16 +59,13 @@ class RecordingService:
         self,
         session_service: SessionAppService,
         acquisition_service: AcquisitionAppService,
-        stop_drain_seconds: float = 0.3,
+        admission=None,
     ) -> None:
+        self._admission = admission
         self._sessions = session_service
         self._acquisition = acquisition_service
-        # Time to let in-flight epochs drain from the processor queue between
-        # stopping the stream and ending the session. Configurable; the residual
-        # race (an epoch still mid-decode after the window) is bounded and only
-        # ever loses the very last trial.
-        self._stop_drain_seconds = stop_drain_seconds
 
+    @admitted
     def start(self, paradigm: Optional[str] = None) -> str:
         """
         Begin a recording: create + start a session, then start the stream.
@@ -109,6 +109,7 @@ class RecordingService:
         logger.info("Recording started: session=%s paradigm=%s", session_id, paradigm)
         return session_id
 
+    @admitted(recovery=True)
     def stop(self) -> str:
         """
         End the active recording: stop the stream, drain, then end the session.
@@ -119,14 +120,20 @@ class RecordingService:
         if session_id is None:
             raise NoActiveRecordingError("No active recording to stop.")
 
-        # 1. Stop the stream first — no new epochs after this.
-        self._acquisition.handle_stop_stream(StopStreamCommand())
-
-        # 2. Let in-flight epochs already queued in the processor finish recording.
-        if self._stop_drain_seconds > 0:
-            time.sleep(self._stop_drain_seconds)
-
-        # 3. End the session.
+        receipt = self._acquisition.handle_stop_and_drain(session_id=session_id)
+        if receipt.session_id != session_id:
+            raise RecordingDrainError("Drain receipt does not identify the active recording")
+        # EventBus preserves this processor's event order, but a projection
+        # callback can fail independently. Verify the persisted sequence before
+        # issuing EndSession; a missing or duplicate trial keeps the session open.
+        trials = self._sessions.handle_get_trials(GetSessionTrialsQuery(session_id))
+        if [trial.trial_number for trial in trials] != list(range(1, receipt.completed_trials + 1)):
+            raise RecordingDrainError(
+                f"Recording projection is incomplete: expected {receipt.completed_trials} ordered trials, "
+                f"received {len(trials)}; session retained for reconciliation"
+            )
+        if receipt.interrupted_epoch:
+            logger.info("Unfinished epoch discarded while draining recording %s", session_id)
         self._sessions.handle_end_session(EndSessionCommand(session_id=session_id))
         logger.info("Recording stopped: session=%s", session_id)
         return session_id

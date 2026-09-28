@@ -75,7 +75,7 @@ def test_lifespan_registers_engine_listeners(monkeypatch):
 
     container, engine = _make_container()
 
-    async def _fake_build_container():
+    async def _fake_build_container(**kwargs):
         return container
 
     monkeypatch.setattr(main_mod, "build_container", _fake_build_container)
@@ -99,19 +99,3 @@ def test_lifespan_registers_engine_listeners(monkeypatch):
     assert container.session_service.on_session_started in handlers
     assert container.session_service.on_trial_completed in handlers
     assert container.session_service.on_session_ended in handlers
-
-
-def test_no_dangling_unused_hook_on_app_state(monkeypatch):
-    """The old never-called ``_register_event_hooks`` stash must be gone."""
-    from omnibci.presentation import main as main_mod
-
-    container, _ = _make_container()
-
-    async def _fake_build_container():
-        return container
-
-    monkeypatch.setattr(main_mod, "build_container", _fake_build_container)
-
-    app = main_mod.create_app()
-    with TestClient(app):
-        assert not hasattr(app.state, "_register_event_hooks")
