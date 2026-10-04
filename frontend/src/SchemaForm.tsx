@@ -1,5 +1,6 @@
 /** Render the documented plugin schema subset; the server remains authoritative. */
-import { useId } from "react";
+import { useId, useState } from "react";
+import { currentConnection, desktopBridge } from "./desktop";
 
 export interface ConfigurationSchema {
   type: "object" | "array" | "string" | "integer" | "number" | "boolean";
@@ -18,6 +19,7 @@ export interface ConfigurationSchema {
   maxItems?: number;
   "x-scope"?: "portable" | "machine" | "secret";
   "x-apply"?: "restart" | "module" | "trial";
+  "x-widget"?: "file-path";
 }
 
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -90,6 +92,7 @@ interface FieldProps {
 
 function SchemaField({ schema, value, onChange, disabled, label }: FieldProps) {
   const id = useId();
+  const [fileError, setFileError] = useState("");
   const title = schema.title ?? label;
   if (schema.type === "object" && !schema.enum) {
     const values = object(value) ? value : {};
@@ -138,13 +141,23 @@ function SchemaField({ schema, value, onChange, disabled, label }: FieldProps) {
       {schema.enum.map((option, index) => <option value={index} key={index}>{typeof option === "string" ? option : JSON.stringify(option)}</option>)}
     </select> : schema.type === "boolean" ? <input id={id} type="checkbox" checked={value === true} disabled={disabled}
       onChange={(event) => onChange(event.target.checked)} />
-      : schema.type === "string" ? <input id={id} type={schema["x-scope"] === "secret" ? "password" : "text"}
+      : schema.type === "string" ? <div className="file-path-field"><input id={id} type={schema["x-scope"] === "secret" ? "password" : "text"}
         value={typeof value === "string" ? value : ""} minLength={schema.minLength} maxLength={schema.maxLength} disabled={disabled}
         onChange={(event) => onChange(event.target.value)} />
+        {schema["x-widget"] === "file-path" && desktopBridge() && currentConnection()?.kind === "local" &&
+          <button type="button" disabled={disabled} onClick={() => {
+            const owner = currentConnection()?.id;
+            setFileError("");
+            void desktopBridge()!.chooseRecordingFile().then((path) => {
+              if (path !== null && currentConnection()?.id === owner) onChange(path);
+            }).catch((cause) => setFileError(String(cause)));
+          }}>Browse…</button>}</div>
         : <input id={id} type="number" value={typeof value === "number" || typeof value === "string" ? value : ""}
           min={schema.minimum} max={schema.maximum} step={schema.type === "integer" ? 1 : "any"} disabled={disabled}
           onChange={(event) => onChange(event.target.value === "" ? "" : Number(event.target.value))} />}
-    {schema["x-scope"] === "machine" && <span className="setting-detail">Specific to this computer</span>}
+    {schema["x-widget"] === "file-path" && <span className="setting-detail">Path on the backend computer. Remote files are not uploaded.</span>}
+    {schema["x-scope"] === "machine" && <span className="setting-detail">Specific to the backend computer</span>}
+    {fileError && <span className="error" role="alert">{fileError}</span>}
   </div>;
 }
 

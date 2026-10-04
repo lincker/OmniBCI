@@ -6,6 +6,7 @@
  * Branch on `code`, never on message text.
  */
 import type { components } from "./rest-types";
+import { requestJson } from "./transport";
 
 type S = components["schemas"];
 export type EngineStatus = S["EngineStatusResponse"];
@@ -41,8 +42,7 @@ export class ApiError extends Error {
 }
 
 async function get<T>(path: string): Promise<T | null> {
-  const res = await fetch(path, { headers: { Accept: "application/json" } });
-  const body = await res.json().catch(() => null);
+  const { response: res, body } = await requestJson(path, { headers: { Accept: "application/json" } });
   if (!res.ok) {
     const code = body?.code ?? "UNKNOWN";
     throw new ApiError(res.status, code, body?.message ?? res.statusText);
@@ -51,12 +51,11 @@ async function get<T>(path: string): Promise<T | null> {
 }
 
 async function send<T>(method: "POST" | "DELETE" | "PATCH" | "PUT", path: string, body?: unknown): Promise<T | null> {
-  const res = await fetch(path, {
+  const { response: res, body: resBody } = await requestJson(path, {
     method,
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  const resBody = await res.json().catch(() => null);
   if (!res.ok) {
     const code = resBody?.code ?? "UNKNOWN";
     throw new ApiError(res.status, code, resBody?.message ?? res.statusText);
@@ -80,6 +79,8 @@ export const api = {
       throw e;
     }
   },
+
+  sessions: () => get<S["SessionListResponse"]>("/api/v1/sessions"),
 
   sessionTrials: (sessionId: string) =>
     get<Trial[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/trials`),

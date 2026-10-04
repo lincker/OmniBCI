@@ -63,7 +63,7 @@ test("package actions send exact identities and local ZIP bytes to the backend",
     await pluginMarketApi.install({ package_id: "Example.multi", version: "2.0.0", download_url: "https://untrusted.example/ignored.zip" });
     await pluginMarketApi.setEnabled({ package_id: "Example.multi", version: "2.0.0" }, true);
     assert.equal(requests[0].path, "/api/v1/plugin-packages/install");
-    assert.equal(requests[0].headers["Content-Type"], "application/zip");
+    assert.equal(new Headers(requests[0].headers).get("Content-Type"), "application/zip");
     assert.equal(requests[0].body, archive);
     assert.equal(requests[1].path, "/api/v1/market/install");
     assert.deepEqual(JSON.parse(requests[1].body), { package_id: "Example.multi", version: "2.0.0" });

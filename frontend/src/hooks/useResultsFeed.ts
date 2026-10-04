@@ -22,6 +22,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type SessionInfo, type Trial } from "../api/client";
 import { isWsMessage, type StimulationAckMessage } from "../api/ws-types";
+import { openResultsSocket, type ResultsSocket } from "../api/results-socket";
 
 export type ConnectionState = "connecting" | "open" | "closed";
 
@@ -50,7 +51,10 @@ export function useResultsFeed(): ResultsFeed {
 
   useEffect(() => {
     let alive = true;
-    let ws: WebSocket | null = null;
+    let ws: ResultsSocket | null = null;
+    let socketOpen = false;
+    let socketGeneration = 0;
+    let snapshotGeneration = 0;
     let backoff = 1000;
     let reconnectTimer: ReturnType<typeof setTimeout>;
     let lastMsgAt = Date.now();
@@ -58,14 +62,15 @@ export function useResultsFeed(): ResultsFeed {
     // Staleness watchdog: a half-open socket fires no close event — if the
     // feed (incl. server Pings) goes silent, close it to trigger reconnect.
     const staleTimer = setInterval(() => {
-      if (ws?.readyState === WebSocket.OPEN && Date.now() - lastMsgAt > STALE_AFTER_MS) {
-        ws.close();
+      if (socketOpen && Date.now() - lastMsgAt > STALE_AFTER_MS) {
+        ws?.close();
       }
     }, STALE_CHECK_MS);
 
     const resync = async () => {
+      const snapshot = ++snapshotGeneration;
       const active = await api.activeSession().catch(() => null);
-      if (!alive) return;
+      if (!alive || snapshot !== snapshotGeneration) return;
       if (active === null) {
         seen.current = new Set();
         setSession(null);
@@ -73,31 +78,40 @@ export function useResultsFeed(): ResultsFeed {
         return;
       }
       const list = (await api.sessionTrials(active.session_id).catch(() => null)) ?? [];
-      if (!alive) return;
+      if (!alive || snapshot !== snapshotGeneration) return;
       seen.current = new Set(list.map((t) => `${active.session_id}:${t.trial_number}`));
       setSession(active);
       setTrials(list);
     };
 
     const connect = () => {
-      const proto = location.protocol === "https:" ? "wss" : "ws";
-      ws = new WebSocket(`${proto}://${location.host}/api/v1/ws/results`);
+      const generation = ++socketGeneration;
+      socketOpen = false;
       setConnection("connecting");
-
-      ws.onopen = () => {
-        if (!alive) return;
-        backoff = 1000; // reset on success
-        lastMsgAt = Date.now();
-        setConnection("open");
-        void resync(); // snapshot AFTER the socket is open → no gap window
-      };
-
-      ws.onmessage = (ev) => {
-        if (!alive) return;
+      ws = openResultsSocket((event) => {
+        if (!alive || generation !== socketGeneration) return;
+        if (event.type === "open") {
+          socketOpen = true;
+          backoff = 1000; // reset on success
+          lastMsgAt = Date.now();
+          setConnection("open");
+          void resync(); // snapshot AFTER the socket is open → no gap window
+          return;
+        }
+        if (event.type === "error") { ws?.close(); return; }
+        if (event.type === "closed") {
+          socketOpen = false;
+          snapshotGeneration += 1;
+          clearTimeout(reconnectTimer);
+          setConnection("closed");
+          reconnectTimer = setTimeout(connect, backoff);
+          backoff = Math.min(backoff * 2, 10_000);
+          return;
+        }
         lastMsgAt = Date.now(); // any message (incl. Ping) is proof of life
         let msg: unknown;
         try {
-          msg = JSON.parse(ev.data as string);
+          msg = JSON.parse(event.data ?? "");
         } catch {
           return;
         }
@@ -144,15 +158,7 @@ export function useResultsFeed(): ResultsFeed {
           case "Ping":
             break; // liveness only — timestamp already updated above
         }
-      };
-
-      ws.onclose = () => {
-        if (!alive) return;
-        setConnection("closed");
-        reconnectTimer = setTimeout(connect, backoff);
-        backoff = Math.min(backoff * 2, 10_000);
-      };
-      ws.onerror = () => ws?.close();
+      });
     };
 
     connect();

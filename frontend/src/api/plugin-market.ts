@@ -1,6 +1,7 @@
 /** Package and signed-repository requests use generated OpenAPI contracts. */
 import { ApiError, type ApiEnvelope } from "./client";
 import type { components } from "./rest-types";
+import { requestJson } from "./transport";
 
 type S = components["schemas"];
 export type InstalledPackage = S["PackageVersionResponse"];
@@ -11,11 +12,10 @@ type Installation = S["PackageInstallationResponse"];
 
 async function request<T>(path: string, method = "GET", data?: unknown): Promise<T> {
   const upload = data instanceof File;
-  const response = await fetch(`/api/v1${path}`, {
+  const { response, body } = await requestJson(`/api/v1${path}`, {
     method, headers: { Accept: "application/json", "Content-Type": upload ? "application/zip" : "application/json" },
     body: data === undefined ? undefined : upload ? data : JSON.stringify(data),
   });
-  const body = await response.json().catch(() => null);
   if (!response.ok) throw new ApiError(response.status, body?.code ?? "UNKNOWN", body?.message ?? response.statusText);
   return (body as ApiEnvelope<T>).data as T;
 }

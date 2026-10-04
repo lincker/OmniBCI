@@ -13,6 +13,12 @@ function Dot({ on, label }: { on: boolean | undefined; label: string }) {
   return <span className={`dot ${on ? "dot-on" : "dot-off"}`}>● {label}</span>;
 }
 
+export function recordingPathMissing(selection: Activation | null): boolean {
+  const source = selection?.bindings.find((item) => item.slot === "acquisition.source");
+  return source?.selection.package_id === "OmniBCI.file_reader"
+    && !(typeof source.parameters.data_file_path === "string" && source.parameters.data_file_path.trim());
+}
+
 export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, onEditSetup, onResults }: {
   engine: ReturnType<typeof usePoll<EngineStatus>>;
   acquisition: ReturnType<typeof usePoll<AcquisitionStatus>>;
@@ -59,6 +65,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
     return profiles.find((item) => item.profile_id === binding.profile_id)?.name
       ?? `${binding.selection.package_id}/${binding.selection.contribution_id} · ${binding.selection.version}`;
   };
+  const missingRecording = recordingPathMissing(selection);
   const currentParadigm = stimulation.data?.paradigm || selectedParadigm?.plugin_type || "";
   const paradigmName = translatePluginName(currentParadigm,
     selectedParadigm?.plugin_type === currentParadigm ? selectedParadigm.label : currentParadigm || "None", t);
@@ -153,13 +160,14 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
       <button className="text-button" disabled={busy} onClick={onEditSetup}>Edit setup <Icon name="chevron" /></button>
       <p className="meta">Selected configuration is shown here. Review and apply changes from Setup.</p>
     </section>
+    {missingRecording && <p className="inline-message" role="status">Select a recording on the backend computer in Acquisition setup, then save and apply the profile before starting.</p>}
     {loadError && <p className="inline-message error" role="alert">{loadError}</p>}
     <section className="card engine-card" aria-label="Engine controls">
       <div><h2>Engine</h2><div className="engine-status">
         <Dot on={running} label="Running" /><Dot on={engine.data?.acquisition_alive} label="Acquisition process" />
         <Dot on={engine.data?.processor_alive} label="Processing process" />
       </div>{engine.error && <p className="error" role="alert">{engine.error.message}</p>}</div>
-      <div className="actions"><button className="primary" disabled={controlsBlocked || !engineAvailable || running || !selection || !!loadError}
+      <div className="actions"><button className="primary" disabled={controlsBlocked || !engineAvailable || running || !selection || !!loadError || missingRecording}
         onClick={() => void start.run()}><Icon name="play" />{start.pending ? "Starting…" : "Start engine"}</button>
         <button className="danger" disabled={stopBlocked || !engineAvailable || !running} onClick={() => void stop.run()}>Stop engine</button></div>
     </section>
@@ -171,10 +179,10 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
           {acquisition.data?.sample_rate ?? "—"} Hz · {acquisition.data?.channel_count ?? "—"} channels</p>
         <div className="actions actions-grouped">
           <div className="btn-group"><span className="btn-group-title">Source connection</span>
-            <button disabled={controlsBlocked || !acquisitionAvailable || !running || connected} onClick={() => void connect.run()}>Connect</button>
+            <button disabled={controlsBlocked || !acquisitionAvailable || !running || connected || missingRecording} onClick={() => void connect.run()}>Connect</button>
             <button disabled={controlsBlocked || !acquisitionAvailable || !connected || reading || recording} onClick={() => void disconnect.run()}>Disconnect</button></div>
           <div className="btn-group"><span className="btn-group-title">Data reading</span>
-            <button className="primary" disabled={controlsBlocked || !acquisitionAvailable || !running || !connected || reading || recording}
+            <button className="primary" disabled={controlsBlocked || !acquisitionAvailable || !running || !connected || reading || recording || missingRecording}
               onClick={() => void read.run()}>Start reading</button>
             <button disabled={stopBlocked || !acquisitionAvailable || (!reading && !recording)} onClick={() => void stopRead.run()}>Stop reading</button></div>
         </div>

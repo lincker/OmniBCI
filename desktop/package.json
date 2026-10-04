@@ -5,10 +5,15 @@
   "description": "OmniBCI desktop application",
   "author": "OmniBCI contributors",
   "license": "UNLICENSED",
+  "main": "dist/main.cjs",
   "engines": {
     "node": ">=22.12.0"
   },
   "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/dev.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs",
     "runtime:prepare": "node scripts/runtime-tool.mjs prepare-runtime",
     "runtime:verify": "node scripts/runtime-tool.mjs verify-runtime --resources resources"
   },
