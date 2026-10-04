@@ -27,6 +27,8 @@ Endpoints:
 
 import asyncio
 import logging
+import os
+from uuid import uuid4
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket
@@ -35,6 +37,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from omnibci.presentation.routers import engine, acquisition, stimulation, session, recording, config, plugins
 from omnibci.presentation.routers import plugin_config, runtime_config, plugin_packages
 from omnibci.presentation.routers import plugin_package_lifecycle, plugin_market
+from omnibci.presentation.routers import system
+from omnibci.presentation.security import ApiAccessMiddleware, RequestGate
+from omnibci.application.services.shutdown_service import BackendShutdownService
 from omnibci.presentation.websockets.results import results_broadcaster, results_ws_endpoint
 from omnibci.bootstrap import build_container, create_backend_logging, load_host_settings, register_engine_listeners
 from omnibci.presentation.errors import register_exception_handlers
@@ -47,6 +52,7 @@ logger = logging.getLogger(__name__)
 # appears in the OpenAPI spec and the generated frontend types.
 ERROR_RESPONSES = {
     400: {"model": ErrorResponse, "description": "Bad request"},
+    401: {"model": ErrorResponse, "description": "API token required or invalid"},
     404: {"model": ErrorResponse, "description": "Not found"},
     409: {"model": ErrorResponse, "description": "Conflict"},
     422: {"model": ErrorResponse, "description": "Validation error"},
@@ -58,11 +64,14 @@ ERROR_RESPONSES = {
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Keep logging available throughout startup and service shutdown."""
+    app.state.shutdown_complete = False
     host_settings = load_host_settings()
     with create_backend_logging(host_settings) as backend_logging:
         app.state.backend_logging = backend_logging
         async with _services_lifespan(app, host_settings):
             yield
+    # A stopped runtime alone does not confirm successful lifespan/log cleanup.
+    app.state.shutdown_complete = True
 
 
 @asynccontextmanager
@@ -77,7 +86,10 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
       3. stores a hook that registers EventBus listeners (engine read-model +
          WebSocket broadcaster) once the engine process is actually running.
     """
-    container = await build_container(host_settings=host_settings)
+    container = await build_container(
+        host_settings=host_settings,
+        allow_process_termination=app.state.allow_process_termination,
+    )
 
     app.state.container = container
     app.state.engine_service = container.engine_service
@@ -91,6 +103,14 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
     app.state.plugin_installation_service = container.plugin_installation_service
     app.state.plugin_package_service = container.plugin_package_service
     app.state.plugin_market_service = container.plugin_market_service
+    app.state.shutdown_service = BackendShutdownService(
+        engine=container.engine_service,
+        stimulation=container.stimulation_service,
+        stimulation_process=container.stimulation_process_manager,
+        actuation_process=container.actuation_process_manager,
+        recording=container.recording_service,
+        configuration=container.runtime_configuration,
+    )
 
     results_broadcaster.set_loop(asyncio.get_running_loop())
     # Heartbeat: reaps dead WS connections during idle periods and lets the
@@ -115,20 +135,34 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
         yield
     finally:
         results_broadcaster.stop_heartbeat()
-        if container.runtime_configuration is not None:
-            await container.runtime_configuration.wait_for_idle()
-        container.stimulation_process_manager.stop()
-        await container.engine_service.shutdown()
+        progress = app.state.shutdown_progress
+        if progress is not None:
+            progress("waiting_for_requests")
+        await app.state.request_gate.prepare()
+        errors = await app.state.shutdown_service.prepare(progress=progress)
+        app.state.shutdown_errors = errors
+        if errors:
+            raise RuntimeError("; ".join(errors))
         logger.info("OmniBCI API server stopped")
 
 
-def create_app() -> FastAPI:
+def create_app(*, api_token: str | None = None, desktop: bool = False) -> FastAPI:
     app = FastAPI(
         title="OmniBCI API",
         version="1.0.0",
         description="REST + WebSocket API for the OmniBCI BCI platform",
         lifespan=lifespan,
     )
+
+    token = api_token if api_token is not None else os.environ.get("OMNIBCI_API_TOKEN")
+    app.state.instance_id = str(uuid4())
+    app.state.auth_enabled = bool(token)
+    app.state.allow_process_termination = not desktop
+    app.state.request_gate = RequestGate()
+    app.state.shutdown_errors = []
+    app.state.shutdown_complete = False
+    app.state.shutdown_progress = None
+    app.add_middleware(ApiAccessMiddleware, token=token, gate=app.state.request_gate)
 
     app.add_middleware(
         CORSMiddleware,
@@ -143,6 +177,7 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
 
     prefix = "/api/v1"
+    app.include_router(system.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(engine.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(acquisition.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(stimulation.router, prefix=prefix, responses=ERROR_RESPONSES)

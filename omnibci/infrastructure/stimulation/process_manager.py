@@ -87,6 +87,7 @@ class StimulationProcessManager:
 
     When *auto_spawn* is False all public methods are no-ops, so the same
     ``StimulationAppService`` code path works for both deployment modes.
+    Desktop hosts disable process termination and retain unresponsive children.
     """
 
     _GRACEFUL_TIMEOUT_S = 3.0
@@ -99,6 +100,7 @@ class StimulationProcessManager:
         auto_spawn: bool = True,
         *,
         startup_timeout_s: float = _STARTUP_TIMEOUT_S,
+        allow_process_termination: bool = True,
     ) -> None:
         if startup_timeout_s <= 0:
             raise ValueError("startup_timeout_s must be greater than zero")
@@ -106,6 +108,7 @@ class StimulationProcessManager:
         self._auto_spawn = auto_spawn
         self._settings_snapshot: dict | None = None
         self._startup_timeout_s = float(startup_timeout_s)
+        self._allow_process_termination = allow_process_termination
         self._process: mp.Process | None = None
         self._stop_event: Any = None
         self._startup_receiver: Any = None
@@ -186,7 +189,7 @@ class StimulationProcessManager:
                 target=_run_stimulation,
                 args=(paradigm, stop_event, startup_sender),
                 name="StimulationProcess",
-                daemon=True,
+                daemon=self._allow_process_termination,
                 **process_kwargs,
             )
             self._state = ChildProcessState.STARTING
@@ -255,7 +258,7 @@ class StimulationProcessManager:
             )
 
     def stop(self) -> None:
-        """Cooperatively stop, escalating without ever losing a live handle."""
+        """Apply the host stop policy without ever losing a live handle."""
         with self._lifecycle_lock:
             self._stop_locked()
 
@@ -278,6 +281,12 @@ class StimulationProcessManager:
             process.join(timeout=self._GRACEFUL_TIMEOUT_S)
 
         if process.is_alive():
+            if not self._allow_process_termination:
+                self._state = ChildProcessState.FAILED
+                raise RuntimeError(
+                    f"Stimulation subprocess did not stop gracefully (pid={pid}); "
+                    "process retained for an explicit force-exit decision"
+                )
             logger.warning(
                 "Stimulation subprocess did not stop gracefully; terminating "
                 "(pid=%s)",

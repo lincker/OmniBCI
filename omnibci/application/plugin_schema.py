@@ -15,7 +15,7 @@ class PluginSchemaError(ValueError):
 
 _MAX_SCHEMA_DEPTH = 16
 _MAX_JSON_DEPTH = 64
-_COMMON = {"type", "title", "description", "default", "enum", "x-scope", "x-apply"}
+_COMMON = {"type", "title", "description", "default", "enum", "x-scope", "x-apply", "x-widget"}
 _KEYWORDS = {
     "object": {"properties", "required", "additionalProperties"},
     "array": {"items", "minItems", "maxItems"},
@@ -74,6 +74,8 @@ def _validate_schema_node(schema: Any, path: str, depth: int = 0) -> None:
                          ("x-apply", {"restart", "module", "trial"})):
         if key in schema and (not isinstance(schema[key], str) or schema[key] not in allowed):
             _fail(_field(path, key), f"must be one of {', '.join(sorted(allowed))}")
+    if "x-widget" in schema and (kind != "string" or schema["x-widget"] != "file-path"):
+        _fail(_field(path, "x-widget"), "file-path is supported only for string fields")
 
     if kind == "object":
         if schema.get("additionalProperties") is not False:

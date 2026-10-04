@@ -5,10 +5,11 @@
     "data_file_path": {
       "type": "string",
       "title": "Recording path",
-      "default": "tests/fixture/train.cnt",
+      "default": "",
+      "x-widget": "file-path",
       "x-scope": "machine",
       "x-apply": "module",
-      "minLength": 1
+      "minLength": 0
     },
     "file_reader_chunk_size": {
       "type": "integer",

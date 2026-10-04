@@ -163,7 +163,8 @@ def assemble(
 # Full construction (performs engine startup)
 # ---------------------------------------------------------------------------
 
-async def build_container(*, host_settings: dict | None = None) -> AppContainer:
+async def build_container(*, host_settings: dict | None = None,
+                          allow_process_termination: bool = True) -> AppContainer:
     """Wire services; resolve configuration and build workers on engine start."""
     from omnibci.conf import settings
 
@@ -177,15 +178,21 @@ async def build_container(*, host_settings: dict | None = None) -> AppContainer:
         bool(host_settings.get("ACTUATION.enabled", False))
         and bool(host_settings.get("ACTUATION.auto_spawn", True))
     )
-    actuation_manager = ActuationProcessManager(auto_spawn=actuation_auto_spawn)
-    stimulation_manager = StimulationProcessManager(auto_spawn=auto_spawn)
+    actuation_manager = ActuationProcessManager(
+        auto_spawn=actuation_auto_spawn, allow_process_termination=allow_process_termination,
+    )
+    stimulation_manager = StimulationProcessManager(
+        auto_spawn=auto_spawn, allow_process_termination=allow_process_termination,
+    )
 
     # Processes are single-use, so every restart requires a fresh engine graph.
     def startup_snapshot():
         return accepted_runtime_settings(profiles=plugin_profiles)
 
     engine_service = NeuroEngineService(
-        engine_factory=lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
+        engine_factory=lambda snapshot: NeuroEngineBuilder(
+            settings_snapshot=snapshot, allow_process_termination=allow_process_termination,
+        ).build(),
         snapshot_provider=startup_snapshot,
         actuation_process_manager=actuation_manager,
         stimulation_process_manager=stimulation_manager,

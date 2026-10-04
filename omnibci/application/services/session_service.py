@@ -227,6 +227,17 @@ class SessionAppService:
     def handle_list_sessions(self, query: ListSessionsQuery) -> List[SessionDTO]:
         return [_session_record_to_dto(r) for r in self._repo.find_all()]
 
+    def export_snapshot(self, session_ids: Optional[List[str]] = None) -> List[SessionDTO]:
+        """Read metadata and trials from one repository snapshot."""
+        records = self._repo.find_all()
+        if session_ids is not None:
+            requested = set(session_ids)
+            missing = requested - {record.session_id for record in records}
+            if missing:
+                raise KeyError(f"Session '{sorted(missing)[0]}' not found")
+            records = [record for record in records if record.session_id in requested]
+        return [_session_record_to_dto(record, include_trials=True) for record in records]
+
     def handle_get_trials(self, query: GetSessionTrialsQuery) -> List[TrialDTO]:
         return [_trial_record_to_dto(t) for t in self._require(query.session_id).trials]
 

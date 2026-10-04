@@ -3,6 +3,7 @@
 import asyncio
 import multiprocessing as mp
 import threading
+from pathlib import Path
 from multiprocessing.connection import wait
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -173,7 +174,8 @@ def _pinned_worker_snapshot(broken_kind=None):
     snapshot = {"CONFIG.revision": "r", "CONFIG.generation": "g", "ACQUISITION.sample_rate": 250}
     bindings = []
     for slot, kind, alias, parameters in (
-        ("acquisition.source", "acquisition", "file_reader", {"sample_rate": 250, "channel_number": 10}),
+        ("acquisition.source", "acquisition", "file_reader", {"sample_rate": 250, "channel_number": 10,
+         "data_file_path": str(Path(__file__).parents[1] / "fixture" / "train.cnt")}),
         ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA", {}),
         ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
     ):

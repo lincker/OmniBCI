@@ -46,6 +46,9 @@ class NeuroEngine:
     owned_ipc_queues:
         Additional builder-created queues whose close lifecycle belongs to this
         single-use engine graph (EventBus input and DataManager buffer).
+    allow_process_termination:
+        False for desktop hosts: retain unresponsive workers for an explicit
+        user decision instead of automatically terminating them.
     """
 
     def __init__(
@@ -65,6 +68,7 @@ class NeuroEngine:
         startup_timeout_s: float = 5.0,
         config_revision: str | None = None,
         generation: str | None = None,
+        allow_process_termination: bool = True,
     ) -> None:
         self.event_bus = event_bus
         self.data_manager = data_manager
@@ -83,6 +87,7 @@ class NeuroEngine:
         self._startup_timeout_s = startup_timeout_s
         self._config_revision = config_revision
         self._generation = generation
+        self._allow_process_termination = allow_process_termination
         # Engine-side consumer of stimulation → engine feedback (StimulationAck).
         self.stim_feedback = StimulationFeedbackHandler()
         # Actuation ACL + feedback — present only when the actuation peer is
@@ -311,7 +316,10 @@ class NeuroEngine:
             if not getattr(self, attr):
                 continue
             try:
-                await asyncio.to_thread(self._join_process, process, name)
+                await asyncio.to_thread(
+                    self._join_process, process, name,
+                    allow_process_termination=self._allow_process_termination,
+                )
             except Exception as exc:  # keep releasing the remaining owners
                 errors.append(exc)
                 logger.exception("Error stopping %s", name)
@@ -475,9 +483,14 @@ class NeuroEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _join_process(process: mp.Process, name: str, timeout: int = 3) -> None:
+    def _join_process(process: mp.Process, name: str, timeout: int = 3,
+                      *, allow_process_termination: bool = True) -> None:
         process.join(timeout=timeout)
         if process.is_alive():
+            if not allow_process_termination:
+                raise RuntimeError(
+                    f"{name} did not stop gracefully; process retained for an explicit force-exit decision"
+                )
             logger.warning("%s did not exit gracefully; terminating", name)
             process.terminate()
             process.join(timeout=timeout)

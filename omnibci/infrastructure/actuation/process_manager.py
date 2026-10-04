@@ -86,6 +86,7 @@ class ActuationProcessManager:
     engine-lifecycle code path works for both deployment modes (and for
     ``ACTUATION.enabled = false``, where the composition root passes
     auto_spawn=False).
+    Desktop hosts disable process termination and retain unresponsive children.
     """
 
     _GRACEFUL_TIMEOUT_S = 3.0
@@ -98,6 +99,7 @@ class ActuationProcessManager:
         auto_spawn: bool = True,
         *,
         startup_timeout_s: float = _STARTUP_TIMEOUT_S,
+        allow_process_termination: bool = True,
     ) -> None:
         if startup_timeout_s <= 0:
             raise ValueError("startup_timeout_s must be greater than zero")
@@ -105,6 +107,7 @@ class ActuationProcessManager:
         self._auto_spawn = auto_spawn
         self._settings_snapshot: dict | None = None
         self._startup_timeout_s = float(startup_timeout_s)
+        self._allow_process_termination = allow_process_termination
         self._process: mp.Process | None = None
         self._stop_event: Any = None
         self._startup_receiver: Any = None
@@ -186,7 +189,7 @@ class ActuationProcessManager:
             target=_run_actuation,
             args=(effector, stop_event, startup_sender),
             name="ActuationProcess",
-            daemon=True,
+            daemon=self._allow_process_termination,
             **process_kwargs,
         )
         self._state = ChildProcessState.STARTING
@@ -257,11 +260,12 @@ class ActuationProcessManager:
         )
 
     def stop(self) -> None:
-        """Stop the Actuation subprocess, escalating only when necessary.
+        """Stop the Actuation subprocess according to the host policy.
 
         The cooperative stop event lets ``Actuation.serve`` run its ``finally``
         block and tear the device down.  A child that ignores that request is
-        terminated, then killed when the platform exposes ``Process.kill``.
+        terminated, then killed when the host permits automatic termination.
+        Desktop hosts instead report incomplete cleanup for a user decision.
         State is cleared only after the process is confirmed dead; retaining the
         handle on failure prevents a later ``start`` from creating a second
         controller for the same hardware.
@@ -288,6 +292,12 @@ class ActuationProcessManager:
             process.join(timeout=self._GRACEFUL_TIMEOUT_S)
 
         if process.is_alive():
+            if not self._allow_process_termination:
+                self._state = ChildProcessState.FAILED
+                raise RuntimeError(
+                    f"Actuation subprocess did not stop gracefully (pid={pid}); "
+                    "process retained for an explicit force-exit decision"
+                )
             logger.warning(
                 "Actuation subprocess did not stop gracefully; terminating (pid=%s)",
                 pid,

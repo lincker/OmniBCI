@@ -89,6 +89,10 @@ class TestNeuroEngineBuilder:
         eng = patched_builder.build()
         assert eng.should_stop is False
 
+    def test_desktop_stop_policy_reaches_the_worker_owner(self, patched_builder):
+        engine = NeuroEngineBuilder(settings_snapshot={}, allow_process_termination=False).build()
+        assert engine._allow_process_termination is False
+
     def test_custom_config_propagated(self):
         """Builder with queue_size=5 should create queues of maxsize=5."""
         with (

@@ -43,6 +43,53 @@ def test_fetch_running_configuration_is_bounded_and_role_scoped(monkeypatch):
     assert opener.call_args.kwargs["timeout"] == 5.0
 
 
+def test_fetch_sends_token_only_in_authorization_header(monkeypatch):
+    opener = install_response(monkeypatch, response())
+    node_client.fetch_node_configuration("http://backend", "actuation", "private-token")
+    request = opener.call_args.args[0]
+    assert request.get_header("Authorization") == "Bearer private-token"
+    assert "private-token" not in request.full_url
+
+
+def test_supervisor_captures_token_once_before_retry(monkeypatch):
+    monkeypatch.setenv("OMNIBCI_API_TOKEN", "original-token")
+    fetch = Mock(side_effect=[node_client.NodeConfigurationUnavailable("waiting"), RuntimeError("done")])
+    monkeypatch.setattr(node_client, "fetch_node_configuration", fetch)
+    monkeypatch.setattr(node_client.time, "sleep", lambda _: monkeypatch.setenv("OMNIBCI_API_TOKEN", "changed-token"))
+    with pytest.raises(RuntimeError, match="done"):
+        node_client.run_configured_node("actuation", Mock(), backend_url="http://backend")
+    assert [call.args[2] for call in fetch.call_args_list] == ["original-token", "original-token"]
+
+
+@pytest.mark.integration
+def test_authenticated_configuration_never_follows_redirect():
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    paths = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            paths.append(self.path)
+            self.send_response(302)
+            self.send_header("Location", "/credential-leak")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        worker = Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            with pytest.raises(RuntimeError, match="HTTP 302"):
+                node_client.fetch_node_configuration(f"http://127.0.0.1:{server.server_port}", "actuation", "private-token")
+            assert paths == ["/api/v1/config/nodes/actuation"]
+        finally:
+            server.shutdown()
+            worker.join(timeout=5)
+
+
 def test_selected_configuration_waits_without_hardware(monkeypatch):
     install_response(monkeypatch, response(state="selected", generation=None))
     with pytest.raises(node_client.NodeConfigurationUnavailable, match="engine to start"):
