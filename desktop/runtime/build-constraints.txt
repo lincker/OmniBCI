@@ -1,0 +1,4 @@
+# Build environments only; these are not application dependencies.
+setuptools==84.0.0
+wheel==0.48.0
+packaging==26.3

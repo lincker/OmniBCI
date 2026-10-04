@@ -1,0 +1,27 @@
+{
+  "name": "omnibci-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OmniBCI desktop application",
+  "author": "OmniBCI contributors",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "runtime:prepare": "node scripts/runtime-tool.mjs prepare-runtime",
+    "runtime:verify": "node scripts/runtime-tool.mjs verify-runtime --resources resources"
+  },
+  "dependencies": {
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.4",
+    "@types/ws": "8.18.2",
+    "electron": "44.5.1",
+    "electron-builder": "26.17.0",
+    "esbuild": "0.28.2",
+    "playwright": "1.63.0",
+    "typescript": "7.0.2"
+  }
+}
