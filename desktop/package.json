@@ -15,7 +15,9 @@
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs",
     "runtime:prepare": "node scripts/runtime-tool.mjs prepare-runtime",
-    "runtime:verify": "node scripts/runtime-tool.mjs verify-runtime --resources resources"
+    "runtime:verify": "node scripts/runtime-tool.mjs verify-runtime --resources resources",
+    "package:dir": "npm run build && electron-builder --config electron-builder.yml --dir --publish never",
+    "package": "node scripts/package-installer.mjs"
   },
   "dependencies": {
     "ws": "8.22.0"
