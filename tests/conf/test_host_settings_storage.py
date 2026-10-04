@@ -66,6 +66,32 @@ def test_user_overrides_win_and_only_overrides_are_written(host_files):
     assert restarted.read_saved()[1] == saved_revision
 
 
+@pytest.mark.parametrize("line_ending", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_saved_revision_matches_disk_with_windows_text_writes(host_files, monkeypatch, line_ending):
+    from omnibci.conf import storage
+
+    temporary_file = storage.tempfile.NamedTemporaryFile
+
+    def windows_temporary_file(*args, **kwargs):
+        if kwargs.get("newline") is None:
+            kwargs["newline"] = "\r\n"
+        return temporary_file(*args, **kwargs)
+
+    monkeypatch.setattr(storage.tempfile, "NamedTemporaryFile", windows_temporary_file)
+    defaults, user_file = host_files
+    user_file.parent.mkdir()
+    content = f'# Keep the café comment.{line_ending}[NEUROENGINE]{line_ending}queue_size = 100{line_ending}'
+    user_file.write_bytes(content.encode("utf-8"))
+    settings = OmniBCISettings(defaults_file=defaults)
+    _, revision = settings.read_saved()
+
+    for queue_size in (250, 300):
+        revision = settings.update({"NEUROENGINE.queue_size": queue_size}, expected_revision=revision)
+        assert settings.read_saved()[1] == revision
+        assert user_file.read_bytes() == content.replace("100", str(queue_size)).encode("utf-8")
+        assert OmniBCISettings(defaults_file=defaults).read_saved()[1] == revision
+
+
 def test_existing_user_override_is_merged_with_bundled_defaults(host_files):
     defaults, user_file = host_files
     user_file.parent.mkdir()

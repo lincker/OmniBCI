@@ -1,7 +1,11 @@
 """Managed child startup transports a detached snapshot before runtime imports."""
 
 import builtins
+import multiprocessing as mp
+import os
 import pickle
+import subprocess
+import sys
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -11,7 +15,7 @@ import pytest
 import omnibci.conf
 from omnibci.infrastructure.actuation import process_manager as actuation
 from omnibci.infrastructure.stimulation import process_manager as stimulation
-from omnibci.infrastructure.process_lifecycle import StartupReport
+from omnibci.infrastructure.process_lifecycle import StartupReport, StartupReporter
 
 
 MANAGERS = (
@@ -151,3 +155,70 @@ def test_child_installs_snapshot_before_importing_application(
     application.assert_called_once_with(stop_event=None, settings_snapshot=snapshot)
     application.return_value.run.assert_called_once_with()
     settings.set.assert_not_called()
+
+
+def _report_plugin_directory(connection):
+    with connection:
+        connection.send(os.environ.get("OMNIBCI_PLUGIN_DIR"))
+
+
+def _ready_with_current_plugin_directory(selected, stop_event, connection, *, settings_snapshot):
+    reporter = StartupReporter(
+        connection, component=settings_snapshot["TEST.component"],
+        config_revision=settings_snapshot["CONFIG.revision"],
+        generation=settings_snapshot["CONFIG.generation"],
+    )
+    if os.environ.get("OMNIBCI_PLUGIN_DIR") != settings_snapshot["TEST.plugin_dir"]:
+        reporter.failed("environment", RuntimeError("Child inherited an outdated plugin directory"))
+        return
+    reporter.ready()
+    stop_event.wait(10)
+
+
+def _check_current_plugin_directory(component, directory):
+    # This entry point runs only in a disposable interpreter, never in pytest.
+    mp.set_start_method("forkserver")
+    os.environ["OMNIBCI_PLUGIN_DIR"] = directory + "/previous"
+    receiver, sender = mp.Pipe(duplex=False)
+    warmup = mp.Process(target=_report_plugin_directory, args=(sender,))
+    try:
+        warmup.start()
+        sender.close()
+        assert receiver.poll(10), "Forkserver warmup did not report its environment"
+        assert receiver.recv() == directory + "/previous"
+        warmup.join(10)
+        assert warmup.exitcode == 0
+    finally:
+        if warmup.is_alive():
+            warmup.terminate()
+            warmup.join(5)
+        warmup.close()
+        receiver.close()
+        sender.close()
+
+    current = directory + "/current"
+    os.environ["OMNIBCI_PLUGIN_DIR"] = current
+    module, manager_class, _, key = next(item for item in MANAGERS if item[2] == component)
+    setattr(module, f"_run_{component.lower()}", _ready_with_current_plugin_directory)
+    snapshot = {**_snapshot(key), "TEST.component": component, "TEST.plugin_dir": current}
+    manager = manager_class()
+    try:
+        manager.start(settings_snapshot=snapshot)
+        assert manager.is_ready
+    finally:
+        manager.stop()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif("forkserver" not in mp.get_all_start_methods(), reason="Requires forkserver")
+@pytest.mark.parametrize("component", ["Actuation", "Stimulation"])
+def test_managed_child_uses_current_plugin_directory_after_forkserver_start(component, tmp_path):
+    result = subprocess.run(
+        [sys.executable, __file__, component, str(tmp_path)],
+        capture_output=True, text=True, timeout=40,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+if __name__ == "__main__":
+    _check_current_plugin_directory(sys.argv[1], sys.argv[2])

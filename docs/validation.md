@@ -8,11 +8,20 @@ suite using real subprocesses, local IPC, and checked-in signal fixtures. The
 headless suite includes runtime failure injection for drain, projection,
 checkpoint, startup, persistence, output settlement, and unknown resume outcomes.
 
-Each OS also generates the frontend REST types, checks that they match the
-committed API contract, and builds the console. A fresh wheel replaces the
+Managed stimulation and actuation children explicitly use the `spawn` context so
+each launch inherits the caller's current deployment environment. A regression
+starts a forkserver before changing the plugin directory, then checks that both
+managed children receive the updated directory without changing pytest's global
+process start method.
+
+An independent Linux job generates the frontend REST types, checks that they
+match the committed API contract, runs the frontend tests, and builds the console.
+It runs even when backend checks fail. On each OS, a fresh wheel replaces the
 editable installation before isolated Python verifies bundled plugin manifests,
 schemas/defaults, host settings, and all 281 stimulus frames. This catches assets
-that work in a checkout but are missing from the distributed package.
+that work in a checkout but are missing from the distributed package. The wheel
+checks still run after a headless test failure if dependency installation
+succeeded; cancellation stops them, and test failures still fail the job.
 
 Build release wheels from a clean checkout. Setuptools can retain deleted files
 in a previous `build/lib` directory; a stale parent plugin manifest can hide newer
@@ -20,7 +29,11 @@ contributions. The isolated wheel check rejects an import from the source tree
 and detects missing contributions caused by such artifacts.
 
 The separate `contract` workflow compares a newly exported OpenAPI document with
-the committed document. Import-linter checks the architecture dependency rules.
+the committed document on pull requests and pushes to `dev` or `main`.
+Import-linter checks the architecture dependency rules, including the prohibition
+on domain imports of infrastructure. A push to either branch or a pull request
+runs nine checks: three headless, three integration, frontend, architecture, and
+OpenAPI. Configure these check names as required in branch protection.
 
 ## What these checks establish
 

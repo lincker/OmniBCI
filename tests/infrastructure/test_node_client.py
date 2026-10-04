@@ -73,7 +73,7 @@ def test_invalid_backend_request_is_fatal(monkeypatch, status):
 
 @pytest.mark.parametrize("content", [b"not json", [], {"success": False},
     {"success": True, "data": {"state": []}}, response(generation=None),
-    b" " * (node_client._MAX_RESPONSE_BYTES + 1)])
+    pytest.param(b" " * (node_client._MAX_RESPONSE_BYTES + 1), id="oversized-response")])
 def test_malformed_or_oversized_configuration_is_fatal(monkeypatch, content):
     install_response(monkeypatch, content)
     with pytest.raises(ValueError):

@@ -3,6 +3,7 @@
 import asyncio
 import multiprocessing as mp
 import threading
+from multiprocessing.connection import wait
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -214,7 +215,8 @@ def test_spawned_configured_worker_reports_real_plugin_initialization(kind, brok
             report = wait_for_startup_report(receiver, process, component=component, timeout_s=15,
                                               expected_revision="r", expected_generation="g")
             assert report.generation == "g"
-            assert receiver.poll(1)
+            # Windows poll() may raise BrokenPipeError after the sender closes.
+            assert wait([receiver], timeout=1) == [receiver]
             with pytest.raises(EOFError):
                 receiver.recv()
             commands.put(AcquisitionCommand.stop_acquisition if kind == "acquisition"

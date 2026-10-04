@@ -161,7 +161,12 @@ def test_identical_archive_does_not_hide_changed_installation(tmp_path, tamper):
 ])
 def test_unsafe_archive_names_are_rejected_before_extraction(tmp_path, name):
     installer = _installer(tmp_path)
-    archive = _archive(tmp_path, entries=[(name, "unsafe")])
+    member = zipfile.ZipInfo(name)
+    # Preserve malicious spelling instead of normalizing separators on Windows.
+    member.filename = name
+    archive = _archive(tmp_path, entries=[(member, "unsafe")])
+    with zipfile.ZipFile(archive) as package:
+        assert package.infolist()[-1].orig_filename == name
 
     with pytest.raises(PackageInstallError):
         installer.install(archive)

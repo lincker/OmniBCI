@@ -102,6 +102,12 @@ source_modules = ["omnibci.application"]
 forbidden_modules = ["omnibci.infrastructure"]
 
 [[tool.importlinter.contracts]]
+name = "Domain must not depend on infrastructure"
+type = "forbidden"
+source_modules = ["omnibci.domain"]
+forbidden_modules = ["omnibci.infrastructure"]
+
+[[tool.importlinter.contracts]]
 name = "infrastructure 不得依赖 presentation"
 type = "forbidden"
 source_modules = ["omnibci.infrastructure"]

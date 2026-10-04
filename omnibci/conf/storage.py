@@ -56,10 +56,10 @@ def file_lock(path: Path, *, timeout_s: float = 5.0):
 
 
 def atomic_write(path: Path, content: str) -> None:
-    """Replace a complete TOML document after flushing a same-directory file."""
+    """Replace TOML atomically without changing the bytes used for its revision."""
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="", dir=path.parent,
                                          prefix=f".{path.name}.", delete=False) as stream:
             temporary = Path(stream.name)
             stream.write(content)

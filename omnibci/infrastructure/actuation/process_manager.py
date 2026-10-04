@@ -20,7 +20,7 @@ StimulationProcessManager.
 from __future__ import annotations
 
 import logging
-import multiprocessing as mp
+import multiprocessing
 from copy import deepcopy
 from threading import RLock
 from typing import Any
@@ -32,6 +32,9 @@ from omnibci.infrastructure.process_lifecycle import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Managed children must inherit the caller's current environment, not a forkserver's.
+mp = multiprocessing.get_context("spawn")
 
 
 def _run_actuation(
