@@ -1,5 +1,7 @@
 """Package lifecycle routes expose reference conflicts and explicit profile copies."""
 from contextlib import nullcontext
+from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -7,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from omnibci.application.services.plugin_package_service import PluginPackageService
 from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, ReferenceSpec, SourceMetadata
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
@@ -70,6 +73,29 @@ def test_upgrade_preview_then_save_new_profile_with_revision_guard(client):
     body["expected_source_revision"] = 99
     assert http.post("/plugin-packages/version-profiles", json=body).status_code == 409
     assert svc.profiles.repository.get_activation() is None
+
+
+@pytest.mark.parametrize("kind", ["decoder", "acquisition"])
+def test_version_proposal_serializes_channel_configuration(client, monkeypatch, kind):
+    http, svc = client
+    alias = "THUBCI_SSVEP_classic40CCA" if kind == "decoder" else "file_reader"
+    definition = svc.profiles.catalog.legacy(kind, alias)
+    values = ({"processing_input": ProcessingInput(outputs=("O2", "O1"),
+               reference=ReferenceSpec("single", ("M1",)))} if kind == "decoder" else {
+        "manual_montage": SourceMetadata("file_reader", 500, (ChannelDescriptor(0, "O1", unit="V"),), 1)})
+    parameters = {} if kind == "decoder" else {"sample_rate": 500, "channel_number": 2}
+    source = svc.profiles.create(kind, definition.selection, "Versioned profile", parameters, **values)
+    target = replace(definition, selection=replace(definition.selection, version="99.0.0"))
+    monkeypatch.setattr(svc.store, "get_package", lambda *_: SimpleNamespace(error=None, available=True, enabled=True))
+    monkeypatch.setattr(svc.store, "configuration", lambda *_: target)
+    monkeypatch.setattr(svc.profiles.catalog, "get", lambda *_: target)
+    body = {"source_profile_id": source.profile_id, "target_version": "99.0.0"}
+    proposal = http.post("/plugin-packages/profile-version-proposals", json=body)
+    assert proposal.status_code == 200, proposal.text
+    copied = http.post("/plugin-packages/version-profiles", json={**body, "expected_source_revision": source.revision})
+    assert copied.status_code == 201, copied.text
+    field = "processing_input" if kind == "decoder" else "manual_montage"
+    assert copied.json()["data"][field] == proposal.json()["data"][field]
 
 
 @pytest.mark.parametrize("body", [{"enabled": "true"}, {"enabled": True, "unknown": 1}])

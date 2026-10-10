@@ -16,6 +16,8 @@ const replay = selection("example.replay");
 const unsavedPlugin = selection("example.new-source");
 const bandpass = selection("example.bandpass");
 const notch = selection("example.notch");
+const decoder = selection("example.decoder");
+const decoderInput = (outputs) => ({ schema_version: 1, outputs, reference: { mode: "original", channels: [] }, excluded_channels: [] });
 const emptyFilter = selection("example.new-filter");
 const clone = (value) => structuredClone(value);
 const schema = {
@@ -36,18 +38,20 @@ function fixture() {
     profile("band-a", "filter", bandpass, "Band A", 6),
     profile("band-b", "filter", bandpass, "Band B", 7),
     profile("notch-a", "filter", notch, "Notch A", 8),
+    { ...profile("decoder-a", "decoder", decoder, "Decoder A", 1), processing_input: decoderInput(["C3", "C4"]) },
+    { ...profile("decoder-b", "decoder", decoder, "Decoder B", 2), processing_input: decoderInput(["P3", "P4"]) },
   ];
   const bind = (slot, id) => {
     const saved = profiles.find((item) => item.profile_id === id);
-    return { slot, profile_id: id, profile_revision: saved.revision, kind: saved.kind, selection: clone(saved.selection), parameters: clone(saved.parameters) };
+    return { slot, profile_id: id, profile_revision: saved.revision, kind: saved.kind, selection: clone(saved.selection), parameters: clone(saved.parameters), ...(saved.processing_input ? { processing_input: clone(saved.processing_input) } : {}) };
   };
   return { profiles, definitions: [
     definition("acquisition", scanV1, "Scan45"), definition("acquisition", scanV2, "Scan45"),
     definition("acquisition", replay, "Replay"), definition("acquisition", unsavedPlugin, "New source"),
     definition("filter", bandpass, "Bandpass"), definition("filter", notch, "Notch"),
-    definition("filter", emptyFilter, "New filter"),
+    definition("filter", emptyFilter, "New filter"), definition("decoder", decoder, "Decoder"),
   ], activation: { revision: "accepted-revision", bindings: [bind("acquisition.source", "lab-a"),
-    bind("processing.filter.first", "band-a"), bind("processing.filter.second", "notch-a")] } };
+    bind("processing.filter.first", "band-a"), bind("processing.filter.second", "notch-a"), bind("processing.decoder", "decoder-a")] } };
 }
 
 const sameDependencies = (left, right) => !!left && !!right && left.length === right.length && left.every((value, index) => Object.is(value, right[index]));
@@ -134,6 +138,7 @@ function control(harness, label, type = "select") {
 }
 const options = (select) => elements(select).filter((item) => item.type === "option").map((item) => ({ value: item.props.value, label: text(item) }));
 const form = (harness) => elements(harness.tree).find((item) => item.type.name === "SchemaForm");
+const input = (harness) => elements(harness.tree).find((item) => item.type.name === "ProcessingInput");
 const montage = (harness) => elements(harness.tree).find((item) => item.type.name === "AcquisitionMontage");
 const dialog = (harness) => elements(harness.tree).find((item) => item.type.name === "ConfigDialog");
 const filterRows = (harness) => elements(harness.tree).filter((item) => item.type === "ol" && item.props.className === "filter-chain")
@@ -157,14 +162,16 @@ async function withProfiles(module, action, { engineRunning = false } = {}) {
   api.catalog = async (kind) => clone(data.definitions.filter((item) => item.kind === kind));
   api.profiles = async () => clone(data.profiles);
   api.activation = async () => clone(data.activation);
-  api.create = async (kind, choice, name, parameters, manual_montage) => {
-    const montage = manual_montage === undefined ? {} : { manual_montage: clone(manual_montage) };
+  api.create = async (kind, choice, name, parameters, manual_montage, processing_input) => {
+    const montage = { ...(manual_montage === undefined ? {} : { manual_montage: clone(manual_montage) }),
+      ...(processing_input === undefined ? {} : { processing_input: clone(processing_input) }) };
     calls.create.push(clone({ kind, selection: choice, name, parameters, ...montage }));
     const saved = { profile_id: `created-${calls.create.length}`, kind, selection: clone(choice), name, parameters: clone(parameters), revision: 1, ...montage };
     data.profiles.push(saved); return clone(saved);
   };
-  api.update = async (saved, name, parameters, manual_montage) => {
-    const montage = manual_montage === undefined ? {} : { manual_montage: clone(manual_montage) };
+  api.update = async (saved, name, parameters, manual_montage, processing_input) => {
+    const montage = { ...(manual_montage === undefined ? {} : { manual_montage: clone(manual_montage) }),
+      ...(processing_input === undefined ? {} : { processing_input: clone(processing_input) }) };
     calls.update.push(clone({ profile: saved, name, parameters, ...montage }));
     const updated = { ...saved, name, parameters: clone(parameters), revision: saved.revision + 1, ...montage };
     data.profiles = data.profiles.map((item) => item.profile_id === saved.profile_id ? updated : item); return clone(updated);
@@ -367,7 +374,7 @@ test("saving changed parameters keeps the old activation until an explicit revie
     assert.deepEqual(calls.review[0].refresh_slots, ["acquisition.source"]);
     assert.deepEqual(calls.review[0].bindings.find((item) => item.slot === "acquisition.source"), { slot: "acquisition.source", profile_id: "lab-a" });
     assert.equal(calls.review[0].expected_revision, accepted.revision);
-    assert.equal(calls.review[0].include_signal_setup, false);
+    assert.equal("include_signal_setup" in calls.review[0], false);
     assert.equal(calls.apply.length, 0);
     assert.deepEqual(data.activation, accepted);
   });
@@ -424,5 +431,58 @@ test("discarding an editor change preserves pending filter order, while Discard 
     assert.equal(control(harness, "Filter 2 profile").props.value, "notch-a");
     assert.equal(!!button(harness, "Review and apply filter chain").props.disabled, true);
     assert.equal(calls.review.length, 0); assert.equal(calls.apply.length, 0);
+  });
+});
+
+
+test("decoder profiles retain independent ordered channels and wait for reviewed activation", async () => {
+  await withProfiles("processing", async (harness, calls, data) => {
+    const accepted = clone(data.activation);
+    assert.deepEqual(input(harness).props.value.outputs, ["C3", "C4"]);
+    assert.equal(montage(harness), undefined, "Processing must not edit source facts");
+    const updatedInput = { ...decoderInput(["C4", "C3"]), reference: { mode: "single", channels: ["M1"] } };
+    input(harness).props.onChange(updatedInput); await harness.settle();
+    assert.equal(button(harness, "Review and apply profile").props.disabled, true);
+    await click(harness, "Save profile");
+    assert.deepEqual(calls.update[0].processing_input, updatedInput);
+    assert.deepEqual(data.activation, accepted);
+    assert.match(text(harness.tree), /saved changes that are not selected/);
+    await change(harness, "Profile", "decoder-b");
+    assert.deepEqual(input(harness).props.value.outputs, ["P3", "P4"]);
+    await change(harness, "Profile", "decoder-a");
+    assert.deepEqual(input(harness).props.value, updatedInput);
+    await click(harness, "Review and apply profile");
+    assert.deepEqual(calls.review[0].refresh_slots, ["processing.decoder"]);
+    assert.equal(calls.apply.length, 0);
+    assert.deepEqual(data.activation, accepted);
+  });
+});
+
+test("discard and duplication keep channel input inside its decoder profile", async () => {
+  await withProfiles("processing", async (harness, calls) => {
+    input(harness).props.onChange(decoderInput(["C4"])); await harness.settle();
+    await click(harness, "Discard");
+    assert.deepEqual(input(harness).props.value.outputs, ["C3", "C4"]);
+    input(harness).props.onChange(decoderInput(["C4"])); await harness.settle();
+    await click(harness, "Duplicate profile");
+    dialog(harness).props.onConfirm("Decoder C"); await harness.settle();
+    assert.deepEqual(calls.create[0].processing_input.outputs, ["C4"]);
+    assert.equal(calls.update.length, 0);
+    await change(harness, "Profile", "decoder-a");
+    assert.deepEqual(input(harness).props.value.outputs, ["C3", "C4"]);
+  });
+});
+
+test("saving a legacy decoder name does not adopt a new channel input implicitly", async () => {
+  await withProfiles("processing", async (harness, calls, data) => {
+    delete data.profiles.find((item) => item.profile_id === "decoder-a").processing_input;
+    await click(harness, "Reload");
+    assert.equal(input(harness).props.value, null);
+    assert.equal(button(harness, "Duplicate profile").props.disabled, true);
+    assert.match(text(harness.tree), /before duplicating this profile/);
+    await change(harness, "Name", "Renamed decoder", "input");
+    await click(harness, "Save profile");
+    assert.equal("processing_input" in calls.update[0], false);
+    assert.equal(input(harness).props.value, null);
   });
 });

@@ -10,16 +10,17 @@ evidence remains required.
    Acquisition > Source montage**, read the connected source or fill missing
    facts manually. Both the read-only observation and manual declarations are
    saved with the acquisition profile. Save, review, and apply manual changes.
-2. Bind source rows to electrode names. Each binding retains the expected source
-   label so a changed order cannot silently reuse an index. Select an installed
-   MNE template when positions are useful; coordinates are optional for mapping.
-3. Enter the ordered algorithm outputs and choose original, single, average, or
-   bipolar reference. Average reference uses the explicit pool, so CAR is an
-   explicit EEG pool and linked mastoids are an explicit pair. Reference-only
-   channels need not be algorithm outputs. Rereferencing requires established
-   voltage units and a compatible original reference; unknown facts stay unknown.
-4. Preview, save, then review and apply the saved signal setup. General settings
-   and plugin-profile reviews do not implicitly include an unapplied signal edit.
+2. In **Setup > Processing > Decoder > Channel input**, configure the selected
+   decoder profile's ordered outputs, exclusions, and original, single, average,
+   or bipolar software reference. Channel names resolve against the current
+   acquisition montage; source facts are read-only here.
+3. Average reference uses an explicit pool. Reference-only channels need not be
+   algorithm outputs. Rereferencing requires established voltage units and a
+   compatible original reference; unknown facts stay unknown.
+4. Preview, save the decoder profile, then review and apply it. Switching decoder
+   profiles restores their independent input configurations. Saving alone never
+   changes accepted or running values. A changed input requires a rebuild and
+   fresh preparation; a missing channel blocks preparation before recording.
 5. Start recording. The connected source and processing worker must acknowledge
    preparation before the session is created or the source starts fetching.
    **Run** displays readiness; sessions and their JSON/CSV exports retain the
@@ -28,8 +29,9 @@ evidence remains required.
 The implementation uses the existing Scan45, CURRY, and CNT adapters. Scan45
 header discovery and other vendors remain deferred. The layout view is a table
 with position availability; a two-dimensional scalp preview remains deferred.
-Old activations without `SIGNAL.setup` keep the previous identity behavior and
-their stored revision hashes. The current session repository is in memory.
+Old activations without `processing_input` keep their previous global setup or
+identity behavior and stored revision hashes. New decoder profiles default to
+all acquired channels with their original reference. The current session repository is in memory.
 
 OmniBCI will discover the acquisition source, establish the correspondence
 between signal rows and electrodes, and prepare the channels required by the
@@ -37,8 +39,9 @@ selected algorithm. Channel preparation may include rereferencing. Preparation
 must finish before samples enter baseline or epoch buffers.
 
 The first release covers the bundled Scan45, CURRY 8, and CNT sources, manual
-metadata where discovery is unavailable, electrode templates, channel selection
-and ordering, and fixed rereferencing. It preserves the current internal
+metadata where discovery is unavailable, channel selection and ordering, and
+fixed rereferencing. Existing template-based plans remain readable; new source
+coordinates are entered or read in Acquisition. It preserves the current internal
 convention of one final trigger row. A physical source can have a different
 event representation; its adapter remains responsible for that conversion.
 
@@ -85,7 +88,7 @@ configuration changes, and session history cannot silently change row meaning.
 | [ProcessingPipeline](../omnibci/infrastructure/neuroengine/processing/epoch/pipeline.py) transforms the window but leaves supplied baseline and latest unchanged | Apply this channel transform before all three are accumulated |
 | [PluginContext](../omnibci/sdk/__init__.py) documents channel names as acquired channels | Add an explicit description of the actual plugin input instead of silently changing the existing field |
 | [ActivationSnapshot](../omnibci/application/plugin_profiles.py) hashes settings and pinned bindings | Include signal configuration in the accepted snapshot and retain old revision semantics |
-| [Profile review](../frontend/src/PluginProfiles.tsx) normally excludes saved host changes | Add an explicit scoped refresh for signal configuration |
+| [Profile review](../frontend/src/PluginProfiles.tsx) normally excludes saved host changes | Include channel input in the selected decoder binding refresh |
 | [Activation storage](../omnibci/infrastructure/repositories/plugin_profile_repository.py) replaces the current activation file | A session must retain its resolved signal description; a revision alone cannot reconstruct history |
 
 ## Configuration ownership and data contracts
@@ -97,12 +100,18 @@ Manual values are copied into the accepted acquisition binding. A generated
 `CH1` label is marked as generated, so it cannot be confused with a reported
 electrode name. Known device/file facts cannot be edited through the profile API.
 
-The host-owned `SIGNAL.setup` retains source/electrode bindings, optional derived
-layout selection, and processing input configuration, with its existing revision
-guard and activation copy. Existing `manual_metadata` entries remain readable;
-new source declarations belong to the acquisition profile. Processing input
-selection is still global rather than saved per decoder profile. A generated
-plan is an immutable runtime result, not another editable configuration source.
+Decoder profiles own `processing_input`: ordered outputs, software reference,
+and excluded channels. The field is copied into the accepted decoder binding.
+The runtime projects it into `SignalSetup` using the currently selected source
+identity; the compiler and real-time transform remain shared. A generated plan
+is an immutable runtime result, not another editable configuration source.
+
+Existing profiles without the field retain legacy `SIGNAL.setup` behavior until
+explicit adoption. The retired global editor, global write API, separate signal
+review flag, and unused template-list API have been removed. Legacy assignments,
+manual metadata, and templates remain supported when reading existing plans.
+Import copies only processing choices; source declarations must be reviewed in
+Acquisition before adopting the new profile field. No user files are rewritten.
 
 Source plugin parameters continue to own connection and protocol parameters.
 Their existing sampling/count declarations remain explicit expectations or
@@ -114,7 +123,8 @@ includes the event row.
 | --- | --- | --- |
 | `SourceMetadata` | Source identity; connection identity; sample rate; ordered signal descriptors; adapter output row count; native event description; normalized trigger index; field provenance | Acquisition observation |
 | Signal descriptor | Source row identifier/index, original label, signal type, unit and established scale; missing optional facts remain unknown | Acquisition observation plus explicit missing-field declarations |
-| `SignalSetup` | Schema version; source binding; electrode assignments; optional layout; original reference declaration; ordered outputs; reference specification; static exclusions | Saved host configuration |
+| `ProcessingInput` | Schema version; ordered outputs; software reference; exclusions | Decoder profile and pinned binding |
+| `SignalSetup` | Current source identity plus processing input; legacy assignments/layout/source declarations when reading old configuration | Derived runtime projection or read-only legacy compatibility |
 | `ResolvedSignalPlan` | Source description; resolved acquisition and processing layouts; input dependencies; transform; original/software references; template provenance; configuration revision and semantic fingerprint | Application preparation result |
 | Plugin input description | Effective sample rate, ordered channels/types/units/reference and optional positions actually presented to the plugin | Derived processing context |
 
@@ -204,51 +214,35 @@ silently. Test disconnected, timeout, incomplete, malformed, and stale metadata.
 For now the processing engine supports positive integer rates; report an
 unsupported fractional rate rather than rounding it.
 
-## Phase 3 Resolve electrode layouts and save signal setup
+## Phase 3 Save processing input with the decoder profile
 
-Deliver backend configuration, layout resolution, and preview APIs. Signal
-processing still follows the existing identity path until Phase 5 enables it.
+1. Validate and persist `processing_input` through the existing profile API and
+   revision-checked TOML repository. Source declarations remain in Acquisition.
+2. Pin input choices in the accepted decoder binding. Omitted fields in existing
+   documents stay omitted, preserving old activation hashes and legacy behavior.
+   New decoder profiles explicitly select all channels and original reference.
+3. Resolve channel names against the connected source at preparation. Source
+   reordering can change source indices without changing algorithm output order.
+   Missing channels, invalid references, or conflicting source facts block start.
+4. Preview decoder drafts without mutation. Source coordinates retain their
+   observed/manual provenance; legacy templates remain supported by the compiler.
+5. Project the pinned input consistently in managed and standalone engine nodes.
+   Review shows the derived channel plan. Input changes require a rebuild;
+   unrelated decoder parameters retain their supported trial-boundary behavior.
+6. Preserve old global configurations as read-only compatibility data. Explicit
+   adoption saves processing choices in a decoder profile; manual source fields
+   must be completed in Acquisition. Remove replaced writers after validation.
 
-1. Add strict validation and revision-checked persistence for `SIGNAL.setup`.
-   Reuse the existing settings storage and change guard. Add dedicated typed
-   setup API models instead of widening every numeric General-setting control.
-2. Bind each acquisition signal row to a logical channel/electrode using a
-   source identifier and the expected observed label/order. A changed source
-   selection or conflicting observation requires revalidation. Do not use fuzzy
-   name matching or silently reuse an index against a different row order.
-3. Resolve device/file positions first when available. Otherwise allow an
-   explicit MNE template and selected electrode names. A manual mapping may
-   have no coordinates. Unknown labels remain unlocated; they are not assigned
-   invented scalp positions.
-4. Preserve coordinate frame and units, distinguishing template from measured
-   positions. Convert to a defined display frame only with a valid transform;
-   never treat arbitrary template/MRI coordinates as head coordinates. Freeze
-   resolved positions and the provider/version with the runtime/session result.
-5. Provide read-only template listing/detail and a side-effect-free preview
-   endpoint. Preview returns resolved rows, algorithm outputs, reference
-   dependencies, warnings, and field-specific errors.
-6. Declare host ownership and engine-node validation/projection for this
-   structured value. Update candidate construction to refresh only the saved
-   signal setting when requested; do not automatically apply unrelated saved
-   General settings. Apply uses the reviewed frozen candidate.
-7. Existing accepted activations remain readable without rewriting or adding
-   defaults to their stored content/hash. Missing `SIGNAL.setup` means legacy
-   identity behavior. Read old `ACQUISITION.channel_names` as migration input;
-   once explicit setup exists, it is the only writable owner of channel names.
-   Preserve old fields as historical compatibility data rather than merging
-   them into a second live definition.
-
-Primary seams: [config service](../omnibci/application/services/config_service.py),
-[host ownership](../omnibci/application/activation_settings.py),
-[activation construction](../omnibci/application/services/plugin_profile_service.py),
+Primary seams: [profile service](../omnibci/application/services/plugin_profile_service.py),
+[signal preparation](../omnibci/application/services/signal_setup_service.py),
 [node projection](../omnibci/application/node_configuration.py), and
-[runtime request schema](../omnibci/presentation/schemas/runtime_config.py).
+[runtime planning](../omnibci/application/services/runtime_configuration_service.py).
 
-Acceptance: reordered observations cannot silently reuse a saved row binding;
-unlocated channels remain valid for operations that do not require geometry;
-invalid/duplicate electrode assignments and malformed coordinates are rejected.
-Test save without apply, revision conflicts, old activation hashes, scoped
-refresh, and isolation of unrelated host settings.
+Acceptance: decoder A/B inputs survive switching and repository reload; saved
+edits do not mutate accepted bindings; source switching resolves the same input
+names against the new source; missing channels block recording; legacy hashes
+remain unchanged. Profile persistence, preview, runtime classification, and real
+CNT integration cover these boundaries.
 
 ## Phase 4 Compile and verify channel transformations
 
@@ -398,18 +392,15 @@ Deliver the user-facing workflow after backend preparation is available.
    native event origin, and the normalized trigger row. Add an explicit inspect
    or refresh action that respects source lifecycle restrictions. Save missing
    names, types, units, reference and optional coordinates in this profile.
-2. Channels and Montage shows source row, reported label, assigned electrode,
-   type, unit, field provenance, and location availability. Offer a template
-   selector and manual assignments. Add the two-dimensional position preview
-   after the table works; use the same resolved metadata for both views.
-3. Processing shows ordered algorithm outputs, reference mode/pool, excluded
-   channels, and the effective output reference. Show dependencies that are used
-   only for reference. Acquisition profile declarations and processing input
-   settings have their respective revision guards and explicit Apply steps.
+2. Acquisition shows source row, label, type, unit, field provenance, and optional
+   position. There is no second writable source-description editor in Processing.
+3. Each decoder profile shows ordered algorithm outputs, reference mode/pool,
+   and excluded channels. Source information is read-only. Its existing profile
+   revision and Review/Apply workflow also govern channel input changes.
 4. Preview displays the resolved source-to-output mapping and actionable errors.
    Offline editing is allowed, but it is not evidence that the connected source
    has been validated. Start remains a backend-gated action.
-5. Review explicitly includes the saved signal setting, shows semantic changes
+5. Review includes the selected decoder input, shows semantic changes
    such as output order/reference pool, and explains rebuild/continuation effects.
    Saving alone never changes the active plan. Run displays signal readiness and
    the active plan summary, not an unapplied draft.

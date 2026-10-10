@@ -142,6 +142,64 @@ def test_acquisition_profile_saves_manual_montage_and_pins_it_on_selection(clien
     assert service.resolve_settings()["ACQUISITION.manual_montage"]["channels"][0]["name"] == "C3"
 
 
+def test_decoder_profile_saves_and_pins_processing_input(client):
+    http, service, _ = client
+    profile = create(client, "decoder", "THUBCI_SSVEP_classic40CCA")
+    assert profile["processing_input"] == {"schema_version": 1, "outputs": [],
+        "reference": {"mode": "original", "channels": []}, "excluded_channels": []}
+    path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
+    channel_input = {"outputs": ["O2", "O1"], "reference": {"mode": "single", "channels": ["M1"]}}
+    updated = http.put(path, json={"name": profile["name"], "parameters": profile["parameters"],
+        "expected_revision": profile["revision"], "processing_input": channel_input})
+    assert updated.status_code == 200, updated.text
+    configured = updated.json()["data"]
+    selected = accept(http, complete_profiles(client, [("processing.decoder", configured)]))
+    assert selected.status_code == 200, selected.text
+    decoder = next(binding for binding in selected.json()["data"]["bindings"] if binding["kind"] == "decoder")
+    assert decoder["processing_input"] == configured["processing_input"]
+    assert service.resolve_settings()["SIGNAL.setup"]["outputs"] == ["O2", "O1"]
+    cleared = http.put(path, json={"name": configured["name"], "parameters": configured["parameters"],
+        "expected_revision": configured["revision"], "processing_input": None})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["data"]["processing_input"] == profile["processing_input"]
+    assert service.resolve_settings()["SIGNAL.setup"]["outputs"] == ["O2", "O1"]
+
+
+def test_new_decoder_with_null_input_uses_explicit_default(client):
+    http, service, _ = client
+    response = http.post(f"{PREFIX}/plugin-profiles", json={
+        "kind": "decoder", "selection": service.catalog.legacy("decoder", "THUBCI_SSVEP_classic40CCA").selection.to_dict(),
+        "name": "Default input", "processing_input": None,
+    })
+    assert response.status_code == 201, response.text
+    assert response.json()["data"]["processing_input"]["reference"]["mode"] == "original"
+    assert response.json()["data"]["processing_input"]["outputs"] == []
+
+
+@pytest.mark.parametrize("channel_input", [
+    {"outputs": ["O1", "O1"]}, {"source_id": "file_reader"}, {"original_reference": "Cz"},
+    {"assignments": []}, {"reference": {"mode": "average", "channels": []}},
+])
+def test_invalid_decoder_input_returns_422_without_saving(client, channel_input):
+    http, _, _ = client
+    profile = create(client, "decoder", "THUBCI_SSVEP_classic40CCA")
+    path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
+    response = http.put(path, json={"name": profile["name"], "parameters": profile["parameters"],
+        "expected_revision": profile["revision"], "processing_input": channel_input})
+    assert response.status_code == 422, response.text
+    assert http.get(path).json()["data"] == profile
+
+
+def test_acquisition_profile_rejects_processing_input(client):
+    http, _, _ = client
+    profile = create(client)
+    path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
+    response = http.put(path, json={"name": profile["name"], "parameters": profile["parameters"],
+        "expected_revision": profile["revision"], "processing_input": {}})
+    assert response.status_code == 422, response.text
+    assert http.get(path).json()["data"] == profile
+
+
 def test_read_only_source_observation_is_rejected_by_create_and_update(client):
     http, service, _ = client
     request = {"kind": "acquisition", "selection": service.catalog.legacy("acquisition", "file_reader").selection.to_dict(),

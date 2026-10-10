@@ -217,6 +217,11 @@ def materialize_node_configuration(configuration: NodeConfiguration,
             filters.append(definition.plugin_type)
     if configuration.role == "engine":
         result["ALGORITHM.filters"] = filters
+        decoder = next(binding for binding in configuration.bindings if binding.kind == "decoder")
+        if decoder.processing_input is not None:
+            result["SIGNAL.setup"] = decoder.processing_input.as_signal_setup(
+                result["ACQUISITION.signal_source"],
+            ).to_dict()
     result["PLUGINS.bindings"] = [binding.to_dict() for binding in configuration.bindings]
     result["CONFIG.revision"] = configuration.revision
     if configuration.generation is not None:

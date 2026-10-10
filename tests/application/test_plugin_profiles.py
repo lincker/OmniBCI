@@ -9,7 +9,7 @@ from omnibci.application.plugin_profiles import (
     ActivationSnapshot, PluginProfile, PluginProfileValidationError,
     PluginSelection, ProfileBinding,
 )
-from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
+from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, ReferenceSpec, SourceMetadata
 
 
 def _montage():
@@ -62,6 +62,26 @@ def test_manual_montage_is_frozen_in_binding_and_affects_activation_revision():
     assert ActivationSnapshot.from_dict(selected.to_dict()) == selected
     assert selected.bindings[0].manual_montage.connection_id == ""
     assert "acquisition_montage" not in selected.bindings[0].to_dict()
+
+
+def test_processing_input_is_decoder_only_and_frozen_in_activation():
+    channel_input = ProcessingInput(outputs=("O2", "O1"), reference=ReferenceSpec("single", ("M1",)))
+    profile = PluginProfile(str(uuid4()), "Decoder", "decoder",
+                            PluginSelection("acme.decoder", "main", None), {},
+                            processing_input=channel_input)
+    assert PluginProfile.from_dict(profile.to_dict()) == profile
+    legacy = ActivationSnapshot({}, (_binding(),))
+    assert "processing_input" not in legacy.bindings[0].to_dict()
+    selected = ActivationSnapshot({}, (replace(_binding(), processing_input=channel_input),))
+    assert ActivationSnapshot.from_dict(selected.to_dict()) == selected
+    assert selected.revision != legacy.revision
+    exported = selected.to_dict()
+    exported["bindings"][0]["processing_input"]["outputs"].reverse()
+    assert selected.bindings[0].processing_input.outputs == ("O2", "O1")
+    with pytest.raises(PluginProfileValidationError, match="decoder"):
+        replace(profile, kind="filter")
+    with pytest.raises(PluginProfileValidationError, match="decoder"):
+        replace(_binding("acquisition.source", "acquisition"), processing_input=channel_input)
 
 
 def _binding(slot="processing.decoder", kind="decoder", **fields):

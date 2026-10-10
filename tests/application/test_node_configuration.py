@@ -9,7 +9,7 @@ from omnibci.application.node_configuration import (
 from omnibci.application.plugin_profiles import ProfileBinding, PluginSelection
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration
-from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
+from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, SourceMetadata
 
 
 SLOTS = {
@@ -149,6 +149,22 @@ def test_invalid_signal_setup_is_rejected_in_engine_projection(runtime):
     runtime["SIGNAL.setup"] = {"source_id": "test-source", "reference": {"mode": "average", "channels": []}}
     with pytest.raises(ValueError, match="nonempty"):
         project_node_configuration(runtime, "engine")
+
+
+@pytest.mark.parametrize("processing_input", [
+    ProcessingInput(),
+    ProcessingInput.from_dict({"outputs": ["O2", "O1"],
+                               "reference": {"mode": "single", "channels": ["M1"]}}),
+])
+def test_decoder_input_overrides_legacy_setup_using_pinned_source(runtime, processing_input):
+    runtime["SIGNAL.setup"] = {"source_id": "old-device", "outputs": ["obsolete"]}
+    decoder = ProfileBinding.from_dict(runtime["PLUGINS.bindings"][1])
+    runtime["PLUGINS.bindings"][1] = replace(decoder, processing_input=processing_input).to_dict()
+    dto = NodeConfiguration.from_dict(project_node_configuration(runtime, "engine").to_dict())
+    result = materialize_node_configuration(dto, LocalCatalog({"acquisition", "decoder", "epoch_detector"}))
+    assert result["SIGNAL.setup"] == processing_input.as_signal_setup("local_acquisition").to_dict()
+    assert dto.bindings[1].processing_input == processing_input
+    assert "SIGNAL.setup" not in project_node_configuration(runtime, "stimulation").settings
 
 
 def test_projected_dto_is_independent_of_input_and_export_mutation(runtime):

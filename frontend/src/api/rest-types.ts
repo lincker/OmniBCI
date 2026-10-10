@@ -441,8 +441,7 @@ export interface paths {
         };
         /** Read Signal Setup */
         get: operations["read_signal_setup_api_v1_config_signal_get"];
-        /** Save Signal Setup */
-        put: operations["save_signal_setup_api_v1_config_signal_put"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -461,40 +460,6 @@ export interface paths {
         put?: never;
         /** Preview Signal Setup */
         post: operations["preview_signal_setup_api_v1_config_signal_preview_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/config/signal/templates": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Signal Templates */
-        get: operations["signal_templates_api_v1_config_signal_templates_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/config/signal/templates/{name}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Signal Template */
-        get: operations["signal_template_api_v1_config_signal_templates__name__get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -851,11 +816,6 @@ export interface components {
              * @default false
              */
             include_host_settings: boolean;
-            /**
-             * Include Signal Setup
-             * @default false
-             */
-            include_signal_setup: boolean;
         };
         /** AcquisitionStatusResponse */
         AcquisitionStatusResponse: {
@@ -1190,34 +1150,6 @@ export interface components {
             message: string;
             data?: components["schemas"]["SignalSetupResponse"] | null;
         };
-        /** ApiResponse[SignalTemplateResponse] */
-        ApiResponse_SignalTemplateResponse_: {
-            /**
-             * Success
-             * @default true
-             */
-            success: boolean;
-            /**
-             * Message
-             * @default ok
-             */
-            message: string;
-            data?: components["schemas"]["SignalTemplateResponse"] | null;
-        };
-        /** ApiResponse[SignalTemplatesResponse] */
-        ApiResponse_SignalTemplatesResponse_: {
-            /**
-             * Success
-             * @default true
-             */
-            success: boolean;
-            /**
-             * Message
-             * @default ok
-             */
-            message: string;
-            data?: components["schemas"]["SignalTemplatesResponse"] | null;
-        };
         /** ApiResponse[SourceMetadataModel] */
         ApiResponse_SourceMetadataModel_: {
             /**
@@ -1406,6 +1338,7 @@ export interface components {
                 [key: string]: unknown;
             };
             manual_montage?: components["schemas"]["SourceMetadataModel"] | null;
+            processing_input?: components["schemas"]["ProcessingInputModel"] | null;
         };
         /** CreateSessionRequest */
         CreateSessionRequest: {
@@ -1737,6 +1670,7 @@ export interface components {
             revision: number;
             readonly acquisition_montage?: components["schemas"]["SourceMetadataModel"] | null;
             manual_montage?: components["schemas"]["SourceMetadataModel"] | null;
+            processing_input?: components["schemas"]["ProcessingInputModel"] | null;
         };
         /** PluginSelectionResponse */
         PluginSelectionResponse: {
@@ -1749,8 +1683,22 @@ export interface components {
         };
         /** PreviewSignalSetupRequest */
         PreviewSignalSetupRequest: {
-            setup: components["schemas"]["SignalSetupModel"];
+            processing_input: components["schemas"]["ProcessingInputModel"];
             metadata?: components["schemas"]["SourceMetadataModel"] | null;
+        };
+        /** ProcessingInputModel */
+        ProcessingInputModel: {
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version: 1;
+            /** Outputs */
+            outputs?: (string | components["schemas"]["BipolarOutputModel"])[];
+            reference?: components["schemas"]["ReferenceModel"];
+            /** Excluded Channels */
+            excluded_channels?: string[];
         };
         /** ProfileBindingResponse */
         ProfileBindingResponse: {
@@ -1773,6 +1721,7 @@ export interface components {
             /** Profile Revision */
             profile_revision: number;
             manual_montage?: components["schemas"]["SourceMetadataModel"] | null;
+            processing_input?: components["schemas"]["ProcessingInputModel"] | null;
         };
         /** ProfileVersionProposalResponse */
         ProfileVersionProposalResponse: {
@@ -1796,6 +1745,8 @@ export interface components {
             configuration_version: number;
             /** Target Enabled */
             target_enabled: boolean;
+            manual_montage?: components["schemas"]["SourceMetadataModel"] | null;
+            processing_input?: components["schemas"]["ProcessingInputModel"] | null;
         };
         /** ProfileVersionRequest */
         ProfileVersionRequest: {
@@ -1887,11 +1838,6 @@ export interface components {
              * @default false
              */
             include_host_settings: boolean;
-            /**
-             * Include Signal Setup
-             * @default false
-             */
-            include_signal_setup: boolean;
         };
         /** RuntimePlanResponse */
         RuntimePlanResponse: {
@@ -1925,12 +1871,6 @@ export interface components {
             errors: string[];
             /** Signal Summary */
             signal_summary?: string | null;
-        };
-        /** SaveSignalSetupRequest */
-        SaveSignalSetupRequest: {
-            setup: components["schemas"]["SignalSetupModel"];
-            /** Expected Revision */
-            expected_revision: string;
         };
         /** SelectProfileBindingRequest */
         SelectProfileBindingRequest: {
@@ -2082,15 +2022,15 @@ export interface components {
              * @constant
              */
             schema_version: 1;
-            /** Source Id */
-            source_id: string;
-            /** Assignments */
-            assignments?: components["schemas"]["ChannelAssignmentModel"][];
             /** Outputs */
             outputs?: (string | components["schemas"]["BipolarOutputModel"])[];
             reference?: components["schemas"]["ReferenceModel"];
             /** Excluded Channels */
             excluded_channels?: string[];
+            /** Source Id */
+            source_id: string;
+            /** Assignments */
+            assignments?: components["schemas"]["ChannelAssignmentModel"][];
             /** Original Reference */
             original_reference?: string | null;
             /** Template */
@@ -2101,39 +2041,16 @@ export interface components {
         SignalSetupResponse: {
             /** Selected Source Id */
             selected_source_id?: string | null;
+            /** Selected Decoder Profile Id */
+            selected_decoder_profile_id?: string | null;
             source_metadata?: components["schemas"]["SourceMetadataModel"] | null;
+            legacy_setup?: components["schemas"]["SignalSetupModel"] | null;
             setup: components["schemas"]["SignalSetupModel"] | null;
             /** Revision */
             revision: string;
             accepted_setup: components["schemas"]["SignalSetupModel"] | null;
             active_setup: components["schemas"]["SignalSetupModel"] | null;
             readiness: components["schemas"]["SignalReadinessModel"];
-        };
-        /** SignalTemplateResponse */
-        SignalTemplateResponse: {
-            /** Name */
-            name: string;
-            /** Positions */
-            positions: {
-                [key: string]: number[];
-            };
-            /**
-             * Coordinate Frame
-             * @constant
-             */
-            coordinate_frame: "head";
-            /**
-             * Unit
-             * @constant
-             */
-            unit: "m";
-            /** Provider */
-            provider: string;
-        };
-        /** SignalTemplatesResponse */
-        SignalTemplatesResponse: {
-            /** Templates */
-            templates: string[];
         };
         /** SourceMetadataModel */
         SourceMetadataModel: {
@@ -2261,6 +2178,7 @@ export interface components {
             /** Expected Revision */
             expected_revision: number;
             manual_montage?: components["schemas"]["SourceMetadataModel"] | null;
+            processing_input?: components["schemas"]["ProcessingInputModel"] | null;
         };
     };
     responses: never;
@@ -4820,93 +4738,6 @@ export interface operations {
             };
         };
     };
-    save_signal_setup_api_v1_config_signal_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SaveSignalSetupRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiResponse_SignalSetupResponse_"];
-                };
-            };
-            /** @description Bad request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description API token required or invalid */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Service unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     preview_signal_setup_api_v1_config_signal_preview_post: {
         parameters: {
             query?: never;
@@ -4927,174 +4758,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_SignalPreviewResponse_"];
-                };
-            };
-            /** @description Bad request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description API token required or invalid */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Service unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    signal_templates_api_v1_config_signal_templates_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiResponse_SignalTemplatesResponse_"];
-                };
-            };
-            /** @description Bad request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description API token required or invalid */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Service unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    signal_template_api_v1_config_signal_templates__name__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiResponse_SignalTemplateResponse_"];
                 };
             };
             /** @description Bad request */

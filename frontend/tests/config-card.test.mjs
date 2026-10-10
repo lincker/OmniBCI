@@ -167,7 +167,7 @@ test("Save sends host updates only and Review retains every selected plugin bind
       { slot: "acquisition.source", profile_id: "source" },
       { slot: "processing.filter.first", profile_id: "filter" },
       { slot: "processing.filter.second", profile_id: "filter" },
-    ], expected_revision: "accepted", refresh_slots: [], include_host_settings: true, include_signal_setup: false }]);
+    ], expected_revision: "accepted", refresh_slots: [], include_host_settings: true }]);
     assert.deepEqual(applied, [], "Only the runtime review dialog may apply the saved settings");
     assert.deepEqual([...new Set(calls.map((call) => call.path))], ["/api/v1/config", "/api/v1/config/activation"]);
   });

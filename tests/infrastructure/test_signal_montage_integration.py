@@ -3,6 +3,7 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from omnibci.application.commands.acquisition_commands import (
@@ -14,6 +15,8 @@ from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.application.services.signal_setup_service import SignalSetupService
 from omnibci.bootstrap import assemble, register_engine_listeners, _acquisition_montage_binding
+from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, ResolvedSignalPlan, SourceMetadata
+from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
@@ -25,15 +28,16 @@ from omnibci.shared.events import EventType
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connection(tmp_path):
-    setup = {
-        "source_id": "file_reader", "outputs": ["O2", "Pz"],
+    processing_input = ProcessingInput.from_dict({
+        "outputs": ["O2", "Pz"],
         "reference": {"mode": "single", "channels": ["Oz"]},
-        "original_reference": "Cz", "template": "standard_1020",
-    }
+    })
+    manual = SourceMetadata("file_reader", 1000, tuple(
+        ChannelDescriptor(index, f"CH{index + 1}", signal_type="unknown", name_provenance="generated")
+        for index in range(9)), 9, original_reference="Cz")
     host = {"NEUROENGINE.message_server_port": 0, "NEUROENGINE.startup_timeout_s": 15.0,
             "NEUROENGINE.command_timeout_s": 30.0, "STIMULATION.auto_spawn": True,
-            "ACTUATION.enabled": False, "ALGORITHM.baseline_duration": 0.2,
-            "SIGNAL.setup": setup}
+            "ACTUATION.enabled": False, "ALGORITHM.baseline_duration": 0.2}
     profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "profiles"),
                                     CatalogConfigurationAdapter(), settings_source=lambda: host)
     selections = []
@@ -46,8 +50,15 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
         ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40", {}),
     ):
-        profile = profiles.create(kind, profiles.catalog.legacy(kind, alias).selection, alias, parameters)
+        extra = {"manual_montage": manual} if kind == "acquisition" else (
+            {"processing_input": processing_input} if kind == "decoder" else {})
+        profile = profiles.create(kind, profiles.catalog.legacy(kind, alias).selection, alias, parameters, **extra)
         selections.append({"slot": slot, "profile_id": profile.profile_id})
+    decoder_a = profiles.repository.get_profile(selections[1]["profile_id"])
+    decoder_b = profiles.create("decoder", decoder_a.selection, "Original reference", {},
+                                processing_input=ProcessingInput(outputs=("Pz", "O2")))
+    missing_decoder = profiles.create("decoder", decoder_a.selection, "Missing electrode", {},
+                                      processing_input=ProcessingInput(outputs=("NotPresent",)))
     profiles.accept(profiles.propose(selections), expected_revision=None)
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
                                 snapshot_provider=profiles.resolve_settings)
@@ -92,6 +103,13 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         assert [channel["reference"] for channel in plan["output_channels"]] == ["Oz", "Oz"]
         assert plan["source"]["connection_id"] == metadata["connection_id"]
         assert plan["coefficients"][0] == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 1.0]
+        raw = np.arange(30, dtype=float).reshape(10, 3)
+        raw[-1] = [0, 1, 255]
+        chunk = SignalChunk(timestamp=1.0, sequence_id=7, raw_data=raw)
+        mapped = ResolvedSignalPlan.from_dict(plan).apply(chunk)
+        np.testing.assert_array_equal(mapped.data[0], raw[8] - raw[7])
+        np.testing.assert_array_equal(mapped.triggers, chunk.triggers)
+        assert mapped.timestamp == chunk.timestamp and mapped.sequence_id == chunk.sequence_id
         await asyncio.sleep(0.05)
         assert await asyncio.to_thread(container.recording_service.stop) == session_id
 
@@ -110,5 +128,36 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         assert signal.read()["readiness"]["receipt"]["connection_id"] == reconnected["connection_id"]
         assert await asyncio.to_thread(container.recording_service.stop) == next_session
         assert session.signal_plan == plan
+
+        # Restart reads each decoder's persisted input instead of a shared global setup.
+        for decoder, outputs, reference in (
+            (decoder_b, ["Pz", "O2"], "Cz"), (decoder_a, ["O2", "Pz"], "Oz"),
+        ):
+            await engine.handle_stop_engine(StopEngineCommand())
+            profiles.repository = TomlPluginProfileRepository(tmp_path / "profiles")
+            assert profiles.repository.get_profile(decoder.profile_id).processing_input == decoder.processing_input
+            selections[1] = {"slot": "processing.decoder", "profile_id": decoder.profile_id}
+            previous = profiles.repository.get_activation()
+            profiles.accept(profiles.propose(selections), expected_revision=previous.revision)
+            await engine.handle_start_engine(StartEngineCommand())
+            await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
+            current_session = await asyncio.to_thread(container.recording_service.start)
+            current_plan = container.session_repository.find_by_id(current_session).signal_plan
+            assert [channel["name"] for channel in current_plan["output_channels"]] == outputs
+            assert [channel["reference"] for channel in current_plan["output_channels"]] == [reference, reference]
+            transformed = ResolvedSignalPlan.from_dict(current_plan).apply(chunk)
+            np.testing.assert_array_equal(transformed.triggers, chunk.triggers)
+            assert await asyncio.to_thread(container.recording_service.stop) == current_session
+
+        await engine.handle_stop_engine(StopEngineCommand())
+        selections[1] = {"slot": "processing.decoder", "profile_id": missing_decoder.profile_id}
+        previous = profiles.repository.get_activation()
+        profiles.accept(profiles.propose(selections), expected_revision=previous.revision)
+        await engine.handle_start_engine(StartEngineCommand())
+        await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
+        with pytest.raises(ValueError, match="Missing signal dependency: NotPresent"):
+            await asyncio.to_thread(container.recording_service.start)
+        assert container.session_service.active_session_id is None
+        assert signal.read()["readiness"]["ready"] is False
     finally:
         await engine.handle_stop_engine(StopEngineCommand())

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,6 +19,8 @@ from omnibci.infrastructure.repositories.session_repository import (
     InMemorySessionRepository,
 )
 from omnibci.application.services.engine_service import NeuroEngineService
+from omnibci.application.services.signal_setup_service import SignalSetupService
+from omnibci.infrastructure.signal_layouts import SignalLayoutProvider
 
 
 _ROOT = Path(__file__).parents[2]
@@ -67,15 +70,24 @@ def test_file_reader_session_id_matches_websocket_and_rest(
 
     async def build_acceptance_container(**kwargs):
         engine_service = NeuroEngineService(
-            engine_factory=lambda: NeuroEngineBuilder(engine_config, settings_snapshot=snapshot).build()
+            engine_factory=lambda runtime: NeuroEngineBuilder(engine_config, settings_snapshot=runtime).build(),
+            snapshot_provider=profiles.resolve_settings,
         )
         await engine_service.startup()
-        return assemble(
+        container = assemble(
             engine_service,
             InMemorySessionRepository(),
             settings={**snapshot, "NEUROENGINE.command_timeout_s": 90.0},
             auto_spawn=False,
+            admission=engine_service.admission,
         )
+        signal = SignalSetupService(
+            SimpleNamespace(read_saved=lambda: (seed, "saved")), profiles, engine_service,
+            container.acquisition_service, container.command_results, SignalLayoutProvider(),
+        )
+        container.acquisition_service.set_signal_preparer(signal.prepare)
+        container.session_service.set_signal_preparer(signal.prepare_session, container.acquisition_service.lifecycle_lock)
+        return container
 
     monkeypatch.setattr(main_mod, "build_container", build_acceptance_container)
     app = main_mod.create_app()
@@ -154,6 +166,7 @@ def test_file_reader_session_id_matches_websocket_and_rest(
                     client.get(f"/api/v1/sessions/{session_id}/trials")
                 )
                 assert session["session_id"] == session_id
+                assert session["signal_plan"]["setup"]["outputs"] == []
                 assert session["trial_count"] >= 1
                 assert trials
                 assert trials[0]["trial_number"] == trial_message["trial_number"]

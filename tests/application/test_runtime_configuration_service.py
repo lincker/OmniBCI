@@ -11,7 +11,7 @@ from omnibci.application.services.plugin_profile_service import PluginProfileSer
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
-from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
+from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, SourceMetadata
 
 
 @pytest.fixture
@@ -78,6 +78,55 @@ def test_manual_source_montage_change_requires_rebuild_and_is_pinned(runtime):
     assert plan.changed_slots == ("acquisition.source",)
     assert service.resolve_plan(plan.plan_id).snapshot.bindings[0].manual_montage == manual
     assert before.bindings[0].manual_montage is None
+
+
+def test_decoder_input_edit_requires_rebuild_and_review_uses_profile_input(runtime):
+    service, selections, before = runtime
+    profile = service.profiles.repository.get_profile(selections[1]["profile_id"])
+    input_a = ProcessingInput.from_dict({
+        "outputs": ["O2", "O1"], "reference": {"mode": "single", "channels": ["M1"]},
+        "excluded_channels": ["EOG"],
+    })
+    service.profiles.update(profile.profile_id, name=profile.name, parameters=profile.parameters,
+                            processing_input=input_a, expected_revision=profile.revision)
+
+    plan = service.plan(selections, expected_revision=before.revision)
+
+    assert plan.strategy == "rebuild"
+    assert plan.session_effect == "continuation"
+    assert plan.changed_slots == ("processing.decoder",)
+    assert plan.changed_settings == ()
+    assert plan.signal_summary == "Outputs: O2, O1; Reference: single (M1); Excluded: EOG"
+    candidate = service.resolve_plan(plan.plan_id).snapshot
+    assert candidate.bindings[1].processing_input == input_a
+    assert "SIGNAL.setup" not in candidate.settings
+    assert service.profiles.materialize(candidate)["SIGNAL.setup"] == input_a.as_signal_setup("file_reader").to_dict()
+    assert before.bindings[1].processing_input == ProcessingInput()
+
+
+def test_decoder_profiles_restore_independent_inputs_and_parameters_keep_trial_boundary(runtime):
+    service, selections, before = runtime
+    profiles = service.profiles
+    selection = profiles.catalog.legacy("decoder", "THUBCI_SSVEP_classic40CCA").selection
+    profile_a = profiles.create("decoder", selection, "Input A", {}, processing_input=ProcessingInput(outputs=("O1",)))
+    profile_b = profiles.create("decoder", selection, "Input B", {}, processing_input=ProcessingInput(outputs=("O2", "O1")))
+    expected = before.revision
+    for profile in (profile_a, profile_b, profile_a):
+        selections[1] = {"slot": "processing.decoder", "profile_id": profile.profile_id}
+        plan = service.plan(selections, expected_revision=expected)
+        assert plan.strategy == "rebuild"
+        target = service.resolve_plan(plan.plan_id).snapshot
+        materialized = profiles.materialize(target)
+        assert materialized["SIGNAL.setup"]["outputs"] == list(profile.processing_input.outputs)
+        profiles.accept(target, expected_revision=expected)
+        service.engine.applied_snapshot = materialized
+        service.engine.applied_revision = target.revision
+        expected = target.revision
+
+    edit((service, selections, before), "processing.decoder", {"window_duration": 2.5})
+    plan = service.plan(selections, expected_revision=expected)
+    assert plan.strategy == "trial_boundary"
+    assert plan.signal_summary == "Outputs: O1; Reference: original"
 
 
 def test_effector_selection_uses_module_boundary(runtime):

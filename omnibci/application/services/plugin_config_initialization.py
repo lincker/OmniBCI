@@ -14,6 +14,7 @@ from omnibci.application.plugin_profiles import (
     ProfileRevisionConflict,
 )
 from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.domain.montage import ProcessingInput
 
 
 # Stable identities let interrupted initialization resume without duplicates.
@@ -56,7 +57,9 @@ class SettingsPluginConfigInitializer:
         return ProfileBinding(slot=slot, kind=profile.kind, profile_id=profile.profile_id,
                               selection=profile.selection, parameters=profile.parameters,
                               configuration_version=profile.configuration_version,
-                              profile_revision=max(1, profile.revision))
+                              profile_revision=max(1, profile.revision),
+                              manual_montage=profile.manual_montage,
+                              processing_input=profile.processing_input)
 
     def _ensure_profile(self, draft: PluginProfile) -> PluginProfile:
         try:
@@ -92,6 +95,7 @@ class SettingsPluginConfigInitializer:
                 kind=definition.kind, selection=selection,
                 parameters=legacy_parameters(definition, settings),
                 configuration_version=definition.configuration_version,
+                processing_input=ProcessingInput() if kind == "decoder" and "SIGNAL.setup" not in settings else None,
             )
             drafts[profile_id] = profile
             bindings.append((slot, profile.profile_id))

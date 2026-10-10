@@ -115,3 +115,23 @@ def test_invalid_candidate_does_not_change_input():
     with pytest.raises(ValueError):
         _build(before, after)
     assert before["PLUGINS.bindings"][1]["parameters"]["window_duration"] == 1
+
+
+@pytest.mark.parametrize("changed_selection", [False, True])
+def test_decoder_input_change_cannot_reuse_existing_prepared_plan(changed_selection):
+    before = selected_snapshot()
+    after = deepcopy(before)
+    after["PLUGINS.bindings"][1]["processing_input"] = {"outputs": ["O2"]}
+    if changed_selection:
+        selection = PluginCatalog().resolve_legacy("decoder", "THUBCI_SSVEP_classic40FBCCA").selection
+        after["PLUGINS.bindings"][1]["selection"] = selection.to_dict()
+    with pytest.raises(ValueError, match="Processing input changes"):
+        _build(before, after)
+
+
+def test_output_context_cannot_change_decoder_input():
+    before = selected_snapshot()
+    after = deepcopy(before)
+    after["PLUGINS.bindings"][1]["processing_input"] = {"outputs": ["O2"]}
+    with pytest.raises(ValueError, match="Processing or source changes"):
+        configuration.validate_output_context(before, after)

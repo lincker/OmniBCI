@@ -7,7 +7,8 @@ import { pluginConfigApi as api, selectionKey, type Activation, type BindingSele
 import "./PluginProfiles.css";
 import type { RuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
 import { AcquisitionMontage, acquisitionMontageErrors } from "./AcquisitionMontage";
-import type { SourceMetadata } from "./api/signal-config";
+import type { ProcessingInput as DecoderInput, SourceMetadata } from "./api/signal-config";
+import { ProcessingInput, emptyProcessingInput, processingInputErrors } from "./ProcessingInput";
 
 type Module = "acquisition" | "processing" | "stimulation" | "actuation";
 type Slot = { slot: string; kind: PluginKind; label: string };
@@ -24,20 +25,23 @@ const slots: Record<Module, Slot[]> = {
   ],
   actuation: [{ slot: "actuation.effector", kind: "effector", label: "Effector" }],
 };
-type Editor = { profile: PluginProfile | null; plugin: string; name: string; parameters: Record<string, unknown>; manualMontage: SourceMetadata | null };
+type Editor = { profile: PluginProfile | null; plugin: string; name: string; parameters: Record<string, unknown>; manualMontage: SourceMetadata | null; processingInput: DecoderInput | null };
 type FilterInstance = BindingSelection & { plugin: string };
-const emptyEditor: Editor = { profile: null, plugin: "", name: "", parameters: {}, manualMontage: null };
+const emptyEditor: Editor = { profile: null, plugin: "", name: "", parameters: {}, manualMontage: null, processingInput: null };
 const filterInstances = (activation: Activation | null): FilterInstance[] => activation?.bindings
   .filter((item) => item.kind === "filter").map((item) => ({ slot: item.slot,
     profile_id: item.profile_id ?? "", plugin: selectionKey(item.selection) })) ?? [];
 
 function editorFor(profile: PluginProfile | undefined, definitions: PluginDefinition[], plugin?: string): Editor {
   if (profile) return { profile, plugin: selectionKey(profile.selection), name: profile.name,
-    parameters: structuredClone(profile.parameters), manualMontage: structuredClone(profile.manual_montage ?? null) };
+    parameters: structuredClone(profile.parameters), manualMontage: structuredClone(profile.manual_montage ?? null),
+    processingInput: profile.processing_input ? { ...emptyProcessingInput(), ...structuredClone(profile.processing_input),
+      reference: { mode: profile.processing_input.reference?.mode ?? "original", channels: [...(profile.processing_input.reference?.channels ?? [])] } } : null };
   const definition = plugin !== undefined ? definitions.find((item) => selectionKey(item.selection) === plugin)
     : definitions.find((item) => item.schema && item.available) ?? definitions.find((item) => item.schema);
   return { profile: null, plugin: plugin ?? (definition ? selectionKey(definition.selection) : ""), name: "",
-    parameters: definition?.schema ? initialSchemaValue(definition.schema) as Record<string, unknown> : {}, manualMontage: null };
+    parameters: definition?.schema ? initialSchemaValue(definition.schema) as Record<string, unknown> : {}, manualMontage: null,
+    processingInput: definition?.kind === "decoder" ? emptyProcessingInput() : null };
 }
 
 export function PluginProfiles({ module, engineRunning, engineAvailable = true, navigation,
@@ -80,13 +84,17 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   const selectionLabel = !engineRunning ? "Selected for next start"
     : activation && runtime.status?.applied_revision === activation.revision ? "Applied" : "Selected";
   const dirty = editor.name !== baseline.name || editor.plugin !== baseline.plugin
-    || !sameParameters(editor.parameters, baseline.parameters) || !sameParameters(editor.manualMontage, baseline.manualMontage);
+    || !sameParameters(editor.parameters, baseline.parameters) || !sameParameters(editor.manualMontage, baseline.manualMontage)
+    || !sameParameters(editor.processingInput, baseline.processingInput);
   const errors = [...(definition?.schema ? schemaErrors(definition.schema, editor.parameters) : []),
-    ...(slot.kind === "acquisition" ? acquisitionMontageErrors(editor.manualMontage) : [])];
+    ...(slot.kind === "acquisition" ? acquisitionMontageErrors(editor.manualMontage) : []),
+    ...(slot.kind === "decoder" ? processingInputErrors(editor.processingInput) : [])];
   const selectedBindings = activation?.bindings.filter((item) => item.profile_id === editor.profile?.profile_id) ?? [];
   const selectedChanged = selectedBindings.some((item) => !sameParameters(item.parameters, editor.profile?.parameters)
     || selectionKey(item.selection) !== selectionKey(editor.profile!.selection)
-    || !sameParameters(item.manual_montage ?? null, editor.profile?.manual_montage ?? null));
+    || !sameParameters(item.manual_montage ?? null, editor.profile?.manual_montage ?? null)
+    || !sameParameters(item.processing_input ?? null, editor.profile?.processing_input ?? null));
+  const legacyDecoder = slot.kind === "decoder" && !!editor.profile && !editor.processingInput;
   const savedChain = filterInstances(activation);
   const chainDirty = JSON.stringify(chain) !== JSON.stringify(savedChain);
   const chainDirtyRef = useRef(chainDirty);
@@ -160,17 +168,18 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   const reviewSelection = async (makeBindings: () => BindingSelection[], refreshSlots: string[]) => {
     setBusy(true); setError(""); setNotice("");
     try { await runtime.review({ bindings: makeBindings(), expected_revision: activation?.revision ?? null,
-      refresh_slots: refreshSlots, include_host_settings: false, include_signal_setup: false }); }
+      refresh_slots: refreshSlots, include_host_settings: false }); }
     catch (cause) { setError(String(cause)); }
     finally { setBusy(false); }
   };
   const save = (copy = false, name = editor.name) => {
     if (!definition) return;
     const manualMontage = slot.kind === "acquisition" && (editor.manualMontage || baseline.manualMontage) ? editor.manualMontage : undefined;
+    const processingInput = slot.kind === "decoder" ? editor.processingInput ?? undefined : undefined;
     void run(async () => {
       const saved = editor.profile && !copy
-        ? await api.update(editor.profile, name, editor.parameters, manualMontage)
-        : await api.create(slot.kind, definition.selection, name, editor.parameters, manualMontage);
+        ? await api.update(editor.profile, name, editor.parameters, manualMontage, processingInput)
+        : await api.create(slot.kind, definition.selection, name, editor.parameters, manualMontage, processingInput);
       return saved.profile_id;
     }, "Profile saved. Review and apply it to change the selected configuration.", true);
   };
@@ -264,11 +273,12 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
             </select></label>
           <div className="profile-tools actions">
             <button disabled={busy || !definition?.schema} onClick={() => newProfile()}>New profile</button>
-            <button disabled={busy || !definition?.schema || errors.length > 0} onClick={() => setDialog({ title: "Duplicate profile",
+            <button disabled={busy || !definition?.schema || errors.length > 0 || legacyDecoder} onClick={() => setDialog({ title: "Duplicate profile",
               message: "Save a separate copy of the current parameters. The original profile and running configuration stay unchanged.",
               confirmLabel: "Create profile", initialValue: `${editor.name || definition?.label || slot.label} copy`,
               onConfirm: (name) => { setDialog(null); save(true, name); } })}>Duplicate profile</button>
           </div>
+          {legacyDecoder && <p className="setting-description">Configure or import the decoder input before duplicating this profile.</p>}
           {!pluginProfiles.length && <p className="setting-description">No saved profiles for this plugin version. Name and save the default configuration below.</p>}
         </div>
         <div className="setting-group"><h2>{editor.profile ? "Edit profile" : "New profile"}</h2>
@@ -309,6 +319,10 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
             }
             setEditor({ ...editor, parameters, manualMontage }); setNotice("");
           }} />}
+        {slot.kind === "decoder" && definition && <ProcessingInput key={`${editor.profile?.profile_id ?? editor.plugin}:${editor.profile?.revision ?? "new"}`}
+          value={editor.processingInput} busy={busy}
+          configurationRevision={`${runtime.status?.accepted_revision}:${runtime.status?.applied_revision}`}
+          onChange={(processingInput) => { setEditor({ ...editor, processingInput }); setNotice(""); }} />}
         {errors.length > 0 && <ul className="schema-errors" role="alert">{errors.map((message) => <li key={message}>{message}</li>)}</ul>}
         {selectedBindings.length > 0 && <p className="setting-description">Selected profile revision: {selectedBindings.map((item) => item.profile_revision).join(", ")}. Saved revision: {editor.profile?.revision}.</p>}
         {slot.kind === "filter" && <div className="setting-group"><h2>Filter chain</h2>

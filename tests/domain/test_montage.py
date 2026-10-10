@@ -8,6 +8,7 @@ import pytest
 
 from omnibci.domain.montage import (
     ChannelDescriptor,
+    ProcessingInput,
     ResolvedSignalPlan,
     SignalSetup,
     SourceMetadata,
@@ -35,6 +36,34 @@ def setup(**values):
 def chunk(values=(10, 20, 30, 2, 4), triggers=(0, 3, 0)):
     samples = len(triggers)
     return SignalChunk(123456, 17, np.array([[v] * samples for v in values] + [list(triggers)]))
+
+
+def test_processing_input_resolves_named_channels_against_each_source():
+    channel_input = ProcessingInput.from_dict({"outputs": ["O2", "O1"],
+        "reference": {"mode": "single", "channels": ["M1"]}})
+    assert ProcessingInput.from_dict(channel_input.to_dict()) == channel_input
+    first = compile_signal_plan(source(), channel_input.as_signal_setup("test-source"))
+    second_source = source(("M1", "O2", "O1"), source_id="second-source")
+    second = compile_signal_plan(second_source, channel_input.as_signal_setup("second-source"))
+    assert [channel.name for channel in first.output_channels] == ["O2", "O1"]
+    assert [channel.name for channel in second.output_channels] == ["O2", "O1"]
+    np.testing.assert_allclose(first.apply(chunk()).raw_data[:2, 0], [28e-6, 8e-6])
+    np.testing.assert_allclose(second.apply(chunk(values=(2, 30, 10))).raw_data[:2, 0], [28e-6, 8e-6])
+    np.testing.assert_array_equal(second.apply(chunk(values=(2, 30, 10))).raw_data[-1], [0, 3, 0])
+    with pytest.raises(ValueError, match="O2"):
+        compile_signal_plan(source(("O1", "M1")), channel_input.as_signal_setup("test-source"))
+
+
+@pytest.mark.parametrize("value", [
+    {"source_id": "device"}, {"assignments": []}, {"manual_metadata": {}},
+    {"original_reference": "Cz"}, {"template": "standard_1020"},
+    {"schema_version": 2}, {"outputs": ["O1", "O1"]},
+    {"reference": {"mode": "single", "channels": []}},
+    {"reference": {"mode": "bipolar"}, "outputs": ["O1"]},
+])
+def test_processing_input_rejects_source_facts_and_invalid_mapping(value):
+    with pytest.raises(ValueError):
+        ProcessingInput.from_dict(value)
 
 
 def test_profile_manual_montage_fills_missing_facts_without_mutating_observation():

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 from uuid import UUID
 
-from omnibci.domain.montage import SourceMetadata
+from omnibci.domain.montage import ProcessingInput, SourceMetadata
 
 
 class PluginProfileValidationError(ValueError):
@@ -98,7 +98,13 @@ def _montage_data(value: SourceMetadata) -> dict:
     return data
 
 
-def _parse_montages(data: dict, fields: tuple[str, ...]) -> dict:
+def _processing_input(value, kind: str) -> ProcessingInput | None:
+    if value is not None and (kind != "decoder" or not isinstance(value, ProcessingInput)):
+        raise PluginProfileValidationError("processing_input requires a decoder profile and ProcessingInput")
+    return value
+
+
+def _parse_profile_fields(data: dict, fields: tuple[str, ...]) -> dict:
     result = dict(data)
     for name in fields:
         if name in result:
@@ -106,6 +112,11 @@ def _parse_montages(data: dict, fields: tuple[str, ...]) -> dict:
                 result[name] = SourceMetadata.from_dict(result[name])
             except (ValueError, TypeError) as exc:
                 raise PluginProfileValidationError(f"Invalid {name}: {exc}") from exc
+    if "processing_input" in result:
+        try:
+            result["processing_input"] = ProcessingInput.from_dict(result["processing_input"])
+        except (ValueError, TypeError) as exc:
+            raise PluginProfileValidationError(f"Invalid processing_input: {exc}") from exc
     return result
 
 
@@ -149,6 +160,7 @@ class PluginProfile:
     format_version: int = 2
     acquisition_montage: SourceMetadata | None = None
     manual_montage: SourceMetadata | None = None
+    processing_input: ProcessingInput | None = None
 
     def __post_init__(self) -> None:
         validate_profile_id(self.profile_id)
@@ -167,6 +179,7 @@ class PluginProfile:
         object.__setattr__(self, "parameters", _object_data(self.parameters, "parameters"))
         object.__setattr__(self, "acquisition_montage", _montage(self.acquisition_montage, self.kind))
         object.__setattr__(self, "manual_montage", _montage(self.manual_montage, self.kind, manual=True))
+        object.__setattr__(self, "processing_input", _processing_input(self.processing_input, self.kind))
 
     def to_dict(self) -> dict:
         data = {
@@ -178,13 +191,16 @@ class PluginProfile:
         for name in ("acquisition_montage", "manual_montage"):
             if getattr(self, name) is not None:
                 data[name] = _montage_data(getattr(self, name))
+        if self.processing_input is not None:
+            data["processing_input"] = self.processing_input.to_dict()
         return data
 
     @classmethod
     def from_dict(cls, data: dict) -> PluginProfile:
         _fields(data, {"format_version", "profile_id", "name", "kind", "selection",
-                       "parameters", "configuration_version", "revision"}, {"acquisition_montage", "manual_montage"})
-        return cls(**{**_parse_montages(data, ("acquisition_montage", "manual_montage")),
+                       "parameters", "configuration_version", "revision"},
+                {"acquisition_montage", "manual_montage", "processing_input"})
+        return cls(**{**_parse_profile_fields(data, ("acquisition_montage", "manual_montage")),
                       "selection": PluginSelection.from_dict(data["selection"])})
 
 
@@ -200,6 +216,7 @@ class ProfileBinding:
     configuration_version: int = 1
     profile_revision: int = 0
     manual_montage: SourceMetadata | None = None
+    processing_input: ProcessingInput | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.slot, str):
@@ -219,6 +236,7 @@ class ProfileBinding:
                           minimum=0 if self.profile_id is None else 1)
         object.__setattr__(self, "parameters", _object_data(self.parameters, "parameters"))
         object.__setattr__(self, "manual_montage", _montage(self.manual_montage, self.kind, manual=True))
+        object.__setattr__(self, "processing_input", _processing_input(self.processing_input, self.kind))
 
     def to_dict(self) -> dict:
         data = {
@@ -231,13 +249,15 @@ class ProfileBinding:
             data["profile_id"] = self.profile_id
         if self.manual_montage is not None:
             data["manual_montage"] = _montage_data(self.manual_montage)
+        if self.processing_input is not None:
+            data["processing_input"] = self.processing_input.to_dict()
         return data
 
     @classmethod
     def from_dict(cls, data: dict) -> ProfileBinding:
         _fields(data, {"slot", "kind", "selection", "parameters", "configuration_version",
-                       "profile_revision"}, {"profile_id", "manual_montage"})
-        return cls(**{**_parse_montages(data, ("manual_montage",)), "profile_id": data.get("profile_id"),
+                       "profile_revision"}, {"profile_id", "manual_montage", "processing_input"})
+        return cls(**{**_parse_profile_fields(data, ("manual_montage",)), "profile_id": data.get("profile_id"),
                       "selection": PluginSelection.from_dict(data["selection"])})
 
 

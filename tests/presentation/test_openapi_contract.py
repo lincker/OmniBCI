@@ -63,10 +63,7 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/config", "get"),
     ("/api/v1/config", "patch"),
     ("/api/v1/config/signal", "get"),
-    ("/api/v1/config/signal", "put"),
     ("/api/v1/config/signal/preview", "post"),
-    ("/api/v1/config/signal/templates", "get"),
-    ("/api/v1/config/signal/templates/{name}", "get"),
     # Plugin profiles and accepted activation.
     ("/api/v1/config/plugin-catalog/{kind}", "get"),
     ("/api/v1/config/plugin-profiles", "get"),

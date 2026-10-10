@@ -1,4 +1,4 @@
-"""Typed editing contract for the single saved signal setup."""
+"""Typed contracts for source metadata, processing input, and resolved plans."""
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -54,16 +54,11 @@ class ReferenceModel(SignalModel):
     channels: list[str] = Field(default_factory=list)
 
 
-class SignalSetupModel(SignalModel):
+class ProcessingInputModel(SignalModel):
     schema_version: Literal[1] = 1
-    source_id: str
-    assignments: list[ChannelAssignmentModel] = Field(default_factory=list)
     outputs: list[str | BipolarOutputModel] = Field(default_factory=list)
     reference: ReferenceModel = Field(default_factory=ReferenceModel)
     excluded_channels: list[str] = Field(default_factory=list)
-    original_reference: str | None = None
-    template: str | None = None
-    manual_metadata: SourceMetadataModel | None = None
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -73,13 +68,16 @@ class SignalSetupModel(SignalModel):
         return value
 
 
-class SaveSignalSetupRequest(SignalModel):
-    setup: SignalSetupModel
-    expected_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+class SignalSetupModel(ProcessingInputModel):
+    source_id: str
+    assignments: list[ChannelAssignmentModel] = Field(default_factory=list)
+    original_reference: str | None = None
+    template: str | None = None
+    manual_metadata: SourceMetadataModel | None = None
 
 
 class PreviewSignalSetupRequest(SignalModel):
-    setup: SignalSetupModel
+    processing_input: ProcessingInputModel
     metadata: SourceMetadataModel | None = None
 
 
@@ -90,7 +88,9 @@ class SignalReadinessModel(BaseModel):
 
 class SignalSetupResponse(BaseModel):
     selected_source_id: str | None = None
+    selected_decoder_profile_id: str | None = None
     source_metadata: SourceMetadataModel | None = None
+    legacy_setup: SignalSetupModel | None = None
     setup: SignalSetupModel | None
     revision: str
     accepted_setup: SignalSetupModel | None
@@ -101,15 +101,3 @@ class SignalSetupResponse(BaseModel):
 class SignalPreviewResponse(BaseModel):
     plan: dict[str, Any]
     warnings: list[str]
-
-
-class SignalTemplatesResponse(BaseModel):
-    templates: list[str]
-
-
-class SignalTemplateResponse(BaseModel):
-    name: str
-    positions: dict[str, list[float]]
-    coordinate_frame: Literal["head"]
-    unit: Literal["m"]
-    provider: str

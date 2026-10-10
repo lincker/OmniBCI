@@ -28,7 +28,8 @@ def load_filters(snapshot: dict, context: PluginContext) -> list[Filter]:
 
 def _binding_content(binding):
     return (binding.slot, binding.kind, binding.selection,
-            binding.configuration_version, binding.parameters)
+            binding.configuration_version, binding.parameters, binding.manual_montage,
+            binding.processing_input)
 
 
 def validate_output_context(current: dict, candidate: dict) -> dict:
@@ -75,6 +76,11 @@ def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int,
         raise ValueError("Pipeline update requires a configuration revision")
     previous = configured_bindings(current)
     selected = configured_bindings(snapshot)
+    previous_decoder = next((binding for binding in previous if binding.kind == "decoder"), None)
+    selected_decoder = next((binding for binding in selected if binding.kind == "decoder"), None)
+    if (getattr(previous_decoder, "processing_input", None)
+            != getattr(selected_decoder, "processing_input", None)):
+        raise ValueError("Processing input changes require a module restart")
 
     flexible = {"decoder", "filter"}
     before_fixed = [_binding_content(binding) for binding in previous if binding.kind not in flexible]

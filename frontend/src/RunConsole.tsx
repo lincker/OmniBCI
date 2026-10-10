@@ -162,15 +162,16 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
       <button className="text-button" disabled={busy} onClick={onEditSetup}>Edit setup <Icon name="chevron" /></button>
       <p className="meta">Selected configuration is shown here. Review and apply changes from Setup.</p>
     </section>
-    <section className="setup-summary" aria-label="Active signal setup">
+    <section className="setup-summary" aria-label="Active decoder input">
       <div className="summary-items"><div><span>Signal preparation</span>
         <strong>{signal.error ? "Unavailable" : !running ? "Engine stopped" : signal.data?.readiness.ready ? "Ready" : "Validated before reading starts"}</strong></div>
-        <div><span>Active channel selection</span><strong>{!running ? "None" : signal.error ? "Unavailable" : !signal.data ? "Loading…" : signal.data.active_setup
-          ? signal.data.active_setup.outputs.length ? signal.data.active_setup.outputs.map((output) => typeof output === "string" ? output : output.name).join(", ") : "All mapped channels"
+        <div><span>Active decoder channels</span><strong>{!running ? "None" : signal.error ? "Unavailable" : !signal.data ? "Loading…" : signal.data.active_setup
+          ? signal.data.active_setup.outputs.length ? signal.data.active_setup.outputs.map((output) => typeof output === "string" ? output : output.name).join(", ") : signal.data.active_setup.excluded_channels.length
+            ? `All source channels except ${signal.data.active_setup.excluded_channels.join(", ")}` : "All source channels"
           : "Original source channels"}</strong></div>
         <div><span>Active reference mode</span><strong>{!running ? "None" : signal.error ? "Unavailable" : !signal.data ? "Loading…" : signal.data.active_setup?.reference.mode ?? "original"}</strong></div></div>
       {signal.error && <p className="error" role="alert">{signal.error.message}</p>}
-      {!signal.data?.readiness.ready && running && <p className="meta">Starting reading prepares the selected mapping against the connected source before creating a recording.</p>}
+      {!signal.data?.readiness.ready && running && <p className="meta">Starting reading prepares the selected decoder input against the Acquisition montage before creating a recording.</p>}
     </section>
     {missingRecording && <p className="inline-message" role="status">Select a recording on the backend computer in Acquisition setup, then save and apply the profile before starting.</p>}
     {loadError && <p className="inline-message error" role="alert">{loadError}</p>}

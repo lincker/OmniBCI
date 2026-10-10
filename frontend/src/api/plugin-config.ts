@@ -3,7 +3,7 @@ import { ApiError, type ApiEnvelope } from "./client";
 import type { components } from "./rest-types";
 import { requestJson } from "./transport";
 import type { ConfigurationSchema } from "../SchemaForm";
-import type { SourceMetadata } from "./signal-config";
+import type { ProcessingInput, SourceMetadata } from "./signal-config";
 
 type S = components["schemas"];
 export type PluginKind = S["PluginProfileResponse"]["kind"];
@@ -41,12 +41,12 @@ export const pluginConfigApi = {
   catalog: (kind: PluginKind) => request<PluginDefinition[]>(`/plugin-catalog/${kind}`),
   profiles: () => request<PluginProfile[]>("/plugin-profiles"),
   activation: () => request<Activation | null>("/activation"),
-  create: (kind: PluginKind, selection: PluginSelection, name: string, parameters: Record<string, unknown>, manual_montage?: SourceMetadata | null) =>
+  create: (kind: PluginKind, selection: PluginSelection, name: string, parameters: Record<string, unknown>, manual_montage?: SourceMetadata | null, processing_input?: ProcessingInput) =>
     request<PluginProfile>("/plugin-profiles", "POST", { kind, selection, name, parameters,
-      ...manualFields(manual_montage) }),
-  update: (profile: PluginProfile, name: string, parameters: Record<string, unknown>, manual_montage?: SourceMetadata | null) =>
+      ...manualFields(manual_montage), ...(processing_input === undefined ? {} : { processing_input }) }),
+  update: (profile: PluginProfile, name: string, parameters: Record<string, unknown>, manual_montage?: SourceMetadata | null, processing_input?: ProcessingInput) =>
     request<PluginProfile>(`/plugin-profiles/${encodeURIComponent(profile.profile_id)}`, "PUT",
-      { name, parameters, expected_revision: profile.revision, ...manualFields(manual_montage) }),
+      { name, parameters, expected_revision: profile.revision, ...manualFields(manual_montage), ...(processing_input === undefined ? {} : { processing_input }) }),
   readMontage: async (profileId: string) => {
     const { response, body } = await requestJson(`/api/v1/acquisition/metadata/refresh?profile_id=${encodeURIComponent(profileId)}`, {
       method: "POST", headers: { Accept: "application/json" },

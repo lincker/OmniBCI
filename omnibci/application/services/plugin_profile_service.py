@@ -15,7 +15,7 @@ from omnibci.application.plugin_profiles import (
 )
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfigurationCatalog
-from omnibci.domain.montage import SourceMetadata, merge_source_montage
+from omnibci.domain.montage import ProcessingInput, SourceMetadata, merge_source_montage
 
 
 _UNSET = object()
@@ -76,29 +76,38 @@ class PluginProfileService:
         return definition, validate_parameters(definition.schema, parameters)
 
     def create(self, kind: str, selection: PluginSelection, name: str, parameters: dict, *,
-               manual_montage: SourceMetadata | None = None):
+               manual_montage: SourceMetadata | None = None,
+               processing_input=_UNSET):
+        """Create explicit decoder input by default; None preserves a legacy version copy."""
         with self.change_guard(False):
             definition, values = self._parameters(kind, selection, parameters)
             _validate_manual_montage(kind, definition, values, manual_montage)
+            if processing_input is _UNSET:
+                processing_input = ProcessingInput() if kind == "decoder" else None
             profile = PluginProfile(
                 profile_id=str(uuid4()), name=name, kind=kind, selection=selection,
                 parameters=values, configuration_version=definition.configuration_version,
                 manual_montage=manual_montage,
+                processing_input=processing_input,
             )
             return self.repository.save_profile(profile, expected_revision=None)
 
     def update(self, profile_id: str, *, name: str, parameters: dict, expected_revision: int,
-               manual_montage=_UNSET):
+               manual_montage=_UNSET, processing_input=_UNSET):
         with self.change_guard(False):
             previous = self.repository.get_profile(profile_id)
             definition, values = self._parameters(previous.kind, previous.selection, parameters,
                                          previous.configuration_version)
             manual = previous.manual_montage if manual_montage is _UNSET else manual_montage
+            channel_input = previous.processing_input if processing_input is _UNSET else processing_input
+            if previous.kind == "decoder" and processing_input is None:
+                channel_input = ProcessingInput()
             observed = previous.acquisition_montage if _same_parameters(previous.parameters, values) else None
             _validate_manual_montage(previous.kind, definition, values, manual, observed)
             return self.repository.save_profile(
                 replace(previous, name=name, parameters=values, manual_montage=manual,
-                        acquisition_montage=observed), expected_revision=expected_revision,
+                        acquisition_montage=observed, processing_input=channel_input),
+                expected_revision=expected_revision,
             )
 
     def record_acquisition_montage(self, binding: ProfileBinding, metadata: SourceMetadata) -> PluginProfile | None:
@@ -136,7 +145,6 @@ class PluginProfileService:
             self.repository.delete_profile(profile_id, expected_revision=expected_revision)
 
     def propose(self, selections: list[dict], *, include_host_settings: bool = False,
-                include_signal_setup: bool = False,
                 refresh_slots: list[str] | None = None) -> ActivationSnapshot:
         """Resolve an ordered set of slot/profile references into pinned copies."""
         current = self.repository.get_activation()
@@ -144,15 +152,9 @@ class PluginProfileService:
         if include_host_settings:
             self._validate_host_changes(base, current)
         base = activation_host_settings(base)
-        if current is not None and include_host_settings and not include_signal_setup:
+        if current is not None and include_host_settings:
             if "SIGNAL.setup" in current.settings:
                 base["SIGNAL.setup"] = current.settings["SIGNAL.setup"]
-            else:
-                base.pop("SIGNAL.setup", None)
-        if include_signal_setup:
-            saved = self.settings_source()
-            if "SIGNAL.setup" in saved:
-                base["SIGNAL.setup"] = deepcopy(saved["SIGNAL.setup"])
             else:
                 base.pop("SIGNAL.setup", None)
         if current is not None:
@@ -186,6 +188,7 @@ class PluginProfileService:
                 configuration_version=profile.configuration_version,
                 profile_revision=profile.revision,
                 manual_montage=profile.manual_montage,
+                processing_input=profile.processing_input,
             ))
         return ActivationSnapshot(bindings=tuple(bindings), settings=base)
 
@@ -287,6 +290,12 @@ class PluginProfileService:
             elif binding.kind == "filter":
                 filters.append(definition.plugin_type)
         result["ALGORITHM.filters"] = filters
+        decoder = next((binding for binding in snapshot.bindings if binding.kind == "decoder"), None)
+        if decoder is not None and decoder.processing_input is not None:
+            source_id = result.get("ACQUISITION.signal_source")
+            if source_id is None:
+                raise PluginSchemaError("Decoder processing input requires an acquisition source")
+            result["SIGNAL.setup"] = decoder.processing_input.as_signal_setup(source_id).to_dict()
         result["CONFIG.revision"] = snapshot.revision
         result["PLUGINS.bindings"] = [binding.to_dict() for binding in snapshot.bindings]
         return result

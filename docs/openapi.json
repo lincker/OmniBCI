@@ -2911,105 +2911,6 @@
             }
           }
         }
-      },
-      "put": {
-        "tags": [
-          "Signal setup"
-        ],
-        "summary": "Save Signal Setup",
-        "operationId": "save_signal_setup_api_v1_config_signal_put",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SaveSignalSetupRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_SignalSetupResponse_"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "API token required or invalid",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Service unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
       }
     },
     "/api/v1/config/signal/preview": {
@@ -3036,199 +2937,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponse_SignalPreviewResponse_"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "API token required or invalid",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Service unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/config/signal/templates": {
-      "get": {
-        "tags": [
-          "Signal setup"
-        ],
-        "summary": "Signal Templates",
-        "operationId": "signal_templates_api_v1_config_signal_templates_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_SignalTemplatesResponse_"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "API token required or invalid",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Service unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/config/signal/templates/{name}": {
-      "get": {
-        "tags": [
-          "Signal setup"
-        ],
-        "summary": "Signal Template",
-        "operationId": "signal_template_api_v1_config_signal_templates__name__get",
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Name"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_SignalTemplateResponse_"
                 }
               }
             }
@@ -5635,11 +5343,6 @@
             "type": "boolean",
             "title": "Include Host Settings",
             "default": false
-          },
-          "include_signal_setup": {
-            "type": "boolean",
-            "title": "Include Signal Setup",
-            "default": false
           }
         },
         "additionalProperties": false,
@@ -6298,58 +6001,6 @@
         "type": "object",
         "title": "ApiResponse[SignalSetupResponse]"
       },
-      "ApiResponse_SignalTemplateResponse_": {
-        "properties": {
-          "success": {
-            "type": "boolean",
-            "title": "Success",
-            "default": true
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "ok"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SignalTemplateResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[SignalTemplateResponse]"
-      },
-      "ApiResponse_SignalTemplatesResponse_": {
-        "properties": {
-          "success": {
-            "type": "boolean",
-            "title": "Success",
-            "default": true
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "ok"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SignalTemplatesResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[SignalTemplatesResponse]"
-      },
       "ApiResponse_SourceMetadataModel_": {
         "properties": {
           "success": {
@@ -6736,6 +6387,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/SourceMetadataModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "processing_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingInputModel"
               },
               {
                 "type": "null"
@@ -7588,6 +7249,16 @@
                 "type": "null"
               }
             ]
+          },
+          "processing_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingInputModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -7634,8 +7305,8 @@
       },
       "PreviewSignalSetupRequest": {
         "properties": {
-          "setup": {
-            "$ref": "#/components/schemas/SignalSetupModel"
+          "processing_input": {
+            "$ref": "#/components/schemas/ProcessingInputModel"
           },
           "metadata": {
             "anyOf": [
@@ -7651,9 +7322,46 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "setup"
+          "processing_input"
         ],
         "title": "PreviewSignalSetupRequest"
+      },
+      "ProcessingInputModel": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version",
+            "default": 1
+          },
+          "outputs": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/components/schemas/BipolarOutputModel"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Outputs"
+          },
+          "reference": {
+            "$ref": "#/components/schemas/ReferenceModel"
+          },
+          "excluded_channels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Excluded Channels"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ProcessingInputModel"
       },
       "ProfileBindingResponse": {
         "properties": {
@@ -7705,6 +7413,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/SourceMetadataModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "processing_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingInputModel"
               },
               {
                 "type": "null"
@@ -7765,6 +7483,26 @@
           "target_enabled": {
             "type": "boolean",
             "title": "Target Enabled"
+          },
+          "manual_montage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceMetadataModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "processing_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingInputModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -8057,11 +7795,6 @@
             "type": "boolean",
             "title": "Include Host Settings",
             "default": false
-          },
-          "include_signal_setup": {
-            "type": "boolean",
-            "title": "Include Signal Setup",
-            "default": false
           }
         },
         "additionalProperties": false,
@@ -8185,25 +7918,6 @@
           "errors"
         ],
         "title": "RuntimePlanResponse"
-      },
-      "SaveSignalSetupRequest": {
-        "properties": {
-          "setup": {
-            "$ref": "#/components/schemas/SignalSetupModel"
-          },
-          "expected_revision": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$",
-            "title": "Expected Revision"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "setup",
-          "expected_revision"
-        ],
-        "title": "SaveSignalSetupRequest"
       },
       "SelectProfileBindingRequest": {
         "properties": {
@@ -8688,17 +8402,6 @@
             "title": "Schema Version",
             "default": 1
           },
-          "source_id": {
-            "type": "string",
-            "title": "Source Id"
-          },
-          "assignments": {
-            "items": {
-              "$ref": "#/components/schemas/ChannelAssignmentModel"
-            },
-            "type": "array",
-            "title": "Assignments"
-          },
           "outputs": {
             "items": {
               "anyOf": [
@@ -8722,6 +8425,17 @@
             },
             "type": "array",
             "title": "Excluded Channels"
+          },
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "assignments": {
+            "items": {
+              "$ref": "#/components/schemas/ChannelAssignmentModel"
+            },
+            "type": "array",
+            "title": "Assignments"
           },
           "original_reference": {
             "anyOf": [
@@ -8776,10 +8490,31 @@
             ],
             "title": "Selected Source Id"
           },
+          "selected_decoder_profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Decoder Profile Id"
+          },
           "source_metadata": {
             "anyOf": [
               {
                 "$ref": "#/components/schemas/SourceMetadataModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "legacy_setup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignalSetupModel"
               },
               {
                 "type": "null"
@@ -8833,63 +8568,6 @@
           "readiness"
         ],
         "title": "SignalSetupResponse"
-      },
-      "SignalTemplateResponse": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "positions": {
-            "additionalProperties": {
-              "items": {
-                "type": "number"
-              },
-              "type": "array"
-            },
-            "type": "object",
-            "title": "Positions"
-          },
-          "coordinate_frame": {
-            "type": "string",
-            "const": "head",
-            "title": "Coordinate Frame"
-          },
-          "unit": {
-            "type": "string",
-            "const": "m",
-            "title": "Unit"
-          },
-          "provider": {
-            "type": "string",
-            "title": "Provider"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "positions",
-          "coordinate_frame",
-          "unit",
-          "provider"
-        ],
-        "title": "SignalTemplateResponse"
-      },
-      "SignalTemplatesResponse": {
-        "properties": {
-          "templates": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Templates"
-          }
-        },
-        "type": "object",
-        "required": [
-          "templates"
-        ],
-        "title": "SignalTemplatesResponse"
       },
       "SourceMetadataModel": {
         "properties": {
@@ -9176,6 +8854,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/SourceMetadataModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "processing_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingInputModel"
               },
               {
                 "type": "null"

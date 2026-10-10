@@ -390,6 +390,40 @@ class SignalSetup:
 
 
 @dataclass(frozen=True)
+class ProcessingInput:
+    """A decoder's channel selection, independent of acquisition identity."""
+
+    schema_version: int = 1
+    outputs: tuple[str | BipolarOutput, ...] = ()
+    reference: ReferenceSpec = field(default_factory=ReferenceSpec)
+    excluded_channels: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        setup = self.as_signal_setup("processing-input")
+        object.__setattr__(self, "outputs", setup.outputs)
+        object.__setattr__(self, "excluded_channels", setup.excluded_channels)
+
+    def as_signal_setup(self, source_id: str) -> SignalSetup:
+        return SignalSetup(source_id, schema_version=self.schema_version, outputs=self.outputs,
+                           reference=self.reference, excluded_channels=self.excluded_channels)
+
+    def to_dict(self) -> dict:
+        return {
+            "schema_version": self.schema_version,
+            "outputs": [o.to_dict() if isinstance(o, BipolarOutput) else o for o in self.outputs],
+            "reference": self.reference.to_dict(),
+            "excluded_channels": list(self.excluded_channels),
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict) -> ProcessingInput:
+        data = _record(value, "processing input", set(cls.__dataclass_fields__))
+        setup = SignalSetup.from_dict({**data, "source_id": "processing-input"})
+        return cls(schema_version=setup.schema_version, outputs=setup.outputs,
+                   reference=setup.reference, excluded_channels=setup.excluded_channels)
+
+
+@dataclass(frozen=True)
 class ResolvedSignalPlan:
     source: SourceMetadata
     output_channels: tuple[ChannelDescriptor, ...]

@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 
 from omnibci.application.plugin_profiles import ActivationSnapshot, PluginSelection, ProfileBinding, ProfileRevisionConflict
-from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
+from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, ReferenceSpec, SourceMetadata
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
@@ -198,6 +198,82 @@ def complete_selections(service, selections=()):
             profile_id = service.create(kind, plugin.selection, f"Required {kind}", {}).profile_id
         selections.append({"slot": slot, "profile_id": profile_id})
     return selections
+
+
+def test_decoder_inputs_switch_independently_and_resolve_against_current_source(service):
+    definition = service.catalog.legacy("decoder", "THUBCI_SSVEP_classic40CCA")
+    first_input = ProcessingInput(outputs=("O2", "O1"), reference=ReferenceSpec("single", ("M1",)),
+                                  excluded_channels=("Oz",))
+    first = service.create("decoder", definition.selection, "Visual", {}, processing_input=first_input)
+    second = service.create("decoder", definition.selection, "Motor", {},
+                             processing_input=ProcessingInput(outputs=("C3", "C4")))
+    selections = complete_selections(service, [{"slot": "processing.decoder", "profile_id": first.profile_id}])
+    accepted = service.accept(service.propose(selections), expected_revision=None)
+    assert service.resolve_settings()["SIGNAL.setup"] == first_input.as_signal_setup("file_reader").to_dict()
+
+    edited = service.update(first.profile_id, name=first.name, parameters=first.parameters,
+                            expected_revision=first.revision, processing_input=ProcessingInput(outputs=("Oz",)))
+    assert service.resolve_settings()["SIGNAL.setup"]["outputs"] == ["O2", "O1"]
+    other_selections = [dict(item, profile_id=second.profile_id) if item["slot"] == "processing.decoder" else item
+                        for item in selections]
+    second_activation = service.accept(service.propose(other_selections), expected_revision=accepted.revision)
+    assert service.resolve_settings()["SIGNAL.setup"]["outputs"] == ["C3", "C4"]
+
+    source_definition = service.catalog.legacy("acquisition", "neuroscan_curry8_reader")
+    source = service.create("acquisition", source_definition.selection, "Device", {})
+    changed_source = [dict(item, profile_id=source.profile_id) if item["slot"] == "acquisition.source" else item
+                      for item in selections]
+    service.accept(service.propose(changed_source), expected_revision=second_activation.revision)
+    assert service.resolve_settings()["SIGNAL.setup"] == edited.processing_input.as_signal_setup("neuroscan_curry8_reader").to_dict()
+    fresh = PluginProfileService(TomlPluginProfileRepository(service.repository.root), service.catalog,
+                                  settings_source=service.settings_source)
+    assert fresh.resolve_settings() == service.resolve_settings()
+    assert fresh.repository.get_profile(first.profile_id).processing_input == edited.processing_input
+    assert fresh.repository.get_profile(second.profile_id).processing_input == second.processing_input
+
+
+def test_legacy_decoder_input_is_read_unchanged_until_explicitly_configured(service):
+    legacy_setup = {"source_id": "file_reader", "outputs": ["Occipital"],
+                    "assignments": [{"source_index": 0, "electrode": "Occipital", "expected_name": "O1"}]}
+    service.settings_source = lambda: {"SIGNAL.setup": legacy_setup}
+    selections = complete_selections(service)
+    decoder_id = next(item["profile_id"] for item in selections if item["slot"] == "processing.decoder")
+    decoder = service.repository.get_profile(decoder_id)
+    legacy = service.repository.save_profile(replace(decoder, processing_input=None),
+                                              expected_revision=decoder.revision)
+    accepted = service.accept(service.propose(selections), expected_revision=None)
+    renamed = service.update(legacy.profile_id, name="Legacy renamed", parameters=legacy.parameters,
+                              expected_revision=legacy.revision)
+    assert renamed.processing_input is None
+    assert service.resolve_settings()["SIGNAL.setup"] == legacy_setup
+    assert service.propose(selections).revision == accepted.revision
+
+    configured = service.update(renamed.profile_id, name=renamed.name, parameters=renamed.parameters,
+                                expected_revision=renamed.revision, processing_input=None)
+    assert configured.processing_input == ProcessingInput()
+    assert service.resolve_settings()["SIGNAL.setup"] == legacy_setup
+    selected = service.accept(service.propose(selections), expected_revision=accepted.revision)
+    assert selected.settings["SIGNAL.setup"] == legacy_setup
+    assert service.resolve_settings()["SIGNAL.setup"] == ProcessingInput().as_signal_setup("file_reader").to_dict()
+
+
+def test_new_decoder_profile_has_explicit_input_and_ignores_global_legacy_setup(service):
+    service.settings_source = lambda: {"SIGNAL.setup": {"source_id": "other-device", "outputs": ["Old"]}}
+    selections = complete_selections(service)
+    selected = service.accept(service.propose(selections), expected_revision=None)
+    decoder = next(binding for binding in selected.bindings if binding.kind == "decoder")
+    assert decoder.processing_input == ProcessingInput()
+    assert service.resolve_settings()["SIGNAL.setup"] == ProcessingInput().as_signal_setup("file_reader").to_dict()
+
+
+def test_processing_input_cannot_be_saved_to_an_acquisition_profile(service):
+    from omnibci.application.plugin_profiles import PluginProfileValidationError
+
+    profile = create_source(service)
+    with pytest.raises(PluginProfileValidationError, match="decoder"):
+        service.update(profile.profile_id, name=profile.name, parameters=profile.parameters,
+                       expected_revision=profile.revision, processing_input=ProcessingInput())
+    assert service.repository.get_profile(profile.profile_id) == profile
 
 
 def test_save_never_changes_accepted_values_even_for_active_profile(service):
@@ -430,7 +506,7 @@ def test_host_settings_are_included_only_when_explicitly_requested(service):
     assert service.repository.get_activation() == previous
 
 
-def test_signal_refresh_preserves_unreviewed_general_host_settings(service):
+def test_saved_global_signal_setup_cannot_be_added_to_an_existing_activation(service):
     selections = complete_selections(service)
     service.settings_source = lambda: {"NEUROENGINE.queue_size": 64}
     previous = service.accept(service.propose(selections), expected_revision=None)
@@ -438,9 +514,9 @@ def test_signal_refresh_preserves_unreviewed_general_host_settings(service):
     service.settings_source = lambda: {"NEUROENGINE.queue_size": 128, "SIGNAL.setup": signal}
 
     assert service.propose(selections) == previous
-    candidate = service.propose(selections, include_signal_setup=True, refresh_slots=[])
+    candidate = service.propose(selections, include_host_settings=True, refresh_slots=[])
 
-    assert candidate.settings == {"NEUROENGINE.queue_size": 64, "SIGNAL.setup": signal}
+    assert candidate.settings == {"NEUROENGINE.queue_size": 128}
     assert candidate.bindings == previous.bindings
     assert candidate.revision != previous.revision
     assert service.repository.get_activation() == previous
@@ -459,12 +535,10 @@ def test_general_host_refresh_preserves_unreviewed_signal_setup(service):
     candidate = service.propose(selections, include_host_settings=True, refresh_slots=[])
 
     assert candidate.settings == {"NEUROENGINE.queue_size": 128, "SIGNAL.setup": signal}
-    combined = service.propose(selections, include_host_settings=True, include_signal_setup=True, refresh_slots=[])
-    assert combined.settings["SIGNAL.setup"]["outputs"] == ["O2"]
     assert service.repository.get_activation() == previous
 
 
-def test_scoped_signal_removal_preserves_other_accepted_host_settings(service):
+def test_legacy_signal_setup_survives_removal_from_saved_host_settings(service):
     service.settings_source = lambda: {
         "NEUROENGINE.queue_size": 64, "SIGNAL.setup": {"source_id": "test-source"},
     }
@@ -472,9 +546,9 @@ def test_scoped_signal_removal_preserves_other_accepted_host_settings(service):
     previous = service.accept(service.propose(selections), expected_revision=None)
     service.settings_source = lambda: {"NEUROENGINE.queue_size": 128}
 
-    candidate = service.propose(selections, include_signal_setup=True, refresh_slots=[])
+    candidate = service.propose(selections, include_host_settings=True, refresh_slots=[])
 
-    assert candidate.settings == {"NEUROENGINE.queue_size": 64}
+    assert candidate.settings == {"NEUROENGINE.queue_size": 128, "SIGNAL.setup": {"source_id": "test-source"}}
     assert "SIGNAL.setup" in previous.settings
     assert service.repository.get_activation() == previous
 
@@ -492,7 +566,7 @@ def test_saved_signal_setup_does_not_rewrite_legacy_activation_or_revision(servi
     candidate = service.propose(selections, include_host_settings=True, refresh_slots=[])
 
     assert "SIGNAL.setup" not in restored.settings
-    assert "SIGNAL.setup" not in materialized
+    assert materialized["SIGNAL.setup"] == ProcessingInput().as_signal_setup("file_reader").to_dict()
     assert restored.revision == previous.revision == candidate.revision
     assert service.repository.get_activation() == previous
     assert {path: path.read_bytes() for path in original_files} == original_files

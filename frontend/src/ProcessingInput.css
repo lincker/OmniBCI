@@ -1,0 +1,6 @@
+.processing-input .input-source { font-size: 0.75rem; color: var(--muted); margin: 1rem 0; }
+.processing-input .input-source p { margin: 0.375rem 0; }
+.processing-input .signal-pair { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 0.5rem; margin-bottom: 0.5rem; }
+.processing-input .signal-pair input { min-width: 0; width: 100%; }
+.processing-input .actions { flex-wrap: wrap; }
+@media (max-width: 700px) { .processing-input .signal-pair { grid-template-columns: 1fr; } }
