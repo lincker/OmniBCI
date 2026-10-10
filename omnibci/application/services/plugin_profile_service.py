@@ -11,10 +11,35 @@ from omnibci.application.activation_settings import (
 )
 from omnibci.application.plugin_profiles import (
     ActivationSnapshot, PluginProfile, PluginSelection, ProfileBinding,
-    ProfileRevisionConflict,
+    ProfileRevisionConflict, PluginProfileNotFoundError,
 )
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfigurationCatalog
+from omnibci.domain.montage import SourceMetadata, merge_source_montage
+
+
+_UNSET = object()
+
+
+def _same_parameters(first: dict, second: dict) -> bool:
+    return json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
+
+
+def _validate_manual_montage(kind, definition, parameters, manual, observed=None):
+    if manual is None:
+        return
+    if kind != "acquisition" or not isinstance(manual, SourceMetadata):
+        raise PluginSchemaError("manual_montage is only available for acquisition profiles")
+    if manual.source_id != definition.plugin_type:
+        raise PluginSchemaError("Manual montage source_id differs from the selected acquisition plugin")
+    if (manual.sample_rate != parameters.get("sample_rate")
+            or manual.output_row_count != parameters.get("channel_number")):
+        raise PluginSchemaError("Manual montage rate and output rows must match acquisition profile parameters")
+    if observed is not None:
+        try:
+            merge_source_montage(observed, manual)
+        except ValueError as exc:
+            raise PluginSchemaError(str(exc)) from exc
 
 
 def _validate_source_metadata(binding: ProfileBinding) -> None:
@@ -50,23 +75,56 @@ class PluginProfileService:
             raise PluginSchemaError("The profile requires a configuration schema migration")
         return definition, validate_parameters(definition.schema, parameters)
 
-    def create(self, kind: str, selection: PluginSelection, name: str, parameters: dict):
+    def create(self, kind: str, selection: PluginSelection, name: str, parameters: dict, *,
+               manual_montage: SourceMetadata | None = None):
         with self.change_guard(False):
             definition, values = self._parameters(kind, selection, parameters)
+            _validate_manual_montage(kind, definition, values, manual_montage)
             profile = PluginProfile(
                 profile_id=str(uuid4()), name=name, kind=kind, selection=selection,
                 parameters=values, configuration_version=definition.configuration_version,
+                manual_montage=manual_montage,
             )
             return self.repository.save_profile(profile, expected_revision=None)
 
-    def update(self, profile_id: str, *, name: str, parameters: dict, expected_revision: int):
+    def update(self, profile_id: str, *, name: str, parameters: dict, expected_revision: int,
+               manual_montage=_UNSET):
         with self.change_guard(False):
             previous = self.repository.get_profile(profile_id)
-            _, values = self._parameters(previous.kind, previous.selection, parameters,
+            definition, values = self._parameters(previous.kind, previous.selection, parameters,
                                          previous.configuration_version)
+            manual = previous.manual_montage if manual_montage is _UNSET else manual_montage
+            observed = previous.acquisition_montage if _same_parameters(previous.parameters, values) else None
+            _validate_manual_montage(previous.kind, definition, values, manual, observed)
             return self.repository.save_profile(
-                replace(previous, name=name, parameters=values), expected_revision=expected_revision,
+                replace(previous, name=name, parameters=values, manual_montage=manual,
+                        acquisition_montage=observed), expected_revision=expected_revision,
             )
+
+    def record_acquisition_montage(self, binding: ProfileBinding, metadata: SourceMetadata) -> PluginProfile | None:
+        """Cache a raw observation only while the saved source still matches.
+
+        Called inside acquisition lifecycle serialization, without taking the
+        engine change guard. Concurrent profile edits win the repository CAS.
+        """
+        if binding.kind != "acquisition" or binding.profile_id is None:
+            return None
+        if not isinstance(metadata, SourceMetadata):
+            raise ValueError("Acquisition montage must be SourceMetadata")
+        try:
+            profile = self.repository.get_profile(binding.profile_id)
+            if (profile.kind != binding.kind or profile.selection != binding.selection
+                    or profile.configuration_version != binding.configuration_version
+                    or not _same_parameters(profile.parameters, binding.parameters)):
+                return None
+            observation = replace(metadata, connection_id="")
+            if profile.acquisition_montage == observation:
+                return profile
+            return self.repository.save_profile(
+                replace(profile, acquisition_montage=observation), expected_revision=profile.revision,
+            )
+        except (PluginProfileNotFoundError, ProfileRevisionConflict):
+            return None
 
     def delete(self, profile_id: str, *, expected_revision: int):
         # Accepted bindings include independent values; retain linked profiles to
@@ -78,6 +136,7 @@ class PluginProfileService:
             self.repository.delete_profile(profile_id, expected_revision=expected_revision)
 
     def propose(self, selections: list[dict], *, include_host_settings: bool = False,
+                include_signal_setup: bool = False,
                 refresh_slots: list[str] | None = None) -> ActivationSnapshot:
         """Resolve an ordered set of slot/profile references into pinned copies."""
         current = self.repository.get_activation()
@@ -85,6 +144,17 @@ class PluginProfileService:
         if include_host_settings:
             self._validate_host_changes(base, current)
         base = activation_host_settings(base)
+        if current is not None and include_host_settings and not include_signal_setup:
+            if "SIGNAL.setup" in current.settings:
+                base["SIGNAL.setup"] = current.settings["SIGNAL.setup"]
+            else:
+                base.pop("SIGNAL.setup", None)
+        if include_signal_setup:
+            saved = self.settings_source()
+            if "SIGNAL.setup" in saved:
+                base["SIGNAL.setup"] = deepcopy(saved["SIGNAL.setup"])
+            else:
+                base.pop("SIGNAL.setup", None)
         if current is not None:
             # Preserve old inert copies without allowing saved edits to change a running revision.
             base.update({key: value for key, value in current.settings.items()
@@ -115,6 +185,7 @@ class PluginProfileService:
                 selection=profile.selection, parameters=parameters,
                 configuration_version=profile.configuration_version,
                 profile_revision=profile.revision,
+                manual_montage=profile.manual_montage,
             ))
         return ActivationSnapshot(bindings=tuple(bindings), settings=base)
 
@@ -153,6 +224,9 @@ class PluginProfileService:
         Stimulation is started separately; its platform-specific selections may
         remain dormant. Callers include currently active outputs when applying.
         """
+        if "SIGNAL.setup" in snapshot.settings:
+            from omnibci.domain.montage import SignalSetup
+            SignalSetup.from_dict(snapshot.settings["SIGNAL.setup"])
         slots = {binding.slot for binding in snapshot.bindings}
         required = {"acquisition.source", "processing.decoder", "processing.epoch_detector",
                     "stimulation.paradigm"}
@@ -170,6 +244,7 @@ class PluginProfileService:
             definition, parameters = self._parameters(
                 binding.kind, binding.selection, binding.parameters, binding.configuration_version,
             )
+            _validate_manual_montage(binding.kind, definition, parameters, binding.manual_montage)
             if parameters != binding.parameters:
                 raise PluginSchemaError(f"{binding.slot}: snapshot must include resolved defaults")
             if binding.kind in kinds and not definition.available:
@@ -207,6 +282,8 @@ class PluginProfileService:
                 result[aliases[binding.slot]] = definition.plugin_type
             if binding.kind == "acquisition":
                 result.update({f"ACQUISITION.{key}": value for key, value in binding.parameters.items()})
+                if binding.manual_montage is not None:
+                    result["ACQUISITION.manual_montage"] = binding.manual_montage.to_dict()
             elif binding.kind == "filter":
                 filters.append(definition.plugin_type)
         result["ALGORITHM.filters"] = filters

@@ -416,6 +416,7 @@ class NeuroEngine:
             EventType.ConnectDataProvider:            (acq, AcquisitionCommand.connect, True),
             EventType.DisconnectDataProvider:         (acq, AcquisitionCommand.disconnect, True),
             EventType.StartStream:                    (acq, AcquisitionCommand.start_stream, True),
+            EventType.GetSourceMetadata:              (acq, AcquisitionCommand.get_metadata, True),
             EventType.StopStream:                     (acq, AcquisitionCommand.stop_stream, True),
             EventType.StopAndDrain:                   (acq, AcquisitionCommand.stop_and_drain, True),
             EventType.GetSourceCheckpoint:            (acq, AcquisitionCommand.get_checkpoint, True),
@@ -427,6 +428,7 @@ class NeuroEngine:
             EventType.StageProcessingConfiguration:   (proc, SignalProcessorCommand.stage_configuration, True),
             EventType.CancelProcessingConfiguration:  (proc, SignalProcessorCommand.cancel_configuration, True),
             EventType.UpdateProcessingContext:        (proc, SignalProcessorCommand.update_context, True),
+            EventType.PrepareSignalProcessing:        (proc, SignalProcessorCommand.prepare_signal, True),
         }
 
     def _register_event_listeners(self) -> None:

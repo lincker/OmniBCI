@@ -6,7 +6,9 @@ Keeps acquisition routing and result-waiting logic out of the routers.
 """
 
 import logging
+from threading import RLock
 from omnibci.application.runtime_admission import admitted
+from omnibci.application.plugin_profiles import ProfileRevisionConflict, PluginProfileStorageError
 from typing import Optional
 
 from omnibci.shared.events import EventType, Event
@@ -20,8 +22,9 @@ from omnibci.application.queries.acquisition_queries import (
     GetAcquisitionStatusQuery,
     AcquisitionStatusResult,
 )
-from omnibci.application.events import AcquisitionSnapshot, StreamDrainReceipt
-from omnibci.application.services.command_result_service import CommandExecutor
+from omnibci.application.events import AcquisitionSnapshot, CommandFailureKind, CommandResult, StreamDrainReceipt
+from omnibci.application.services.command_result_service import CommandExecutor, CommandRejectedError
+from omnibci.domain.montage import SourceMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,7 @@ class AcquisitionAppService:
         command_executor: CommandExecutor,
         settings=None,
         admission=None,
+        lifecycle_lock=None,
     ) -> None:
         self._admission = admission
         """Use injected settings only for optional device status metadata."""
@@ -48,6 +52,25 @@ class AcquisitionAppService:
         # command handlers no longer guess — see on_acquisition_state().
         self._connected = False
         self._streaming = False
+        self.lifecycle_lock = lifecycle_lock or RLock()
+        self._prepare_signal = None
+        self._metadata = None
+        self._metadata_binding = None
+        self._metadata_recorder = None
+
+    def set_signal_preparer(self, callback) -> None:
+        """Install the signal preparation application service after composition."""
+        self._prepare_signal = callback
+
+    def set_metadata_recorder(self, binding_provider, recorder) -> None:
+        """Persist source observations against the binding that owns the running source."""
+        self._metadata_binding = binding_provider
+        self._metadata_recorder = recorder
+
+    @property
+    def cached_metadata(self) -> dict | None:
+        """Return the last confirmed metadata; disconnect invalidates this view."""
+        return self._metadata.to_dict() if self._metadata is not None else None
 
     # ------------------------------------------------------------------
     # Command handlers
@@ -55,22 +78,37 @@ class AcquisitionAppService:
 
     @admitted
     def handle_connect(self, cmd: ConnectDataProviderCommand) -> None:
-        self._put_event(EventType.ConnectDataProvider)
+        with self.lifecycle_lock:
+            self._put_event(EventType.ConnectDataProvider)
+            if self._metadata_recorder is not None:
+                try:
+                    self.get_metadata(refresh=True, allow_manual_fallback=True)
+                except (CommandRejectedError, RuntimeError) as exc:
+                    logger.warning("Source connected, but acquisition metadata is unavailable: %s", exc)
+                except PluginProfileStorageError as exc:
+                    raise PluginProfileStorageError(
+                        f"Source connected, but its acquisition montage could not be saved: {exc}"
+                    ) from exc
         logger.info("ConnectDataProvider event dispatched")
 
     @admitted(recovery=True)
     def handle_disconnect(self, cmd: DisconnectDataProviderCommand) -> None:
-        self._put_event(EventType.DisconnectDataProvider)
+        with self.lifecycle_lock:
+            self._metadata = None
+            self._put_event(EventType.DisconnectDataProvider)
         logger.info("DisconnectDataProvider event dispatched")
 
     @admitted
     def handle_start_stream(self, cmd: StartStreamCommand) -> None:
-        self._put_event(EventType.StartStream)
+        with self.lifecycle_lock:
+            receipt = self._prepare_signal() if self._prepare_signal is not None else None
+            self._put_event(EventType.StartStream, receipt)
         logger.info("StartStream event dispatched")
 
     @admitted(recovery=True)
     def handle_stop_stream(self, cmd: StopStreamCommand) -> None:
-        self._put_event(EventType.StopStream)
+        with self.lifecycle_lock:
+            self._put_event(EventType.StopStream)
         logger.info("StopStream event dispatched")
 
     @admitted(recovery=True)
@@ -78,9 +116,10 @@ class AcquisitionAppService:
         self, *, session_id: str | None = None, timeout_s: float | None = None,
     ) -> StreamDrainReceipt:
         """Wait for processing evidence after acquisition joins its producer."""
-        result = self._command_executor.request(
-            EventType.StopAndDrain, {"session_id": session_id}, timeout_s=timeout_s,
-        )
+        with self.lifecycle_lock:
+            result = self._command_executor.request(
+                EventType.StopAndDrain, {"session_id": session_id}, timeout_s=timeout_s,
+            )
         try:
             receipt = StreamDrainReceipt.from_value(result.data)
         except ValueError as exc:
@@ -100,6 +139,7 @@ class AcquisitionAppService:
         """
         self._connected = False
         self._streaming = False
+        self._metadata = None
 
     # ------------------------------------------------------------------
     # EventBus listeners (registered in bootstrap.register_engine_listeners)
@@ -115,10 +155,57 @@ class AcquisitionAppService:
             return
         self._connected = snap.connected
         self._streaming = snap.streaming
+        if not snap.connected:
+            self._metadata = None
 
     # ------------------------------------------------------------------
     # Query handlers
     # ------------------------------------------------------------------
+
+    @admitted
+    def get_metadata(self, *, refresh: bool = False, profile_id: str | None = None,
+                     allow_manual_fallback: bool = False) -> dict:
+        """Request metadata from the acquisition command loop with a bounded wait."""
+        with self.lifecycle_lock:
+            if profile_id is not None and self._metadata_binding is None:
+                raise ProfileRevisionConflict("Acquisition profile observation storage is unavailable")
+            binding = self._metadata_binding(profile_id) if self._metadata_binding is not None else None
+            self._metadata = None
+            include_observation = self._metadata_recorder is not None or allow_manual_fallback
+            payload = {"refresh": refresh}
+            if include_observation:
+                payload["include_observation"] = True
+            result = self._command_executor.request(
+                EventType.GetSourceMetadata, payload, timeout_s=5.0,
+            )
+            value = result.data
+            if include_observation:
+                if not isinstance(value, dict) or set(value) != {
+                    "metadata", "observation", "metadata_error", "observation_error",
+                }:
+                    raise RuntimeError("Source returned invalid acquisition metadata observation")
+                observation = value["observation"]
+                if observation is not None and self._metadata_recorder is not None and binding is not None:
+                    try:
+                        observation = SourceMetadata.from_dict(observation)
+                    except (TypeError, ValueError) as exc:
+                        raise RuntimeError("Source returned invalid acquisition metadata observation") from exc
+                    stored = self._metadata_recorder(binding, observation)
+                    if profile_id is not None and stored is None:
+                        raise ProfileRevisionConflict("Acquisition profile changed; observation was not saved")
+                error = value["metadata_error"] or (value["observation_error"] if not allow_manual_fallback else None)
+                if error is not None:
+                    raise CommandRejectedError(CommandResult(
+                        result.command_id, result.command, False, message=error,
+                        error_code="INVALID_SOURCE_METADATA", failure_kind=CommandFailureKind.REJECTED,
+                    ))
+                value = value["metadata"]
+            try:
+                metadata = SourceMetadata.from_dict(value)
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("Source returned invalid acquisition metadata") from exc
+            self._metadata = metadata
+            return metadata.to_dict()
 
     def handle_get_status(self, query: GetAcquisitionStatusQuery) -> AcquisitionStatusResult:
         source, sample_rate, channel_count = self._device_metadata()
@@ -128,6 +215,8 @@ class AcquisitionAppService:
             source=source,
             sample_rate=sample_rate,
             channel_count=channel_count,
+            metadata_available=self._metadata is not None,
+            metadata_provenance=self._metadata.provenance if self._metadata else None,
         )
 
     def _device_metadata(self):
@@ -137,6 +226,8 @@ class AcquisitionAppService:
         settings were injected — preserving the prior null behaviour.
 
         """
+        if self._metadata is not None:
+            return self._metadata.source_id, self._metadata.sample_rate, self._metadata.output_row_count
         if self._settings is None:
             return None, None, None
         source = self._settings.get("ACQUISITION.signal_source", None)

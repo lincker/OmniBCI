@@ -13,6 +13,8 @@ Dependency graph (follows DIP):
 """
 
 import logging
+from copy import deepcopy
+from threading import RLock
 from omnibci.application.runtime_admission import admitted
 import uuid
 from datetime import datetime, timezone
@@ -78,6 +80,7 @@ def _session_record_to_dto(r: SessionRecord, include_trials: bool = False) -> Se
         continuation_of=r.continuation_of,
         config_revision=r.config_revision,
         interruption_reason=r.interruption_reason,
+        signal_plan=deepcopy(r.signal_plan),
     )
 
 
@@ -110,6 +113,12 @@ class SessionAppService:
         self._repo = repository
         self._engine = engine_port  # EnginePort | None
         self._command_results = command_results
+        self._prepare_signal = None
+        self._signal_lock = RLock()
+
+    def set_signal_preparer(self, callback, lifecycle_lock):
+        self._prepare_signal = callback
+        self._signal_lock = lifecycle_lock
 
     # ------------------------------------------------------------------
     # Command handlers
@@ -117,6 +126,10 @@ class SessionAppService:
 
     @admitted
     def handle_create_session(self, cmd: CreateSessionCommand) -> str:
+        with self._signal_lock:
+            return self._create_session(cmd)
+
+    def _create_session(self, cmd: CreateSessionCommand) -> str:
         if cmd.continuation_of is not None:
             previous = self._require(cmd.continuation_of)
             if previous.state != SessionRecordState.ENDED:
@@ -127,6 +140,7 @@ class SessionAppService:
             cmd.config_revision if cmd.config_revision is not None
             else self._current_config_revision()
         )
+        signal_plan = self._prepare_signal() if self._prepare_signal is not None else None
         session_id = str(uuid.uuid4())
         record = SessionRecord(
             session_id=session_id,
@@ -135,6 +149,7 @@ class SessionAppService:
             started_at=datetime.now(timezone.utc),
             continuation_of=cmd.continuation_of,
             config_revision=config_revision,
+            signal_plan=deepcopy(signal_plan),
         )
         self._repo.save(record)
         payload = {"session_id": session_id, "paradigm": cmd.paradigm}

@@ -106,6 +106,7 @@ class PluginDescriptor:
 
     configuration_schema: Mapping[str, Any] | None = None
     configuration_version: int | None = None
+    signal_input_contract: int | None = None
 
     def supports_platform(self, platform_name: str) -> bool:
         """Both package and contribution constraints must permit the host."""

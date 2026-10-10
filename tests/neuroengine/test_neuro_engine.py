@@ -53,6 +53,10 @@ def _mark_resources_started(eng: NeuroEngine) -> None:
 
 
 _COMMAND_ROUTES = [
+    (EventType.GetSourceMetadata, "acquisition_command_queue", AcquisitionCommand.get_metadata,
+     {"refresh": True}),
+    (EventType.PrepareSignalProcessing, "processor_command_queue", SignalProcessorCommand.prepare_signal,
+     {"plan": {}, "receipt": {}}),
     (EventType.UpdateProcessingContext, "processor_command_queue", SignalProcessorCommand.update_context,
      {"generation": "run", "expected_revision": "old", "settings_snapshot": {}}),
     (EventType.GetSourceCheckpoint, "acquisition_command_queue", AcquisitionCommand.get_checkpoint,

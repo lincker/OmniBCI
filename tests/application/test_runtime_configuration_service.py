@@ -11,6 +11,7 @@ from omnibci.application.services.plugin_profile_service import PluginProfileSer
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
 
 
 @pytest.fixture
@@ -62,6 +63,21 @@ def test_source_change_requires_continuation(runtime):
     plan = service.plan(selections, expected_revision=before.revision)
     assert plan.strategy == "rebuild"
     assert plan.session_effect == "continuation"
+
+
+def test_manual_source_montage_change_requires_rebuild_and_is_pinned(runtime):
+    service, selections, before = runtime
+    profile = service.profiles.repository.get_profile(selections[0]["profile_id"])
+    manual = SourceMetadata("file_reader", profile.parameters["sample_rate"], tuple(
+        ChannelDescriptor(index, f"C{index + 1}", unit="uV")
+        for index in range(profile.parameters["channel_number"] - 1)), profile.parameters["channel_number"] - 1)
+    service.profiles.update(profile.profile_id, name=profile.name, parameters=profile.parameters,
+                            manual_montage=manual, expected_revision=profile.revision)
+    plan = service.plan(selections, expected_revision=before.revision)
+    assert plan.strategy == "rebuild"
+    assert plan.changed_slots == ("acquisition.source",)
+    assert service.resolve_plan(plan.plan_id).snapshot.bindings[0].manual_montage == manual
+    assert before.bindings[0].manual_montage is None
 
 
 def test_effector_selection_uses_module_boundary(runtime):

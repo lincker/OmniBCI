@@ -22,6 +22,7 @@ class RuntimePlanResponse(BaseModel):
     changed_settings: list[str]
     session_effect: Literal["preserve", "continuation"]
     errors: list[str]
+    signal_summary: str | None = None
 
 
 class RuntimeOperationResponse(BaseModel):

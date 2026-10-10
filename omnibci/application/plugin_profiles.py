@@ -4,9 +4,11 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 from uuid import UUID
+
+from omnibci.domain.montage import SourceMetadata
 
 
 class PluginProfileValidationError(ValueError):
@@ -78,6 +80,35 @@ def _fields(data: dict, required: set[str], optional: set[str] = frozenset()) ->
         raise PluginProfileValidationError("Document has missing or unknown fields")
 
 
+def _montage(value, kind: str, *, manual: bool = False) -> SourceMetadata | None:
+    if value is None:
+        return None
+    if kind != "acquisition" or not isinstance(value, SourceMetadata):
+        raise PluginProfileValidationError("Montage metadata requires an acquisition profile and SourceMetadata")
+    if manual:
+        channels = tuple(replace(channel, position_provenance="user-declared")
+                         if channel.position is not None else channel for channel in value.channels)
+        return replace(value, connection_id="", provenance="user-declared", channels=channels)
+    return replace(value, connection_id="")
+
+
+def _montage_data(value: SourceMetadata) -> dict:
+    data = value.to_dict()
+    data.pop("connection_id", None)
+    return data
+
+
+def _parse_montages(data: dict, fields: tuple[str, ...]) -> dict:
+    result = dict(data)
+    for name in fields:
+        if name in result:
+            try:
+                result[name] = SourceMetadata.from_dict(result[name])
+            except (ValueError, TypeError) as exc:
+                raise PluginProfileValidationError(f"Invalid {name}: {exc}") from exc
+    return result
+
+
 @dataclass(frozen=True, slots=True)
 class PluginSelection:
     """Exact capability identity; None selects an unversioned legacy package."""
@@ -116,6 +147,8 @@ class PluginProfile:
     configuration_version: int = 1
     revision: int = 0
     format_version: int = 2
+    acquisition_montage: SourceMetadata | None = None
+    manual_montage: SourceMetadata | None = None
 
     def __post_init__(self) -> None:
         validate_profile_id(self.profile_id)
@@ -132,20 +165,27 @@ class PluginProfile:
         _positive_integer(self.revision, "revision", minimum=0)
         object.__setattr__(self, "name", self.name.strip())
         object.__setattr__(self, "parameters", _object_data(self.parameters, "parameters"))
+        object.__setattr__(self, "acquisition_montage", _montage(self.acquisition_montage, self.kind))
+        object.__setattr__(self, "manual_montage", _montage(self.manual_montage, self.kind, manual=True))
 
     def to_dict(self) -> dict:
-        return {
+        data = {
             "format_version": self.format_version, "profile_id": self.profile_id,
             "name": self.name, "kind": self.kind, "selection": self.selection.to_dict(),
             "parameters": _object_data(self.parameters, "parameters"),
             "configuration_version": self.configuration_version, "revision": self.revision,
         }
+        for name in ("acquisition_montage", "manual_montage"):
+            if getattr(self, name) is not None:
+                data[name] = _montage_data(getattr(self, name))
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> PluginProfile:
         _fields(data, {"format_version", "profile_id", "name", "kind", "selection",
-                       "parameters", "configuration_version", "revision"})
-        return cls(**{**data, "selection": PluginSelection.from_dict(data["selection"])})
+                       "parameters", "configuration_version", "revision"}, {"acquisition_montage", "manual_montage"})
+        return cls(**{**_parse_montages(data, ("acquisition_montage", "manual_montage")),
+                      "selection": PluginSelection.from_dict(data["selection"])})
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +199,7 @@ class ProfileBinding:
     parameters: dict
     configuration_version: int = 1
     profile_revision: int = 0
+    manual_montage: SourceMetadata | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.slot, str):
@@ -177,6 +218,7 @@ class ProfileBinding:
         _positive_integer(self.profile_revision, "profile_revision",
                           minimum=0 if self.profile_id is None else 1)
         object.__setattr__(self, "parameters", _object_data(self.parameters, "parameters"))
+        object.__setattr__(self, "manual_montage", _montage(self.manual_montage, self.kind, manual=True))
 
     def to_dict(self) -> dict:
         data = {
@@ -187,13 +229,15 @@ class ProfileBinding:
         }
         if self.profile_id is not None:
             data["profile_id"] = self.profile_id
+        if self.manual_montage is not None:
+            data["manual_montage"] = _montage_data(self.manual_montage)
         return data
 
     @classmethod
     def from_dict(cls, data: dict) -> ProfileBinding:
         _fields(data, {"slot", "kind", "selection", "parameters", "configuration_version",
-                       "profile_revision"}, {"profile_id"})
-        return cls(**{**data, "profile_id": data.get("profile_id"),
+                       "profile_revision"}, {"profile_id", "manual_montage"})
+        return cls(**{**_parse_montages(data, ("manual_montage",)), "profile_id": data.get("profile_id"),
                       "selection": PluginSelection.from_dict(data["selection"])})
 
 

@@ -19,6 +19,13 @@ from omnibci.presentation.routers.runtime_config import router as runtime_router
 PREFIX = "/api/v1/config"
 
 
+def manual_montage():
+    return {"source_id": "file_reader", "sample_rate": 500, "trigger_row_index": 2,
+            "channels": [{"index": 0, "name": "C3", "signal_type": "eeg", "unit": "uV"},
+                         {"index": 1, "name": "C4", "signal_type": "eeg", "unit": "uV"}],
+            "original_reference": "Cz", "provenance": "user-declared"}
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
@@ -106,6 +113,57 @@ def test_profile_crud_and_compare_and_swap(client):
     assert http.delete(f"{path}?expected_revision=1").status_code == 409
     assert http.delete(f"{path}?expected_revision=2").status_code == 200
     assert http.get(path).status_code == 404
+
+
+def test_acquisition_profile_saves_manual_montage_and_pins_it_on_selection(client):
+    http, service, _ = client
+    response = http.post(f"{PREFIX}/plugin-profiles", json={
+        "kind": "acquisition", "selection": service.catalog.legacy("acquisition", "file_reader").selection.to_dict(),
+        "name": "Manual montage", "parameters": {"sample_rate": 500, "channel_number": 3},
+        "manual_montage": manual_montage(),
+    })
+    assert response.status_code == 201, response.text
+    profile = response.json()["data"]
+    path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
+    assert http.get(path).json()["data"]["manual_montage"]["channels"][0]["name"] == "C3"
+    renamed = http.put(path, json={"name": "Renamed", "parameters": profile["parameters"],
+                                  "expected_revision": profile["revision"]})
+    assert renamed.status_code == 200
+    assert renamed.json()["data"]["manual_montage"] == profile["manual_montage"]
+    profiles = complete_profiles(client, [("acquisition.source", renamed.json()["data"])])
+    selected = accept(http, profiles)
+    assert selected.status_code == 200, selected.text
+    assert service.resolve_settings()["ACQUISITION.manual_montage"]["channels"][0]["name"] == "C3"
+    cleared = http.put(path, json={"name": "Renamed", "parameters": profile["parameters"],
+        "expected_revision": renamed.json()["data"]["revision"], "manual_montage": None})
+    assert cleared.status_code == 200
+    assert cleared.json()["data"]["manual_montage"] is None
+    # Saved edits never change already selected acquisition inputs.
+    assert service.resolve_settings()["ACQUISITION.manual_montage"]["channels"][0]["name"] == "C3"
+
+
+def test_read_only_source_observation_is_rejected_by_create_and_update(client):
+    http, service, _ = client
+    request = {"kind": "acquisition", "selection": service.catalog.legacy("acquisition", "file_reader").selection.to_dict(),
+               "name": "Forged observation", "parameters": {}, "acquisition_montage": manual_montage()}
+    assert http.post(f"{PREFIX}/plugin-profiles", json=request).status_code == 422
+    profile = create(client)
+    path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
+    assert http.put(path, json={"name": profile["name"], "parameters": profile["parameters"],
+        "expected_revision": profile["revision"], "acquisition_montage": manual_montage()}).status_code == 422
+    assert http.get(path).json()["data"] == profile
+
+
+@pytest.mark.parametrize("patch", [{"trigger_row_index": 3}, {"sample_rate": 250},
+                                 {"source_id": "different-source"}])
+def test_manual_montage_requires_consistent_profile_identity_and_dimensions(client, patch):
+    http, _, _ = client
+    profile = create(client, parameters={"sample_rate": 500, "channel_number": 3})
+    path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
+    response = http.put(path, json={"name": profile["name"], "parameters": profile["parameters"],
+        "expected_revision": profile["revision"], "manual_montage": {**manual_montage(), **patch}})
+    assert response.status_code == 422, response.text
+    assert http.get(path).json()["data"] == profile
 
 
 @pytest.mark.parametrize("include_host_settings", [False, True])

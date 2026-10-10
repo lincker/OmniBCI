@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import time
+from uuid import uuid4
 from enum import Enum
 from typing import Optional, Protocol, runtime_checkable
 
@@ -14,6 +15,7 @@ from omnibci.application.events import (
 )
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.domain.signal import SignalChunk
+from omnibci.infrastructure.acquisition.metadata import source_metadata
 from omnibci.shared.events import Event, EventType
 
 logger = logging.getLogger(__name__)
@@ -72,6 +74,7 @@ _COMMAND_RESULT_NAMES = {
     AcquisitionCommand.get_checkpoint: EventType.GetSourceCheckpoint.name,
     AcquisitionCommand.restore_checkpoint: EventType.RestoreSourceCheckpoint.name,
     AcquisitionCommand.update_revision: EventType.UpdateAcquisitionRevision.name,
+    AcquisitionCommand.get_metadata: EventType.GetSourceMetadata.name,
 }
 
 
@@ -89,6 +92,7 @@ class Acquisition:
         event_bus=None,
         generation: str | None = None,
         config_revision: str | None = None,
+        metadata_settings: dict | None = None,
     ) -> None:
         self.data_source = data_source
         self.command_queue = command_queue
@@ -102,6 +106,12 @@ class Acquisition:
         self.config_revision = config_revision
         self._last_sequence = -1
         self._fetch_failure: str | None = None
+        self._metadata_settings = metadata_settings or {}
+        self._metadata = None
+        self._observation = None
+        self._metadata_error = None
+        self._observation_error = None
+        self.connection_id = uuid4().hex if getattr(data_source, "is_connected", False) else None
 
     def run(self) -> None:
         asyncio.run(self.serve())
@@ -166,7 +176,13 @@ class Acquisition:
         try:
             if command is AcquisitionCommand.stop_and_drain and request is None:
                 raise AcquisitionCommandRejected("CORRELATION_REQUIRED", "StopAndDrain requires a command ID")
-            await handler()
+            data = None
+            if command is AcquisitionCommand.get_metadata:
+                data = await self._on_get_metadata(request)
+            elif command is AcquisitionCommand.start_stream:
+                await self._on_start_stream(request.payload if request else None)
+            else:
+                await handler()
             if command is AcquisitionCommand.stop_and_drain:
                 self._require_healthy_stream()
                 payload = request.payload
@@ -213,7 +229,7 @@ class Acquisition:
             )
             return
         if request is not None:
-            self._emit_command_result(request, command, ok=True)
+            self._emit_command_result(request, command, ok=True, data=data)
 
     def _configuration_command(self, command, request) -> None:
         if request is None:
@@ -254,6 +270,8 @@ class Acquisition:
 
     async def _on_connect(self) -> None:
         if self.data_source.is_connected:
+            if self.connection_id is None:
+                self.connection_id = uuid4().hex
             self.status = AcquisitionState.running
             self._emit_state()
             return
@@ -263,10 +281,18 @@ class Acquisition:
                 "CONNECT_FAILED",
                 "Data source did not enter the connected state",
             )
+        self.connection_id = uuid4().hex
+        self._metadata = None
+        self._observation = None
+        self._metadata_error = self._observation_error = None
         self.status = AcquisitionState.running
         self._emit_state()
 
     async def _on_disconnect(self) -> None:
+        self.connection_id = None
+        self._metadata = None
+        self._observation = None
+        self._metadata_error = self._observation_error = None
         # A successful disconnect means no reader coroutine remains alive.
         # Some SignalSource implementations (including FileReader) do not
         # implicitly stop their stream in disconnect(), so enforce the order
@@ -284,7 +310,7 @@ class Acquisition:
         self.status = AcquisitionState.stop
         self._emit_state()
 
-    async def _on_start_stream(self) -> None:
+    async def _on_start_stream(self, receipt=None) -> None:
         self._require_healthy_stream()
         # start_stream is only honoured once connected (status == running);
         # otherwise it is dropped — but the truth (not streaming) is still
@@ -296,6 +322,8 @@ class Acquisition:
                 "DATA_SOURCE_NOT_CONNECTED",
                 "Cannot start stream before the data source is connected",
             )
+        if self._metadata_settings.get("SIGNAL.setup") is not None:
+            self._validate_signal_receipt(receipt)
         if self.data_source.is_streaming:
             self._emit_state()
             return
@@ -348,9 +376,77 @@ class Acquisition:
     async def _on_stop_acquisition(self) -> None:
         self.should_exit = True
 
-    async def _on_get_metadata(self) -> None:
-        info = await self.data_source.get_metadata()
-        logger.info('Device metadata: %s', info)
+    async def _on_get_metadata(self, request=None):
+        if request is None and not self._metadata_settings:
+            # Preserve direct legacy worker commands without a metadata contract.
+            return await self.data_source.get_metadata()
+        if not self.data_source.is_connected:
+            raise AcquisitionCommandRejected("DATA_SOURCE_NOT_CONNECTED", "Connect the source before reading metadata")
+        payload = request.payload if request else None
+        refresh = isinstance(payload, dict) and payload.get("refresh") is True
+        include_observation = isinstance(payload, dict) and payload.get("include_observation") is True
+        if self.connection_id is None:
+            raise AcquisitionCommandRejected("DATA_SOURCE_NOT_CONNECTED", "Reconnect the source before reading metadata")
+        if self.data_source.is_streaming or self.fetch_task is not None:
+            if self._metadata is not None and not refresh:
+                return self._metadata_response(include_observation)
+            raise AcquisitionCommandRejected("METADATA_REQUIRES_STOP", "Stop the stream before reading source metadata")
+        if self._metadata is None or refresh:
+            self._metadata = self._observation = None
+            self._metadata_error = self._observation_error = None
+            source_id = self._metadata_settings.get("ACQUISITION.signal_source") or getattr(
+                self.data_source, "plugin_type", type(self.data_source).__name__,
+            )
+            try:
+                info = await asyncio.wait_for(self.data_source.get_metadata(), timeout=3.0)
+            except Exception as exc:
+                info = None
+                self._observation_error = str(exc) or "Source metadata timed out"
+            else:
+                try:
+                    self._observation = source_metadata(
+                        info, self._metadata_settings, source_id=source_id, connection_id=self.connection_id,
+                        include_manual=False, validate_configuration=False,
+                    )
+                except (ValueError, TypeError) as exc:
+                    self._observation_error = str(exc)
+            manual = self._metadata_settings.get("ACQUISITION.manual_montage") or (
+                self._metadata_settings.get("SIGNAL.setup") or {}
+            ).get("manual_metadata")
+            try:
+                if self._observation_error and info is None and manual is None:
+                    raise ValueError(self._observation_error)
+                self._metadata = source_metadata(
+                    info, self._metadata_settings, source_id=source_id, connection_id=self.connection_id,
+                )
+            except (ValueError, TypeError) as exc:
+                self._metadata_error = str(exc)
+        return self._metadata_response(include_observation)
+
+    def _metadata_response(self, include_observation):
+        if include_observation:
+            return {
+                "metadata": self._metadata.to_dict() if self._metadata is not None else None,
+                "observation": self._observation.to_dict() if self._observation is not None else None,
+                "metadata_error": self._metadata_error,
+                "observation_error": self._observation_error,
+            }
+        error = self._metadata_error or self._observation_error
+        if error is not None:
+            raise AcquisitionCommandRejected("INVALID_SOURCE_METADATA", error)
+        return self._metadata.to_dict()
+
+    def _validate_signal_receipt(self, receipt) -> None:
+        expected = {
+            "generation": self.generation, "config_revision": self.config_revision,
+            "connection_id": self.connection_id,
+            "source_fingerprint": self._metadata.fingerprint if self._metadata else None,
+        }
+        if (not isinstance(receipt, dict) or self._metadata is None
+                or any(receipt.get(key) != value for key, value in expected.items())
+                or not isinstance(receipt.get("plan_fingerprint"), str)
+                or len(receipt["plan_fingerprint"]) != 64):
+            raise AcquisitionCommandRejected("SIGNAL_NOT_PREPARED", "Prepare the signal mapping for this connection and configuration before streaming")
 
     async def fetch(self) -> None:
         packets_counter = 0

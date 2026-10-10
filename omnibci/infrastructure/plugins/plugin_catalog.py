@@ -518,6 +518,12 @@ def _parse_contributions(
         if any(not isinstance(value, Mapping) for value in controls.values()):
             raise PluginManifestError(f"{manifest_path}: contribution controls must be TOML tables")
         configuration_schema, configuration_version = _configuration(contribution, package_dir)
+        signal_contract = contribution.get("signal_input_contract")
+        if signal_contract is not None and (
+            type(signal_contract) is not int or signal_contract != 1
+            or category not in {"decoder", "epoch_detector", "filter"}
+        ):
+            raise PluginManifestError(f"{manifest_path}: invalid signal_input_contract")
         descriptors.append(PluginDescriptor(
             package=metadata,
             contribution_id=identifier,
@@ -537,6 +543,7 @@ def _parse_contributions(
             platforms=_platforms(contribution, manifest_path),
             configuration_schema=configuration_schema,
             configuration_version=configuration_version,
+            signal_input_contract=signal_contract,
         ))
     return tuple(descriptors)
 

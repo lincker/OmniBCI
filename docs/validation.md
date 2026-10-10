@@ -37,6 +37,39 @@ OpenAPI. Configure these check names as required in branch protection.
 
 ## What these checks establish
 
+The acquisition-profile montage follow-up on 2026-10-10 passed focused backend
+batches of 195 configuration/API/domain checks, 125 profile/storage checks, 26
+signal/API-contract checks, 61 acquisition/bootstrap checks, and 34 processing/API
+checks including real CNT acquisition across processes. These batches overlap.
+Coverage includes persistent source observations, missing-field manual fallback,
+read-only device facts, stale-profile and concurrent-write rejection, pinned
+manual inputs, connection invalidation, and device/configuration conflicts.
+All 70 frontend tests, type checking, production build, OpenAPI/REST consistency,
+and six architecture contracts passed. Frontend regressions also cover changed
+channel counts, generated names, and avoiding reuse of a file's observed
+coordinates as manual declarations for another file. The full backend suite and
+physical-device/other-OS release checks were not rerun for this follow-up.
+
+Montage validation on 2026-10-10 used the existing Python 3.14 environment on
+macOS. The final focused suites passed 153 runtime/API tests and 224
+domain/configuration/plugin tests (these suites overlap). The complete integration
+suite passed 24 tests with one skip; the real CNT montage and command-confirmation
+process tests also passed after the final acquisition fix. The full headless run
+had 2,361 passes and five failures: a lightweight source test double lacked a
+connection property, and the event-routing expectation omitted the two new
+commands. Those failures were corrected and covered by the final focused suites;
+the complete headless suite was not rerun after those fixes.
+
+All 57 frontend tests, type checking, production build, OpenAPI/REST type
+consistency, and six architecture contracts passed. A clean temporary wheel was
+installed outside the checkout and checked without the editable-package import
+hook: all ten contributions, 281 stimulus frames, new montage modules, and the
+installed MNE electrode template resolved successfully. Template coordinates
+were explicitly verified in the head frame and meters. Browser screenshot QA
+was unavailable because the computer-use runtime exposed no browser surfaces.
+These checks do not establish physical Scan45/CURRY behavior or Windows/Linux
+results; those remain release validation work.
+
 Local verification on 2026-09-24: 1,927 headless/backend tests passed, including
 real-process integration. The final source-capability change was then rechecked
 with 49 relevant coordinator, failure, and process tests. All 18 frontend tests,

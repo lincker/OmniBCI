@@ -70,6 +70,10 @@ def _validate_settings(role: str, settings: dict) -> None:
     for key, value in settings.items():
         if key in _CONTEXT_KEYS:
             continue
+        if key == "SIGNAL.setup":
+            from omnibci.domain.montage import SignalSetup
+            SignalSetup.from_dict(value)
+            continue
         if key == "debug" or key.endswith((".enabled", ".auto_spawn")):
             valid = type(value) is bool
         elif key.endswith(("_ip", ".renderer")):
@@ -203,6 +207,12 @@ def materialize_node_configuration(configuration: NodeConfiguration,
                 if _canonical(parameters.get(key)) != _canonical(result[f"ACQUISITION.{key}"]):
                     raise PluginSchemaError(f"ACQUISITION.{key} disagrees with the pinned source")
             result.update({f"ACQUISITION.{key}": value for key, value in parameters.items()})
+            if binding.manual_montage is not None:
+                if (binding.manual_montage.source_id != definition.plugin_type
+                        or binding.manual_montage.sample_rate != parameters["sample_rate"]
+                        or binding.manual_montage.output_row_count != parameters["channel_number"]):
+                    raise PluginSchemaError("Manual montage disagrees with the pinned source")
+                result["ACQUISITION.manual_montage"] = binding.manual_montage.to_dict()
         elif binding.kind == "filter":
             filters.append(definition.plugin_type)
     if configuration.role == "engine":

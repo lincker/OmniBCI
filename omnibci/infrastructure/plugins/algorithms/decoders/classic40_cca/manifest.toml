@@ -9,6 +9,7 @@ api_version = "2"
 publisher = "OmniBCI"
 
 [[contributions]]
+signal_input_contract = 1
 id = "default"
 kind = "decoder"
 plugin_type = "THUBCI_SSVEP_classic40CCA"

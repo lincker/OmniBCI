@@ -37,6 +37,8 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/acquisition/stream/start", "post"),
     ("/api/v1/acquisition/stream/stop", "post"),
     ("/api/v1/acquisition/status", "get"),
+    ("/api/v1/acquisition/metadata", "get"),
+    ("/api/v1/acquisition/metadata/refresh", "post"),
     # stimulation
     ("/api/v1/stimulation/status", "get"),
     # plugins
@@ -60,6 +62,11 @@ EXPECTED_OPERATIONS = {
     # Host configuration.
     ("/api/v1/config", "get"),
     ("/api/v1/config", "patch"),
+    ("/api/v1/config/signal", "get"),
+    ("/api/v1/config/signal", "put"),
+    ("/api/v1/config/signal/preview", "post"),
+    ("/api/v1/config/signal/templates", "get"),
+    ("/api/v1/config/signal/templates/{name}", "get"),
     # Plugin profiles and accepted activation.
     ("/api/v1/config/plugin-catalog/{kind}", "get"),
     ("/api/v1/config/plugin-profiles", "get"),
@@ -162,7 +169,7 @@ class TestResponseDtos:
         props = _schema(spec, "SessionResponse")["properties"]
         assert set(props) == {
             "session_id", "paradigm", "state", "trial_count", "started_at", "ended_at",
-            "continuation_of", "config_revision", "interruption_reason",
+            "continuation_of", "config_revision", "interruption_reason", "signal_plan",
         }
 
     def test_trial_response_fields(self, spec):
@@ -180,6 +187,7 @@ class TestResponseDtos:
         props = _schema(spec, "AcquisitionStatusResponse")["properties"]
         assert set(props) == {
             "connected", "streaming", "source", "sample_rate", "channel_count",
+            "metadata_available", "metadata_provenance",
         }
 
 

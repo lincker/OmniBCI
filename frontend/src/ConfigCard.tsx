@@ -93,7 +93,7 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
       }
       await runtime.review({
         bindings: activation.bindings.map((binding) => ({ slot: binding.slot, profile_id: binding.profile_id! })),
-        expected_revision: activation.revision, refresh_slots: [], include_host_settings: true,
+        expected_revision: activation.revision, refresh_slots: [], include_host_settings: true, include_signal_setup: false,
       });
     } catch (cause) { setError(String(cause)); }
     finally { setBusy(false); }

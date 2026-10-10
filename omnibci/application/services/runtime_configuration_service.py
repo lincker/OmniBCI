@@ -24,6 +24,7 @@ class ConfigurationPlan:
     changed_settings: tuple[str, ...]
     session_effect: str
     errors: tuple[str, ...]
+    signal_summary: str | None = None
 
     def to_dict(self):
         return asdict(self)
@@ -66,7 +67,8 @@ class RuntimeConfigurationService:
 
     def plan(self, bindings: list[dict], *, expected_revision: str | None,
              refresh_slots: list[str] | None = None,
-             include_host_settings: bool = False) -> ConfigurationPlan:
+             include_host_settings: bool = False,
+             include_signal_setup: bool = False) -> ConfigurationPlan:
         current = self.profiles.repository.get_activation()
         actual_revision = current.revision if current else None
         if expected_revision != actual_revision:
@@ -74,6 +76,7 @@ class RuntimeConfigurationService:
         snapshot = self.profiles.propose(
             bindings, refresh_slots=refresh_slots,
             include_host_settings=include_host_settings,
+            include_signal_setup=include_signal_setup,
         )
         running = self.engine.is_engine_ready
         errors = []
@@ -118,13 +121,35 @@ class RuntimeConfigurationService:
             self.engine.generation if running else None, running, strategy,
             tuple(slots), settings,
             "continuation" if running and strategy == "rebuild" else "preserve",
-            tuple(errors),
+            tuple(errors), self._signal_summary(snapshot.settings.get("SIGNAL.setup")),
         )
         with self._lock:
             self._plans[plan.plan_id] = PlannedConfiguration(plan, snapshot, monotonic())
             while len(self._plans) > self._MAX_PLANS:
                 self._plans.popitem(last=False)
         return plan
+
+    @staticmethod
+    def _signal_summary(setup):
+        if setup is None:
+            return None
+        from omnibci.domain.montage import SignalSetup
+        try:
+            setup = SignalSetup.from_dict(setup).to_dict()
+        except (ValueError, TypeError):
+            return "Invalid signal setup; correct the validation errors before applying"
+        outputs = setup.get("outputs", [])
+        names = [item["name"] if isinstance(item, dict) else item for item in outputs]
+        reference = setup.get("reference", {})
+        parts = ["Outputs: " + (", ".join(names) or "all available channels"),
+                 "Reference: " + reference.get("mode", "original")]
+        if reference.get("channels"):
+            parts[-1] += " (" + ", ".join(reference["channels"]) + ")"
+        if setup.get("excluded_channels"):
+            parts.append("Excluded: " + ", ".join(setup["excluded_channels"]))
+        if setup.get("template"):
+            parts.append("Template: " + setup["template"])
+        return "; ".join(parts)
 
     def resolve_plan(self, plan_id: str) -> PlannedConfiguration:
         with self._lock:
@@ -223,7 +248,8 @@ class RuntimeConfigurationService:
     def _binding_values(binding):
         if binding is None:
             return None
-        return (binding.kind, binding.selection, binding.parameters, binding.configuration_version)
+        return (binding.kind, binding.selection, binding.parameters, binding.configuration_version,
+                binding.manual_montage)
 
     def _strategy(self, slots, settings, old, new):
         if not slots and not settings:

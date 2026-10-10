@@ -6,6 +6,7 @@ import { useRuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
 import { RuntimeConfigurationStatus, RuntimeConfigurationReview } from "./RuntimeConfiguration";
 import { ConfigCard } from "./ConfigCard";
 import { PluginProfiles } from "./PluginProfiles";
+import { SignalSetup } from "./SignalSetup";
 import { PluginMarket } from "./PluginMarket";
 import { ConfigDialog } from "./ConfigDialog";
 import { RunConsole } from "./RunConsole";
@@ -18,7 +19,7 @@ import { useI18n } from "./i18n";
 import "./styles.css";
 
 const setupPages = [
-  ["acquisition", "Acquisition", "signal"], ["processing", "Processing", "workflow"],
+  ["acquisition", "Acquisition", "signal"], ["channels", "Channels and montage", "signal"], ["processing", "Processing", "workflow"],
   ["stimulation", "Stimulation", "system"], ["actuation", "Actuation", "plug"],
 ] as const;
 const settingsPages = [["general", "General", "settings"]] as const;
@@ -128,7 +129,8 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
         <RuntimeConfigurationStatus runtime={runtime} />
         <fieldset className="desktop-control-guard" disabled={!!desktopConnection && desktopConnection.status !== "ready"}>
         <div className="editor-viewport">
-          {isSetup ? <PluginProfiles key={view} module={view as SetupPage} engineRunning={engineRunning} engineAvailable={engine.data !== null && engine.error === null} navigation={navigation}
+          {view === "channels" ? <SignalSetup navigation={navigation} runtime={runtime} onDirtyChange={setDirty} onBusyChange={setBusy} />
+            : isSetup ? <PluginProfiles key={view} module={view as Exclude<SetupPage, "channels">} engineRunning={engineRunning} engineAvailable={engine.data !== null && engine.error === null} navigation={navigation}
             runtime={runtime} onDirtyChange={setDirty} onBusyChange={setBusy} />
             : view === "extensions" ? <PluginMarket runtimeBusy={runtime.blocked}
               onBusyChange={setBusy} onDirtyChange={setDirty} onOpenSetup={() => navigate(lastSetup)} />

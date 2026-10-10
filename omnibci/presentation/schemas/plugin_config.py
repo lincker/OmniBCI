@@ -1,7 +1,9 @@
 """HTTP contracts for exact plugin profiles and accepted activation snapshots."""
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
+
+from omnibci.presentation.schemas.signal_setup import SourceMetadataModel
 
 
 PluginKind = Literal["acquisition", "decoder", "epoch_detector", "filter", "paradigm", "trigger", "effector"]
@@ -35,6 +37,8 @@ class PluginProfileResponse(BaseModel):
     parameters: dict[str, Any]
     configuration_version: int
     revision: int
+    acquisition_montage: SourceMetadataModel | None = Field(default=None, json_schema_extra={"readOnly": True})
+    manual_montage: SourceMetadataModel | None = None
 
 
 class CreatePluginProfileRequest(BaseModel):
@@ -43,6 +47,7 @@ class CreatePluginProfileRequest(BaseModel):
     selection: PluginSelectionResponse
     name: str = Field(min_length=1, max_length=64)
     parameters: dict[str, Any] = Field(default_factory=dict)
+    manual_montage: SourceMetadataModel | None = None
 
 
 class UpdatePluginProfileRequest(BaseModel):
@@ -50,6 +55,7 @@ class UpdatePluginProfileRequest(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     parameters: dict[str, Any]
     expected_revision: int = Field(ge=1)
+    manual_montage: SourceMetadataModel | None = None
 
 
 class ProfileBindingResponse(BaseModel):
@@ -60,6 +66,14 @@ class ProfileBindingResponse(BaseModel):
     parameters: dict[str, Any]
     configuration_version: int
     profile_revision: int
+    manual_montage: SourceMetadataModel | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_binding(self, handler):
+        data = handler(self)
+        if self.manual_montage is None:
+            data.pop("manual_montage", None)
+        return data
 
 
 class ActivationResponse(BaseModel):
@@ -81,3 +95,4 @@ class AcceptActivationRequest(BaseModel):
     expected_revision: str | None = None
     refresh_slots: list[str] | None = None
     include_host_settings: bool = False
+    include_signal_setup: bool = False

@@ -11,6 +11,7 @@ GET    /sessions/{id}/trials/last  Most recent classification result
 """
 import csv
 import io
+import json
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import List, Literal
@@ -111,6 +112,7 @@ def create_session(
             continuation_of=dto.continuation_of,
             config_revision=dto.config_revision,
             interruption_reason=dto.interruption_reason,
+            signal_plan=dto.signal_plan,
         ),
     )
 
@@ -133,6 +135,7 @@ def list_sessions(svc: SessionAppService = Depends(get_session_service)):
             continuation_of=d.continuation_of,
             config_revision=d.config_revision,
             interruption_reason=d.interruption_reason,
+            signal_plan=d.signal_plan,
         )
         for d in dtos
     ]
@@ -160,6 +163,7 @@ def get_active_session(svc: SessionAppService = Depends(get_session_service)):
             continuation_of=dto.continuation_of,
             config_revision=dto.config_revision,
             interruption_reason=dto.interruption_reason,
+            signal_plan=dto.signal_plan,
         )
     )
 
@@ -196,6 +200,8 @@ def export_sessions(
     writer.writeheader()
     for session in sessions:
         metadata = session.model_dump(mode="json", exclude={"trials"})
+        if metadata.get("signal_plan") is not None:
+            metadata["signal_plan"] = json.dumps(metadata["signal_plan"], ensure_ascii=False, allow_nan=False)
         metadata["session_config_revision"] = metadata.pop("config_revision")
         for trial in session.trials or [None]:
             row = {"format_version": 1, "exported_at": snapshot.exported_at.isoformat(),
@@ -235,6 +241,7 @@ def get_session(
             continuation_of=dto.continuation_of,
             config_revision=dto.config_revision,
             interruption_reason=dto.interruption_reason,
+            signal_plan=dto.signal_plan,
         )
     )
 

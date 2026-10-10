@@ -278,6 +278,8 @@ class Curry8DataReader(SignalSource):
             "allow_amplifier_control": metadata.allow_amplifier_control,
             "allow_recording_control": metadata.allow_recording_control,
             "channel_labels": list(metadata.channel_labels),
+            "native_event": "separate-event-packets",
+            "provenance": "device-reported",
         }
 
     async def start_stream(self) -> bool:

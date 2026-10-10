@@ -127,6 +127,16 @@ Context contains metadata, not global settings or live service objects.
 The class implements its domain port; a registry decorator and `plugin_type`
 attribute are no longer required. The manifest owns its selection identity.
 
+Processing contributions that support prepared channel input declare
+`signal_input_contract = 1` beside their contribution `kind`. Their context adds
+`acquired_signal` and `input_signal`, both immutable `SourceMetadata` values.
+`channel_names` retains the original acquired-channel meaning; the ordered
+`input_signal.channels` describes the actual decoder/filter/detector input,
+including units, references, and optional positions in meters. The final trigger
+row remains outside channel arithmetic. Undeclared plugins retain the legacy
+identity path and reject transformed input before streaming. The bundled CCA,
+FBCCA, epoch detector, and baseline filter declare this contract.
+
 API `1` keeps its existing constructor arguments and alias checks. Constructor
 errors never cause a retry using a different API. All bundled contributions use
 API `2`; direct legacy constructor calls remain compatible during migration.

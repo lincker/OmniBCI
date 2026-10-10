@@ -13,12 +13,14 @@ class EventType(IntEnum):
     GetSourceCheckpoint = 105
     RestoreSourceCheckpoint = 106
     UpdateAcquisitionRevision = 107
+    GetSourceMetadata = 108
     StartStream = 111
     StopStream = 112
     StopAndDrain = 113  # acquisition stop followed by an ordered processing barrier
     StageProcessingConfiguration = 211  # stage a pipeline until the next epoch boundary
     CancelProcessingConfiguration = 212  # reconcile or cancel a staged pipeline
     UpdateProcessingContext = 213  # acknowledge output metadata after an ordered drain
+    PrepareSignalProcessing = 214
     AcquisitionState = 121  # worker -> API: authoritative device-state snapshot
                             # payload: application.events.AcquisitionSnapshot
     CommandResult = 601      # command consumer -> API: application.events.CommandResult

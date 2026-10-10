@@ -8,6 +8,7 @@ import { SessionSummary, TrialResults } from "./TrialResults";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
 import { pluginConfigApi, selectionKey, type Activation, type PluginProfile, type PluginDefinition } from "./api/plugin-config";
 import { readTrialControls, type TrialControl } from "./plugin-controls";
+import { signalConfigApi } from "./api/signal-config";
 
 function Dot({ on, label }: { on: boolean | undefined; label: string }) {
   return <span className={`dot ${on ? "dot-on" : "dot-off"}`}>● {label}</span>;
@@ -30,6 +31,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
 }) {
   const { t } = useI18n();
   const stimulation = usePoll(api.stimulationStatus);
+  const signal = usePoll(signalConfigApi.get);
   const [selection, setSelection] = useState<Activation | null>(null);
   const [profiles, setProfiles] = useState<PluginProfile[]>([]);
   const [selectedParadigm, setSelectedParadigm] = useState<PluginDefinition | null>(null);
@@ -37,7 +39,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
   const [loadError, setLoadError] = useState<string | null>(null);
   const [controlValues, setControlValues] = useState<Record<string, string>>({});
   const [trialError, setTrialError] = useState<string | null>(null);
-  const refresh = async () => { await Promise.all([engine.refresh(), acquisition.refresh(), stimulation.refresh()]); };
+  const refresh = async () => { await Promise.all([engine.refresh(), acquisition.refresh(), stimulation.refresh(), signal.refresh()]); };
   const start = useAction(api.engineStart, refresh);
   const stop = useAction(api.engineStop, refresh);
   const connect = useAction(api.acqConnect, refresh);
@@ -159,6 +161,16 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
       </div>
       <button className="text-button" disabled={busy} onClick={onEditSetup}>Edit setup <Icon name="chevron" /></button>
       <p className="meta">Selected configuration is shown here. Review and apply changes from Setup.</p>
+    </section>
+    <section className="setup-summary" aria-label="Active signal setup">
+      <div className="summary-items"><div><span>Signal preparation</span>
+        <strong>{signal.error ? "Unavailable" : !running ? "Engine stopped" : signal.data?.readiness.ready ? "Ready" : "Validated before reading starts"}</strong></div>
+        <div><span>Active channel selection</span><strong>{!running ? "None" : signal.error ? "Unavailable" : !signal.data ? "Loading…" : signal.data.active_setup
+          ? signal.data.active_setup.outputs.length ? signal.data.active_setup.outputs.map((output) => typeof output === "string" ? output : output.name).join(", ") : "All mapped channels"
+          : "Original source channels"}</strong></div>
+        <div><span>Active reference mode</span><strong>{!running ? "None" : signal.error ? "Unavailable" : !signal.data ? "Loading…" : signal.data.active_setup?.reference.mode ?? "original"}</strong></div></div>
+      {signal.error && <p className="error" role="alert">{signal.error.message}</p>}
+      {!signal.data?.readiness.ready && running && <p className="meta">Starting reading prepares the selected mapping against the connected source before creating a recording.</p>}
     </section>
     {missingRecording && <p className="inline-message" role="status">Select a recording on the backend computer in Acquisition setup, then save and apply the profile before starting.</p>}
     {loadError && <p className="inline-message error" role="alert">{loadError}</p>}

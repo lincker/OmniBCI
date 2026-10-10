@@ -9,6 +9,7 @@ from omnibci.application.node_configuration import (
 from omnibci.application.plugin_profiles import ProfileBinding, PluginSelection
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration
+from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
 
 
 SLOTS = {
@@ -102,6 +103,16 @@ def test_node_needs_only_owned_plugins(runtime, role, kinds, alias):
         assert "NEUROENGINE.message_server_ip" not in result
 
 
+def test_acquisition_montage_survives_engine_node_projection(runtime):
+    source = ProfileBinding.from_dict(runtime["PLUGINS.bindings"][0])
+    manual = SourceMetadata("local_acquisition", 1000, (ChannelDescriptor(0, "C3", unit="uV"),), 1)
+    runtime["PLUGINS.bindings"][0] = replace(source, manual_montage=manual).to_dict()
+    dto = NodeConfiguration.from_dict(project_node_configuration(runtime, "engine").to_dict())
+    result = materialize_node_configuration(dto, LocalCatalog({"acquisition", "decoder", "epoch_detector"}))
+    assert result["ACQUISITION.manual_montage"] == manual.to_dict()
+    assert "ACQUISITION.manual_montage" not in project_node_configuration(runtime, "stimulation").settings
+
+
 def test_projection_requires_no_installed_catalog_and_preserves_parent_identity(runtime):
     dto = project_node_configuration(runtime, "stimulation")
     assert dto.role == "stimulation"
@@ -111,6 +122,33 @@ def test_projection_requires_no_installed_catalog_and_preserves_parent_identity(
     assert dto.settings["STIMULATION.auto_spawn"] is False
     runtime.pop("CONFIG.generation")
     assert project_node_configuration(runtime, "stimulation").generation is None
+
+
+def test_signal_setup_projects_only_to_engine_and_remains_structured(runtime):
+    setup = {
+        "schema_version": 1, "source_id": "test-source",
+        "assignments": [{"source_index": 0, "electrode": "O1", "expected_name": "CH1"}],
+        "outputs": ["O1"], "reference": {"mode": "original", "channels": []},
+    }
+    runtime["SIGNAL.setup"] = setup
+    engine = project_node_configuration(runtime, "engine")
+    restored = NodeConfiguration.from_dict(engine.to_dict())
+    assert restored.settings["SIGNAL.setup"] == setup
+    result = materialize_node_configuration(restored, LocalCatalog({"acquisition", "decoder", "epoch_detector"}))
+    assert result["SIGNAL.setup"] == setup
+    for role in ("stimulation", "actuation"):
+        projected = project_node_configuration(runtime, role)
+        assert "SIGNAL.setup" not in projected.settings
+        injected = projected.to_dict()
+        injected["settings"]["SIGNAL.setup"] = setup
+        with pytest.raises(PluginSchemaError, match="unsupported fields"):
+            NodeConfiguration.from_dict(injected)
+
+
+def test_invalid_signal_setup_is_rejected_in_engine_projection(runtime):
+    runtime["SIGNAL.setup"] = {"source_id": "test-source", "reference": {"mode": "average", "channels": []}}
+    with pytest.raises(ValueError, match="nonempty"):
+        project_node_configuration(runtime, "engine")
 
 
 def test_projected_dto_is_independent_of_input_and_export_mutation(runtime):

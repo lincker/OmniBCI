@@ -3,6 +3,7 @@ import { ApiError, type ApiEnvelope } from "./client";
 import type { components } from "./rest-types";
 import { requestJson } from "./transport";
 import type { ConfigurationSchema } from "../SchemaForm";
+import type { SourceMetadata } from "./signal-config";
 
 type S = components["schemas"];
 export type PluginKind = S["PluginProfileResponse"]["kind"];
@@ -29,15 +30,29 @@ async function request<T>(path: string, method = "GET", data?: unknown): Promise
 
 export { request as configRequest };
 
+function manualFields(value: SourceMetadata | null | undefined) {
+  if (value === undefined) return {};
+  if (value === null) return { manual_montage: null };
+  const { signal_channel_count: _signalCount, output_row_count: _rowCount, ...declaration } = value;
+  return { manual_montage: declaration };
+}
+
 export const pluginConfigApi = {
   catalog: (kind: PluginKind) => request<PluginDefinition[]>(`/plugin-catalog/${kind}`),
   profiles: () => request<PluginProfile[]>("/plugin-profiles"),
   activation: () => request<Activation | null>("/activation"),
-  create: (kind: PluginKind, selection: PluginSelection, name: string, parameters: Record<string, unknown>) =>
-    request<PluginProfile>("/plugin-profiles", "POST", { kind, selection, name, parameters }),
-  update: (profile: PluginProfile, name: string, parameters: Record<string, unknown>) =>
+  create: (kind: PluginKind, selection: PluginSelection, name: string, parameters: Record<string, unknown>, manual_montage?: SourceMetadata | null) =>
+    request<PluginProfile>("/plugin-profiles", "POST", { kind, selection, name, parameters,
+      ...manualFields(manual_montage) }),
+  update: (profile: PluginProfile, name: string, parameters: Record<string, unknown>, manual_montage?: SourceMetadata | null) =>
     request<PluginProfile>(`/plugin-profiles/${encodeURIComponent(profile.profile_id)}`, "PUT",
-      { name, parameters, expected_revision: profile.revision }),
+      { name, parameters, expected_revision: profile.revision, ...manualFields(manual_montage) }),
+  readMontage: async (profileId: string) => {
+    const { response, body } = await requestJson(`/api/v1/acquisition/metadata/refresh?profile_id=${encodeURIComponent(profileId)}`, {
+      method: "POST", headers: { Accept: "application/json" },
+    });
+    if (!response.ok) throw new ApiError(response.status, body?.code ?? "UNKNOWN", body?.message ?? response.statusText);
+  },
   delete: (profile: PluginProfile) => request<null>(
     `/plugin-profiles/${encodeURIComponent(profile.profile_id)}?expected_revision=${profile.revision}`, "DELETE"),
 };

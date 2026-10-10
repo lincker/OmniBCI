@@ -179,6 +179,8 @@ async def _run_fake_server_scenario(*, compressed: bool = False):
             "allow_amplifier_control": True,
             "allow_recording_control": False,
             "channel_labels": ["Fz", "Cz", "Pz"],
+            "native_event": "separate-event-packets",
+            "provenance": "device-reported",
         }
         assert await driver.start_stream() is True
 

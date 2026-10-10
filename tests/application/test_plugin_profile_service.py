@@ -5,7 +5,8 @@ from uuid import uuid4
 
 import pytest
 
-from omnibci.application.plugin_profiles import ActivationSnapshot, PluginSelection, ProfileRevisionConflict
+from omnibci.application.plugin_profiles import ActivationSnapshot, PluginSelection, ProfileBinding, ProfileRevisionConflict
+from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
@@ -24,6 +25,155 @@ def service(tmp_path, monkeypatch):
 def create_source(service, name="Replay", **parameters):
     plugin = service.catalog.legacy("acquisition", "file_reader")
     return service.create("acquisition", plugin.selection, name, parameters)
+
+
+def _source_montage(*, missing=False):
+    return SourceMetadata("file_reader", 250, tuple(
+        ChannelDescriptor(index, f"CH{index + 1}" if missing else name,
+                          signal_type="unknown" if missing else "eeg",
+                          unit=None if missing else "V", name_provenance="generated" if missing else None)
+        for index, name in enumerate(("O1", "O2"))
+    ), 2, connection_id="connection-one", provenance="file-reported")
+
+
+def _source_binding(profile):
+    return ProfileBinding("acquisition.source", "acquisition", profile.profile_id,
+                          profile.selection, profile.parameters, profile.configuration_version,
+                          profile.revision, manual_montage=profile.manual_montage)
+
+
+def test_observed_montage_cache_is_idempotent_and_does_not_apply_configuration(service, monkeypatch):
+    profile = create_source(service, sample_rate=250, channel_number=3)
+    selections = complete_selections(service, [{"slot": "acquisition.source", "profile_id": profile.profile_id}])
+    accepted = service.accept(service.propose(selections), expected_revision=None)
+    activation_bytes = (service.repository.root / "activation.toml").read_bytes()
+    binding = _source_binding(profile)
+    monkeypatch.setattr(service, "change_guard", lambda *_: pytest.fail("Acquisition reads must not take the engine change guard"))
+
+    cached = service.record_acquisition_montage(binding, _source_montage())
+    assert cached.revision == profile.revision + 1
+    assert cached.acquisition_montage.connection_id == ""
+    repeated = service.record_acquisition_montage(binding, replace(_source_montage(), connection_id="reconnected"))
+    assert repeated == cached
+    assert service.repository.get_activation() == accepted
+    assert (service.repository.root / "activation.toml").read_bytes() == activation_bytes
+    assert service.propose(selections).revision == accepted.revision
+    assert "ACQUISITION.manual_montage" not in service.resolve_settings()
+
+
+@pytest.mark.parametrize("change", ["no_profile", "other_profile", "parameters", "selection", "configuration_version", "deleted"])
+def test_observation_never_overwrites_an_unrelated_or_changed_saved_profile(service, change):
+    profile = create_source(service, sample_rate=250, channel_number=3)
+    binding = _source_binding(profile)
+    if change == "no_profile":
+        binding = replace(binding, profile_id=None, profile_revision=0)
+    elif change == "other_profile":
+        binding = replace(binding, profile_id=str(uuid4()))
+    elif change == "parameters":
+        binding = replace(binding, parameters={**binding.parameters, "sample_rate": 500})
+    elif change == "selection":
+        binding = replace(binding, selection=replace(binding.selection, version="different"))
+    elif change == "configuration_version":
+        binding = replace(binding, configuration_version=2)
+    else:
+        service.delete(profile.profile_id, expected_revision=profile.revision)
+    assert service.record_acquisition_montage(binding, _source_montage()) is None
+    if change != "deleted":
+        assert service.repository.get_profile(profile.profile_id) == profile
+
+
+def test_observation_cas_conflict_preserves_concurrent_user_edit(service, monkeypatch):
+    profile = create_source(service, sample_rate=250, channel_number=3)
+    save = service.repository.save_profile
+
+    def competing_save(candidate, expected_revision):
+        save(replace(profile, name="User edit"), expected_revision=profile.revision)
+        return save(candidate, expected_revision=expected_revision)
+
+    monkeypatch.setattr(service.repository, "save_profile", competing_save)
+    assert service.record_acquisition_montage(_source_binding(profile), _source_montage()) is None
+    retained = service.repository.get_profile(profile.profile_id)
+    assert retained.name == "User edit"
+    assert retained.acquisition_montage is None
+
+
+def test_regular_edit_retains_observation_and_parameter_change_invalidates_it(service):
+    profile = create_source(service, sample_rate=250, channel_number=3)
+    cached = service.record_acquisition_montage(_source_binding(profile), _source_montage())
+    renamed = service.update(cached.profile_id, name="Renamed", parameters=cached.parameters,
+                             expected_revision=cached.revision)
+    assert renamed.acquisition_montage == cached.acquisition_montage
+    changed = service.update(renamed.profile_id, name=renamed.name,
+                             parameters={**renamed.parameters, "data_file_path": "another.cnt"},
+                             expected_revision=renamed.revision)
+    assert changed.acquisition_montage is None
+    with pytest.raises(TypeError, match="acquisition_montage"):
+        service.update(changed.profile_id, name=changed.name, parameters=changed.parameters,
+                       expected_revision=changed.revision, acquisition_montage=_source_montage())
+
+
+def test_manual_montage_is_saved_selected_and_materialized_independently(service):
+    definition = service.catalog.legacy("acquisition", "file_reader")
+    profile = service.create("acquisition", definition.selection, "Manual", {"sample_rate": 250, "channel_number": 3},
+                             manual_montage=_source_montage())
+    assert profile.manual_montage.provenance == "user-declared"
+    selections = complete_selections(service, [{"slot": "acquisition.source", "profile_id": profile.profile_id}])
+    accepted = service.accept(service.propose(selections), expected_revision=None)
+    frozen = next(binding for binding in accepted.bindings if binding.kind == "acquisition")
+    assert frozen.manual_montage == profile.manual_montage
+    assert service.resolve_settings()["ACQUISITION.manual_montage"] == profile.manual_montage.to_dict()
+    renamed = service.update(profile.profile_id, name="Renamed", parameters=profile.parameters,
+                             expected_revision=profile.revision)
+    assert renamed.manual_montage == profile.manual_montage
+    cleared = service.update(profile.profile_id, name=renamed.name, parameters=renamed.parameters,
+                             expected_revision=renamed.revision, manual_montage=None)
+    assert cleared.manual_montage is None
+    assert service.repository.get_activation() == accepted
+    assert service.propose(selections).revision != accepted.revision
+    assert service.resolve_settings()["ACQUISITION.manual_montage"] == profile.manual_montage.to_dict()
+
+
+@pytest.mark.parametrize("change", ["source", "rate", "rows"])
+def test_manual_montage_must_match_its_acquisition_profile(service, change):
+    observed = _source_montage()
+    if change == "source":
+        observed = replace(observed, source_id="another-source")
+    elif change == "rate":
+        observed = replace(observed, sample_rate=500)
+    else:
+        observed = replace(observed, channels=observed.channels[:1], trigger_row_index=1)
+    definition = service.catalog.legacy("acquisition", "file_reader")
+    with pytest.raises(PluginSchemaError, match="Manual montage"):
+        service.create("acquisition", definition.selection, "Invalid", {"sample_rate": 250, "channel_number": 3},
+                       manual_montage=observed)
+
+
+def test_manual_montage_fills_missing_fields_but_cannot_replace_observed_labels(service):
+    profile = create_source(service, sample_rate=250, channel_number=3)
+    cached = service.record_acquisition_montage(_source_binding(profile), _source_montage(missing=True))
+    supplemented = service.update(cached.profile_id, name=cached.name, parameters=cached.parameters,
+                                  expected_revision=cached.revision, manual_montage=_source_montage())
+    assert supplemented.acquisition_montage.channels[0].name == "CH1"
+    assert supplemented.manual_montage.channels[0].name == "O1"
+    observed = service.record_acquisition_montage(_source_binding(supplemented), _source_montage())
+    conflicting = replace(_source_montage(), channels=(replace(_source_montage().channels[0], name="C3"), _source_montage().channels[1]))
+    with pytest.raises(PluginSchemaError, match="changed"):
+        service.update(observed.profile_id, name=observed.name, parameters=observed.parameters,
+                       expected_revision=observed.revision, manual_montage=conflicting)
+    assert service.repository.get_profile(observed.profile_id) == observed
+
+
+def test_parameter_edits_require_manual_montage_to_remain_consistent_or_be_cleared(service):
+    definition = service.catalog.legacy("acquisition", "file_reader")
+    profile = service.create("acquisition", definition.selection, "Manual", {"sample_rate": 250, "channel_number": 3},
+                             manual_montage=_source_montage())
+    parameters = {**profile.parameters, "sample_rate": 500}
+    with pytest.raises(PluginSchemaError, match="rate and output rows"):
+        service.update(profile.profile_id, name=profile.name, parameters=parameters,
+                       expected_revision=profile.revision)
+    updated = service.update(profile.profile_id, name=profile.name, parameters=parameters,
+                             expected_revision=profile.revision, manual_montage=None)
+    assert updated.manual_montage is None
 
 
 REQUIRED_SELECTIONS = (
@@ -278,6 +428,74 @@ def test_host_settings_are_included_only_when_explicitly_requested(service):
     assert candidate.settings == {"host": "original", "NEUROENGINE.queue_size": 64}
     assert candidate.revision != previous.revision
     assert service.repository.get_activation() == previous
+
+
+def test_signal_refresh_preserves_unreviewed_general_host_settings(service):
+    selections = complete_selections(service)
+    service.settings_source = lambda: {"NEUROENGINE.queue_size": 64}
+    previous = service.accept(service.propose(selections), expected_revision=None)
+    signal = {"source_id": "test-source", "outputs": ["O1"]}
+    service.settings_source = lambda: {"NEUROENGINE.queue_size": 128, "SIGNAL.setup": signal}
+
+    assert service.propose(selections) == previous
+    candidate = service.propose(selections, include_signal_setup=True, refresh_slots=[])
+
+    assert candidate.settings == {"NEUROENGINE.queue_size": 64, "SIGNAL.setup": signal}
+    assert candidate.bindings == previous.bindings
+    assert candidate.revision != previous.revision
+    assert service.repository.get_activation() == previous
+
+
+def test_general_host_refresh_preserves_unreviewed_signal_setup(service):
+    signal = {"source_id": "test-source", "outputs": ["O1"]}
+    service.settings_source = lambda: {"NEUROENGINE.queue_size": 64, "SIGNAL.setup": signal}
+    selections = complete_selections(service)
+    previous = service.accept(service.propose(selections), expected_revision=None)
+    service.settings_source = lambda: {
+        "NEUROENGINE.queue_size": 128,
+        "SIGNAL.setup": {"source_id": "test-source", "outputs": ["O2"]},
+    }
+
+    candidate = service.propose(selections, include_host_settings=True, refresh_slots=[])
+
+    assert candidate.settings == {"NEUROENGINE.queue_size": 128, "SIGNAL.setup": signal}
+    combined = service.propose(selections, include_host_settings=True, include_signal_setup=True, refresh_slots=[])
+    assert combined.settings["SIGNAL.setup"]["outputs"] == ["O2"]
+    assert service.repository.get_activation() == previous
+
+
+def test_scoped_signal_removal_preserves_other_accepted_host_settings(service):
+    service.settings_source = lambda: {
+        "NEUROENGINE.queue_size": 64, "SIGNAL.setup": {"source_id": "test-source"},
+    }
+    selections = complete_selections(service)
+    previous = service.accept(service.propose(selections), expected_revision=None)
+    service.settings_source = lambda: {"NEUROENGINE.queue_size": 128}
+
+    candidate = service.propose(selections, include_signal_setup=True, refresh_slots=[])
+
+    assert candidate.settings == {"NEUROENGINE.queue_size": 64}
+    assert "SIGNAL.setup" in previous.settings
+    assert service.repository.get_activation() == previous
+
+
+def test_saved_signal_setup_does_not_rewrite_legacy_activation_or_revision(service):
+    selections = complete_selections(service)
+    previous = service.accept(service.propose(selections), expected_revision=None)
+    original_files = {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")}
+    service.settings_source = lambda: {
+        "host": "original", "SIGNAL.setup": {"source_id": "test-source", "outputs": ["O1"]},
+    }
+
+    restored = ActivationSnapshot.from_dict(previous.to_dict())
+    materialized = service.materialize(restored)
+    candidate = service.propose(selections, include_host_settings=True, refresh_slots=[])
+
+    assert "SIGNAL.setup" not in restored.settings
+    assert "SIGNAL.setup" not in materialized
+    assert restored.revision == previous.revision == candidate.revision
+    assert service.repository.get_activation() == previous
+    assert {path: path.read_bytes() for path in original_files} == original_files
 
 
 @pytest.mark.parametrize("key,value", [

@@ -32,13 +32,14 @@ class _RestoreState:
 class RuntimeApplyCoordinator:
     supported_strategies = {"select_on_start", "no_change", "rebuild", "trial_boundary", "module"}
 
-    def __init__(self, engine, profiles, acquisition, sessions, stimulation, commands):
+    def __init__(self, engine, profiles, acquisition, sessions, stimulation, commands, *, signal_preparer=None):
         self.engine = engine
         self.profiles = profiles
         self.acquisition = acquisition
         self.sessions = sessions
         self.stimulation = stimulation
         self.commands = commands
+        self.signal_preparer = signal_preparer
 
     def active_kinds(self, snapshot):
         kinds = {"acquisition", "decoder", "epoch_detector", "filter"}
@@ -313,6 +314,8 @@ class RuntimeApplyCoordinator:
                                                {**self._identity(running), "checkpoint": selected})
                     self._receipt(data, running, "restored")
                     resumed_checkpoint = True
+        if state.connected and self.signal_preparer is not None:
+            await asyncio.to_thread(self.signal_preparer)
         session_id = None
         if previous_session_id is not None:
             session_id = await asyncio.to_thread(self.sessions.create_continuation, previous_session_id,

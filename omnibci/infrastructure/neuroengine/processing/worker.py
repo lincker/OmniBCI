@@ -46,7 +46,12 @@ class SignalProcessingWorker(mp.Process):
                 from omnibci.conf import settings
                 settings.use_snapshot(self.settings_snapshot)
             self._startup_stage = "plugins"
-            decoder, detector, filters = self._load_algorithm()
+            if self._snapshot().get("SIGNAL.setup") is not None:
+                # A control loop must be ready before a source is connected.
+                # Signal-dependent plugins are constructed by PrepareSignalProcessing.
+                decoder, detector, filters = None, None, []
+            else:
+                decoder, detector, filters = self._load_algorithm()
             self._startup_stage = "processor"
             self._run_processor(decoder, detector, filters, self.sample_rate)
         except BaseException as exc:

@@ -148,3 +148,26 @@ class TestAcquisitionStatus:
         data = resp.json()["data"]
         assert data["connected"] is True
         assert data["streaming"] is True
+
+
+class TestAcquisitionMetadata:
+    def test_read_and_explicit_refresh_use_service_metadata(self, api_client, acquisition_service):
+        from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
+        metadata = SourceMetadata("test", 500, (ChannelDescriptor(0, "O1"),), 1,
+                                  connection_id="current").to_dict()
+        acquisition_service.get_metadata = MagicMock(return_value=metadata)
+        response = api_client.get("/api/v1/acquisition/metadata")
+        assert response.status_code == 200 and response.json()["data"] == metadata
+        acquisition_service.get_metadata.assert_called_once_with(refresh=False)
+        response = api_client.post("/api/v1/acquisition/metadata/refresh")
+        assert response.status_code == 200
+        acquisition_service.get_metadata.assert_called_with(refresh=True)
+        response = api_client.post("/api/v1/acquisition/metadata/refresh?profile_id=source-profile")
+        assert response.status_code == 200
+        acquisition_service.get_metadata.assert_called_with(refresh=True, profile_id="source-profile")
+
+    def test_disconnected_metadata_returns_confirmed_rejection(self, api_client, acquisition_service):
+        acquisition_service.get_metadata = MagicMock(side_effect=_rejected("GetSourceMetadata"))
+        response = api_client.get("/api/v1/acquisition/metadata")
+        assert response.status_code == 409
+        assert response.json()["detail"]["command"] == "GetSourceMetadata"

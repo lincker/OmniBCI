@@ -41,6 +41,7 @@ export function RuntimeConfigurationReview({ runtime }: { runtime: RuntimeConfig
       <dt>Session</dt><dd>{plan.session_effect === "continuation" ? "Create a continuation session after the current session is saved." : "Preserve the current session."}</dd>
       <dt>Affected modules</dt><dd>{plan.changed_slots.length ? plan.changed_slots.join(", ") : "No plugin changes"}</dd>
       {plan.changed_settings.length > 0 && <><dt>Host settings</dt><dd>{plan.changed_settings.join(", ")}</dd></>}
+      {plan.signal_summary && <><dt>Channel setup</dt><dd>{plan.signal_summary}</dd></>}
       <dt>Target revision</dt><dd><code>{revision(plan.target_revision)}</code></dd>
     </dl>
     {plan.errors.length > 0 && <ul className="error" role="alert">{plan.errors.map((error) => <li key={error}>{error}</li>)}</ul>}

@@ -86,6 +86,27 @@ def test_status_reads_applied_values_while_engine_running():
 
 
 @pytest.mark.asyncio
+async def test_montage_binding_uses_applied_source_and_guards_explicit_profile_reads():
+    from omnibci.application.plugin_profiles import ProfileRevisionConflict
+    from omnibci.bootstrap import _acquisition_montage_binding
+    container = await build_container()
+    profiles = container.plugin_profile_service
+    accepted = profiles.repository.get_activation()
+    binding = next(item for item in accepted.bindings if item.slot == "acquisition.source")
+    engine = Mock(applied_snapshot=profiles.materialize(accepted))
+    assert _acquisition_montage_binding(engine, profiles, binding.profile_id) == binding
+    with pytest.raises(ProfileRevisionConflict, match="applied acquisition profile"):
+        _acquisition_montage_binding(engine, profiles, "another-profile")
+    profile = profiles.repository.get_profile(binding.profile_id)
+    profiles.update(profile.profile_id, name=profile.name,
+                    parameters={**profile.parameters, "sample_rate": 250}, expected_revision=profile.revision)
+    with pytest.raises(ProfileRevisionConflict, match="differs from the running source"):
+        _acquisition_montage_binding(engine, profiles, binding.profile_id)
+    # An automatic observation still belongs to the running profile's pinned copy.
+    assert _acquisition_montage_binding(engine, profiles) == binding
+
+
+@pytest.mark.asyncio
 async def test_settings_only_initialization_preserves_nondefault_values(bootstrap_settings):
     original_settings = bootstrap_settings._config_path.read_bytes()
 

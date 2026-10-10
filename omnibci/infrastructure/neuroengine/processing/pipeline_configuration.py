@@ -60,7 +60,7 @@ def _require_trial_changes(schema, before, after, inherited=None):
 
 
 def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int,
-                          baseline_duration: float) -> ConfiguredPipeline:
+                          baseline_duration: float, signal_plan=None) -> ConfiguredPipeline:
     """Validate fixed context, then construct decoder and filters as one bundle.
 
     Source, detector, host settings and buffer dimensions remain fixed. Decoder
@@ -109,6 +109,9 @@ def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int,
     context = PluginContext(sample_rate=sample_rate,
                             channel_names=tuple(snapshot.get("ACQUISITION.channel_names", ())),
                             config_revision=revision)
+    if signal_plan is not None:
+        from .signal_configuration import signal_context
+        context = signal_context(snapshot, signal_plan)
     decoder = load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder, context=context)
     filters = load_filters(snapshot, context)
     return ConfiguredPipeline(decoder, tuple(filters), snapshot)

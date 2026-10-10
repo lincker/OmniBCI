@@ -37,6 +37,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from omnibci.presentation.routers import engine, acquisition, stimulation, session, recording, config, plugins
 from omnibci.presentation.routers import plugin_config, runtime_config, plugin_packages
 from omnibci.presentation.routers import plugin_package_lifecycle, plugin_market
+from omnibci.presentation.routers import signal_setup
 from omnibci.presentation.routers import system
 from omnibci.presentation.security import ApiAccessMiddleware, RequestGate
 from omnibci.application.services.shutdown_service import BackendShutdownService
@@ -184,6 +185,7 @@ def create_app(*, api_token: str | None = None, desktop: bool = False) -> FastAP
     app.include_router(session.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(recording.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(config.router, prefix=prefix, responses=ERROR_RESPONSES)
+    app.include_router(signal_setup.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(plugin_config.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(runtime_config.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(plugin_packages.router, prefix=prefix, responses=ERROR_RESPONSES)

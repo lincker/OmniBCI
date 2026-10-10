@@ -39,6 +39,9 @@ test("review presents the impact before Apply and blocks invalid plans", () => {
   const rebuild = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan, strategy: "rebuild", session_effect: "continuation" } } });
   assert.match(rebuild, /Pause and rebuild the engine/);
   assert.match(rebuild, /continuation session/);
+  const channels = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan,
+    signal_summary: "Outputs: C4, C3; reference: average (M1, M2)" } } });
+  assert.match(channels, /Outputs: C4, C3; reference: average \(M1, M2\)/);
 });
 
 for (const [field, value] of [["accepted_revision", "changed"], ["applied_revision", "changed"], ["generation", "changed"], ["running", false]]) {
