@@ -1,6 +1,7 @@
 """Exercise live pause/rebuild/restore and rollback with real spawned workers."""
 import asyncio
 import json
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -12,11 +13,14 @@ from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
-from omnibci.bootstrap import assemble, register_engine_listeners
+from omnibci.application.services.signal_setup_service import SignalSetupService
+from omnibci.bootstrap import _acquisition_montage_binding, assemble, register_engine_listeners
+from omnibci.domain.montage import ProcessingInput
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
+from omnibci.infrastructure.signal_layouts import SignalLayoutProvider
 
 
 SOURCE = '''
@@ -29,6 +33,7 @@ class Replay(SignalSource):
     def __init__(self, *, parameters, context):
         super().__init__()
         self.size = parameters['size']
+        self.sample_rate = parameters['sample_rate']
         if self.size == 0:
             raise ValueError('candidate construction failed')
         self.path = parameters['log']
@@ -46,7 +51,10 @@ class Replay(SignalSource):
         await asyncio.sleep(.01)
         self.cursor += self.size
         return np.zeros((2,self.size))
-    async def get_metadata(self): return {}
+    async def get_metadata(self):
+        return {'sample_rate': self.sample_rate, 'output_channel_count': 2,
+                'channel_labels': ['CH1'], 'channel_types': ['eeg'], 'channel_units': ['V'],
+                'provenance': 'protocol-defined'}
     @property
     def supports_checkpoint(self): return True
     def checkpoint(self):
@@ -104,6 +112,20 @@ schema_version=1
     return profiles, selections
 
 
+def wire_signal_preparation(profiles, engine, container):
+    container.acquisition_service.set_metadata_recorder(
+        lambda profile_id: _acquisition_montage_binding(engine, profiles, profile_id),
+        profiles.record_acquisition_montage,
+    )
+    service = SignalSetupService(
+        SimpleNamespace(read_saved=lambda: (profiles.settings_source(), "saved")), profiles, engine,
+        container.acquisition_service, container.command_results, SignalLayoutProvider(),
+    )
+    container.acquisition_service.set_signal_preparer(service.prepare)
+    container.session_service.set_signal_preparer(service.prepare_session, container.acquisition_service.lifecycle_lock)
+    return service
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candidate_rolls_back(tmp_path, monkeypatch):
@@ -112,10 +134,11 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
                                 snapshot_provider=profiles.resolve_settings)
     await engine.startup()
     container = assemble(engine, InMemorySessionRepository(), admission=engine.admission)
+    signal = wire_signal_preparation(profiles, engine, container)
     register_engine_listeners(container)
     coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
                                           container.session_service, container.stimulation_service,
-                                          container.command_results)
+                                          container.command_results, signal_preparer=signal.prepare)
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
     try:
         await engine.handle_start_engine(StartEngineCommand())
@@ -140,6 +163,25 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         assert profiles.repository.get_activation().revision == engine.applied_revision == plan.target_revision
         checkpoints = [json.loads(line) for line in (tmp_path / 'restored.jsonl').read_text().splitlines()]
         assert checkpoints[0]['cursor'] > 0
+
+        # A changed decoder input prepares a new graph and records its own plan.
+        decoder = profiles.repository.get_profile(bindings[1]['profile_id'])
+        profiles.update(decoder.profile_id, name=decoder.name, parameters=decoder.parameters,
+                        processing_input=ProcessingInput(outputs=("CH1",)), expected_revision=decoder.revision)
+        previous_generation, previous_session = engine.generation, continuation
+        plan = runtime.plan(bindings, expected_revision=engine.applied_revision)
+        assert plan.strategy == 'rebuild'
+        operation = runtime.submit(plan.plan_id, str(uuid4()))
+        await runtime.wait_for_idle()
+        result = runtime.operation(operation['operation_id'])
+        assert result['status'] == 'succeeded', result
+        assert engine.generation != previous_generation
+        continuation = container.session_service.active_session_id
+        continued = container.session_repository.find_by_id(continuation)
+        assert continued.continuation_of == previous_session
+        assert continued.signal_plan['processing_input']['outputs'] == ['CH1']
+        assert container.session_repository.find_by_id(previous_session).signal_plan['processing_input']['outputs'] == []
+        assert signal.read()['readiness']['ready'] is True
 
         # A dormant output selection still updates the pinned runtime context;
         # acquisition/processing processes and the recording identity survive.

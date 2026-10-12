@@ -19,6 +19,13 @@ from omnibci.presentation.routers.runtime_config import router as runtime_router
 PREFIX = "/api/v1/config"
 
 
+def manual_montage():
+    return {"source_id": "file_reader", "sample_rate": 500, "trigger_row_index": 2,
+            "channels": [{"index": 0, "name": "C3", "signal_type": "eeg", "unit": "uV"},
+                         {"index": 1, "name": "C4", "signal_type": "eeg", "unit": "uV"}],
+            "original_reference": "Cz", "provenance": "user-declared"}
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
@@ -91,6 +98,23 @@ def test_catalog_exposes_exact_identity_and_plugin_owned_schema(client):
     assert http.get(f"{PREFIX}/plugin-catalog/unknown").status_code == 422
 
 
+def test_catalog_exposes_read_only_decoder_channel_requirements(client):
+    http, _, _ = client
+    response = http.get(f"{PREFIX}/plugin-catalog/decoder")
+    assert response.status_code == 200
+    decoders = response.json()["data"]
+    assert len(decoders) == 2
+    for decoder in decoders:
+        requirements = decoder["channel_requirements"]
+        assert requirements["description"]
+        assert requirements["signal_type"] == "eeg"
+        assert requirements["min_count"] == 1
+        assert requirements["required_names"] == []
+        assert requirements["default_names"] == []
+    acquisition = http.get(f"{PREFIX}/plugin-catalog/acquisition").json()["data"]
+    assert all(plugin["channel_requirements"] is None for plugin in acquisition)
+
+
 def test_profile_crud_and_compare_and_swap(client):
     http, _, _ = client
     profile = create(client)
@@ -106,6 +130,118 @@ def test_profile_crud_and_compare_and_swap(client):
     assert http.delete(f"{path}?expected_revision=1").status_code == 409
     assert http.delete(f"{path}?expected_revision=2").status_code == 200
     assert http.get(path).status_code == 404
+
+
+def test_acquisition_profile_saves_manual_montage_and_pins_it_on_selection(client):
+    http, service, _ = client
+    response = http.post(f"{PREFIX}/plugin-profiles", json={
+        "kind": "acquisition", "selection": service.catalog.legacy("acquisition", "file_reader").selection.to_dict(),
+        "name": "Manual montage", "parameters": {"sample_rate": 500, "channel_number": 3},
+        "manual_montage": manual_montage(),
+    })
+    assert response.status_code == 201, response.text
+    profile = response.json()["data"]
+    path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
+    assert http.get(path).json()["data"]["manual_montage"]["channels"][0]["name"] == "C3"
+    renamed = http.put(path, json={"name": "Renamed", "parameters": profile["parameters"],
+                                  "expected_revision": profile["revision"]})
+    assert renamed.status_code == 200
+    assert renamed.json()["data"]["manual_montage"] == profile["manual_montage"]
+    profiles = complete_profiles(client, [("acquisition.source", renamed.json()["data"])])
+    selected = accept(http, profiles)
+    assert selected.status_code == 200, selected.text
+    assert service.resolve_settings()["ACQUISITION.manual_montage"]["channels"][0]["name"] == "C3"
+    cleared = http.put(path, json={"name": "Renamed", "parameters": profile["parameters"],
+        "expected_revision": renamed.json()["data"]["revision"], "manual_montage": None})
+    assert cleared.status_code == 200
+    assert cleared.json()["data"]["manual_montage"] is None
+    # Saved edits never change already selected acquisition inputs.
+    assert service.resolve_settings()["ACQUISITION.manual_montage"]["channels"][0]["name"] == "C3"
+
+
+def test_decoder_profile_saves_and_pins_processing_input(client):
+    http, service, _ = client
+    profile = create(client, "decoder", "THUBCI_SSVEP_classic40CCA")
+    assert profile["processing_input"] == {"schema_version": 1, "outputs": [],
+        "reference": {"mode": "original", "channels": []}, "excluded_channels": []}
+    path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
+    channel_input = {"outputs": ["O2", "O1"], "reference": {"mode": "single", "channels": ["M1"]}}
+    updated = http.put(path, json={"name": profile["name"], "parameters": profile["parameters"],
+        "expected_revision": profile["revision"], "processing_input": channel_input})
+    assert updated.status_code == 200, updated.text
+    configured = updated.json()["data"]
+    selected = accept(http, complete_profiles(client, [("processing.decoder", configured)]))
+    assert selected.status_code == 200, selected.text
+    decoder = next(binding for binding in selected.json()["data"]["bindings"] if binding["kind"] == "decoder")
+    assert decoder["processing_input"] == configured["processing_input"]
+    runtime = service.resolve_settings()
+    assert "SIGNAL.setup" not in runtime
+    assert next(binding for binding in runtime["PLUGINS.bindings"]
+                if binding["slot"] == "processing.decoder")["processing_input"] == configured["processing_input"]
+    cleared = http.put(path, json={"name": configured["name"], "parameters": configured["parameters"],
+        "expected_revision": configured["revision"], "processing_input": None})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["data"]["processing_input"] == profile["processing_input"]
+    assert service.resolve_settings() == runtime
+
+
+def test_new_decoder_with_null_input_uses_explicit_default(client):
+    http, service, _ = client
+    response = http.post(f"{PREFIX}/plugin-profiles", json={
+        "kind": "decoder", "selection": service.catalog.legacy("decoder", "THUBCI_SSVEP_classic40CCA").selection.to_dict(),
+        "name": "Default input", "processing_input": None,
+    })
+    assert response.status_code == 201, response.text
+    assert response.json()["data"]["processing_input"]["reference"]["mode"] == "original"
+    assert response.json()["data"]["processing_input"]["outputs"] == []
+
+
+@pytest.mark.parametrize("channel_input", [
+    {"outputs": ["O1", "O1"]}, {"source_id": "file_reader"}, {"original_reference": "Cz"},
+    {"assignments": []}, {"reference": {"mode": "average", "channels": []}},
+])
+def test_invalid_decoder_input_returns_422_without_saving(client, channel_input):
+    http, _, _ = client
+    profile = create(client, "decoder", "THUBCI_SSVEP_classic40CCA")
+    path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
+    response = http.put(path, json={"name": profile["name"], "parameters": profile["parameters"],
+        "expected_revision": profile["revision"], "processing_input": channel_input})
+    assert response.status_code == 422, response.text
+    assert http.get(path).json()["data"] == profile
+
+
+def test_acquisition_profile_rejects_processing_input(client):
+    http, _, _ = client
+    profile = create(client)
+    path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
+    response = http.put(path, json={"name": profile["name"], "parameters": profile["parameters"],
+        "expected_revision": profile["revision"], "processing_input": {}})
+    assert response.status_code == 422, response.text
+    assert http.get(path).json()["data"] == profile
+
+
+def test_read_only_source_observation_is_rejected_by_create_and_update(client):
+    http, service, _ = client
+    request = {"kind": "acquisition", "selection": service.catalog.legacy("acquisition", "file_reader").selection.to_dict(),
+               "name": "Forged observation", "parameters": {}, "acquisition_montage": manual_montage()}
+    assert http.post(f"{PREFIX}/plugin-profiles", json=request).status_code == 422
+    profile = create(client)
+    path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
+    assert http.put(path, json={"name": profile["name"], "parameters": profile["parameters"],
+        "expected_revision": profile["revision"], "acquisition_montage": manual_montage()}).status_code == 422
+    assert http.get(path).json()["data"] == profile
+
+
+@pytest.mark.parametrize("patch", [{"trigger_row_index": 3}, {"sample_rate": 250},
+                                 {"source_id": "different-source"}])
+def test_manual_montage_requires_consistent_profile_identity_and_dimensions(client, patch):
+    http, _, _ = client
+    profile = create(client, parameters={"sample_rate": 500, "channel_number": 3})
+    path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
+    response = http.put(path, json={"name": profile["name"], "parameters": profile["parameters"],
+        "expected_revision": profile["revision"], "manual_montage": {**manual_montage(), **patch}})
+    assert response.status_code == 422, response.text
+    assert http.get(path).json()["data"] == profile
 
 
 @pytest.mark.parametrize("include_host_settings", [False, True])

@@ -52,7 +52,9 @@ class OmniBCISettings:
             if not prefix and key in {"META", "PROFILES"}:
                 continue
             dotted = f"{prefix}{key}"
-            if hasattr(value, "items") and not isinstance(value, (str, list)):
+            if dotted == "SIGNAL.setup":
+                flat[dotted] = value.unwrap() if hasattr(value, "unwrap") else deepcopy(value)
+            elif hasattr(value, "items") and not isinstance(value, (str, list)):
                 flat.update(cls._flatten(value, prefix=f"{dotted}."))
             else:
                 flat[dotted] = value.unwrap() if hasattr(value, "unwrap") else value

@@ -1,0 +1,9 @@
+/node_modules/
+/resources/
+/release/
+/dist/
+/runtime/cache/
+/artifacts/
+/OmniBCI-*-unpacked.tar.gz
+/SHA256SUMS-*.txt
+/.runtime-*/

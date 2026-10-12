@@ -3,7 +3,7 @@ Session API schemas (request / response DTOs).
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -34,6 +34,7 @@ class SessionResponse(BaseModel):
     continuation_of: Optional[str] = None
     config_revision: Optional[str] = None
     interruption_reason: Optional[str] = None
+    signal_plan: Optional[dict] = None
 
 
 class SessionDetailResponse(SessionResponse):
@@ -44,3 +45,10 @@ class SessionDetailResponse(SessionResponse):
 class SessionListResponse(BaseModel):
     sessions: List[SessionResponse]
     total: int
+
+
+class SessionExportResponse(BaseModel):
+    format_version: Literal[1] = 1
+    exported_at: datetime
+    app_version: str
+    sessions: List[SessionDetailResponse]

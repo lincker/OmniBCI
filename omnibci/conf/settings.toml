@@ -15,8 +15,8 @@ channel_number = 10
 sample_rate = 1000
 
 file_reader_chunk_size = 100
-# Relative paths use platform-neutral "/" separators and the project root.
-data_file_path = "tests/fixture/train.cnt"
+# Select a recording on the backend machine before starting acquisition.
+data_file_path = ""
 
 DATA_PROVIDER_IP = '192.168.0.3'
 DATA_PROVIDER_PORT = 4000

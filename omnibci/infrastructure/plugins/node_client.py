@@ -7,7 +7,7 @@ import os
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from omnibci.application.node_configuration import (
     NodeConfiguration,
@@ -20,6 +20,15 @@ logger = logging.getLogger(__name__)
 _REQUEST_TIMEOUT_S = 5.0
 _MAX_RESPONSE_BYTES = 1024 * 1024
 _RETRY_DELAY_S = 1.0
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        return None
+
+
+# Credentials are only sent to the configured backend, never a redirect target.
+urlopen = build_opener(_NoRedirect()).open
 
 
 class NodeConfigurationUnavailable(RuntimeError):
@@ -36,7 +45,7 @@ def node_backend_argument(role: str, argv=None) -> str:
     return parser.parse_args(argv).backend
 
 
-def fetch_node_configuration(backend_url: str, role: str) -> NodeConfiguration:
+def fetch_node_configuration(backend_url: str, role: str, api_token: str | None = None) -> NodeConfiguration:
     """Bound each HTTP request; never fall back to a local activation file."""
     if role not in {"stimulation", "actuation"}:
         raise ValueError("Unknown node role")
@@ -47,9 +56,14 @@ def fetch_node_configuration(backend_url: str, role: str) -> NodeConfiguration:
         raise ValueError("Backend URL must be an HTTP(S) URL without credentials, query, or fragment")
     # Validate malformed/out-of-range ports before starting a retry loop.
     parsed.port
+    headers = {"Accept": "application/json"}
+    if api_token:
+        if "\r" in api_token or "\n" in api_token:
+            raise ValueError("API token must not contain line breaks")
+        headers["Authorization"] = f"Bearer {api_token}"
     request = Request(
         backend_url.rstrip("/") + f"/api/v1/config/nodes/{role}",
-        headers={"Accept": "application/json"},
+        headers=headers,
     )
     try:
         deadline = time.monotonic() + _REQUEST_TIMEOUT_S
@@ -103,9 +117,10 @@ def run_configured_node(role: str, application_factory, *, backend_url: str) -> 
     loops. Hardware initialization and teardown errors propagate to the caller.
     """
     waiting_message = None
+    api_token = os.environ.get("OMNIBCI_API_TOKEN")
     while True:
         try:
-            configuration = fetch_node_configuration(backend_url, role)
+            configuration = fetch_node_configuration(backend_url, role, api_token)
         except NodeConfigurationUnavailable as exc:
             message = str(exc)
             if message != waiting_message:

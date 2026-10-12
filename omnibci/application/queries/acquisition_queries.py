@@ -17,3 +17,5 @@ class AcquisitionStatusResult:
     source: Optional[str] = None
     sample_rate: Optional[int] = None
     channel_count: Optional[int] = None
+    metadata_available: bool = False
+    metadata_provenance: Optional[str] = None

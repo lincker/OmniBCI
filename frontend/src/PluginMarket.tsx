@@ -5,6 +5,7 @@ import { pluginConfigApi, type PluginProfile } from "./api/plugin-config";
 import { pluginMarketApi as api, type InstalledPackage, type MarketPackage,
   type ProfileVersionProposal, type ProfileVersionRequest } from "./api/plugin-market";
 import { ConfigDialog, type ConfigDialogProps } from "./ConfigDialog";
+import { DecoderDeveloperGuide } from "./DecoderDeveloperGuide";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
 import "./PluginMarket.css";
 
@@ -19,7 +20,7 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
   onDirtyChange?: (dirty: boolean) => void;
   onOpenSetup?: () => void;
 }) {
-  const [tab, setTab] = useState<"installed" | "repository">("installed");
+  const [tab, setTab] = useState<"installed" | "repository" | "guide">("installed");
   const [query, setQuery] = useState("");
   const [installed, setInstalled] = useState<InstalledPackage[]>([]);
   const [catalog, setCatalog] = useState<MarketPackage[]>([]);
@@ -122,6 +123,8 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
           onClick={() => { setTab("installed"); setQuery(""); }}><Icon name="plug" /><span>Installed</span><span className="count">{installed.length}</span></button>
         <button className={`explorer-item ${tab === "repository" ? "selected" : ""}`} aria-current={tab === "repository" ? "page" : undefined}
           onClick={() => { setTab("repository"); setQuery(""); }}><Icon name="folder" /><span>Repository</span></button>
+        <button className={`explorer-item ${tab === "guide" ? "selected" : ""}`} aria-current={tab === "guide" ? "page" : undefined}
+          onClick={() => setTab("guide")}><Icon name="profile" /><span>Decoder developer guide</span></button>
       </nav>
       <div className="explorer-footer"><strong>Exact versions, reusable profiles</strong>
         <p>Install a package, enable its contributions, then select a profile in Setup.</p>
@@ -130,16 +133,17 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
       </div>
     </aside>
     <section className="settings-editor">
-      <div className="breadcrumbs">Extensions<Icon name="chevron" />{tab === "installed" ? "Installed plugins" : "Signed repository"}</div>
-      <header className="editor-heading"><div><p className="eyebrow">Plugin library</p><h1>{tab === "installed" ? "Installed plugins" : "Plugin repository"}</h1>
-        <p>Manage acquisition, processing, stimulation and actuation packages.</p></div>
-        <button disabled={locked} onClick={() => upload.current?.click()}><Icon name="plus" />Install ZIP…</button>
+      <div className="breadcrumbs">Extensions<Icon name="chevron" />{tab === "guide" ? "Decoder developer guide" : tab === "installed" ? "Installed plugins" : "Signed repository"}</div>
+      <header className="editor-heading"><div><p className="eyebrow">Plugin library</p><h1>{tab === "guide" ? "Decoder developer guide" : tab === "installed" ? "Installed plugins" : "Plugin repository"}</h1>
+        <p>{tab === "guide" ? "Required files, channel declarations and an executable starter." : "Manage acquisition, processing, stimulation and actuation packages."}</p></div>
+        <button disabled={locked} onClick={() => { if (tab === "guide") setTab("installed"); upload.current?.click(); }}><Icon name="plus" />Install ZIP…</button>
         <input ref={upload} type="file" accept=".zip,application/zip" hidden aria-label="Choose plugin ZIP" onChange={(event) => {
           const file = event.target.files?.[0]; event.target.value = "";
           if (file) void run(`Installing ${file.name}…`, () => api.upload(file), "Package installed. Enable it to make its contributions available in Setup.");
         }} />
       </header>
       <div className="market-body">
+        {tab === "guide" ? <DecoderDeveloperGuide /> : <>
         <div className="market-toolbar"><label className="market-search"><Icon name="search" /><input type="search" aria-label="Search plugins"
           placeholder="Search names, versions or capabilities" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
           <button disabled={pending !== null || loading || catalogLoading} onClick={() => { void reload(); if (tab === "repository") void loadCatalog(); }}><Icon name="refresh" />Refresh</button></div>
@@ -206,6 +210,7 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
             </div></article>;
           })}
         </div>}
+        </>}
       </div>
     </section>
     {dialog && <ConfigDialog {...dialog} onCancel={() => setDialog(null)} />}

@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from omnibci.application.plugin_profiles import PluginSelection
+from omnibci.domain.decoder_input import DecoderChannelRequirements
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,7 @@ class PluginConfiguration:
     configuration_version: int | None
     available: bool
     controls: dict = field(default_factory=dict)
+    channel_requirements: DecoderChannelRequirements | None = None
 
 
 class PluginConfigurationCatalog(Protocol):

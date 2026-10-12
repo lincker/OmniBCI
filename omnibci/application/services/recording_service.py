@@ -22,6 +22,7 @@ continuous stream); RecordingService is the convenience path for the common
 """
 
 import logging
+from contextlib import nullcontext
 from omnibci.application.runtime_admission import admitted
 from typing import Optional
 
@@ -67,6 +68,10 @@ class RecordingService:
 
     @admitted
     def start(self, paradigm: Optional[str] = None) -> str:
+        with getattr(self._acquisition, "lifecycle_lock", nullcontext()):
+            return self._start(paradigm)
+
+    def _start(self, paradigm: Optional[str] = None) -> str:
         """
         Begin a recording: create + start a session, then start the stream.
 

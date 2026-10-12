@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/system/info": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** System Info */
+        get: operations["system_info_api_v1_system_info_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/engine/start": {
         parameters: {
             query?: never;
@@ -140,6 +157,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/acquisition/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read metadata for the current source connection */
+        get: operations["get_metadata_api_v1_acquisition_metadata_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/acquisition/metadata/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh metadata while the source is stopped */
+        post: operations["refresh_metadata_api_v1_acquisition_metadata_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stimulation/status": {
         parameters: {
             query?: never;
@@ -260,6 +311,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export a consistent snapshot of selected sessions */
+        get: operations["export_sessions_api_v1_sessions_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{session_id}": {
         parameters: {
             query?: never;
@@ -362,6 +430,40 @@ export interface paths {
         head?: never;
         /** Save host settings without applying them */
         patch: operations["patch_config_api_v1_config_patch"];
+        trace?: never;
+    };
+    "/api/v1/config/signal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Signal Setup */
+        get: operations["read_signal_setup_api_v1_config_signal_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/signal/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview Signal Setup */
+        post: operations["preview_signal_setup_api_v1_config_signal_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/config/plugin-catalog/{kind}": {
@@ -727,6 +829,13 @@ export interface components {
             sample_rate?: number | null;
             /** Channel Count */
             channel_count?: number | null;
+            /**
+             * Metadata Available
+             * @default false
+             */
+            metadata_available: boolean;
+            /** Metadata Provenance */
+            metadata_provenance?: string | null;
         };
         /** ActivationResponse */
         ActivationResponse: {
@@ -1013,6 +1122,48 @@ export interface components {
             message: string;
             data?: components["schemas"]["SessionResponse"] | null;
         };
+        /** ApiResponse[SignalPreviewResponse] */
+        ApiResponse_SignalPreviewResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["SignalPreviewResponse"] | null;
+        };
+        /** ApiResponse[SignalSetupResponse] */
+        ApiResponse_SignalSetupResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["SignalSetupResponse"] | null;
+        };
+        /** ApiResponse[SourceMetadataModel] */
+        ApiResponse_SourceMetadataModel_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["SourceMetadataModel"] | null;
+        };
         /** ApiResponse[StimulationStatusResponse] */
         ApiResponse_StimulationStatusResponse_: {
             /**
@@ -1026,6 +1177,20 @@ export interface components {
              */
             message: string;
             data?: components["schemas"]["StimulationStatusResponse"] | null;
+        };
+        /** ApiResponse[SystemInfoResponse] */
+        ApiResponse_SystemInfoResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["SystemInfoResponse"] | null;
         };
         /** ApiResponse[TrialResponse] */
         ApiResponse_TrialResponse_: {
@@ -1101,6 +1266,35 @@ export interface components {
             /** Data */
             data?: components["schemas"]["PluginProfileResponse"][] | null;
         };
+        /** BipolarOutputModel */
+        BipolarOutputModel: {
+            /** Name */
+            name: string;
+            /** Positive */
+            positive: string;
+            /** Negative */
+            negative: string;
+        };
+        /** ChannelAssignmentModel */
+        ChannelAssignmentModel: {
+            /** Source Index */
+            source_index: number;
+            /** Electrode */
+            electrode: string;
+            /** Expected Name */
+            expected_name: string;
+            /** Unit */
+            unit?: string | null;
+            /** Signal Type */
+            signal_type?: string | null;
+        };
+        /** ChannelBindingModel */
+        ChannelBindingModel: {
+            /** Name */
+            name: string;
+            /** Source */
+            source: string;
+        };
         /** ConfigEntry */
         ConfigEntry: {
             /**
@@ -1150,6 +1344,8 @@ export interface components {
             parameters?: {
                 [key: string]: unknown;
             };
+            manual_montage?: components["schemas"]["SourceMetadataModel"] | null;
+            processing_input?: components["schemas"]["ProcessingInputModel"] | null;
         };
         /** CreateSessionRequest */
         CreateSessionRequest: {
@@ -1173,6 +1369,22 @@ export interface components {
             } | null;
             /** Expected Source Revision */
             expected_source_revision: number;
+        };
+        /** DecoderChannelRequirementsResponse */
+        DecoderChannelRequirementsResponse: {
+            /** Description */
+            description?: string | null;
+            /** Signal Type */
+            signal_type?: string | null;
+            /**
+             * Min Count
+             * @default 1
+             */
+            min_count: number;
+            /** Required Names */
+            required_names?: string[];
+            /** Default Names */
+            default_names?: string[];
         };
         /** EngineStatusResponse */
         EngineStatusResponse: {
@@ -1452,6 +1664,7 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
+            channel_requirements?: components["schemas"]["DecoderChannelRequirementsResponse"] | null;
         };
         /** PluginProfileResponse */
         PluginProfileResponse: {
@@ -1479,6 +1692,9 @@ export interface components {
             configuration_version: number;
             /** Revision */
             revision: number;
+            readonly acquisition_montage?: components["schemas"]["SourceMetadataModel"] | null;
+            manual_montage?: components["schemas"]["SourceMetadataModel"] | null;
+            processing_input?: components["schemas"]["ProcessingInputModel"] | null;
         };
         /** PluginSelectionResponse */
         PluginSelectionResponse: {
@@ -1488,6 +1704,48 @@ export interface components {
             contribution_id: string;
             /** Version */
             version?: string | null;
+        };
+        /** PreviewSignalSetupRequest */
+        PreviewSignalSetupRequest: {
+            processing_input: components["schemas"]["ProcessingInputModel"];
+            /** Expected Source Revision */
+            expected_source_revision?: string | null;
+            decoder_selection?: components["schemas"]["PluginSelectionResponse"] | null;
+        };
+        /** ProcessingInputModel */
+        ProcessingInputModel: {
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version: 1;
+            /** Outputs */
+            outputs?: (string | components["schemas"]["ChannelBindingModel"] | components["schemas"]["BipolarOutputModel"])[];
+            reference?: components["schemas"]["ReferenceModel"];
+            /** Excluded Channels */
+            excluded_channels?: string[];
+        };
+        /** ProcessingSourceBindingModel */
+        ProcessingSourceBindingModel: {
+            /** Source Id */
+            source_id: string;
+            /** Profile Id */
+            profile_id?: string | null;
+            /** Profile Name */
+            profile_name?: string | null;
+            /** Profile Revision */
+            profile_revision?: number | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "active" | "selected";
+            /**
+             * Metadata Origin
+             * @enum {string}
+             */
+            metadata_origin: "connected" | "profile" | "unavailable";
         };
         /** ProfileBindingResponse */
         ProfileBindingResponse: {
@@ -1509,6 +1767,8 @@ export interface components {
             configuration_version: number;
             /** Profile Revision */
             profile_revision: number;
+            manual_montage?: components["schemas"]["SourceMetadataModel"] | null;
+            processing_input?: components["schemas"]["ProcessingInputModel"] | null;
         };
         /** ProfileVersionProposalResponse */
         ProfileVersionProposalResponse: {
@@ -1532,6 +1792,8 @@ export interface components {
             configuration_version: number;
             /** Target Enabled */
             target_enabled: boolean;
+            manual_montage?: components["schemas"]["SourceMetadataModel"] | null;
+            processing_input?: components["schemas"]["ProcessingInputModel"] | null;
         };
         /** ProfileVersionRequest */
         ProfileVersionRequest: {
@@ -1553,6 +1815,17 @@ export interface components {
              * @description The session created/ended for this recording
              */
             session_id: string;
+        };
+        /** ReferenceModel */
+        ReferenceModel: {
+            /**
+             * Mode
+             * @default original
+             * @enum {string}
+             */
+            mode: "original" | "single" | "average" | "bipolar";
+            /** Channels */
+            channels?: string[];
         };
         /** RuntimeApplyRequest */
         RuntimeApplyRequest: {
@@ -1643,6 +1916,8 @@ export interface components {
             session_effect: "preserve" | "continuation";
             /** Errors */
             errors: string[];
+            /** Signal Summary */
+            signal_summary?: string | null;
         };
         /** SelectProfileBindingRequest */
         SelectProfileBindingRequest: {
@@ -1650,6 +1925,56 @@ export interface components {
             slot: string;
             /** Profile Id */
             profile_id: string;
+        };
+        /**
+         * SessionDetailResponse
+         * @description SessionResponse extended with full trial list.
+         */
+        SessionDetailResponse: {
+            /** Session Id */
+            session_id: string;
+            /** Paradigm */
+            paradigm: string | null;
+            state: components["schemas"]["SessionStateDTO"];
+            /** Trial Count */
+            trial_count: number;
+            /** Started At */
+            started_at: string | null;
+            /** Ended At */
+            ended_at: string | null;
+            /** Continuation Of */
+            continuation_of?: string | null;
+            /** Config Revision */
+            config_revision?: string | null;
+            /** Interruption Reason */
+            interruption_reason?: string | null;
+            /** Signal Plan */
+            signal_plan?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Trials
+             * @default []
+             */
+            trials: components["schemas"]["TrialResponse"][];
+        };
+        /** SessionExportResponse */
+        SessionExportResponse: {
+            /**
+             * Format Version
+             * @default 1
+             * @constant
+             */
+            format_version: 1;
+            /**
+             * Exported At
+             * Format: date-time
+             */
+            exported_at: string;
+            /** App Version */
+            app_version: string;
+            /** Sessions */
+            sessions: components["schemas"]["SessionDetailResponse"][];
         };
         /** SessionListResponse */
         SessionListResponse: {
@@ -1677,6 +2002,10 @@ export interface components {
             config_revision?: string | null;
             /** Interruption Reason */
             interruption_reason?: string | null;
+            /** Signal Plan */
+            signal_plan?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * SessionStateDTO
@@ -1687,6 +2016,131 @@ export interface components {
         SetPackageEnabledRequest: {
             /** Enabled */
             enabled: boolean;
+        };
+        /** SignalChannelModel */
+        SignalChannelModel: {
+            /** Index */
+            index: number;
+            /** Name */
+            name: string;
+            /**
+             * Signal Type
+             * @default unknown
+             */
+            signal_type: string;
+            /** Unit */
+            unit?: string | null;
+            /** Reference */
+            reference?: string | null;
+            /** Position */
+            position?: number[] | null;
+            /** Coordinate Frame */
+            coordinate_frame?: string | null;
+            /** Position Provenance */
+            position_provenance?: string | null;
+            /** Derivation */
+            derivation?: string[] | null;
+            /** Name Provenance */
+            name_provenance?: "generated" | null;
+        };
+        /** SignalPreviewResponse */
+        SignalPreviewResponse: {
+            /** Plan */
+            plan: {
+                [key: string]: unknown;
+            };
+            /** Warnings */
+            warnings: string[];
+            /** Source Revision */
+            source_revision: string;
+        };
+        /** SignalReadinessModel */
+        SignalReadinessModel: {
+            /** Ready */
+            ready: boolean;
+            /** Receipt */
+            receipt?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** SignalSetupModel */
+        SignalSetupModel: {
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version: 1;
+            /** Outputs */
+            outputs?: (string | components["schemas"]["ChannelBindingModel"] | components["schemas"]["BipolarOutputModel"])[];
+            reference?: components["schemas"]["ReferenceModel"];
+            /** Excluded Channels */
+            excluded_channels?: string[];
+            /** Source Id */
+            source_id: string;
+            /** Assignments */
+            assignments?: components["schemas"]["ChannelAssignmentModel"][];
+            /** Original Reference */
+            original_reference?: string | null;
+            /** Template */
+            template?: string | null;
+            manual_metadata?: components["schemas"]["SourceMetadataModel"] | null;
+        };
+        /** SignalSetupResponse */
+        SignalSetupResponse: {
+            /** Selected Source Id */
+            selected_source_id?: string | null;
+            /** Selected Decoder Profile Id */
+            selected_decoder_profile_id?: string | null;
+            selected_decoder_selection?: components["schemas"]["PluginSelectionResponse"] | null;
+            source_metadata?: components["schemas"]["SourceMetadataModel"] | null;
+            /** Source Error */
+            source_error?: string | null;
+            source_binding?: components["schemas"]["ProcessingSourceBindingModel"] | null;
+            /** Source Revision */
+            source_revision: string;
+            processing_input?: components["schemas"]["ProcessingInputModel"] | null;
+            accepted_input?: components["schemas"]["ProcessingInputModel"] | null;
+            active_input?: components["schemas"]["ProcessingInputModel"] | null;
+            legacy_setup?: components["schemas"]["SignalSetupModel"] | null;
+            setup: components["schemas"]["SignalSetupModel"] | null;
+            /** Revision */
+            revision: string;
+            accepted_setup: components["schemas"]["SignalSetupModel"] | null;
+            active_setup: components["schemas"]["SignalSetupModel"] | null;
+            readiness: components["schemas"]["SignalReadinessModel"];
+        };
+        /** SourceMetadataModel */
+        SourceMetadataModel: {
+            /** Source Id */
+            source_id: string;
+            /** Sample Rate */
+            sample_rate: number;
+            /** Channels */
+            channels: components["schemas"]["SignalChannelModel"][];
+            /** Trigger Row Index */
+            trigger_row_index: number;
+            /**
+             * Connection Id
+             * @default
+             */
+            connection_id: string;
+            /** Original Reference */
+            original_reference?: string | null;
+            /**
+             * Native Event
+             * @default final-row
+             */
+            native_event: string;
+            /**
+             * Provenance
+             * @default user-declared
+             */
+            provenance: string;
+            /** Signal Channel Count */
+            signal_channel_count?: number | null;
+            /** Output Row Count */
+            output_row_count?: number | null;
         };
         /** StartRecordingRequest */
         StartRecordingRequest: {
@@ -1736,6 +2190,21 @@ export interface components {
             /** Paradigm */
             paradigm?: string | null;
         };
+        /** SystemInfoResponse */
+        SystemInfoResponse: {
+            /** App Version */
+            app_version: string;
+            /**
+             * Desktop Api Version
+             * @default 1
+             * @constant
+             */
+            desktop_api_version: 1;
+            /** Instance Id */
+            instance_id: string;
+            /** Auth Enabled */
+            auth_enabled: boolean;
+        };
         /** TrialResponse */
         TrialResponse: {
             /** Trial Number */
@@ -1766,6 +2235,8 @@ export interface components {
             };
             /** Expected Revision */
             expected_revision: number;
+            manual_montage?: components["schemas"]["SourceMetadataModel"] | null;
+            processing_input?: components["schemas"]["ProcessingInputModel"] | null;
         };
     };
     responses: never;
@@ -1776,6 +2247,89 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    system_info_api_v1_system_info_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_SystemInfoResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     start_engine_api_v1_engine_start_post: {
         parameters: {
             query?: never;
@@ -1796,6 +2350,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1877,6 +2440,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -1951,6 +2523,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -2018,6 +2599,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2108,6 +2698,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -2184,6 +2783,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2274,6 +2882,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -2357,6 +2974,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -2404,6 +3030,192 @@ export interface operations {
             };
         };
     };
+    get_metadata_api_v1_acquisition_metadata_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_SourceMetadataModel_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    refresh_metadata_api_v1_acquisition_metadata_refresh_post: {
+        parameters: {
+            query?: {
+                profile_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_SourceMetadataModel_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     stimulation_status_api_v1_stimulation_status_get: {
         parameters: {
             query?: never;
@@ -2424,6 +3236,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2498,6 +3319,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2583,6 +3413,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -2650,6 +3489,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2744,6 +3592,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -2827,6 +3684,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -2898,6 +3764,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2988,6 +3863,102 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    export_sessions_api_v1_sessions_export_get: {
+        parameters: {
+            query?: {
+                session_id?: string[] | null;
+                format?: "json" | "csv";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionExportResponse"];
+                    "text/csv": string;
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -3064,6 +4035,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -3133,6 +4113,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3225,6 +4214,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -3294,6 +4292,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3372,6 +4379,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3462,6 +4478,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -3538,6 +4563,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3623,6 +4657,185 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_signal_setup_api_v1_config_signal_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_SignalSetupResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    preview_signal_setup_api_v1_config_signal_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreviewSignalSetupRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_SignalPreviewResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -3699,6 +4912,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -3768,6 +4990,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3853,6 +5084,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -3922,6 +5162,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4009,6 +5258,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -4087,6 +5345,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -4154,6 +5421,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4239,6 +5515,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -4315,6 +5600,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -4382,6 +5676,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4467,6 +5770,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -4538,6 +5850,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4621,6 +5942,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -4688,6 +6018,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4767,6 +6106,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4855,6 +6203,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -4925,6 +6282,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5010,6 +6376,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -5088,6 +6463,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -5155,6 +6539,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5240,6 +6633,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -5309,6 +6711,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

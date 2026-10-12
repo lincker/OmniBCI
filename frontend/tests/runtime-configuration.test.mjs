@@ -39,6 +39,9 @@ test("review presents the impact before Apply and blocks invalid plans", () => {
   const rebuild = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan, strategy: "rebuild", session_effect: "continuation" } } });
   assert.match(rebuild, /Pause and rebuild the engine/);
   assert.match(rebuild, /continuation session/);
+  const channels = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan,
+    signal_summary: "Outputs: C4, C3; reference: average (M1, M2)" } } });
+  assert.match(channels, /Outputs: C4, C3; reference: average \(M1, M2\)/);
 });
 
 for (const [field, value] of [["accepted_revision", "changed"], ["applied_revision", "changed"], ["generation", "changed"], ["running", false]]) {
@@ -126,4 +129,28 @@ test("trial controls validate supported fields and numeric defaults before rende
     { a: { field: "n_trials" }, b: { field: "n_trials" } }]) {
     assert.throws(() => readTrialControls(invalid));
   }
+});
+
+test("Run reports exclusions when the decoder selects all remaining source channels", () => {
+  const dispatcher = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
+  const previous = dispatcher.current;
+  let stateIndex = 0;
+  const activeSetup = { outputs: [], reference: { mode: "original", channels: [] }, excluded_channels: ["EOG", "M1"] };
+  // Seed the signal poll's data; the first poll contains stimulation data and its error.
+  dispatcher.current = {
+    useState: (initial) => [stateIndex++ === 2 ? { active_setup: activeSetup, readiness: { ready: true } }
+      : typeof initial === "function" ? initial() : initial, noop],
+    useContext: () => ({ t: (key) => key }), useRef: (value) => ({ current: value }),
+    useCallback: (callback) => callback, useEffect: noop,
+  };
+  let tree;
+  try {
+    tree = RunConsole({ engine: { data: { running: true }, error: null, refresh: noop },
+      acquisition: { data: { connected: true, streaming: false }, error: null, refresh: noop },
+      feed: { session: null, trials: [], acks: [] }, runtime: baseRuntime,
+      onBusyChange: noop, onEditSetup: noop, onResults: noop });
+  } finally { dispatcher.current = previous; }
+  const html = renderToStaticMarkup(React.createElement(I18nProvider, null, tree));
+  assert.match(html, /All source channels except EOG, M1/);
+  assert.doesNotMatch(html, /All source channels<\/strong>/);
 });

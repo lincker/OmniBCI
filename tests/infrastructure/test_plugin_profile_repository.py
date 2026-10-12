@@ -55,6 +55,27 @@ def test_round_trip_and_optimistic_rename_preserve_identity(repository, profile)
     ]
 
 
+def test_profile_montages_persist_without_entering_accepted_activation(repository, profile):
+    from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
+
+    observed = SourceMetadata("test-source", 250, (
+        ChannelDescriptor(0, "O1", unit="V"), ChannelDescriptor(1, "O2", unit="V"),
+    ), 2, connection_id="transient-connection", provenance="file-reported")
+    saved = repository.save_profile(profile)
+    accepted = repository.save_activation(_snapshot(saved))
+    activation_bytes = (repository.root / "activation.toml").read_bytes()
+    cached = repository.save_profile(replace(saved, acquisition_montage=observed,
+                                             manual_montage=observed), expected_revision=saved.revision)
+    fresh = TomlPluginProfileRepository(repository.root)
+    assert fresh.get_profile(saved.profile_id) == cached
+    assert fresh.get_profile(saved.profile_id).acquisition_montage.channels == observed.channels
+    document = (repository.root / "plugin-profiles" / f"{saved.profile_id}.toml").read_text()
+    assert "transient-connection" not in document
+    assert "connection_id" not in document
+    assert fresh.get_activation() == accepted
+    assert (repository.root / "activation.toml").read_bytes() == activation_bytes
+
+
 def test_returned_profile_parameters_do_not_mutate_storage(repository, profile):
     saved = repository.save_profile(profile)
     saved.parameters["channels"].append(3)

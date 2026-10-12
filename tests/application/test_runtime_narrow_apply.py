@@ -513,7 +513,7 @@ async def test_live_logger_replacement_preserves_source_processing_and_session(t
     from omnibci.infrastructure.actuation.process_manager import ActuationProcessManager
     from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
     from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
-    from tests.application.test_runtime_apply_integration import configured_profiles
+    from tests.application.test_runtime_apply_integration import configured_profiles, wire_signal_preparation
 
     profiles, bindings = configured_profiles(tmp_path, monkeypatch)
     plugin = tmp_path / "plugins" / "effectors" / "alternate_logger"
@@ -557,10 +557,11 @@ schema_version=1
     await engine.startup()
     container = assemble(engine, InMemorySessionRepository(), admission=engine.admission,
                          actuation_process_manager=manager)
+    signal = wire_signal_preparation(profiles, engine, container)
     register_engine_listeners(container)
     coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
                                           container.session_service, container.stimulation_service,
-                                          container.command_results)
+                                          container.command_results, signal_preparer=signal.prepare)
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
     try:
         await engine.handle_start_engine(StartEngineCommand())

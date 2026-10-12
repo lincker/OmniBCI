@@ -10,6 +10,7 @@ from omnibci.application.plugin_profiles import (
     PluginSelection, ProfileRevisionConflict,
 )
 from omnibci.application.plugin_schema import PluginSchemaError
+from omnibci.domain.montage import ProcessingInput, SourceMetadata
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.presentation.errors import ApiError
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
@@ -33,7 +34,7 @@ def get_plugin_profile_service(request: Request) -> PluginProfileService:
 def _configuration_errors():
     try:
         yield
-    except (PluginSchemaError, PluginProfileValidationError) as exc:
+    except (PluginSchemaError, PluginProfileValidationError, ValueError) as exc:
         raise ApiError(422, ErrorCode.VALIDATION_ERROR, str(exc)) from exc
     except (ProfileRevisionConflict, ConfigProfileConflictError) as exc:
         raise ApiError(409, ErrorCode.CONFLICT, str(exc)) from exc
@@ -61,7 +62,13 @@ def create_profile(body: CreatePluginProfileRequest,
                    svc: PluginProfileService = Depends(get_plugin_profile_service)):
     with _configuration_errors():
         selection = PluginSelection(**body.selection.model_dump())
-        profile = svc.create(body.kind, selection, body.name, body.parameters)
+        manual = (SourceMetadata.from_dict(body.manual_montage.model_dump(exclude_none=True))
+                  if body.manual_montage is not None else None)
+        values = {}
+        if body.processing_input is not None:
+            values["processing_input"] = ProcessingInput.from_dict(body.processing_input.model_dump(exclude_none=True))
+        profile = svc.create(body.kind, selection, body.name, body.parameters,
+                             manual_montage=manual, **values)
         return ApiResponse(message="Profile created", data=profile.to_dict())
 
 
@@ -75,7 +82,16 @@ def get_profile(profile_id: str, svc: PluginProfileService = Depends(get_plugin_
 def update_profile(profile_id: str, body: UpdatePluginProfileRequest,
                    svc: PluginProfileService = Depends(get_plugin_profile_service)):
     with _configuration_errors():
-        profile = svc.update(profile_id, **body.model_dump())
+        values = body.model_dump(exclude={"manual_montage", "processing_input"})
+        if "manual_montage" in body.model_fields_set:
+            values["manual_montage"] = (
+                SourceMetadata.from_dict(body.manual_montage.model_dump(exclude_none=True))
+                if body.manual_montage is not None else None)
+        if "processing_input" in body.model_fields_set:
+            values["processing_input"] = (
+                ProcessingInput.from_dict(body.processing_input.model_dump(exclude_none=True))
+                if body.processing_input is not None else None)
+        profile = svc.update(profile_id, **values)
         return ApiResponse(message="Profile saved", data=profile.to_dict())
 
 

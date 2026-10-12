@@ -26,6 +26,7 @@ def spec():
 
 EXPECTED_OPERATIONS = {
     ("/healthz", "get"),
+    ("/api/v1/system/info", "get"),
     # engine
     ("/api/v1/engine/start", "post"),
     ("/api/v1/engine/stop", "post"),
@@ -36,6 +37,8 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/acquisition/stream/start", "post"),
     ("/api/v1/acquisition/stream/stop", "post"),
     ("/api/v1/acquisition/status", "get"),
+    ("/api/v1/acquisition/metadata", "get"),
+    ("/api/v1/acquisition/metadata/refresh", "post"),
     # stimulation
     ("/api/v1/stimulation/status", "get"),
     # plugins
@@ -48,6 +51,7 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/sessions", "post"),
     ("/api/v1/sessions", "get"),
     ("/api/v1/sessions/active", "get"),
+    ("/api/v1/sessions/export", "get"),
     ("/api/v1/sessions/{session_id}", "get"),
     ("/api/v1/sessions/{session_id}", "delete"),
     ("/api/v1/sessions/{session_id}/trials", "get"),
@@ -58,6 +62,8 @@ EXPECTED_OPERATIONS = {
     # Host configuration.
     ("/api/v1/config", "get"),
     ("/api/v1/config", "patch"),
+    ("/api/v1/config/signal", "get"),
+    ("/api/v1/config/signal/preview", "post"),
     # Plugin profiles and accepted activation.
     ("/api/v1/config/plugin-catalog/{kind}", "get"),
     ("/api/v1/config/plugin-profiles", "get"),
@@ -131,6 +137,16 @@ def _schema(spec, name):
 
 
 class TestResponseDtos:
+    def test_desktop_handshake_and_export_contract(self, spec):
+        assert set(_schema(spec, "SystemInfoResponse")["properties"]) == {
+            "app_version", "desktop_api_version", "instance_id", "auth_enabled",
+        }
+        export = _schema(spec, "SessionExportResponse")
+        assert export["properties"]["format_version"]["const"] == 1
+        assert set(export["properties"]) == {"format_version", "exported_at", "app_version", "sessions"}
+        content = spec["paths"]["/api/v1/sessions/export"]["get"]["responses"]["200"]["content"]
+        assert set(content) == {"application/json", "text/csv"}
+
     def test_host_configuration_has_no_application_profile_contract(self, spec):
         assert not any(path.startswith("/api/v1/config/profiles") for path in spec["paths"])
         assert set(_schema(spec, "ConfigResponse")["properties"]) == {"entries", "revision"}
@@ -150,7 +166,7 @@ class TestResponseDtos:
         props = _schema(spec, "SessionResponse")["properties"]
         assert set(props) == {
             "session_id", "paradigm", "state", "trial_count", "started_at", "ended_at",
-            "continuation_of", "config_revision", "interruption_reason",
+            "continuation_of", "config_revision", "interruption_reason", "signal_plan",
         }
 
     def test_trial_response_fields(self, spec):
@@ -168,6 +184,7 @@ class TestResponseDtos:
         props = _schema(spec, "AcquisitionStatusResponse")["properties"]
         assert set(props) == {
             "connected", "streaming", "source", "sample_rate", "channel_count",
+            "metadata_available", "metadata_provenance",
         }
 
 

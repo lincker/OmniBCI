@@ -3,7 +3,9 @@
 import asyncio
 import multiprocessing as mp
 import threading
+from pathlib import Path
 from multiprocessing.connection import wait
+from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -166,15 +168,65 @@ async def test_worker_must_still_be_alive_when_other_worker_becomes_ready():
     assert engine.shutdown_complete
 
 
-def _pinned_worker_snapshot(broken_kind=None):
+@pytest.fixture
+def legacy_decoder(tmp_path, monkeypatch):
+    """A real decoder whose constructor runs before source metadata is available."""
+    plugin_dir = tmp_path / "plugins"
+    package = plugin_dir / "algorithms" / "decoders" / "readiness"
+    package.mkdir(parents=True)
+    (package / "manifest.toml").write_text(dedent('''
+        manifest_version = 2
+        [package]
+        id = "readiness"
+        publisher = "test"
+        version = "1"
+        api_version = "2"
+        [[contributions]]
+        id = "default"
+        kind = "decoder"
+        plugin_type = "readiness_decoder"
+        entrypoint = "decoder:ReadinessDecoder"
+        signal_input_contract = 1
+        [contributions.configuration]
+        schema = "default.schema.json"
+        schema_version = 1
+    '''), encoding="utf-8")
+    (package / "default.schema.json").write_text(
+        '{"type":"object","properties":{},"additionalProperties":false}', encoding="utf-8",
+    )
+    (package / "decoder.py").write_text(dedent('''
+        from pathlib import Path
+        from omnibci.sdk import Decoder
+
+        class ReadinessDecoder(Decoder):
+            def __init__(self, *, parameters, context):
+                if context.sample_rate is None or context.sample_rate <= 0:
+                    raise ValueError("ReadinessDecoder requires context.sample_rate")
+                if context.input_signal is not None:
+                    raise ValueError("This test must exercise construction before signal preparation")
+                self.sample_rate = context.sample_rate
+                Path(context.resource_root, "constructed").write_text("ready", encoding="utf-8")
+
+            def should_decode(self, window):
+                return False
+
+            def decode(self, window, latest):
+                return None
+    '''), encoding="utf-8")
+    monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(plugin_dir))
+    return "readiness_decoder", package / "constructed"
+
+
+def _pinned_worker_snapshot(decoder_alias, broken_kind=None):
     from dataclasses import replace
     from omnibci.application.plugin_profiles import ProfileBinding
     from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
     snapshot = {"CONFIG.revision": "r", "CONFIG.generation": "g", "ACQUISITION.sample_rate": 250}
     bindings = []
     for slot, kind, alias, parameters in (
-        ("acquisition.source", "acquisition", "file_reader", {"sample_rate": 250, "channel_number": 10}),
-        ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA", {}),
+        ("acquisition.source", "acquisition", "file_reader", {"sample_rate": 250, "channel_number": 10,
+         "data_file_path": str(Path(__file__).parents[1] / "fixture" / "train.cnt")}),
+        ("processing.decoder", "decoder", decoder_alias, {}),
         ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
     ):
         descriptor = PluginCatalog().resolve(kind, alias)
@@ -189,14 +241,15 @@ def _pinned_worker_snapshot(broken_kind=None):
 @pytest.mark.integration
 @pytest.mark.parametrize("kind", ["acquisition", "processing"])
 @pytest.mark.parametrize("broken", [False, True])
-def test_spawned_configured_worker_reports_real_plugin_initialization(kind, broken):
+def test_spawned_configured_worker_reports_real_plugin_initialization(kind, broken, legacy_decoder):
+    decoder_alias, constructed = legacy_decoder
     context = mp.get_context("spawn")
     commands, data, events = (context.Queue() for _ in range(3))
     receiver, sender = context.Pipe(duplex=False)
     component = "Acquisition" if kind == "acquisition" else "Processing"
     reporter = StartupReporter(sender, component=component, config_revision="r", generation="g")
     broken_kind = ("acquisition" if kind == "acquisition" else "decoder") if broken else None
-    snapshot = _pinned_worker_snapshot(broken_kind)
+    snapshot = _pinned_worker_snapshot(decoder_alias, broken_kind)
     worker_type = AcquisitionWorker if kind == "acquisition" else SignalProcessingWorker
     worker = worker_type(commands, DataManager(buffer=data), EventBus(events),
                          settings_snapshot=snapshot, startup_reporter=reporter)
@@ -215,6 +268,8 @@ def test_spawned_configured_worker_reports_real_plugin_initialization(kind, brok
             report = wait_for_startup_report(receiver, process, component=component, timeout_s=15,
                                               expected_revision="r", expected_generation="g")
             assert report.generation == "g"
+            if kind == "processing":
+                assert constructed.read_text(encoding="utf-8") == "ready"
             # Windows poll() may raise BrokenPipeError after the sender closes.
             assert wait([receiver], timeout=1) == [receiver]
             with pytest.raises(EOFError):
@@ -238,10 +293,11 @@ def test_spawned_configured_worker_reports_real_plugin_initialization(kind, brok
 @pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("broken", [False, True])
-async def test_builder_manages_real_worker_startup_and_cleanup(broken):
+async def test_builder_manages_real_worker_startup_and_cleanup(broken, legacy_decoder):
     from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
+    decoder_alias, constructed = legacy_decoder
     engine = NeuroEngineBuilder(settings_snapshot=_pinned_worker_snapshot(
-        "decoder" if broken else None,
+        decoder_alias, "decoder" if broken else None,
     )).build()
     engine.peer_gateway = MagicMock(start=AsyncMock(), stop=AsyncMock())
     try:
@@ -252,6 +308,7 @@ async def test_builder_manages_real_worker_startup_and_cleanup(broken):
         else:
             await engine._start()
             assert engine._started
+            assert constructed.read_text(encoding="utf-8") == "ready"
             assert engine.acquisition_worker.is_alive()
             assert engine.signal_processing_worker.is_alive()
         assert all(channel.receiver.closed for channel in engine._startup_channels)

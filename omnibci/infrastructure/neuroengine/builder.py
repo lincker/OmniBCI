@@ -72,11 +72,13 @@ class NeuroEngineBuilder:
     """
 
     def __init__(self, config: NeuroEngineConfig | None = None,
-                 *, settings_snapshot: dict | None = None) -> None:
+                 *, settings_snapshot: dict | None = None,
+                 allow_process_termination: bool = True) -> None:
         if settings_snapshot is None:
             raise ValueError("NeuroEngineBuilder requires a pinned settings snapshot")
         self._settings_snapshot = deepcopy(settings_snapshot)
         self._config = config or NeuroEngineConfig.from_settings(self._settings_snapshot)
+        self._allow_process_termination = allow_process_termination
 
     def build(self) -> NeuroEngine:
         """
@@ -188,4 +190,5 @@ class NeuroEngineBuilder:
             startup_timeout_s=cfg.startup_timeout_s,
             config_revision=revision,
             generation=generation,
+            allow_process_termination=self._allow_process_termination,
         )

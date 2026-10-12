@@ -110,7 +110,7 @@ class NeuroEngineService(EnginePort):
 
     async def shutdown(self) -> None:
         """Stop everything cleanly."""
-        if self._running or (
+        if self._running or self._restart_blocked or (
             self._engine_thread is not None and self._engine_thread.is_alive()
         ):
             await self.handle_stop_engine(StopEngineCommand())

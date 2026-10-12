@@ -1,6 +1,7 @@
 """References block destructive package lifecycle changes; version copies are explicit."""
 from contextlib import contextmanager
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +10,7 @@ from omnibci.application.plugin_profiles import ActivationSnapshot, ProfileBindi
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.application.services.plugin_package_service import PluginPackageService
 from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, SourceMetadata
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
@@ -164,6 +166,46 @@ def test_added_target_defaults_are_visible_in_preview(service, tmp_path):
         "gain": {"type": "number", "default": 1.0}, "new_option": {"type": "boolean", "default": True},
     }))
     assert svc.propose_profile(original.profile_id, "3.0.0").parameters == {"gain": 2.0, "new_option": True}
+
+
+@pytest.mark.parametrize("channel_input", [None, ProcessingInput(outputs=("O2", "O1"))])
+def test_decoder_version_copy_preserves_input_including_legacy_absence(service, monkeypatch, channel_input):
+    svc, _ = service
+    definition = svc.profiles.catalog.legacy("decoder", "THUBCI_SSVEP_classic40CCA")
+    source = svc.profiles.create("decoder", definition.selection, "Decoder", {}, processing_input=channel_input)
+    target = replace(definition, selection=replace(definition.selection, version="99.0.0"))
+    monkeypatch.setattr(svc.store, "get_package", lambda *_: SimpleNamespace(error=None, available=True, enabled=True))
+    monkeypatch.setattr(svc.store, "configuration", lambda *_: target)
+    monkeypatch.setattr(svc.profiles.catalog, "get", lambda *_: target)
+
+    proposal = svc.propose_profile(source.profile_id, "99.0.0")
+    copied = svc.create_version_profile(source.profile_id, "99.0.0", expected_source_revision=source.revision)
+    assert proposal.processing_input == channel_input
+    assert copied.processing_input == channel_input
+    assert copied.profile_id != source.profile_id
+    assert svc.profiles.repository.get_profile(source.profile_id) == source
+
+
+def test_acquisition_version_copy_keeps_valid_manual_montage_without_observation(service, monkeypatch):
+    svc, _ = service
+    definition = svc.profiles.catalog.legacy("acquisition", "file_reader")
+    montage = SourceMetadata("file_reader", 500, (ChannelDescriptor(0, "O1", unit="V"),), 1)
+    source = svc.profiles.create("acquisition", definition.selection, "Reader", {
+        "sample_rate": 500, "channel_number": 2}, manual_montage=montage)
+    source = svc.profiles.repository.save_profile(replace(source, acquisition_montage=montage),
+                                                   expected_revision=source.revision)
+    target = replace(definition, selection=replace(definition.selection, version="99.0.0"))
+    monkeypatch.setattr(svc.store, "get_package", lambda *_: SimpleNamespace(error=None, available=True, enabled=True))
+    monkeypatch.setattr(svc.store, "configuration", lambda *_: target)
+    monkeypatch.setattr(svc.profiles.catalog, "get", lambda *_: target)
+
+    proposal = svc.propose_profile(source.profile_id, "99.0.0")
+    assert proposal.manual_montage == source.manual_montage
+    copied = svc.create_version_profile(source.profile_id, "99.0.0", expected_source_revision=source.revision)
+    assert copied.manual_montage == source.manual_montage
+    assert copied.acquisition_montage is None
+    with pytest.raises(PluginSchemaError, match="rate and output rows"):
+        svc.propose_profile(source.profile_id, "99.0.0", parameters={**source.parameters, "sample_rate": 250})
 
 
 def test_after_all_references_are_released_disable_and_remove_work(service):

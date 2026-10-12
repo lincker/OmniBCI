@@ -9,6 +9,7 @@ version = "0.1.0"
 api_version = "2"
 
 [[contributions]]
+signal_input_contract = 1
 id = "default"
 kind = "epoch_detector"
 plugin_type = "DEFAULT_EPOCH_DETECTOR"

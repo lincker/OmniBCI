@@ -1,11 +1,13 @@
 """Composition selects accepted configuration instead of mutable saved profiles."""
 from unittest.mock import Mock
+from dataclasses import replace
 
 import pytest
 
 from omnibci import bootstrap
 from omnibci.application.plugin_profiles import ActivationSnapshot
 from omnibci.application.plugin_schema import PluginSchemaError
+from omnibci.domain.montage import ProcessingInput
 from omnibci.bootstrap import _RuntimeSettings, build_container
 from omnibci.conf import OmniBCISettings
 from omnibci.infrastructure.config_paths import config_root
@@ -86,6 +88,27 @@ def test_status_reads_applied_values_while_engine_running():
 
 
 @pytest.mark.asyncio
+async def test_montage_binding_uses_applied_source_and_guards_explicit_profile_reads():
+    from omnibci.application.plugin_profiles import ProfileRevisionConflict
+    from omnibci.bootstrap import _acquisition_montage_binding
+    container = await build_container()
+    profiles = container.plugin_profile_service
+    accepted = profiles.repository.get_activation()
+    binding = next(item for item in accepted.bindings if item.slot == "acquisition.source")
+    engine = Mock(applied_snapshot=profiles.materialize(accepted))
+    assert _acquisition_montage_binding(engine, profiles, binding.profile_id) == binding
+    with pytest.raises(ProfileRevisionConflict, match="applied acquisition profile"):
+        _acquisition_montage_binding(engine, profiles, "another-profile")
+    profile = profiles.repository.get_profile(binding.profile_id)
+    profiles.update(profile.profile_id, name=profile.name,
+                    parameters={**profile.parameters, "sample_rate": 250}, expected_revision=profile.revision)
+    with pytest.raises(ProfileRevisionConflict, match="differs from the running source"):
+        _acquisition_montage_binding(engine, profiles, binding.profile_id)
+    # An automatic observation still belongs to the running profile's pinned copy.
+    assert _acquisition_montage_binding(engine, profiles) == binding
+
+
+@pytest.mark.asyncio
 async def test_settings_only_initialization_preserves_nondefault_values(bootstrap_settings):
     original_settings = bootstrap_settings._config_path.read_bytes()
 
@@ -98,6 +121,11 @@ async def test_settings_only_initialization_preserves_nondefault_values(bootstra
         "channel_number": 5, "file_reader_chunk_size": 17,
     }
     assert bindings["processing.decoder"].parameters == {"window_duration": 4.25, "offset_time": 0.15}
+    assert bindings["processing.decoder"].processing_input == ProcessingInput()
+    runtime = container.engine_service._snapshot_provider()
+    assert "SIGNAL.setup" not in runtime
+    assert next(binding for binding in runtime["PLUGINS.bindings"]
+                if binding["slot"] == "processing.decoder")["processing_input"] == ProcessingInput().to_dict()
     assert "stimulation.trigger" not in bindings
     assert "actuation.effector" not in bindings
     assert accepted.settings == {
@@ -196,6 +224,25 @@ async def test_existing_activation_keeps_its_revision_and_pinned_inputs(bootstra
     assert decoder["parameters"] == {"window_duration": 4.25, "offset_time": 0.15}
     assert _toml_files(profiles.repository.root) == original_files
     assert bootstrap_settings._config_path.read_bytes() == original_settings
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_keeps_legacy_decoder_input_absence_and_global_setup(bootstrap_settings):
+    first = await build_container()
+    profiles = first.plugin_profile_service
+    current = profiles.repository.get_activation()
+    setup = {"source_id": "file_reader", "outputs": ["O1"]}
+    legacy = ActivationSnapshot({**current.settings, "SIGNAL.setup": setup}, tuple(
+        replace(binding, processing_input=None) if binding.kind == "decoder" else binding
+        for binding in current.bindings))
+    profiles.repository.save_activation(legacy, expected_revision=current.revision)
+    files = _toml_files(profiles.repository.root)
+
+    restarted = await build_container()
+
+    assert restarted.plugin_profile_service.repository.get_activation() == legacy
+    assert restarted.engine_service._snapshot_provider()["SIGNAL.setup"] == setup
+    assert _toml_files(profiles.repository.root) == files
 
 
 @pytest.mark.asyncio

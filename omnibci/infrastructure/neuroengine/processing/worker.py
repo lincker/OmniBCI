@@ -9,6 +9,7 @@ import multiprocessing as mp
 from copy import deepcopy
 from typing import Optional
 
+from omnibci.application.processing_source import requires_signal_preparation
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector
 from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessor
 from omnibci.infrastructure.process_lifecycle import StartupReporter
@@ -46,7 +47,12 @@ class SignalProcessingWorker(mp.Process):
                 from omnibci.conf import settings
                 settings.use_snapshot(self.settings_snapshot)
             self._startup_stage = "plugins"
-            decoder, detector, filters = self._load_algorithm()
+            if requires_signal_preparation(self._snapshot()):
+                # A control loop must be ready before a source is connected.
+                # Signal-dependent plugins are constructed by PrepareSignalProcessing.
+                decoder, detector, filters = None, None, []
+            else:
+                decoder, detector, filters = self._load_algorithm()
             self._startup_stage = "processor"
             self._run_processor(decoder, detector, filters, self.sample_rate)
         except BaseException as exc:

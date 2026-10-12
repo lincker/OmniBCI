@@ -1,6 +1,7 @@
 """Composition root for application services and infrastructure adapters."""
 
 import logging
+import json
 from dataclasses import dataclass
 from typing import Callable, Iterable, Tuple
 
@@ -22,6 +23,7 @@ from omnibci.application.services.plugin_installation_service import PluginInsta
 from omnibci.application.services.plugin_package_service import PluginPackageService
 from omnibci.application.services.plugin_market_service import PluginMarketService
 from omnibci.application.plugin_packages import package_references_from_settings
+from omnibci.application.plugin_profiles import ProfileBinding, ProfileRevisionConflict, PluginProfileNotFoundError
 from omnibci.domain.repositories import SessionRepository
 from omnibci.infrastructure.backend_logging import BackendLogging
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
@@ -83,6 +85,7 @@ class AppContainer:
     plugin_installation_service: "PluginInstallationService | None" = None
     plugin_package_service: "PluginPackageService | None" = None
     plugin_market_service: "PluginMarketService | None" = None
+    signal_setup_service: object | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +166,8 @@ def assemble(
 # Full construction (performs engine startup)
 # ---------------------------------------------------------------------------
 
-async def build_container(*, host_settings: dict | None = None) -> AppContainer:
+async def build_container(*, host_settings: dict | None = None,
+                          allow_process_termination: bool = True) -> AppContainer:
     """Wire services; resolve configuration and build workers on engine start."""
     from omnibci.conf import settings
 
@@ -177,15 +181,21 @@ async def build_container(*, host_settings: dict | None = None) -> AppContainer:
         bool(host_settings.get("ACTUATION.enabled", False))
         and bool(host_settings.get("ACTUATION.auto_spawn", True))
     )
-    actuation_manager = ActuationProcessManager(auto_spawn=actuation_auto_spawn)
-    stimulation_manager = StimulationProcessManager(auto_spawn=auto_spawn)
+    actuation_manager = ActuationProcessManager(
+        auto_spawn=actuation_auto_spawn, allow_process_termination=allow_process_termination,
+    )
+    stimulation_manager = StimulationProcessManager(
+        auto_spawn=auto_spawn, allow_process_termination=allow_process_termination,
+    )
 
     # Processes are single-use, so every restart requires a fresh engine graph.
     def startup_snapshot():
         return accepted_runtime_settings(profiles=plugin_profiles)
 
     engine_service = NeuroEngineService(
-        engine_factory=lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
+        engine_factory=lambda snapshot: NeuroEngineBuilder(
+            settings_snapshot=snapshot, allow_process_termination=allow_process_termination,
+        ).build(),
         snapshot_provider=startup_snapshot,
         actuation_process_manager=actuation_manager,
         stimulation_process_manager=stimulation_manager,
@@ -220,12 +230,27 @@ async def build_container(*, host_settings: dict | None = None) -> AppContainer:
                          admission=engine_service.admission)
     container.config_service = config_service
     container.plugin_profile_service = plugin_profiles
+    container.acquisition_service.set_metadata_recorder(
+        lambda profile_id: _acquisition_montage_binding(engine_service, plugin_profiles, profile_id),
+        plugin_profiles.record_acquisition_montage,
+    )
+    from omnibci.application.services.signal_setup_service import SignalSetupService
+    from omnibci.infrastructure.signal_layouts import SignalLayoutProvider
+    container.signal_setup_service = SignalSetupService(
+        settings, plugin_profiles, engine_service, container.acquisition_service,
+        container.command_results, SignalLayoutProvider(),
+    )
+    container.acquisition_service.set_signal_preparer(container.signal_setup_service.prepare)
+    container.session_service.set_signal_preparer(
+        container.signal_setup_service.prepare_session, container.acquisition_service.lifecycle_lock,
+    )
     container.node_configuration = NodeConfigurationService(engine_service, plugin_profiles)
     container.runtime_configuration = RuntimeConfigurationService(
         plugin_profiles, engine_service,
         executor=RuntimeApplyCoordinator(engine_service, plugin_profiles, container.acquisition_service,
                                           container.session_service, container.stimulation_service,
-                                          container.command_results),
+                                          container.command_results,
+                                          signal_preparer=container.signal_setup_service.prepare),
     )
     packages = PluginPackageService(
         ManagedPluginPackageStore(), plugin_profiles,
@@ -242,6 +267,27 @@ async def build_container(*, host_settings: dict | None = None) -> AppContainer:
         packages.store, admission_guard=engine_service.admission.transition,
     )
     return container
+
+
+def _acquisition_montage_binding(engine, profiles, profile_id=None):
+    """Resolve the running source, never a saved selection awaiting Apply."""
+    snapshot = engine.applied_snapshot or {}
+    value = next((binding for binding in snapshot.get("PLUGINS.bindings", ())
+                  if binding.get("slot") == "acquisition.source"), None)
+    binding = ProfileBinding.from_dict(value) if value is not None else None
+    if profile_id is None:
+        return binding
+    if binding is None or binding.profile_id != profile_id:
+        raise ProfileRevisionConflict("Connect the applied acquisition profile before reading its montage")
+    try:
+        saved = profiles.repository.get_profile(profile_id)
+    except PluginProfileNotFoundError as exc:
+        raise ProfileRevisionConflict("Acquisition profile no longer exists") from exc
+    if (saved.kind != binding.kind or saved.selection != binding.selection
+            or saved.configuration_version != binding.configuration_version
+            or json.dumps(saved.parameters, sort_keys=True) != json.dumps(binding.parameters, sort_keys=True)):
+        raise ProfileRevisionConflict("Acquisition profile differs from the running source; Apply it before reading montage")
+    return binding
 
 
 class _RuntimeSettings:

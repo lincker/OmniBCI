@@ -14,7 +14,7 @@ def test_status_and_review_plan_contract():
                   generation=None, operation=None)
     plan = dict(plan_id="plan", expected_revision="selected", target_revision="new",
                 applied_revision=None, generation=None, running=False, strategy="select_on_start",
-                changed_slots=["processing.decoder"], changed_settings=[], session_effect="preserve", errors=[])
+                changed_slots=["processing.decoder"], changed_settings=[], session_effect="preserve", errors=[], signal_summary=None)
     requests = []
 
     def create_plan(**kwargs):
@@ -39,6 +39,9 @@ def test_status_and_review_plan_contract():
         }).status_code == 200
         assert requests[-1] == {"bindings": [], "expected_revision": "selected",
                                 "refresh_slots": [], "include_host_settings": True}
+        assert client.post("/config/apply-plan", json={
+            "bindings": [], "include_signal_setup": True,
+        }).status_code == 422
         assert client.post("/config/apply-plan", json={"bindings": [], "unknown": True}).status_code == 422
 
         def stale(**kwargs):

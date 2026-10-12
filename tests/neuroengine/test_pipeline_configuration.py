@@ -7,13 +7,15 @@ from uuid import uuid4
 import pytest
 
 from omnibci.application.plugin_profiles import ProfileBinding
+from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, SourceMetadata, compile_processing_plan
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.infrastructure.neuroengine.processing import pipeline_configuration as configuration
 
 
 def selected_snapshot(revision="old"):
     catalog = PluginCatalog()
-    bindings = [ProfileBinding(slot, kind, None, catalog.resolve_legacy(kind, alias).selection, parameters).to_dict()
+    bindings = [ProfileBinding(slot, kind, None, catalog.resolve_legacy(kind, alias).selection, parameters,
+                               processing_input=ProcessingInput() if kind == "decoder" else None).to_dict()
                 for slot, kind, alias, parameters in (
                     ("acquisition.source", "acquisition", "file_reader", {"sample_rate": 250}),
                     ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA",
@@ -21,12 +23,20 @@ def selected_snapshot(revision="old"):
                     ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
                 )]
     return {"CONFIG.revision": revision, "CONFIG.generation": "run",
+            "ACQUISITION.signal_source": "file_reader",
             "ACQUISITION.sample_rate": 250, "ALGORITHM.baseline_duration": 0.2,
             "ACQUISITION.channel_names": ["O1", "O2"], "PLUGINS.bindings": bindings}
 
 
 def _build(before, after):
-    return configuration.build_pipeline_update(before, after, sample_rate=250, baseline_duration=0.2)
+    channels = tuple(ChannelDescriptor(index, name, signal_type="eeg", unit="V")
+                     for index, name in enumerate(before["ACQUISITION.channel_names"]))
+    source = SourceMetadata(before["ACQUISITION.signal_source"], before["ACQUISITION.sample_rate"],
+                            channels, len(channels), connection_id="test-connection")
+    plan = compile_processing_plan(source, ProcessingInput.from_dict(
+        before["PLUGINS.bindings"][1]["processing_input"]), config_revision=before["CONFIG.revision"])
+    return configuration.build_pipeline_update(before, after, sample_rate=250, baseline_duration=0.2,
+                                               signal_plan=plan)
 
 
 def test_bundle_uses_new_parameters_and_ordered_distinct_filter_instances():
@@ -101,7 +111,7 @@ def test_decoder_replacement_and_filter_removal_build_complete_bundle():
     decoder = PluginCatalog().resolve_legacy("decoder", "THUBCI_SSVEP_classic40FBCCA")
     after["PLUGINS.bindings"][1] = ProfileBinding(
         "processing.decoder", "decoder", None, decoder.selection,
-        {"window_duration": 1.0, "offset_time": 0.0},
+        {"window_duration": 1.0, "offset_time": 0.0}, processing_input=ProcessingInput(),
     ).to_dict()
     bundle = _build(before, after)
     assert bundle.decoder.plugin_type == "THUBCI_SSVEP_classic40FBCCA"
@@ -115,3 +125,23 @@ def test_invalid_candidate_does_not_change_input():
     with pytest.raises(ValueError):
         _build(before, after)
     assert before["PLUGINS.bindings"][1]["parameters"]["window_duration"] == 1
+
+
+@pytest.mark.parametrize("changed_selection", [False, True])
+def test_decoder_input_change_cannot_reuse_existing_prepared_plan(changed_selection):
+    before = selected_snapshot()
+    after = deepcopy(before)
+    after["PLUGINS.bindings"][1]["processing_input"] = {"outputs": ["O2"]}
+    if changed_selection:
+        selection = PluginCatalog().resolve_legacy("decoder", "THUBCI_SSVEP_classic40FBCCA").selection
+        after["PLUGINS.bindings"][1]["selection"] = selection.to_dict()
+    with pytest.raises(ValueError, match="Processing input changes"):
+        _build(before, after)
+
+
+def test_output_context_cannot_change_decoder_input():
+    before = selected_snapshot()
+    after = deepcopy(before)
+    after["PLUGINS.bindings"][1]["processing_input"] = {"outputs": ["O2"]}
+    with pytest.raises(ValueError, match="Processing or source changes"):
+        configuration.validate_output_context(before, after)

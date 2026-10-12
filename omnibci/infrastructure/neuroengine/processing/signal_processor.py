@@ -2,6 +2,7 @@
 
 import asyncio
 from copy import deepcopy
+from dataclasses import replace
 from enum import Enum
 import hashlib
 import json
@@ -17,6 +18,7 @@ from omnibci.domain.ports.algorithm import Decoder, EpochDetector
 from omnibci.application.events import (
     CommandFailureKind, CommandRequest, CommandResult, StreamBarrier, StreamDrainReceipt,
 )
+from omnibci.application.processing_source import requires_signal_preparation, validate_plan_binding
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.event_translator import DomainEventPublisher
 from .processing_state import AwaitingEpochState, AssemblingEpochState
@@ -35,6 +37,7 @@ class SignalProcessorCommand(Enum):
     stage_configuration = 'stage_processing_configuration'
     cancel_configuration = 'cancel_processing_configuration'
     update_context = 'update_processing_context'
+    prepare_signal = 'prepare_signal_processing'
 
 
 class SignalProcessor:
@@ -91,6 +94,8 @@ class SignalProcessor:
         self._sample_rate = sample_rate
         self._baseline_duration = baseline_duration
         self._settings_snapshot = deepcopy(settings_snapshot)
+        self._signal_plan = None
+        self._signal_receipt = None
         self._pending_configuration = None
         # Command receipts live for this worker generation. A cancelled command
         # cannot become a new update if a delayed duplicate arrives later.
@@ -163,6 +168,10 @@ class SignalProcessor:
             self._on_stream_barrier(item)
             return None
         if isinstance(item, SignalChunk):
+            if requires_signal_preparation(self._settings_snapshot or {}):
+                if self._signal_plan is None:
+                    raise RuntimeError("Signal processing has not been prepared")
+                item = self._signal_plan.apply(item)
             self._last_sequence = item.sequence_id
         return item
 
@@ -264,6 +273,10 @@ class SignalProcessor:
             command, raw_payload = item, None
         request = CommandRequest.from_value(raw_payload)
         payload = request.payload if request is not None else raw_payload
+        if command == SignalProcessorCommand.prepare_signal:
+            if request is not None:
+                self._prepare_signal(request)
+            return
         if command == SignalProcessorCommand.update_context:
             if request is not None:
                 self._update_output_context(request)
@@ -286,7 +299,8 @@ class SignalProcessor:
             # End the session cleanly so SessionEnded domain event is emitted
             self._end_current_session()
         elif command == SignalProcessorCommand.start_session:
-            ok = self._start_session(payload)
+            ok = (not requires_signal_preparation(self._settings_snapshot or {})
+                  or self._signal_receipt is not None) and self._start_session(payload)
             if not ok:
                 message = "StartSession payload must contain a non-empty session_id"
                 error_code = "INVALID_SESSION_COMMAND"
@@ -317,6 +331,46 @@ class SignalProcessor:
     # Session lifecycle (identity pushed down from the API — see
     # docs/session-id-unification.md)
     # ------------------------------------------------------------------
+
+    def _prepare_signal(self, request):
+        from omnibci.domain.montage import ResolvedSignalPlan
+        from .signal_configuration import load_signal_pipeline
+        try:
+            payload = request.payload
+            if not isinstance(payload, dict) or set(payload) != {"plan", "receipt"}:
+                raise ValueError("Invalid signal preparation request")
+            plan = ResolvedSignalPlan.from_dict(payload["plan"])
+            receipt = payload["receipt"]
+            if (not isinstance(receipt, dict)
+                    or set(receipt) != {"generation", "config_revision", "connection_id",
+                                       "source_fingerprint", "plan_fingerprint"}
+                    or receipt["generation"] != self.generation
+                    or receipt["config_revision"] != self.config_revision
+                    or receipt["connection_id"] != plan.source.connection_id
+                    or not receipt["connection_id"]
+                    or (plan.processing_input is not None
+                        and receipt["source_fingerprint"] != plan.source.fingerprint)
+                    or receipt["plan_fingerprint"] != plan.fingerprint
+                    or plan.config_revision != self.config_revision):
+                raise ValueError("Signal preparation belongs to a different runtime or connection")
+            validate_plan_binding(self._settings_snapshot or {}, plan)
+            if receipt != self._signal_receipt:
+                if self.current_epoch is not None or self._pending_configuration is not None:
+                    raise ValueError("Drain the stream before preparing a new signal plan")
+                decoder, detector, filters = load_signal_pipeline(self._settings_snapshot, plan)
+                self._decoder, self.detector, self._filters = decoder, detector, list(filters)
+                self._sample_rate = plan.source.sample_rate
+                self.baseline_samples = round(self._baseline_duration * self._sample_rate)
+                self.pretrigger = PreTriggerBuffer(capacity=self.baseline_samples)
+                self._signal_plan = plan
+                self._signal_receipt = deepcopy(receipt)
+            result = CommandResult(request.command_id, EventType.PrepareSignalProcessing.name,
+                                   ok=True, data=deepcopy(receipt))
+        except Exception as exc:
+            result = CommandResult(request.command_id, EventType.PrepareSignalProcessing.name,
+                                   ok=False, message=str(exc), error_code="SIGNAL_PREPARATION_FAILED",
+                                   failure_kind=CommandFailureKind.REJECTED)
+        self._publish_configuration_result(result)
 
     def _start_session(self, payload) -> bool:
         """Open a session with the API-supplied identity (single-active invariant)."""
@@ -391,6 +445,10 @@ class SignalProcessor:
             snapshot = validate_output_context(self._settings_snapshot, payload.get("settings_snapshot"))
             self._settings_snapshot = snapshot
             self.config_revision = snapshot["CONFIG.revision"]
+            if self._signal_plan is not None:
+                self._signal_plan = replace(self._signal_plan, config_revision=self.config_revision)
+            if self._signal_receipt is not None:
+                self._signal_receipt["config_revision"] = self.config_revision
             result = CommandResult(request.command_id, EventType.UpdateProcessingContext.name, ok=True,
                                    data=self._configuration_receipt(request.command_id, "applied"))
         except Exception as exc:
@@ -444,6 +502,7 @@ class SignalProcessor:
             candidate = build_pipeline_update(
                 self._settings_snapshot, payload["settings_snapshot"],
                 sample_rate=self._sample_rate, baseline_duration=self._baseline_duration,
+                signal_plan=self._signal_plan,
             )
         except Exception as exc:
             # Rejecting a conflicting duplicate must not overwrite the receipt
@@ -471,6 +530,10 @@ class SignalProcessor:
         self._filters = list(candidate.filters)
         self._settings_snapshot = candidate.settings_snapshot
         self.config_revision = candidate.settings_snapshot["CONFIG.revision"]
+        if self._signal_plan is not None:
+            self._signal_plan = replace(self._signal_plan, config_revision=self.config_revision)
+        if self._signal_receipt is not None:
+            self._signal_receipt["config_revision"] = self.config_revision
         self._pending_configuration = None
         self._finish_configuration(command_id, ok=True)
 

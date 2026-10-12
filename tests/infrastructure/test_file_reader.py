@@ -41,13 +41,13 @@ class _FakeAdapter:
 
 class TestFileReaderLifecycle:
     def _reader(self, chunk_size: int = 100) -> FileReader:
-        r = FileReader(parameters={})
+        r = FileReader(parameters={"data_file_path": "sample.cnt"})
         r.reader_adapter = _FakeAdapter()
         r._chunk_size = chunk_size
         return r
 
     def test_initial_flags(self):
-        r = FileReader(parameters={})
+        r = FileReader(parameters={"data_file_path": "sample.cnt"})
         assert r.is_connected is False
         assert r._is_streaming is False
         assert r.file_pointer == 0
@@ -61,7 +61,7 @@ class TestFileReaderLifecycle:
         file_path = tmp_path / "sample.cnt"
         file_path.touch()
 
-        r = FileReader(parameters={})
+        r = FileReader(parameters={"data_file_path": str(file_path)})
         r.set_file_path(str(file_path))
 
         assert _run(r.connect()) is True
@@ -77,7 +77,7 @@ class TestFileReaderLifecycle:
         assert r._is_streaming is True
 
     def test_start_stream_requires_adapter(self):
-        r = FileReader(parameters={})
+        r = FileReader(parameters={"data_file_path": "sample.cnt"})
         r.reader_adapter = None
         with pytest.raises(ValueError):
             _run(r.start_stream())

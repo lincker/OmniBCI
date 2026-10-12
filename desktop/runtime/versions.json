@@ -1,0 +1,39 @@
+{
+  "pythonVersion": "3.14.8",
+  "pbsRelease": "20261003",
+  "uvVersion": "0.12.23",
+  "sourceBuilds": ["moderngl", "glcontext"],
+  "targets": {
+    "darwin-arm64": {
+      "triple": "aarch64-apple-darwin",
+      "lockPlatform": "aarch64-apple-darwin",
+      "sha256": "ed14e9042f36c0aa18383f5d9729bcbf17847e842666a793b5a5a5d8505c0ca1",
+      "interpreter": "python/bin/python3",
+      "minimumMacOS": [13, 0],
+      "minimumOS": "macOS 13"
+    },
+    "darwin-x64": {
+      "triple": "x86_64-apple-darwin",
+      "lockPlatform": "x86_64-apple-darwin",
+      "sha256": "08310045a2611bad730d7c1a01e847a1ea729d9dcfe29110ca67cbdf3998bb54",
+      "interpreter": "python/bin/python3",
+      "minimumMacOS": [13, 0],
+      "minimumOS": "macOS 13"
+    },
+    "win32-x64": {
+      "triple": "x86_64-pc-windows-msvc",
+      "lockPlatform": "x86_64-pc-windows-msvc",
+      "sha256": "10e5705e44938ee78de35c62b30fdfe2945b53438343d04c0f53548cdd8e91b6",
+      "interpreter": "python/python.exe",
+      "minimumOS": "Windows 10 22H2 x64"
+    },
+    "linux-x64": {
+      "triple": "x86_64-unknown-linux-gnu",
+      "lockPlatform": "x86_64-manylinux_2_35",
+      "sha256": "d9ec7a6935ade8b671a57ebaf111083d7314eab8dae5071d167054dadd2b97d6",
+      "interpreter": "python/bin/python3",
+      "maximumGlibc": [2, 35],
+      "minimumOS": "Ubuntu 22.04 x64 (glibc 2.35)"
+    }
+  }
+}

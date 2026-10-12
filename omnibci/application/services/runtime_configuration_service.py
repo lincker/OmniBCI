@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 from omnibci.application.plugin_profiles import ActivationSnapshot, ProfileRevisionConflict
 from omnibci.application.plugin_schema import PluginSchemaError
+from omnibci.application.processing_source import processing_input
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,7 @@ class ConfigurationPlan:
     changed_settings: tuple[str, ...]
     session_effect: str
     errors: tuple[str, ...]
+    signal_summary: str | None = None
 
     def to_dict(self):
         return asdict(self)
@@ -77,8 +79,10 @@ class RuntimeConfigurationService:
         )
         running = self.engine.is_engine_ready
         errors = []
+        materialized = {}
         try:
             self._validate_runtime(snapshot)
+            materialized = self.profiles.materialize(snapshot)
         except (ValueError, KeyError) as exc:
             errors.append(str(exc))
         old = {binding.slot: binding for binding in current.bindings} if current else {}
@@ -93,6 +97,10 @@ class RuntimeConfigurationService:
         settings = tuple(sorted(key for key in old_settings.keys() | snapshot.settings.keys()
                                 if old_settings.get(key) != snapshot.settings.get(key)))
         strategy = self._strategy(slots, settings, old, new)
+        if (running and strategy == "trial_boundary" and materialized
+                and processing_input(self.engine.applied_snapshot or {}) != processing_input(materialized)):
+            # Historical profiles may acquire an identity input only in their runtime projection.
+            strategy = "rebuild"
         if strategy == "no_change" and current is not None and snapshot.revision != current.revision:
             strategy = "rebuild"
         if self.executor is not None and strategy not in self.executor.supported_strategies:
@@ -118,13 +126,35 @@ class RuntimeConfigurationService:
             self.engine.generation if running else None, running, strategy,
             tuple(slots), settings,
             "continuation" if running and strategy == "rebuild" else "preserve",
-            tuple(errors),
+            tuple(errors), self._signal_summary(materialized),
         )
         with self._lock:
             self._plans[plan.plan_id] = PlannedConfiguration(plan, snapshot, monotonic())
             while len(self._plans) > self._MAX_PLANS:
                 self._plans.popitem(last=False)
         return plan
+
+    @staticmethod
+    def _signal_summary(snapshot):
+        try:
+            value = processing_input(snapshot)
+            if value is None:
+                return None
+            setup = value.to_dict()
+        except (ValueError, TypeError):
+            return "Invalid signal setup; correct the validation errors before applying"
+        outputs = setup.get("outputs", [])
+        names = [item["name"] if isinstance(item, dict) else item for item in outputs]
+        reference = setup.get("reference", {})
+        parts = ["Outputs: " + (", ".join(names) or "all available channels"),
+                 "Reference: " + reference.get("mode", "original")]
+        if reference.get("channels"):
+            parts[-1] += " (" + ", ".join(reference["channels"]) + ")"
+        if setup.get("excluded_channels"):
+            parts.append("Excluded: " + ", ".join(setup["excluded_channels"]))
+        if setup.get("template"):
+            parts.append("Template: " + setup["template"])
+        return "; ".join(parts)
 
     def resolve_plan(self, plan_id: str) -> PlannedConfiguration:
         with self._lock:
@@ -223,12 +253,17 @@ class RuntimeConfigurationService:
     def _binding_values(binding):
         if binding is None:
             return None
-        return (binding.kind, binding.selection, binding.parameters, binding.configuration_version)
+        return (binding.kind, binding.selection, binding.parameters, binding.configuration_version,
+                binding.manual_montage, binding.processing_input)
 
     def _strategy(self, slots, settings, old, new):
         if not slots and not settings:
             return "no_change"
         if settings or any(s in ("acquisition.source", "processing.epoch_detector") for s in slots):
+            return "rebuild"
+        previous_decoder, following_decoder = old.get("processing.decoder"), new.get("processing.decoder")
+        if (getattr(previous_decoder, "processing_input", None)
+                != getattr(following_decoder, "processing_input", None)):
             return "rebuild"
         if all(s == "processing.decoder" or s.startswith("processing.filter.") for s in slots):
             # Schema annotations are a permission to use a narrower boundary;

@@ -55,8 +55,10 @@ class TestFilterLoading:
 
 
 class TestAlgorithmLoading:
-    def test_explicit_pipeline_uses_host_sample_rate_without_global_reads(self, monkeypatch):
+    def test_prepared_pipeline_uses_host_sample_rate_without_global_reads(self, monkeypatch):
         from omnibci.application.plugin_profiles import ProfileBinding
+        from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, SourceMetadata, compile_processing_plan
+        from omnibci.infrastructure.neuroengine.processing.signal_configuration import load_signal_pipeline
         from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
         snapshot = {"ACQUISITION.sample_rate": 250, "CONFIG.revision": "test-revision"}
         bindings = []
@@ -67,13 +69,17 @@ class TestAlgorithmLoading:
         ):
             descriptor = PluginCatalog().resolve(kind, alias)
             descriptors.append(descriptor)
-            bindings.append(ProfileBinding(slot, kind, None, descriptor.selection, parameters).to_dict())
+            bindings.append(ProfileBinding(slot, kind, None, descriptor.selection, parameters,
+                                           processing_input=ProcessingInput() if kind == "decoder" else None).to_dict())
         snapshot["PLUGINS.bindings"] = bindings
+        source = SourceMetadata("file_reader", snapshot["ACQUISITION.sample_rate"],
+                                (ChannelDescriptor(0, "O1", signal_type="eeg", unit="V"),), 1)
+        plan = compile_processing_plan(source, ProcessingInput(), config_revision=snapshot["CONFIG.revision"])
         monkeypatch.setattr(conf_module.settings, "get", lambda *a, **k: pytest.fail("global settings read"))
         with patch.object(
             PluginLoader, "load_entrypoint", wraps=PluginLoader.load_entrypoint
         ) as load_entrypoint:
-            decoder, detector, filters = _worker(settings_snapshot=snapshot)._load_algorithm()
+            decoder, detector, filters = load_signal_pipeline(snapshot, plan)
         assert load_entrypoint.call_args_list == [
             call(descriptors[0], Decoder),
             call(descriptors[1], EpochDetector),

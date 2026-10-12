@@ -15,7 +15,8 @@ from omnibci.infrastructure.plugins.acquisition.neuroscan.scan45.scan45 import S
 
 @pytest.mark.parametrize("source_type,safe", [(FileReader, False), (Scan45DataReader, True), (Curry8DataReader, True)])
 def test_builtin_sources_declare_live_resume_separately_from_checkpoint(source_type, safe):
-    source = source_type(parameters={})
+    parameters = {"data_file_path": "sample.cnt"} if source_type is FileReader else {}
+    source = source_type(parameters=parameters)
     assert source.resume_without_checkpoint_safe is safe
     assert source.supports_checkpoint is (source_type is FileReader)
 

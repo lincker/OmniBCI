@@ -1,0 +1,55 @@
+appId: org.omnibci.desktop
+productName: OmniBCI
+asar: true
+npmRebuild: false
+publish: null
+artifactName: OmniBCI-${version}-${os}-${arch}.${ext}
+directories:
+  output: release
+files:
+  - dist/**/*
+  - package.json
+extraResources:
+  - from: resources/python
+    to: python
+    filter: ["**/*"]
+  - from: resources/runtime-manifest.json
+    to: runtime-manifest.json
+  - from: resources/third-party-licenses
+    to: third-party-licenses
+beforePack: runtime/before-pack.cjs
+mac:
+  target: dmg
+  category: public.app-category.medical
+  minimumSystemVersion: "13.0.0"
+  identity: "-"
+  hardenedRuntime: false
+  notarize: false
+win:
+  target: nsis
+  signAndEditExecutable: false
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+linux:
+  target: deb
+  executableName: omnibci-desktop
+  category: Science
+  maintainer: OmniBCI contributors
+deb:
+  depends:
+    - libc6 (>= 2.35)
+    - libgtk-3-0
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+    - libgbm1
+    - libasound2
+    - libgl1
+    - libx11-6

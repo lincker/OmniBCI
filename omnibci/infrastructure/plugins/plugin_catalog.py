@@ -24,6 +24,7 @@ import omnibci
 import tomlkit
 
 from omnibci.application.plugin_schema import validate_schema
+from omnibci.domain.decoder_input import DecoderChannelRequirements
 from omnibci.infrastructure.plugins.installed_registry import enabled_package_directories
 
 from omnibci.infrastructure.plugins.descriptors import (
@@ -518,6 +519,25 @@ def _parse_contributions(
         if any(not isinstance(value, Mapping) for value in controls.values()):
             raise PluginManifestError(f"{manifest_path}: contribution controls must be TOML tables")
         configuration_schema, configuration_version = _configuration(contribution, package_dir)
+        signal_contract = contribution.get("signal_input_contract")
+        if signal_contract is not None and (
+            type(signal_contract) is not int or signal_contract not in (1, 2)
+            or category not in {"decoder", "epoch_detector", "filter"}
+            or (signal_contract == 2 and category != "decoder")
+        ):
+            raise PluginManifestError(f"{manifest_path}: invalid signal_input_contract")
+        requirements = None
+        if "channel_requirements" in contribution:
+            if category != "decoder" or signal_contract != 2:
+                raise PluginManifestError(
+                    f"{manifest_path}: channel_requirements requires a decoder with signal_input_contract = 2"
+                )
+            try:
+                requirements = DecoderChannelRequirements.from_dict(contribution["channel_requirements"])
+            except ValueError as exc:
+                raise PluginManifestError(f"{manifest_path}: invalid channel_requirements: {exc}") from exc
+        elif signal_contract == 2:
+            raise PluginManifestError(f"{manifest_path}: signal_input_contract = 2 requires channel_requirements")
         descriptors.append(PluginDescriptor(
             package=metadata,
             contribution_id=identifier,
@@ -537,6 +557,8 @@ def _parse_contributions(
             platforms=_platforms(contribution, manifest_path),
             configuration_schema=configuration_schema,
             configuration_version=configuration_version,
+            signal_input_contract=signal_contract,
+            channel_requirements=requirements,
         ))
     return tuple(descriptors)
 

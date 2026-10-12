@@ -8,7 +8,6 @@ from unittest.mock import Mock, call
 
 import pytest
 
-from omnibci.conf.paths import resolve_config_path
 from omnibci.infrastructure.plugins.acquisition.file import reader as file_module
 from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8 import curry8
 from omnibci.infrastructure.plugins.acquisition.neuroscan.scan45 import scan45
@@ -38,10 +37,8 @@ def test_file_reader_uses_explicit_path_and_chunk_size(tmp_path):
 
 @pytest.mark.parametrize("kwargs", [{"parameters": {}}, {"parameters": {}, "context": PluginContext()}])
 def test_file_reader_explicit_defaults_never_fall_back_to_settings(kwargs):
-    reader = file_module.FileReader(**kwargs)
-
-    assert reader.file_path == str(resolve_config_path("tests/fixture/train.cnt"))
-    assert reader._chunk_size == 100
+    with pytest.raises(ValueError, match="Select a recording file"):
+        file_module.FileReader(**kwargs)
 
 
 @pytest.mark.parametrize(

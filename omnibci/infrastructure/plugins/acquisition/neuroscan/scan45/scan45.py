@@ -145,6 +145,7 @@ class Scan45DataReader(SignalSource):
         self.data_provider_ip = parameters.get("DATA_PROVIDER_IP", "127.0.0.1")
         self.data_provider_port = parameters.get("DATA_PROVIDER_PORT", 4000)
         self.channel_number = parameters.get("channel_number", 10)
+        self._sample_rate = parameters.get("sample_rate", context.sample_rate if context else None)
         if type(self.channel_number) is not int or self.channel_number < 2:
             raise ValueError("channel_number must be an integer >= 2, including the event channel")
         # self.record_srate = config.get('record_srate', 1000)
@@ -191,7 +192,14 @@ class Scan45DataReader(SignalSource):
         await self.writer.wait_closed()
 
     async def get_metadata(self):
-        await self.request_basic_info()
+        """Return profile declarations without reading an unimplemented header."""
+        return {
+            "output_channel_count": self.channel_number,
+            "sample_rate": self._sample_rate,
+            "channel_labels": [],
+            "native_event": "final-row",
+            "provenance": "user-declared",
+        }
 
     async def request_basic_info(self):
         self.writer.write(scan45_message_manager.getEDFHeaderInfoCommand)

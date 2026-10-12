@@ -42,7 +42,12 @@ def remove(package_id: str, version: str, svc: PluginPackageService = Depends(ge
 @router.post("/profile-version-proposals", response_model=ApiResponse[ProfileVersionProposalResponse])
 def propose_profile(body: ProfileVersionRequest, svc: PluginPackageService = Depends(get_plugin_package_service)):
     with package_errors(), _configuration_errors():
-        return ApiResponse(data=asdict(svc.propose_profile(**body.model_dump())))
+        proposal = svc.propose_profile(**body.model_dump())
+        data = asdict(proposal)
+        for name in ("manual_montage", "processing_input"):
+            if getattr(proposal, name) is not None:
+                data[name] = getattr(proposal, name).to_dict()
+        return ApiResponse(data=data)
 
 
 @router.post("/version-profiles", status_code=201, response_model=ApiResponse[PluginProfileResponse])

@@ -9,6 +9,79 @@ from omnibci.application.plugin_profiles import (
     ActivationSnapshot, PluginProfile, PluginProfileValidationError,
     PluginSelection, ProfileBinding,
 )
+from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, ReferenceSpec, SourceMetadata
+
+
+def _montage():
+    return SourceMetadata("test-source", 250, (
+        ChannelDescriptor(0, "O1", unit="V", position=(0.0, 0.01, 0.02),
+                          coordinate_frame="head", position_provenance="file-reported"),
+    ), 1, connection_id="live-connection", provenance="file-reported")
+
+
+def test_profile_montages_round_trip_without_persisting_connection_identity():
+    observed = _montage()
+    profile = PluginProfile(str(uuid4()), "Source", "acquisition",
+                            PluginSelection("acme.source", "main", "1.0.0"), {},
+                            acquisition_montage=observed, manual_montage=observed)
+    exported = profile.to_dict()
+    assert "connection_id" not in exported["acquisition_montage"]
+    assert "connection_id" not in exported["manual_montage"]
+    assert profile.acquisition_montage.connection_id == ""
+    assert profile.acquisition_montage.channels[0].position_provenance == "file-reported"
+    assert profile.manual_montage.provenance == "user-declared"
+    assert profile.manual_montage.channels[0].position_provenance == "user-declared"
+    assert observed.connection_id == "live-connection"
+    assert PluginProfile.from_dict(exported) == profile
+    exported["manual_montage"]["channels"][0]["name"] = "Changed"
+    assert profile.manual_montage.channels[0].name == "O1"
+
+
+def test_montage_fields_are_acquisition_only_and_omitted_for_legacy_documents():
+    profile = PluginProfile(str(uuid4()), "Decoder", "decoder",
+                            PluginSelection("acme.decoder", "main", None), {})
+    assert "acquisition_montage" not in profile.to_dict()
+    assert "manual_montage" not in profile.to_dict()
+    assert PluginProfile.from_dict(profile.to_dict()) == profile
+    for field in ("acquisition_montage", "manual_montage"):
+        with pytest.raises(PluginProfileValidationError, match="acquisition"):
+            replace(profile, **{field: _montage()})
+    with pytest.raises(PluginProfileValidationError, match="acquisition"):
+        replace(_binding(), manual_montage=_montage())
+
+
+def test_manual_montage_is_frozen_in_binding_and_affects_activation_revision():
+    binding = _binding("acquisition.source", "acquisition")
+    legacy = ActivationSnapshot({}, (binding,))
+    restored = ActivationSnapshot.from_dict(legacy.to_dict())
+    assert restored.revision == legacy.revision
+    assert "manual_montage" not in restored.bindings[0].to_dict()
+    manual = replace(binding, manual_montage=_montage())
+    selected = ActivationSnapshot({}, (manual,))
+    assert selected.revision != legacy.revision
+    assert ActivationSnapshot.from_dict(selected.to_dict()) == selected
+    assert selected.bindings[0].manual_montage.connection_id == ""
+    assert "acquisition_montage" not in selected.bindings[0].to_dict()
+
+
+def test_processing_input_is_decoder_only_and_frozen_in_activation():
+    channel_input = ProcessingInput(outputs=("O2", "O1"), reference=ReferenceSpec("single", ("M1",)))
+    profile = PluginProfile(str(uuid4()), "Decoder", "decoder",
+                            PluginSelection("acme.decoder", "main", None), {},
+                            processing_input=channel_input)
+    assert PluginProfile.from_dict(profile.to_dict()) == profile
+    legacy = ActivationSnapshot({}, (_binding(),))
+    assert "processing_input" not in legacy.bindings[0].to_dict()
+    selected = ActivationSnapshot({}, (replace(_binding(), processing_input=channel_input),))
+    assert ActivationSnapshot.from_dict(selected.to_dict()) == selected
+    assert selected.revision != legacy.revision
+    exported = selected.to_dict()
+    exported["bindings"][0]["processing_input"]["outputs"].reverse()
+    assert selected.bindings[0].processing_input.outputs == ("O2", "O1")
+    with pytest.raises(PluginProfileValidationError, match="decoder"):
+        replace(profile, kind="filter")
+    with pytest.raises(PluginProfileValidationError, match="decoder"):
+        replace(_binding("acquisition.source", "acquisition"), processing_input=channel_input)
 
 
 def _binding(slot="processing.decoder", kind="decoder", **fields):

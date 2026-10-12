@@ -1,0 +1,174 @@
+name: desktop
+
+on:
+  pull_request:
+    paths: ["desktop/**", "frontend/**", "omnibci/**", "pyproject.toml", ".github/workflows/desktop.yml"]
+  push:
+    branches: [main, dev, feat-ui]
+    paths: ["desktop/**", "frontend/**", "omnibci/**", "pyproject.toml", ".github/workflows/desktop.yml"]
+  workflow_dispatch:
+    inputs:
+      installers:
+        description: Build internal installers as downloadable artifacts
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUTF8: "1"
+  MPLBACKEND: Agg
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+  CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  checks:
+    name: desktop contracts
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            desktop/package-lock.json
+            frontend/package-lock.json
+      - run: |
+          npm ci --prefix frontend
+          npm ci --prefix desktop
+          npm --prefix frontend test
+          npm --prefix frontend run build
+          npm --prefix desktop run typecheck
+          npm --prefix desktop test
+          python -B desktop/runtime/test_packaging.py
+
+  package:
+    name: package (${{ matrix.target }})
+    needs: checks
+    if: github.event_name != 'push'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: win32-x64
+            runner: windows-2022
+          - target: darwin-arm64
+            runner: macos-15
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: linux-x64
+            runner: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            desktop/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install native build and display dependencies on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libx11-dev libgl1 libgtk-3-0 libgbm1 libnss3 libasound2 xvfb
+
+      - name: Install the pinned build resolver
+        run: python -m pip install uv==0.12.23
+
+      - uses: actions/cache@v4
+        with:
+          path: desktop/runtime/cache
+          key: pbs-${{ matrix.target }}-${{ hashFiles('desktop/runtime/versions.json') }}
+
+      - name: Install JavaScript build dependencies
+        run: |
+          npm ci --prefix frontend
+          npm ci --prefix desktop
+          mkdir -p desktop/artifacts
+
+      - name: Check renderer and desktop contracts
+        run: |
+          npm --prefix frontend test
+          npm --prefix frontend run build
+          npm --prefix desktop run typecheck
+          npm --prefix desktop test
+          python -B desktop/runtime/test_packaging.py
+
+      - name: Stage the locked standalone Python runtime
+        run: python -B desktop/scripts/prepare-runtime.py --target ${{ matrix.target }} 2>&1 | tee desktop/artifacts/runtime-prepare.log
+
+      - name: Build the unpacked application
+        run: npm --prefix desktop run package:dir 2>&1 | tee desktop/artifacts/package.log
+
+      - name: Verify Python after relocation into the packaged application
+        run: python -B desktop/scripts/verify-runtime.py --packaged desktop/release 2>&1 | tee desktop/artifacts/runtime-verify.log
+
+      - name: Copy to a read-only installation with spaces and Unicode
+        id: installed
+        run: python -B desktop/scripts/prepare-installed-copy.py --source desktop/release --github-output
+
+      - name: Exercise the packaged desktop on Linux
+        if: runner.os == 'Linux'
+        env:
+          INSTALLED_APP: ${{ steps.installed.outputs.path }}
+        run: xvfb-run -a node desktop/scripts/smoke.mjs --packaged "$INSTALLED_APP" 2>&1 | tee desktop/artifacts/smoke.log
+
+      - name: Exercise the packaged desktop on Windows and macOS
+        if: runner.os != 'Linux'
+        env:
+          INSTALLED_APP: ${{ steps.installed.outputs.path }}
+        run: node desktop/scripts/smoke.mjs --packaged "$INSTALLED_APP" 2>&1 | tee desktop/artifacts/smoke.log
+
+      - name: Archive the unpacked application preserving executable bits and symlinks
+        run: python -c "import shutil; shutil.make_archive('desktop/OmniBCI-${{ matrix.target }}-unpacked', 'gztar', 'desktop/release')"
+
+      - name: Build internal installers without publishing
+        if: github.event_name == 'workflow_dispatch' && inputs.installers
+        run: npm --prefix desktop run package 2>&1 | tee desktop/artifacts/installer.log
+
+      - name: Record artifact checksums
+        run: python -B desktop/scripts/artifact-checksums.py
+
+      - name: Verify the mounted DMG contains the smoke-tested app
+        if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch' && inputs.installers
+        env:
+          INSTALLED_APP: ${{ steps.installed.outputs.path }}
+        run: python -B desktop/scripts/verify-dmg.py --image desktop/release/*.dmg --reference "$INSTALLED_APP" --report desktop/artifacts/dmg-verification.json 2>&1 | tee desktop/artifacts/dmg-verification.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-${{ matrix.target }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            desktop/OmniBCI-*-unpacked.tar.gz
+            desktop/release/*.exe
+            desktop/release/*.dmg
+            desktop/release/*.deb
+            desktop/SHA256SUMS-*.txt
+            desktop/resources/runtime-manifest.json
+            desktop/artifacts/**

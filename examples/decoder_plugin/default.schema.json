@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "window_duration": {
+      "type": "number",
+      "title": "Demo window (seconds)",
+      "description": "Number of seconds used for the tutorial's Oz mean. At least two samples are required.",
+      "default": 1.0,
+      "minimum": 0.001,
+      "x-scope": "portable",
+      "x-apply": "trial"
+    }
+  },
+  "required": ["window_duration"]
+}

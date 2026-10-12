@@ -1,0 +1,12 @@
+.acquisition-montage .montage-observation { font-size: 0.75rem; margin: 1rem 0; }
+.acquisition-montage .montage-declarations { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+.acquisition-montage .montage-declarations label { display: grid; gap: 0.5rem; font-size: 0.75rem; }
+.acquisition-montage .montage-declarations input { width: 100%; min-width: 0; }
+.acquisition-montage .montage-table { overflow-x: auto; margin: 1rem 0; }
+.acquisition-montage table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+.acquisition-montage th, .acquisition-montage td { padding: 0.5rem; text-align: left; border-bottom: 1px solid var(--border-soft); }
+.acquisition-montage td > input, .acquisition-montage td select { width: 100%; min-width: 5rem; }
+.acquisition-montage input[readonly] { color: var(--muted); border-color: transparent; }
+.acquisition-montage .montage-position { display: flex; gap: 0.25rem; }
+.acquisition-montage .montage-position input { width: 5rem; min-width: 0; }
+@media (max-width: 700px) { .acquisition-montage .montage-declarations { grid-template-columns: 1fr; } }

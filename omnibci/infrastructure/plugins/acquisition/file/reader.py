@@ -27,17 +27,21 @@ class FileReader(SignalSource):
         self._resume_checkpoint = None
         self._read_in_progress = False
         self._chunk_size = parameters.get('file_reader_chunk_size', 100)
-        file_path = parameters.get('data_file_path', 'tests/fixture/train.cnt')
+        file_path = parameters.get('data_file_path', '')
+        if not isinstance(file_path, (str, Path)) or not str(file_path).strip():
+            raise ValueError("Select a recording file before starting acquisition")
         self.file_path = str(resolve_config_path(file_path))
         self.data = None
 
     def set_file_path(self, file_path: str | Path):
+        if not str(file_path).strip():
+            raise ValueError("Select a recording file before starting acquisition")
         self.file_path = str(resolve_config_path(file_path))
 
     async def connect(self) -> bool:
         """Open the signal file."""
         path = Path(self.file_path)
-        if not path.exists():
+        if not path.is_file():
             raise FileNotFoundError(f"File {self.file_path} does not exist.")
         identity = self._current_file_identity()
         if self.file_path.endswith('.cnt'):

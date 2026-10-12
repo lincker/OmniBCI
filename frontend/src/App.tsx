@@ -10,6 +10,9 @@ import { PluginMarket } from "./PluginMarket";
 import { ConfigDialog } from "./ConfigDialog";
 import { RunConsole } from "./RunConsole";
 import { SessionSummary, TrialResults } from "./TrialResults";
+import { ResultExport } from "./ResultExport";
+import { desktopBridge } from "./desktop";
+import type { ConnectionInfo } from "../../desktop/src/contracts";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
 import { useI18n } from "./i18n";
 import "./styles.css";
@@ -28,11 +31,12 @@ function initialView(): View {
   const hash = window.location.hash.slice(1);
   if ([...setupPages, ...settingsPages].some(([page]) => page === hash) || hash === "run" || hash === "results" || hash === "extensions") return hash as View;
   if (["engine-panel", "acquisition-panel", "stimulation-panel", "acks-panel"].includes(hash)) return "run";
+  if (hash === "channels") return "processing";
   if (hash === "results-panel") return "results";
   return "acquisition";
 }
 
-export default function App() {
+export default function App({ desktopConnection }: { desktopConnection?: ConnectionInfo } = {}) {
   const { language, setLanguage } = useI18n();
   const [view, setView] = useState<View>(initialView);
   const [lastSetup, setLastSetup] = useState<SetupPage>("acquisition");
@@ -61,11 +65,15 @@ export default function App() {
     if (setupPages.some(([page]) => page === view)) setLastSetup(view as SetupPage);
   }, [view]);
   useEffect(() => {
-    if (!dirty && !busy) return;
+    if (desktopBridge() || (!dirty && !busy)) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty, busy]);
+
+  useEffect(() => {
+    desktopBridge()?.setEditorState({ dirty, busy: busy || runtime.inProgress });
+  }, [dirty, busy, runtime.inProgress]);
 
   const navigate = useCallback((next: View) => {
     if (next === view || busy) return;
@@ -119,6 +127,7 @@ export default function App() {
       </nav>
       <main className="editor-workspace">
         <RuntimeConfigurationStatus runtime={runtime} />
+        <fieldset className="desktop-control-guard" disabled={!!desktopConnection && desktopConnection.status !== "ready"}>
         <div className="editor-viewport">
           {isSetup ? <PluginProfiles key={view} module={view as SetupPage} engineRunning={engineRunning} engineAvailable={engine.data !== null && engine.error === null} navigation={navigation}
             runtime={runtime} onDirtyChange={setDirty} onBusyChange={setBusy} />
@@ -131,6 +140,7 @@ export default function App() {
               <header className="editor-heading"><div><p className="eyebrow">Session data</p><h1>Trial results</h1>
                 <p>Decoded trials from the current or most recent session.</p></div>
                 <button onClick={() => navigate("run")}><Icon name="play" />Open Run</button></header>
+              <ResultExport onBusyChange={setBusy} />
               <SessionSummary session={feed.session} trialCount={feed.trials.length} />
               <section className="card"><h2>Results <span className="count">{feed.trials.length}</span></h2><TrialResults trials={feed.trials} /></section>
             </div>
@@ -138,6 +148,7 @@ export default function App() {
               preferences={preferences} onDirtyChange={setDirty} onBusyChange={setBusy}
               runtime={runtime} />}
         </div>
+        </fieldset>
       </main>
     </div>
     <footer className="status-bar" aria-label="Console status">

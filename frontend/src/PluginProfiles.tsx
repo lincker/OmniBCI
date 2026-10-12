@@ -6,6 +6,9 @@ import { pluginConfigApi as api, selectionKey, type Activation, type BindingSele
   type PluginDefinition, type PluginKind, type PluginProfile } from "./api/plugin-config";
 import "./PluginProfiles.css";
 import type { RuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
+import { AcquisitionMontage, acquisitionMontageErrors } from "./AcquisitionMontage";
+import type { ProcessingInput as DecoderInput, SourceMetadata } from "./api/signal-config";
+import { ProcessingInput, emptyProcessingInput, processingInputErrors } from "./ProcessingInput";
 
 type Module = "acquisition" | "processing" | "stimulation" | "actuation";
 type Slot = { slot: string; kind: PluginKind; label: string };
@@ -22,20 +25,23 @@ const slots: Record<Module, Slot[]> = {
   ],
   actuation: [{ slot: "actuation.effector", kind: "effector", label: "Effector" }],
 };
-type Editor = { profile: PluginProfile | null; plugin: string; name: string; parameters: Record<string, unknown> };
+type Editor = { profile: PluginProfile | null; plugin: string; name: string; parameters: Record<string, unknown>; manualMontage: SourceMetadata | null; processingInput: DecoderInput | null };
 type FilterInstance = BindingSelection & { plugin: string };
-const emptyEditor: Editor = { profile: null, plugin: "", name: "", parameters: {} };
+const emptyEditor: Editor = { profile: null, plugin: "", name: "", parameters: {}, manualMontage: null, processingInput: null };
 const filterInstances = (activation: Activation | null): FilterInstance[] => activation?.bindings
   .filter((item) => item.kind === "filter").map((item) => ({ slot: item.slot,
     profile_id: item.profile_id ?? "", plugin: selectionKey(item.selection) })) ?? [];
 
 function editorFor(profile: PluginProfile | undefined, definitions: PluginDefinition[], plugin?: string): Editor {
   if (profile) return { profile, plugin: selectionKey(profile.selection), name: profile.name,
-    parameters: structuredClone(profile.parameters) };
+    parameters: structuredClone(profile.parameters), manualMontage: structuredClone(profile.manual_montage ?? null),
+    processingInput: profile.processing_input ? { ...emptyProcessingInput(), ...structuredClone(profile.processing_input),
+      reference: { mode: profile.processing_input.reference?.mode ?? "original", channels: [...(profile.processing_input.reference?.channels ?? [])] } } : null };
   const definition = plugin !== undefined ? definitions.find((item) => selectionKey(item.selection) === plugin)
     : definitions.find((item) => item.schema && item.available) ?? definitions.find((item) => item.schema);
   return { profile: null, plugin: plugin ?? (definition ? selectionKey(definition.selection) : ""), name: "",
-    parameters: definition?.schema ? initialSchemaValue(definition.schema) as Record<string, unknown> : {} };
+    parameters: definition?.schema ? initialSchemaValue(definition.schema) as Record<string, unknown> : {}, manualMontage: null,
+    processingInput: definition?.kind === "decoder" ? emptyProcessingInput(definition.channel_requirements?.default_names) : null };
 }
 
 export function PluginProfiles({ module, engineRunning, engineAvailable = true, navigation,
@@ -63,6 +69,8 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   const [dialog, setDialog] = useState<Omit<ConfigDialogProps, "onCancel"> | null>(null);
   const loadGeneration = useRef(0);
   const definition = definitions.find((item) => selectionKey(item.selection) === editor.plugin);
+  const sourceDimensionsChanged = !!editor.profile && ["sample_rate", "channel_number"]
+    .some((key) => !sameParameters(editor.parameters[key], editor.profile!.parameters[key]));
   const profilesFor = (plugin: string) => profiles.filter((item) => item.kind === slot.kind
     && selectionKey(item.selection) === plugin);
   const pluginProfiles = profilesFor(editor.plugin);
@@ -76,11 +84,17 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   const selectionLabel = !engineRunning ? "Selected for next start"
     : activation && runtime.status?.applied_revision === activation.revision ? "Applied" : "Selected";
   const dirty = editor.name !== baseline.name || editor.plugin !== baseline.plugin
-    || !sameParameters(editor.parameters, baseline.parameters);
-  const errors = definition?.schema ? schemaErrors(definition.schema, editor.parameters) : [];
+    || !sameParameters(editor.parameters, baseline.parameters) || !sameParameters(editor.manualMontage, baseline.manualMontage)
+    || !sameParameters(editor.processingInput, baseline.processingInput);
+  const errors = [...(definition?.schema ? schemaErrors(definition.schema, editor.parameters) : []),
+    ...(slot.kind === "acquisition" ? acquisitionMontageErrors(editor.manualMontage) : []),
+    ...(slot.kind === "decoder" ? processingInputErrors(editor.processingInput) : [])];
   const selectedBindings = activation?.bindings.filter((item) => item.profile_id === editor.profile?.profile_id) ?? [];
   const selectedChanged = selectedBindings.some((item) => !sameParameters(item.parameters, editor.profile?.parameters)
-    || selectionKey(item.selection) !== selectionKey(editor.profile!.selection));
+    || selectionKey(item.selection) !== selectionKey(editor.profile!.selection)
+    || !sameParameters(item.manual_montage ?? null, editor.profile?.manual_montage ?? null)
+    || !sameParameters(item.processing_input ?? null, editor.profile?.processing_input ?? null));
+  const legacyDecoder = slot.kind === "decoder" && !!editor.profile && !editor.processingInput;
   const savedChain = filterInstances(activation);
   const chainDirty = JSON.stringify(chain) !== JSON.stringify(savedChain);
   const chainDirtyRef = useRef(chainDirty);
@@ -160,12 +174,37 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   };
   const save = (copy = false, name = editor.name) => {
     if (!definition) return;
+    const manualMontage = slot.kind === "acquisition" && (editor.manualMontage || baseline.manualMontage) ? editor.manualMontage : undefined;
+    const processingInput = slot.kind === "decoder" ? editor.processingInput ?? undefined : undefined;
     void run(async () => {
       const saved = editor.profile && !copy
-        ? await api.update(editor.profile, name, editor.parameters)
-        : await api.create(slot.kind, definition.selection, name, editor.parameters);
+        ? await api.update(editor.profile, name, editor.parameters, manualMontage, processingInput)
+        : await api.create(slot.kind, definition.selection, name, editor.parameters, manualMontage, processingInput);
       return saved.profile_id;
     }, "Profile saved. Review and apply it to change the selected configuration.", true);
+  };
+  const readMontage = async () => {
+    if (!editor.profile) return;
+    const savedProfile = editor.profile;
+    const generation = loadGeneration.current;
+    setBusy(true); setError(""); setNotice("");
+    let readFailure: unknown;
+    try {
+      try { await api.readMontage(savedProfile.profile_id); } catch (cause) { readFailure = cause; }
+      const nextProfiles = await api.profiles();
+      if (generation !== loadGeneration.current) return;
+      const latest = nextProfiles.find((profile) => profile.profile_id === savedProfile.profile_id);
+      if (!latest) throw new Error("The profile is no longer available. Reload profiles before saving.");
+      const writableUnchanged = latest.name === savedProfile.name && sameParameters(latest.parameters, savedProfile.parameters)
+        && sameParameters(latest.manual_montage ?? null, savedProfile.manual_montage ?? null);
+      if (!writableUnchanged) throw new Error("The profile was edited elsewhere while reading the source. Your edits are preserved; reload before saving again.");
+      setProfiles(nextProfiles);
+      setEditor((previous) => ({ ...previous, profile: latest }));
+      setBaseline((previous) => ({ ...previous, profile: latest }));
+      if (readFailure) throw readFailure;
+      setNotice("Source information read. Unsaved profile edits are preserved.");
+    } catch (cause) { if (generation === loadGeneration.current) setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { if (generation === loadGeneration.current) setBusy(false); }
   };
   const pluginOptions = <>
     {!definitions.length && !missingPlugins.length && <option value="">No plugins available</option>}
@@ -234,11 +273,12 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
             </select></label>
           <div className="profile-tools actions">
             <button disabled={busy || !definition?.schema} onClick={() => newProfile()}>New profile</button>
-            <button disabled={busy || !definition?.schema || errors.length > 0} onClick={() => setDialog({ title: "Duplicate profile",
+            <button disabled={busy || !definition?.schema || errors.length > 0 || legacyDecoder} onClick={() => setDialog({ title: "Duplicate profile",
               message: "Save a separate copy of the current parameters. The original profile and running configuration stay unchanged.",
               confirmLabel: "Create profile", initialValue: `${editor.name || definition?.label || slot.label} copy`,
               onConfirm: (name) => { setDialog(null); save(true, name); } })}>Duplicate profile</button>
           </div>
+          {legacyDecoder && <p className="setting-description">Configure or import the decoder input before duplicating this profile.</p>}
           {!pluginProfiles.length && <p className="setting-description">No saved profiles for this plugin version. Name and save the default configuration below.</p>}
         </div>
         <div className="setting-group"><h2>{editor.profile ? "Edit profile" : "New profile"}</h2>
@@ -248,8 +288,42 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
             }} /></label>
         </div>
         {definition?.schema ? <SchemaForm schema={definition.schema} value={editor.parameters} disabled={busy}
-          onChange={(parameters) => { setEditor({ ...editor, parameters }); setNotice(""); }} />
+          onChange={(parameters) => {
+            let manualMontage = editor.manualMontage;
+            if (manualMontage && slot.kind === "acquisition") {
+              manualMontage = structuredClone(manualMontage);
+              delete manualMontage.signal_channel_count;
+              delete manualMontage.output_row_count;
+              if (typeof parameters.sample_rate === "number" && Number.isSafeInteger(parameters.sample_rate) && parameters.sample_rate > 0) manualMontage.sample_rate = parameters.sample_rate;
+              if (typeof parameters.channel_number === "number" && Number.isSafeInteger(parameters.channel_number) && parameters.channel_number > 1 && parameters.channel_number <= 4097) {
+                const channels = manualMontage.channels;
+                manualMontage.channels = Array.from({ length: parameters.channel_number - 1 }, (_, index) => channels[index]
+                  ?? { index, name: `CH${index + 1}`, name_provenance: "generated", signal_type: "unknown" });
+                manualMontage.trigger_row_index = manualMontage.channels.length;
+              }
+            }
+            setEditor({ ...editor, parameters, manualMontage }); setNotice("");
+          }} />
           : <p className="setting-description">An editable schema is required. Install or select the correct plugin version.</p>}
+        {slot.kind === "acquisition" && definition && <AcquisitionMontage key={editor.profile?.profile_id ?? editor.plugin}
+          observed={sourceDimensionsChanged ? null : editor.profile?.acquisition_montage} value={editor.manualMontage} sourceId={definition.plugin_type}
+          parameters={editor.parameters} busy={busy} canRead={!!editor.profile && engineRunning && !runtime.blocked}
+          readHint={!editor.profile ? "Save this profile before reading source information."
+            : !engineRunning ? "Start the engine and connect this source in Run to read its montage; manual editing is available offline."
+            : "The connected source must use this saved profile. Stop reading before refreshing its montage."}
+          onRead={() => void readMontage()} onChange={(manualMontage) => {
+            const parameters = { ...editor.parameters };
+            if (manualMontage) {
+              if ("sample_rate" in parameters) parameters.sample_rate = manualMontage.sample_rate;
+              if ("channel_number" in parameters) parameters.channel_number = manualMontage.channels.length + 1;
+            }
+            setEditor({ ...editor, parameters, manualMontage }); setNotice("");
+          }} />}
+        {slot.kind === "decoder" && definition && <ProcessingInput key={`${editor.profile?.profile_id ?? editor.plugin}:${editor.profile?.revision ?? "new"}`}
+          value={editor.processingInput} busy={busy}
+          decoderSelection={definition.selection} channelRequirements={definition.channel_requirements}
+          configurationRevision={`${runtime.status?.accepted_revision}:${runtime.status?.applied_revision}`}
+          onChange={(processingInput) => { setEditor({ ...editor, processingInput }); setNotice(""); }} />}
         {errors.length > 0 && <ul className="schema-errors" role="alert">{errors.map((message) => <li key={message}>{message}</li>)}</ul>}
         {selectedBindings.length > 0 && <p className="setting-description">Selected profile revision: {selectedBindings.map((item) => item.profile_revision).join(", ")}. Saved revision: {editor.profile?.revision}.</p>}
         {slot.kind === "filter" && <div className="setting-group"><h2>Filter chain</h2>

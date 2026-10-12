@@ -95,6 +95,16 @@ def _data(client, path):
     return response.json()["data"]
 
 
+@pytest.mark.parametrize("desktop", [False, True])
+def test_process_stop_policy_is_injected_into_all_desktop_modules(startup_environment, desktop):
+    with TestClient(create_app(desktop=desktop)) as client:
+        container = client.app.state.container
+        assert container.stimulation_process_manager._allow_process_termination is (not desktop)
+        assert container.actuation_process_manager._allow_process_termination is (not desktop)
+        assert client.post("/api/v1/engine/start").status_code == 200
+        assert startup_environment.builder.call_args.kwargs["allow_process_termination"] is (not desktop)
+
+
 def _assert_management_available(client):
     assert client.get("/healthz").json() == {"status": "ok"}
     for path in ("/config", "/config/plugin-profiles", "/config/plugin-catalog/acquisition",

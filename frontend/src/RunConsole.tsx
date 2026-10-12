@@ -8,9 +8,16 @@ import { SessionSummary, TrialResults } from "./TrialResults";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
 import { pluginConfigApi, selectionKey, type Activation, type PluginProfile, type PluginDefinition } from "./api/plugin-config";
 import { readTrialControls, type TrialControl } from "./plugin-controls";
+import { signalConfigApi } from "./api/signal-config";
 
 function Dot({ on, label }: { on: boolean | undefined; label: string }) {
   return <span className={`dot ${on ? "dot-on" : "dot-off"}`}>● {label}</span>;
+}
+
+export function recordingPathMissing(selection: Activation | null): boolean {
+  const source = selection?.bindings.find((item) => item.slot === "acquisition.source");
+  return source?.selection.package_id === "OmniBCI.file_reader"
+    && !(typeof source.parameters.data_file_path === "string" && source.parameters.data_file_path.trim());
 }
 
 export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, onEditSetup, onResults }: {
@@ -24,6 +31,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
 }) {
   const { t } = useI18n();
   const stimulation = usePoll(api.stimulationStatus);
+  const signal = usePoll(signalConfigApi.get);
   const [selection, setSelection] = useState<Activation | null>(null);
   const [profiles, setProfiles] = useState<PluginProfile[]>([]);
   const [selectedParadigm, setSelectedParadigm] = useState<PluginDefinition | null>(null);
@@ -31,7 +39,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
   const [loadError, setLoadError] = useState<string | null>(null);
   const [controlValues, setControlValues] = useState<Record<string, string>>({});
   const [trialError, setTrialError] = useState<string | null>(null);
-  const refresh = async () => { await Promise.all([engine.refresh(), acquisition.refresh(), stimulation.refresh()]); };
+  const refresh = async () => { await Promise.all([engine.refresh(), acquisition.refresh(), stimulation.refresh(), signal.refresh()]); };
   const start = useAction(api.engineStart, refresh);
   const stop = useAction(api.engineStop, refresh);
   const connect = useAction(api.acqConnect, refresh);
@@ -59,6 +67,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
     return profiles.find((item) => item.profile_id === binding.profile_id)?.name
       ?? `${binding.selection.package_id}/${binding.selection.contribution_id} · ${binding.selection.version}`;
   };
+  const missingRecording = recordingPathMissing(selection);
   const currentParadigm = stimulation.data?.paradigm || selectedParadigm?.plugin_type || "";
   const paradigmName = translatePluginName(currentParadigm,
     selectedParadigm?.plugin_type === currentParadigm ? selectedParadigm.label : currentParadigm || "None", t);
@@ -153,13 +162,25 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
       <button className="text-button" disabled={busy} onClick={onEditSetup}>Edit setup <Icon name="chevron" /></button>
       <p className="meta">Selected configuration is shown here. Review and apply changes from Setup.</p>
     </section>
+    <section className="setup-summary" aria-label="Active decoder input">
+      <div className="summary-items"><div><span>Signal preparation</span>
+        <strong>{signal.error ? "Unavailable" : !running ? "Engine stopped" : signal.data?.readiness.ready ? "Ready" : "Validated before reading starts"}</strong></div>
+        <div><span>Active decoder channels</span><strong>{!running ? "None" : signal.error ? "Unavailable" : !signal.data ? "Loading…" : signal.data.active_setup
+          ? signal.data.active_setup.outputs.length ? signal.data.active_setup.outputs.map((output) => typeof output === "string" ? output : output.name).join(", ") : signal.data.active_setup.excluded_channels.length
+            ? `All source channels except ${signal.data.active_setup.excluded_channels.join(", ")}` : "All source channels"
+          : "Original source channels"}</strong></div>
+        <div><span>Active reference mode</span><strong>{!running ? "None" : signal.error ? "Unavailable" : !signal.data ? "Loading…" : signal.data.active_setup?.reference.mode ?? "original"}</strong></div></div>
+      {signal.error && <p className="error" role="alert">{signal.error.message}</p>}
+      {!signal.data?.readiness.ready && running && <p className="meta">Starting reading prepares the selected decoder input against the Acquisition montage before creating a recording.</p>}
+    </section>
+    {missingRecording && <p className="inline-message" role="status">Select a recording on the backend computer in Acquisition setup, then save and apply the profile before starting.</p>}
     {loadError && <p className="inline-message error" role="alert">{loadError}</p>}
     <section className="card engine-card" aria-label="Engine controls">
       <div><h2>Engine</h2><div className="engine-status">
         <Dot on={running} label="Running" /><Dot on={engine.data?.acquisition_alive} label="Acquisition process" />
         <Dot on={engine.data?.processor_alive} label="Processing process" />
       </div>{engine.error && <p className="error" role="alert">{engine.error.message}</p>}</div>
-      <div className="actions"><button className="primary" disabled={controlsBlocked || !engineAvailable || running || !selection || !!loadError}
+      <div className="actions"><button className="primary" disabled={controlsBlocked || !engineAvailable || running || !selection || !!loadError || missingRecording}
         onClick={() => void start.run()}><Icon name="play" />{start.pending ? "Starting…" : "Start engine"}</button>
         <button className="danger" disabled={stopBlocked || !engineAvailable || !running} onClick={() => void stop.run()}>Stop engine</button></div>
     </section>
@@ -171,10 +192,10 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
           {acquisition.data?.sample_rate ?? "—"} Hz · {acquisition.data?.channel_count ?? "—"} channels</p>
         <div className="actions actions-grouped">
           <div className="btn-group"><span className="btn-group-title">Source connection</span>
-            <button disabled={controlsBlocked || !acquisitionAvailable || !running || connected} onClick={() => void connect.run()}>Connect</button>
+            <button disabled={controlsBlocked || !acquisitionAvailable || !running || connected || missingRecording} onClick={() => void connect.run()}>Connect</button>
             <button disabled={controlsBlocked || !acquisitionAvailable || !connected || reading || recording} onClick={() => void disconnect.run()}>Disconnect</button></div>
           <div className="btn-group"><span className="btn-group-title">Data reading</span>
-            <button className="primary" disabled={controlsBlocked || !acquisitionAvailable || !running || !connected || reading || recording}
+            <button className="primary" disabled={controlsBlocked || !acquisitionAvailable || !running || !connected || reading || recording || missingRecording}
               onClick={() => void read.run()}>Start reading</button>
             <button disabled={stopBlocked || !acquisitionAvailable || (!reading && !recording)} onClick={() => void stopRead.run()}>Stop reading</button></div>
         </div>

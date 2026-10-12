@@ -6,6 +6,97 @@
     "version": "1.0.0"
   },
   "paths": {
+    "/api/v1/system/info": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "System Info",
+        "operationId": "system_info_api_v1_system_info_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SystemInfoResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/engine/start": {
       "post": {
         "tags": [
@@ -26,6 +117,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -115,6 +216,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -196,6 +307,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -269,6 +390,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -368,6 +499,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -451,6 +592,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -550,6 +701,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -641,6 +802,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -694,6 +865,226 @@
         }
       }
     },
+    "/api/v1/acquisition/metadata": {
+      "get": {
+        "tags": [
+          "Acquisition"
+        ],
+        "summary": "Read metadata for the current source connection",
+        "operationId": "get_metadata_api_v1_acquisition_metadata_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SourceMetadataModel_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Command execution timeout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/acquisition/metadata/refresh": {
+      "post": {
+        "tags": [
+          "Acquisition"
+        ],
+        "summary": "Refresh metadata while the source is stopped",
+        "operationId": "refresh_metadata_api_v1_acquisition_metadata_refresh_post",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SourceMetadataModel_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Command execution timeout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/stimulation/status": {
       "get": {
         "tags": [
@@ -714,6 +1105,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -795,6 +1196,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -894,6 +1305,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -967,6 +1388,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -1078,6 +1509,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -1161,6 +1602,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -1258,6 +1709,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -1341,6 +1802,147 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/export": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Export a consistent snapshot of selected sessions",
+        "operationId": "export_sessions_api_v1_sessions_export_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "json",
+                "csv"
+              ],
+              "type": "string",
+              "default": "json",
+              "title": "Format"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionExportResponse"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -1441,6 +2043,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -1523,6 +2135,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -1633,6 +2255,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -1717,6 +2349,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -1816,6 +2458,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -1899,6 +2551,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -1998,6 +2660,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -2079,6 +2751,208 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/signal": {
+      "get": {
+        "tags": [
+          "Signal setup"
+        ],
+        "summary": "Read Signal Setup",
+        "operationId": "read_signal_setup_api_v1_config_signal_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SignalSetupResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/signal/preview": {
+      "post": {
+        "tags": [
+          "Signal setup"
+        ],
+        "summary": "Preview Signal Setup",
+        "operationId": "preview_signal_setup_api_v1_config_signal_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewSignalSetupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_SignalPreviewResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -2180,6 +3054,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -2296,6 +3180,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -2377,6 +3271,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -2469,6 +3373,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -2577,6 +3491,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -2677,6 +3601,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -2750,6 +3684,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -2839,6 +3783,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -2943,6 +3897,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -3016,6 +3980,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -3115,6 +4089,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -3198,6 +4182,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -3298,6 +4292,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -3371,6 +4375,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -3469,6 +4483,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -3588,6 +4612,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -3689,6 +4723,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -3772,6 +4816,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -3871,6 +4925,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -3944,6 +5008,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -4043,6 +5117,16 @@
               }
             }
           },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -4128,6 +5212,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -4300,6 +5394,22 @@
               }
             ],
             "title": "Channel Count"
+          },
+          "metadata_available": {
+            "type": "boolean",
+            "title": "Metadata Available",
+            "default": false
+          },
+          "metadata_provenance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata Provenance"
           }
         },
         "type": "object",
@@ -4839,6 +5949,84 @@
         "type": "object",
         "title": "ApiResponse[SessionResponse]"
       },
+      "ApiResponse_SignalPreviewResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignalPreviewResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[SignalPreviewResponse]"
+      },
+      "ApiResponse_SignalSetupResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignalSetupResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[SignalSetupResponse]"
+      },
+      "ApiResponse_SourceMetadataModel_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceMetadataModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[SourceMetadataModel]"
+      },
       "ApiResponse_StimulationStatusResponse_": {
         "properties": {
           "success": {
@@ -4864,6 +6052,32 @@
         },
         "type": "object",
         "title": "ApiResponse[StimulationStatusResponse]"
+      },
+      "ApiResponse_SystemInfoResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SystemInfoResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[SystemInfoResponse]"
       },
       "ApiResponse_TrialResponse_": {
         "properties": {
@@ -5011,6 +6225,96 @@
         "type": "object",
         "title": "ApiResponse[list[PluginProfileResponse]]"
       },
+      "BipolarOutputModel": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "positive": {
+            "type": "string",
+            "title": "Positive"
+          },
+          "negative": {
+            "type": "string",
+            "title": "Negative"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "positive",
+          "negative"
+        ],
+        "title": "BipolarOutputModel"
+      },
+      "ChannelAssignmentModel": {
+        "properties": {
+          "source_index": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Source Index"
+          },
+          "electrode": {
+            "type": "string",
+            "title": "Electrode"
+          },
+          "expected_name": {
+            "type": "string",
+            "title": "Expected Name"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "signal_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal Type"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_index",
+          "electrode",
+          "expected_name"
+        ],
+        "title": "ChannelAssignmentModel"
+      },
+      "ChannelBindingModel": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "source"
+        ],
+        "title": "ChannelBindingModel"
+      },
       "ConfigEntry": {
         "properties": {
           "key": {
@@ -5097,6 +6401,26 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Parameters"
+          },
+          "manual_montage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceMetadataModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "processing_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingInputModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -5177,6 +6501,54 @@
           "expected_source_revision"
         ],
         "title": "CreateVersionProfileRequest"
+      },
+      "DecoderChannelRequirementsResponse": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "signal_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal Type"
+          },
+          "min_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Min Count",
+            "default": 1
+          },
+          "required_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Required Names"
+          },
+          "default_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Default Names"
+          }
+        },
+        "type": "object",
+        "title": "DecoderChannelRequirementsResponse"
       },
       "EngineStatusResponse": {
         "properties": {
@@ -5864,6 +7236,16 @@
             },
             "type": "object",
             "title": "Controls"
+          },
+          "channel_requirements": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecoderChannelRequirementsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -5923,6 +7305,37 @@
           "revision": {
             "type": "integer",
             "title": "Revision"
+          },
+          "acquisition_montage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceMetadataModel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "readOnly": true
+          },
+          "manual_montage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceMetadataModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "processing_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingInputModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -5966,6 +7379,145 @@
           "contribution_id"
         ],
         "title": "PluginSelectionResponse"
+      },
+      "PreviewSignalSetupRequest": {
+        "properties": {
+          "processing_input": {
+            "$ref": "#/components/schemas/ProcessingInputModel"
+          },
+          "expected_source_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Source Revision"
+          },
+          "decoder_selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginSelectionResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "processing_input"
+        ],
+        "title": "PreviewSignalSetupRequest"
+      },
+      "ProcessingInputModel": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version",
+            "default": 1
+          },
+          "outputs": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/components/schemas/ChannelBindingModel"
+                },
+                {
+                  "$ref": "#/components/schemas/BipolarOutputModel"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Outputs"
+          },
+          "reference": {
+            "$ref": "#/components/schemas/ReferenceModel"
+          },
+          "excluded_channels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Excluded Channels"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ProcessingInputModel"
+      },
+      "ProcessingSourceBindingModel": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
+          },
+          "profile_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Name"
+          },
+          "profile_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Revision"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "selected"
+            ],
+            "title": "State"
+          },
+          "metadata_origin": {
+            "type": "string",
+            "enum": [
+              "connected",
+              "profile",
+              "unavailable"
+            ],
+            "title": "Metadata Origin"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_id",
+          "state",
+          "metadata_origin"
+        ],
+        "title": "ProcessingSourceBindingModel"
       },
       "ProfileBindingResponse": {
         "properties": {
@@ -6012,6 +7564,26 @@
           "profile_revision": {
             "type": "integer",
             "title": "Profile Revision"
+          },
+          "manual_montage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceMetadataModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "processing_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingInputModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -6067,6 +7639,26 @@
           "target_enabled": {
             "type": "boolean",
             "title": "Target Enabled"
+          },
+          "manual_montage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceMetadataModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "processing_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingInputModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -6141,6 +7733,31 @@
           "session_id"
         ],
         "title": "RecordingResponse"
+      },
+      "ReferenceModel": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "original",
+              "single",
+              "average",
+              "bipolar"
+            ],
+            "title": "Mode",
+            "default": "original"
+          },
+          "channels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Channels"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ReferenceModel"
       },
       "RuntimeApplyRequest": {
         "properties": {
@@ -6429,6 +8046,17 @@
             },
             "type": "array",
             "title": "Errors"
+          },
+          "signal_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal Summary"
           }
         },
         "type": "object",
@@ -6465,6 +8093,153 @@
           "profile_id"
         ],
         "title": "SelectProfileBindingRequest"
+      },
+      "SessionDetailResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "paradigm": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paradigm"
+          },
+          "state": {
+            "$ref": "#/components/schemas/SessionStateDTO"
+          },
+          "trial_count": {
+            "type": "integer",
+            "title": "Trial Count"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "continuation_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Continuation Of"
+          },
+          "config_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Revision"
+          },
+          "interruption_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interruption Reason"
+          },
+          "signal_plan": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal Plan"
+          },
+          "trials": {
+            "items": {
+              "$ref": "#/components/schemas/TrialResponse"
+            },
+            "type": "array",
+            "title": "Trials",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "paradigm",
+          "state",
+          "trial_count",
+          "started_at",
+          "ended_at"
+        ],
+        "title": "SessionDetailResponse",
+        "description": "SessionResponse extended with full trial list."
+      },
+      "SessionExportResponse": {
+        "properties": {
+          "format_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Format Version",
+            "default": 1
+          },
+          "exported_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Exported At"
+          },
+          "app_version": {
+            "type": "string",
+            "title": "App Version"
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionDetailResponse"
+            },
+            "type": "array",
+            "title": "Sessions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "exported_at",
+          "app_version",
+          "sessions"
+        ],
+        "title": "SessionExportResponse"
       },
       "SessionListResponse": {
         "properties": {
@@ -6567,6 +8342,18 @@
               }
             ],
             "title": "Interruption Reason"
+          },
+          "signal_plan": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal Plan"
           }
         },
         "type": "object",
@@ -6602,6 +8389,497 @@
           "enabled"
         ],
         "title": "SetPackageEnabledRequest"
+      },
+      "SignalChannelModel": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Index"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "signal_type": {
+            "type": "string",
+            "title": "Signal Type",
+            "default": "unknown"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array",
+                "maxItems": 3,
+                "minItems": 3
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position"
+          },
+          "coordinate_frame": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coordinate Frame"
+          },
+          "position_provenance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Provenance"
+          },
+          "derivation": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 2,
+                "minItems": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derivation"
+          },
+          "name_provenance": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "generated"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name Provenance"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "index",
+          "name"
+        ],
+        "title": "SignalChannelModel"
+      },
+      "SignalPreviewResponse": {
+        "properties": {
+          "plan": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Plan"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "source_revision": {
+            "type": "string",
+            "title": "Source Revision"
+          }
+        },
+        "type": "object",
+        "required": [
+          "plan",
+          "warnings",
+          "source_revision"
+        ],
+        "title": "SignalPreviewResponse"
+      },
+      "SignalReadinessModel": {
+        "properties": {
+          "ready": {
+            "type": "boolean",
+            "title": "Ready"
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ready"
+        ],
+        "title": "SignalReadinessModel"
+      },
+      "SignalSetupModel": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version",
+            "default": 1
+          },
+          "outputs": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/components/schemas/ChannelBindingModel"
+                },
+                {
+                  "$ref": "#/components/schemas/BipolarOutputModel"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Outputs"
+          },
+          "reference": {
+            "$ref": "#/components/schemas/ReferenceModel"
+          },
+          "excluded_channels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Excluded Channels"
+          },
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "assignments": {
+            "items": {
+              "$ref": "#/components/schemas/ChannelAssignmentModel"
+            },
+            "type": "array",
+            "title": "Assignments"
+          },
+          "original_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Reference"
+          },
+          "template": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template"
+          },
+          "manual_metadata": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceMetadataModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_id"
+        ],
+        "title": "SignalSetupModel"
+      },
+      "SignalSetupResponse": {
+        "properties": {
+          "selected_source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Source Id"
+          },
+          "selected_decoder_profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Decoder Profile Id"
+          },
+          "selected_decoder_selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginSelectionResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_metadata": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceMetadataModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Error"
+          },
+          "source_binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingSourceBindingModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_revision": {
+            "type": "string",
+            "title": "Source Revision"
+          },
+          "processing_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingInputModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "accepted_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingInputModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "active_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingInputModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "legacy_setup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignalSetupModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "setup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignalSetupModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "type": "string",
+            "title": "Revision"
+          },
+          "accepted_setup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignalSetupModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "active_setup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignalSetupModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "readiness": {
+            "$ref": "#/components/schemas/SignalReadinessModel"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_revision",
+          "setup",
+          "revision",
+          "accepted_setup",
+          "active_setup",
+          "readiness"
+        ],
+        "title": "SignalSetupResponse"
+      },
+      "SourceMetadataModel": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "sample_rate": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Sample Rate"
+          },
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/SignalChannelModel"
+            },
+            "type": "array",
+            "title": "Channels"
+          },
+          "trigger_row_index": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Trigger Row Index"
+          },
+          "connection_id": {
+            "type": "string",
+            "title": "Connection Id",
+            "default": ""
+          },
+          "original_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Reference"
+          },
+          "native_event": {
+            "type": "string",
+            "title": "Native Event",
+            "default": "final-row"
+          },
+          "provenance": {
+            "type": "string",
+            "title": "Provenance",
+            "default": "user-declared"
+          },
+          "signal_channel_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal Channel Count"
+          },
+          "output_row_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Row Count"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_id",
+          "sample_rate",
+          "channels",
+          "trigger_row_index"
+        ],
+        "title": "SourceMetadataModel"
       },
       "StartRecordingRequest": {
         "properties": {
@@ -6699,6 +8977,35 @@
         "title": "StimulationStatusResponse",
         "description": "Live status of the Stimulation subsystem.\n\nactive          — the application service has issued a StartStimulation command.\nprocess_alive   — the Stimulation subprocess is currently running (auto_spawn only).\nengine_connected — the Stimulation process has an active IPC connection to the engine."
       },
+      "SystemInfoResponse": {
+        "properties": {
+          "app_version": {
+            "type": "string",
+            "title": "App Version"
+          },
+          "desktop_api_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Desktop Api Version",
+            "default": 1
+          },
+          "instance_id": {
+            "type": "string",
+            "title": "Instance Id"
+          },
+          "auth_enabled": {
+            "type": "boolean",
+            "title": "Auth Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "app_version",
+          "instance_id",
+          "auth_enabled"
+        ],
+        "title": "SystemInfoResponse"
+      },
       "TrialResponse": {
         "properties": {
           "trial_number": {
@@ -6772,6 +9079,26 @@
             "type": "integer",
             "minimum": 1.0,
             "title": "Expected Revision"
+          },
+          "manual_montage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceMetadataModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "processing_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingInputModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,

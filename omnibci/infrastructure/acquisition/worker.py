@@ -70,6 +70,7 @@ class AcquisitionWorker(mp.Process):
             event_bus=self.event_bus,
             generation=(self.settings_snapshot or {}).get("CONFIG.generation"),
             config_revision=(self.settings_snapshot or {}).get("CONFIG.revision"),
+            **({"metadata_settings": self.settings_snapshot} if self.settings_snapshot is not None else {}),
         )
         if self.startup_reporter is not None:
             self.startup_reporter.ready()

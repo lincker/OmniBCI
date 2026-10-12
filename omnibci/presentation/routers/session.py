@@ -9,10 +9,15 @@ DELETE /sessions/{id}         End a session
 GET    /sessions/{id}/trials  Full trial history
 GET    /sessions/{id}/trials/last  Most recent classification result
 """
-from typing import List
+import csv
+import io
+import json
+from dataclasses import asdict
+from datetime import datetime, timezone
+from typing import List, Literal
 
 from omnibci.application.plugin_profiles import ProfileRevisionConflict
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from omnibci.presentation.dependencies import get_session_service
 from omnibci.presentation.errors import (
@@ -26,6 +31,7 @@ from omnibci.presentation.schemas.session import (
     SessionDetailResponse,
     SessionListResponse,
     SessionResponse,
+    SessionExportResponse,
     TrialResponse,
 )
 from omnibci.application.commands.session_commands import (
@@ -40,6 +46,7 @@ from omnibci.application.queries.session_queries import (
     TrialDTO,
 )
 from omnibci.application.services.session_service import SessionAppService
+from omnibci.presentation.routers.system import APP_VERSION
 from omnibci.application.services.command_result_service import (
     CommandExecutionError,
     CommandRejectedError,
@@ -105,6 +112,7 @@ def create_session(
             continuation_of=dto.continuation_of,
             config_revision=dto.config_revision,
             interruption_reason=dto.interruption_reason,
+            signal_plan=dto.signal_plan,
         ),
     )
 
@@ -127,6 +135,7 @@ def list_sessions(svc: SessionAppService = Depends(get_session_service)):
             continuation_of=d.continuation_of,
             config_revision=d.config_revision,
             interruption_reason=d.interruption_reason,
+            signal_plan=d.signal_plan,
         )
         for d in dtos
     ]
@@ -154,8 +163,58 @@ def get_active_session(svc: SessionAppService = Depends(get_session_service)):
             continuation_of=dto.continuation_of,
             config_revision=dto.config_revision,
             interruption_reason=dto.interruption_reason,
+            signal_plan=dto.signal_plan,
         )
     )
+
+
+@router.get("/export", response_model=SessionExportResponse, responses={
+    200: {"content": {"text/csv": {"schema": {"type": "string"}}}},
+}, summary="Export a consistent snapshot of selected sessions")
+def export_sessions(
+    session_id: List[str] | None = Query(default=None),
+    format: Literal["json", "csv"] = "json",
+    svc: SessionAppService = Depends(get_session_service),
+):
+    try:
+        sessions = [SessionDetailResponse(**asdict(dto)) for dto in svc.export_snapshot(session_id)]
+    except KeyError as exc:
+        raise ApiError(status.HTTP_404_NOT_FOUND, ErrorCode.SESSION_NOT_FOUND, str(exc))
+    snapshot = SessionExportResponse(
+        exported_at=datetime.now(timezone.utc), app_version=APP_VERSION, sessions=sessions,
+    )
+    headers = {
+        "Content-Disposition": f'attachment; filename="omnibci-sessions.{format}"',
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+    }
+    if format == "json":
+        return Response(snapshot.model_dump_json(), media_type="application/json", headers=headers)
+    output = io.StringIO(newline="")
+    session_fields = list(SessionResponse.model_fields)
+    trial_fields = list(TrialResponse.model_fields)
+    fields = ["format_version", "exported_at", "app_version"] + [
+        "session_config_revision" if name == "config_revision" else name for name in session_fields
+    ] + ["trial_config_revision" if name == "config_revision" else name for name in trial_fields]
+    writer = csv.DictWriter(output, fieldnames=fields)
+    writer.writeheader()
+    for session in sessions:
+        metadata = session.model_dump(mode="json", exclude={"trials"})
+        if metadata.get("signal_plan") is not None:
+            metadata["signal_plan"] = json.dumps(metadata["signal_plan"], ensure_ascii=False, allow_nan=False)
+        metadata["session_config_revision"] = metadata.pop("config_revision")
+        for trial in session.trials or [None]:
+            row = {"format_version": 1, "exported_at": snapshot.exported_at.isoformat(),
+                   "app_version": APP_VERSION, **metadata}
+            if trial is not None:
+                values = trial.model_dump(mode="json")
+                values["trial_config_revision"] = values.pop("config_revision")
+                row.update(values)
+            # Spreadsheet applications otherwise interpret user labels as formulas.
+            writer.writerow({key: "'" + value if isinstance(value, str)
+                             and value.lstrip().startswith(("=", "+", "-", "@")) else value
+                             for key, value in row.items()})
+    return Response(output.getvalue(), media_type="text/csv", headers=headers)
 
 
 @router.get(
@@ -182,6 +241,7 @@ def get_session(
             continuation_of=dto.continuation_of,
             config_revision=dto.config_revision,
             interruption_reason=dto.interruption_reason,
+            signal_plan=dto.signal_plan,
         )
     )
 

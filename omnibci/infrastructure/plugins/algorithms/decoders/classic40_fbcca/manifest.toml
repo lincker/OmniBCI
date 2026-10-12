@@ -9,12 +9,27 @@ api_version = "2"
 publisher = "OmniBCI"
 
 [[contributions]]
+# Version 2 requires prepared input metadata and enforces channel_requirements.
+signal_input_contract = 2
 id = "default"
 kind = "decoder"
 plugin_type = "THUBCI_SSVEP_classic40FBCCA"
 entrypoint = "classic_40_fbcca:Classic40FBCCA"
 display_name = "Classic 40 FBCCA"
 description = "40-target SSVEP filter-bank canonical correlation decoder."
+
+[contributions.channel_requirements]
+# Human-readable guidance; this text does not add validation rules.
+description = "Accepts a configurable selection of EEG channels. This implementation has no fixed electrode-name requirement."
+# Every final decoder input channel must have this signal type.
+signal_type = "eeg"
+# Minimum number of mapped output channels; excludes trigger and reference-only channels.
+min_count = 1
+# Required output names, matched exactly; extra channels and any order are allowed.
+required_names = []
+# Ordered defaults for NEW profiles only; empty retains the all-source-channel default.
+# These are editable suggestions, separate from required_names; existing profiles are unchanged.
+default_names = []
 
 [contributions.configuration]
 schema = "default.schema.json"

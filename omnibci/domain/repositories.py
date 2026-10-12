@@ -59,6 +59,7 @@ class SessionRecord:
     continuation_of: Optional[str] = None
     config_revision: Optional[str] = None
     interruption_reason: Optional[str] = None
+    signal_plan: Optional[dict] = None
 
     # ------------------------------------------------------------------
     # Mutations (guarded by invariants)
