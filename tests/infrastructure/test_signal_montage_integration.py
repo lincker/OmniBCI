@@ -76,6 +76,7 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
     try:
         await engine.handle_start_engine(StartEngineCommand())
         assert engine.is_engine_ready
+        assert "SIGNAL.setup" not in engine.applied_snapshot
         assert signal.read()["readiness"]["ready"] is False
         await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
 
@@ -99,6 +100,8 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         original_receipt = readiness["receipt"]
         session = container.session_repository.find_by_id(session_id)
         plan = session.signal_plan
+        assert plan["processing_input"] == processing_input.to_dict()
+        assert "setup" not in plan
         assert [channel["name"] for channel in plan["output_channels"]] == ["O2", "Pz"]
         assert [channel["reference"] for channel in plan["output_channels"]] == ["Oz", "Oz"]
         assert plan["source"]["connection_id"] == metadata["connection_id"]

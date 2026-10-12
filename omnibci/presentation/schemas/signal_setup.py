@@ -4,6 +4,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_core import PydanticCustomError
 
+from omnibci.presentation.schemas.plugin_selection import PluginSelectionResponse
+
 
 class SignalModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -43,6 +45,11 @@ class ChannelAssignmentModel(SignalModel):
     signal_type: str | None = None
 
 
+class ChannelBindingModel(SignalModel):
+    name: str
+    source: str
+
+
 class BipolarOutputModel(SignalModel):
     name: str
     positive: str
@@ -56,7 +63,7 @@ class ReferenceModel(SignalModel):
 
 class ProcessingInputModel(SignalModel):
     schema_version: Literal[1] = 1
-    outputs: list[str | BipolarOutputModel] = Field(default_factory=list)
+    outputs: list[str | ChannelBindingModel | BipolarOutputModel] = Field(default_factory=list)
     reference: ReferenceModel = Field(default_factory=ReferenceModel)
     excluded_channels: list[str] = Field(default_factory=list)
 
@@ -78,7 +85,8 @@ class SignalSetupModel(ProcessingInputModel):
 
 class PreviewSignalSetupRequest(SignalModel):
     processing_input: ProcessingInputModel
-    metadata: SourceMetadataModel | None = None
+    expected_source_revision: str | None = None
+    decoder_selection: PluginSelectionResponse | None = None
 
 
 class SignalReadinessModel(BaseModel):
@@ -86,10 +94,26 @@ class SignalReadinessModel(BaseModel):
     receipt: dict[str, Any] | None = None
 
 
+class ProcessingSourceBindingModel(BaseModel):
+    source_id: str
+    profile_id: str | None = None
+    profile_name: str | None = None
+    profile_revision: int | None = None
+    state: Literal["active", "selected"]
+    metadata_origin: Literal["connected", "profile", "unavailable"]
+
+
 class SignalSetupResponse(BaseModel):
     selected_source_id: str | None = None
     selected_decoder_profile_id: str | None = None
+    selected_decoder_selection: PluginSelectionResponse | None = None
     source_metadata: SourceMetadataModel | None = None
+    source_error: str | None = None
+    source_binding: ProcessingSourceBindingModel | None = None
+    source_revision: str
+    processing_input: ProcessingInputModel | None = None
+    accepted_input: ProcessingInputModel | None = None
+    active_input: ProcessingInputModel | None = None
     legacy_setup: SignalSetupModel | None = None
     setup: SignalSetupModel | None
     revision: str
@@ -101,3 +125,4 @@ class SignalSetupResponse(BaseModel):
 class SignalPreviewResponse(BaseModel):
     plan: dict[str, Any]
     warnings: list[str]
+    source_revision: str

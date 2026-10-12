@@ -17,6 +17,8 @@ const unsavedPlugin = selection("example.new-source");
 const bandpass = selection("example.bandpass");
 const notch = selection("example.notch");
 const decoder = selection("example.decoder");
+const channelRequirements = { description: "Select the configured motor channels.", signal_type: "eeg", min_count: 2,
+  required_names: ["C3"], default_names: ["C4", "C3"] };
 const decoderInput = (outputs) => ({ schema_version: 1, outputs, reference: { mode: "original", channels: [] }, excluded_channels: [] });
 const emptyFilter = selection("example.new-filter");
 const clone = (value) => structuredClone(value);
@@ -49,7 +51,7 @@ function fixture() {
     definition("acquisition", scanV1, "Scan45"), definition("acquisition", scanV2, "Scan45"),
     definition("acquisition", replay, "Replay"), definition("acquisition", unsavedPlugin, "New source"),
     definition("filter", bandpass, "Bandpass"), definition("filter", notch, "Notch"),
-    definition("filter", emptyFilter, "New filter"), definition("decoder", decoder, "Decoder"),
+    definition("filter", emptyFilter, "New filter"), { ...definition("decoder", decoder, "Decoder"), channel_requirements: clone(channelRequirements) },
   ], activation: { revision: "accepted-revision", bindings: [bind("acquisition.source", "lab-a"),
     bind("processing.filter.first", "band-a"), bind("processing.filter.second", "notch-a"), bind("processing.decoder", "decoder-a")] } };
 }
@@ -439,6 +441,8 @@ test("decoder profiles retain independent ordered channels and wait for reviewed
   await withProfiles("processing", async (harness, calls, data) => {
     const accepted = clone(data.activation);
     assert.deepEqual(input(harness).props.value.outputs, ["C3", "C4"]);
+    assert.deepEqual(input(harness).props.decoderSelection, decoder);
+    assert.deepEqual(input(harness).props.channelRequirements, channelRequirements);
     assert.equal(montage(harness), undefined, "Processing must not edit source facts");
     const updatedInput = { ...decoderInput(["C4", "C3"]), reference: { mode: "single", channels: ["M1"] } };
     input(harness).props.onChange(updatedInput); await harness.settle();
@@ -455,6 +459,37 @@ test("decoder profiles retain independent ordered channels and wait for reviewed
     assert.deepEqual(calls.review[0].refresh_slots, ["processing.decoder"]);
     assert.equal(calls.apply.length, 0);
     assert.deepEqual(data.activation, accepted);
+  });
+});
+
+test("new decoder profiles initialize plugin channel defaults while saved all-source profiles stay unchanged", async () => {
+  await withProfiles("processing", async (harness, calls, data) => {
+    data.profiles.find((item) => item.profile_id === "decoder-a").processing_input.outputs = [];
+    await click(harness, "Reload");
+    assert.deepEqual(input(harness).props.value.outputs, []);
+    await click(harness, "New profile");
+    assert.deepEqual(input(harness).props.value, decoderInput(["C4", "C3"]));
+    await change(harness, "Name", "Plugin defaults", "input");
+    await click(harness, "Save profile");
+    assert.deepEqual(calls.create[0].processing_input.outputs, ["C4", "C3"]);
+    await change(harness, "Profile", "decoder-a");
+    assert.deepEqual(input(harness).props.value.outputs, []);
+    assert.equal(calls.update.length, 0);
+  });
+});
+
+test("the input editor receives the browsed decoder requirements independently of the active decoder", async () => {
+  await withProfiles("processing", async (harness, calls, data) => {
+    const otherDecoder = selection("example.other-decoder");
+    const otherRequirements = { min_count: 1, required_names: ["P3"], default_names: ["P3", "P4"] };
+    data.definitions.push({ ...definition("decoder", otherDecoder, "Other decoder"), channel_requirements: otherRequirements });
+    await click(harness, "Reload");
+    await change(harness, "Plugin and version", selectionKey(otherDecoder));
+    assert.deepEqual(input(harness).props.decoderSelection, otherDecoder);
+    assert.deepEqual(input(harness).props.channelRequirements, otherRequirements);
+    assert.deepEqual(input(harness).props.value.outputs, ["P3", "P4"]);
+    assert.deepEqual(data.activation.bindings.find((binding) => binding.slot === "processing.decoder").selection, decoder);
+    assert.equal(calls.review.length, 0);
   });
 });
 

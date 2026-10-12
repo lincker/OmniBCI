@@ -1288,6 +1288,13 @@ export interface components {
             /** Signal Type */
             signal_type?: string | null;
         };
+        /** ChannelBindingModel */
+        ChannelBindingModel: {
+            /** Name */
+            name: string;
+            /** Source */
+            source: string;
+        };
         /** ConfigEntry */
         ConfigEntry: {
             /**
@@ -1362,6 +1369,22 @@ export interface components {
             } | null;
             /** Expected Source Revision */
             expected_source_revision: number;
+        };
+        /** DecoderChannelRequirementsResponse */
+        DecoderChannelRequirementsResponse: {
+            /** Description */
+            description?: string | null;
+            /** Signal Type */
+            signal_type?: string | null;
+            /**
+             * Min Count
+             * @default 1
+             */
+            min_count: number;
+            /** Required Names */
+            required_names?: string[];
+            /** Default Names */
+            default_names?: string[];
         };
         /** EngineStatusResponse */
         EngineStatusResponse: {
@@ -1641,6 +1664,7 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
+            channel_requirements?: components["schemas"]["DecoderChannelRequirementsResponse"] | null;
         };
         /** PluginProfileResponse */
         PluginProfileResponse: {
@@ -1684,7 +1708,9 @@ export interface components {
         /** PreviewSignalSetupRequest */
         PreviewSignalSetupRequest: {
             processing_input: components["schemas"]["ProcessingInputModel"];
-            metadata?: components["schemas"]["SourceMetadataModel"] | null;
+            /** Expected Source Revision */
+            expected_source_revision?: string | null;
+            decoder_selection?: components["schemas"]["PluginSelectionResponse"] | null;
         };
         /** ProcessingInputModel */
         ProcessingInputModel: {
@@ -1695,10 +1721,31 @@ export interface components {
              */
             schema_version: 1;
             /** Outputs */
-            outputs?: (string | components["schemas"]["BipolarOutputModel"])[];
+            outputs?: (string | components["schemas"]["ChannelBindingModel"] | components["schemas"]["BipolarOutputModel"])[];
             reference?: components["schemas"]["ReferenceModel"];
             /** Excluded Channels */
             excluded_channels?: string[];
+        };
+        /** ProcessingSourceBindingModel */
+        ProcessingSourceBindingModel: {
+            /** Source Id */
+            source_id: string;
+            /** Profile Id */
+            profile_id?: string | null;
+            /** Profile Name */
+            profile_name?: string | null;
+            /** Profile Revision */
+            profile_revision?: number | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "active" | "selected";
+            /**
+             * Metadata Origin
+             * @enum {string}
+             */
+            metadata_origin: "connected" | "profile" | "unavailable";
         };
         /** ProfileBindingResponse */
         ProfileBindingResponse: {
@@ -2004,6 +2051,8 @@ export interface components {
             };
             /** Warnings */
             warnings: string[];
+            /** Source Revision */
+            source_revision: string;
         };
         /** SignalReadinessModel */
         SignalReadinessModel: {
@@ -2023,7 +2072,7 @@ export interface components {
              */
             schema_version: 1;
             /** Outputs */
-            outputs?: (string | components["schemas"]["BipolarOutputModel"])[];
+            outputs?: (string | components["schemas"]["ChannelBindingModel"] | components["schemas"]["BipolarOutputModel"])[];
             reference?: components["schemas"]["ReferenceModel"];
             /** Excluded Channels */
             excluded_channels?: string[];
@@ -2043,7 +2092,16 @@ export interface components {
             selected_source_id?: string | null;
             /** Selected Decoder Profile Id */
             selected_decoder_profile_id?: string | null;
+            selected_decoder_selection?: components["schemas"]["PluginSelectionResponse"] | null;
             source_metadata?: components["schemas"]["SourceMetadataModel"] | null;
+            /** Source Error */
+            source_error?: string | null;
+            source_binding?: components["schemas"]["ProcessingSourceBindingModel"] | null;
+            /** Source Revision */
+            source_revision: string;
+            processing_input?: components["schemas"]["ProcessingInputModel"] | null;
+            accepted_input?: components["schemas"]["ProcessingInputModel"] | null;
+            active_input?: components["schemas"]["ProcessingInputModel"] | null;
             legacy_setup?: components["schemas"]["SignalSetupModel"] | null;
             setup: components["schemas"]["SignalSetupModel"] | null;
             /** Revision */

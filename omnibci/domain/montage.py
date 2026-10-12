@@ -257,6 +257,21 @@ class ChannelAssignment:
 
 
 @dataclass(frozen=True)
+class ChannelBinding:
+    """Expose one acquisition channel under an algorithm input name."""
+
+    name: str
+    source: str
+
+    def __post_init__(self) -> None:
+        _name(self.name, "output channel")
+        _name(self.source, "source channel")
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "source": self.source}
+
+
+@dataclass(frozen=True)
 class BipolarOutput:
     name: str
     positive: str
@@ -297,12 +312,57 @@ class ReferenceSpec:
         return {"mode": self.mode, "channels": list(self.channels)}
 
 
+def _channel_selection(outputs, reference, excluded_channels) -> tuple[tuple, tuple]:
+    outputs = _sequence(outputs, "outputs")
+    excluded_channels = _sequence(excluded_channels, "excluded_channels")
+    if not isinstance(reference, ReferenceSpec):
+        raise ValueError("reference must be a ReferenceSpec")
+    for output in outputs:
+        if not isinstance(output, (ChannelBinding, BipolarOutput)):
+            _name(output, "output channel")
+    names = [o.name if isinstance(o, (ChannelBinding, BipolarOutput)) else o for o in outputs]
+    if len(names) != len(set(names)):
+        raise ValueError("Output channel names must be unique")
+    if reference.mode == "bipolar":
+        if not outputs or any(not isinstance(o, BipolarOutput) for o in outputs):
+            raise ValueError("bipolar reference requires explicit bipolar outputs")
+    elif any(isinstance(o, BipolarOutput) for o in outputs):
+        raise ValueError("Bipolar outputs require bipolar reference mode")
+    else:
+        sources = [o.source if isinstance(o, ChannelBinding) else o for o in outputs]
+        if len(sources) != len(set(sources)):
+            raise ValueError("Source channels cannot be bound more than once")
+    for name in excluded_channels:
+        _name(name, "excluded channel")
+    if len(set(excluded_channels)) != len(excluded_channels):
+        raise ValueError("Excluded channel names must be unique")
+    return outputs, excluded_channels
+
+
+def _outputs_from_dict(value) -> tuple[str | ChannelBinding | BipolarOutput, ...]:
+    outputs = []
+    for output in _sequence(value, "outputs"):
+        if isinstance(output, Mapping):
+            if "source" in output:
+                output = _record(output, "channel binding", {"name", "source"})
+                if set(output) != {"name", "source"}:
+                    raise ValueError("channel binding requires name and source")
+                output = ChannelBinding(**output)
+            else:
+                output = _record(output, "bipolar output", set(BipolarOutput.__dataclass_fields__))
+                if set(output) != {"name", "positive", "negative"}:
+                    raise ValueError("bipolar output requires name, positive, and negative")
+                output = BipolarOutput(**output)
+        outputs.append(output)
+    return tuple(outputs)
+
+
 @dataclass(frozen=True)
 class SignalSetup:
     source_id: str
     schema_version: int = 1
     assignments: tuple[ChannelAssignment, ...] = ()
-    outputs: tuple[str | BipolarOutput, ...] = ()
+    outputs: tuple[str | ChannelBinding | BipolarOutput, ...] = ()
     reference: ReferenceSpec = field(default_factory=ReferenceSpec)
     excluded_channels: tuple[str, ...] = ()
     original_reference: str | None = None
@@ -313,31 +373,16 @@ class SignalSetup:
         _name(self.source_id, "source_id")
         if type(self.schema_version) is not int or self.schema_version != 1:
             raise ValueError("Unsupported signal setup schema_version")
-        for key in ("assignments", "outputs", "excluded_channels"):
-            object.__setattr__(self, key, _sequence(getattr(self, key), key))
-        if not isinstance(self.reference, ReferenceSpec):
-            raise ValueError("reference must be a ReferenceSpec")
+        object.__setattr__(self, "assignments", _sequence(self.assignments, "assignments"))
+        outputs, exclusions = _channel_selection(self.outputs, self.reference, self.excluded_channels)
+        object.__setattr__(self, "outputs", outputs)
+        object.__setattr__(self, "excluded_channels", exclusions)
         if any(not isinstance(a, ChannelAssignment) for a in self.assignments):
             raise ValueError("assignments must contain ChannelAssignment values")
         if len({a.source_index for a in self.assignments}) != len(self.assignments):
             raise ValueError("Source rows cannot be assigned twice")
         if len({a.electrode for a in self.assignments}) != len(self.assignments):
             raise ValueError("Electrode assignments must be unique")
-        for output in self.outputs:
-            if not isinstance(output, BipolarOutput):
-                _name(output, "output channel")
-        names = [o.name if isinstance(o, BipolarOutput) else o for o in self.outputs]
-        if len(names) != len(set(names)):
-            raise ValueError("Output channel names must be unique")
-        if self.reference.mode == "bipolar":
-            if not self.outputs or any(not isinstance(o, BipolarOutput) for o in self.outputs):
-                raise ValueError("bipolar reference requires explicit bipolar outputs")
-        elif any(isinstance(o, BipolarOutput) for o in self.outputs):
-            raise ValueError("Bipolar outputs require bipolar reference mode")
-        for name in self.excluded_channels:
-            _name(name, "excluded channel")
-        if len(set(self.excluded_channels)) != len(self.excluded_channels):
-            raise ValueError("Excluded channel names must be unique")
         for key in ("original_reference", "template"):
             if getattr(self, key) is not None:
                 _name(getattr(self, key), key)
@@ -351,7 +396,7 @@ class SignalSetup:
         result = {
             "schema_version": self.schema_version, "source_id": self.source_id,
             "assignments": [a.to_dict() for a in self.assignments],
-            "outputs": [o.to_dict() if isinstance(o, BipolarOutput) else o for o in self.outputs],
+            "outputs": [o.to_dict() if isinstance(o, (ChannelBinding, BipolarOutput)) else o for o in self.outputs],
             "reference": self.reference.to_dict(),
             "excluded_channels": list(self.excluded_channels),
         }
@@ -374,15 +419,7 @@ class SignalSetup:
                 raise ValueError("assignment requires source_index, electrode, and expected_name")
             assignments.append(ChannelAssignment(**assignment))
         data["assignments"] = tuple(assignments)
-        outputs = []
-        for output in _sequence(data.get("outputs", ()), "outputs"):
-            if isinstance(output, Mapping):
-                output = _record(output, "bipolar output", set(BipolarOutput.__dataclass_fields__))
-                if set(output) != {"name", "positive", "negative"}:
-                    raise ValueError("bipolar output requires name, positive, and negative")
-                output = BipolarOutput(**output)
-            outputs.append(output)
-        data["outputs"] = tuple(outputs)
+        data["outputs"] = _outputs_from_dict(data.get("outputs", ()))
         data["reference"] = ReferenceSpec(**_record(data.get("reference", {}), "reference", {"mode", "channels"}))
         if "manual_metadata" in data:
             data["manual_metadata"] = SourceMetadata.from_dict(data["manual_metadata"])
@@ -394,14 +431,16 @@ class ProcessingInput:
     """A decoder's channel selection, independent of acquisition identity."""
 
     schema_version: int = 1
-    outputs: tuple[str | BipolarOutput, ...] = ()
+    outputs: tuple[str | ChannelBinding | BipolarOutput, ...] = ()
     reference: ReferenceSpec = field(default_factory=ReferenceSpec)
     excluded_channels: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        setup = self.as_signal_setup("processing-input")
-        object.__setattr__(self, "outputs", setup.outputs)
-        object.__setattr__(self, "excluded_channels", setup.excluded_channels)
+        if type(self.schema_version) is not int or self.schema_version != 1:
+            raise ValueError("Unsupported processing input schema_version")
+        outputs, exclusions = _channel_selection(self.outputs, self.reference, self.excluded_channels)
+        object.__setattr__(self, "outputs", outputs)
+        object.__setattr__(self, "excluded_channels", exclusions)
 
     def as_signal_setup(self, source_id: str) -> SignalSetup:
         return SignalSetup(source_id, schema_version=self.schema_version, outputs=self.outputs,
@@ -410,7 +449,7 @@ class ProcessingInput:
     def to_dict(self) -> dict:
         return {
             "schema_version": self.schema_version,
-            "outputs": [o.to_dict() if isinstance(o, BipolarOutput) else o for o in self.outputs],
+            "outputs": [o.to_dict() if isinstance(o, (ChannelBinding, BipolarOutput)) else o for o in self.outputs],
             "reference": self.reference.to_dict(),
             "excluded_channels": list(self.excluded_channels),
         }
@@ -418,9 +457,9 @@ class ProcessingInput:
     @classmethod
     def from_dict(cls, value: dict) -> ProcessingInput:
         data = _record(value, "processing input", set(cls.__dataclass_fields__))
-        setup = SignalSetup.from_dict({**data, "source_id": "processing-input"})
-        return cls(schema_version=setup.schema_version, outputs=setup.outputs,
-                   reference=setup.reference, excluded_channels=setup.excluded_channels)
+        data["outputs"] = _outputs_from_dict(data.get("outputs", ()))
+        data["reference"] = ReferenceSpec(**_record(data.get("reference", {}), "reference", {"mode", "channels"}))
+        return cls(**data)
 
 
 @dataclass(frozen=True)
@@ -431,9 +470,14 @@ class ResolvedSignalPlan:
     setup: SignalSetup | None = None
     config_revision: str = ""
     warnings: tuple[str, ...] = ()
+    processing_input: ProcessingInput | None = None
     _operations: tuple = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        if self.setup is not None and self.processing_input is not None:
+            raise ValueError("Signal plan cannot contain both legacy setup and processing input")
+        if self.processing_input is not None and not isinstance(self.processing_input, ProcessingInput):
+            raise ValueError("processing_input must be a ProcessingInput")
         outputs = tuple(self.output_channels)
         coefficients = tuple(tuple(row) for row in self.coefficients)
         if not outputs or len(outputs) != len(coefficients):
@@ -502,13 +546,15 @@ class ResolvedSignalPlan:
         }
         if self.setup is not None:
             result["setup"] = self.setup.to_dict()
+        if self.processing_input is not None:
+            result["processing_input"] = self.processing_input.to_dict()
         if include_fingerprint:
             result["fingerprint"] = self.fingerprint
         return result
 
     @classmethod
     def from_dict(cls, value: dict) -> ResolvedSignalPlan:
-        data = _record(value, "signal plan", {"source", "output_channels", "coefficients", "setup", "config_revision", "warnings", "fingerprint"})
+        data = _record(value, "signal plan", {"source", "output_channels", "coefficients", "setup", "processing_input", "config_revision", "warnings", "fingerprint"})
         if not {"source", "output_channels", "coefficients"} <= data.keys():
             raise ValueError("signal plan requires source, output_channels, and coefficients")
         fingerprint = data.pop("fingerprint", None)
@@ -516,10 +562,14 @@ class ResolvedSignalPlan:
         data["output_channels"] = tuple(ChannelDescriptor.from_dict(c) for c in _sequence(data["output_channels"], "output_channels"))
         if "setup" in data:
             data["setup"] = SignalSetup.from_dict(data["setup"])
+        if "processing_input" in data:
+            data["processing_input"] = ProcessingInput.from_dict(data["processing_input"])
         result = cls(**data)
         if fingerprint is not None and fingerprint != result.fingerprint:
             raise ValueError("Signal plan fingerprint does not match its contents")
-        expected = compile_signal_plan(result.source, result.setup, result.config_revision)
+        expected = (compile_processing_plan(result.source, result.processing_input, result.config_revision)
+                    if result.processing_input is not None
+                    else compile_signal_plan(result.source, result.setup, result.config_revision))
         if result.to_dict(include_fingerprint=False) != expected.to_dict(include_fingerprint=False):
             raise ValueError("Signal plan does not match its compiled source and setup")
         return result
@@ -554,14 +604,31 @@ def compile_signal_plan(
                 unit=channel.unit or assignment.unit,
                 signal_type=assignment.signal_type or channel.signal_type,
             )
+    return _compile_channel_selection(metadata, channels, original_reference, setup, config_revision)
+
+
+def compile_processing_plan(
+    metadata: SourceMetadata,
+    processing_input: ProcessingInput,
+    config_revision: str = "",
+) -> ResolvedSignalPlan:
+    """Bind a decoder's channel selection directly to the acquisition metadata."""
+    if not isinstance(processing_input, ProcessingInput):
+        raise ValueError("processing_input must be a ProcessingInput")
+    return _compile_channel_selection(
+        metadata, metadata.channels, metadata.original_reference, processing_input, config_revision,
+    )
+
+
+def _compile_channel_selection(metadata, channels, original_reference, selection, config_revision):
     by_name = {c.name: c for c in channels}
     if len(by_name) != len(channels):
         raise ValueError("Resolved electrode names must be unique")
-    exclusions = set(setup.excluded_channels) if setup else set()
+    exclusions = set(selection.excluded_channels) if selection else set()
     if exclusions - by_name.keys():
         raise ValueError(f"Unknown excluded channels: {', '.join(sorted(exclusions - by_name.keys()))}")
-    reference = setup.reference if setup else ReferenceSpec()
-    requested = setup.outputs if setup and setup.outputs else tuple(c.name for c in channels if c.name not in exclusions)
+    reference = selection.reference if selection else ReferenceSpec()
+    requested = selection.outputs if selection and selection.outputs else tuple(c.name for c in channels if c.name not in exclusions)
     if not requested:
         raise ValueError("At least one output channel is required")
 
@@ -581,7 +648,9 @@ def compile_signal_plan(
     output_channels = []
     coefficients = []
     for output in requested:
-        positive = resolve(output.positive if isinstance(output, BipolarOutput) else output)
+        source_name = (output.positive if isinstance(output, BipolarOutput)
+                       else output.source if isinstance(output, ChannelBinding) else output)
+        positive = resolve(source_name)
         negatives = (resolve(output.negative),) if isinstance(output, BipolarOutput) else reference_channels
         row = [0.0] * metadata.signal_channel_count
         if reference.mode == "original":
@@ -603,6 +672,8 @@ def compile_signal_plan(
             resolved = replace(positive, index=len(output_channels), unit="V", reference=reference_name)
             if isinstance(output, BipolarOutput):
                 resolved = replace(resolved, name=output.name, derivation=(output.positive, output.negative), position=None, coordinate_frame=None, position_provenance=None)
+        if isinstance(output, ChannelBinding) and output.name != positive.name:
+            resolved = replace(resolved, name=output.name, name_provenance=None)
         output_channels.append(resolved)
         coefficients.append(tuple(row))
     warnings = []
@@ -612,5 +683,7 @@ def compile_signal_plan(
         warnings.append("The original acquisition reference is unknown.")
     return ResolvedSignalPlan(
         source=metadata, output_channels=tuple(output_channels), coefficients=tuple(coefficients),
-        setup=setup, config_revision=config_revision, warnings=tuple(warnings),
+        setup=selection if isinstance(selection, SignalSetup) else None,
+        processing_input=selection if isinstance(selection, ProcessingInput) else None,
+        config_revision=config_revision, warnings=tuple(warnings),
     )

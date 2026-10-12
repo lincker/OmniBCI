@@ -122,7 +122,10 @@ async def test_settings_only_initialization_preserves_nondefault_values(bootstra
     }
     assert bindings["processing.decoder"].parameters == {"window_duration": 4.25, "offset_time": 0.15}
     assert bindings["processing.decoder"].processing_input == ProcessingInput()
-    assert container.engine_service._snapshot_provider()["SIGNAL.setup"] == ProcessingInput().as_signal_setup("file_reader").to_dict()
+    runtime = container.engine_service._snapshot_provider()
+    assert "SIGNAL.setup" not in runtime
+    assert next(binding for binding in runtime["PLUGINS.bindings"]
+                if binding["slot"] == "processing.decoder")["processing_input"] == ProcessingInput().to_dict()
     assert "stimulation.trigger" not in bindings
     assert "actuation.effector" not in bindings
     assert accepted.settings == {

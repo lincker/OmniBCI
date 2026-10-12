@@ -98,6 +98,23 @@ def test_catalog_exposes_exact_identity_and_plugin_owned_schema(client):
     assert http.get(f"{PREFIX}/plugin-catalog/unknown").status_code == 422
 
 
+def test_catalog_exposes_read_only_decoder_channel_requirements(client):
+    http, _, _ = client
+    response = http.get(f"{PREFIX}/plugin-catalog/decoder")
+    assert response.status_code == 200
+    decoders = response.json()["data"]
+    assert len(decoders) == 2
+    for decoder in decoders:
+        requirements = decoder["channel_requirements"]
+        assert requirements["description"]
+        assert requirements["signal_type"] == "eeg"
+        assert requirements["min_count"] == 1
+        assert requirements["required_names"] == []
+        assert requirements["default_names"] == []
+    acquisition = http.get(f"{PREFIX}/plugin-catalog/acquisition").json()["data"]
+    assert all(plugin["channel_requirements"] is None for plugin in acquisition)
+
+
 def test_profile_crud_and_compare_and_swap(client):
     http, _, _ = client
     profile = create(client)
@@ -157,12 +174,15 @@ def test_decoder_profile_saves_and_pins_processing_input(client):
     assert selected.status_code == 200, selected.text
     decoder = next(binding for binding in selected.json()["data"]["bindings"] if binding["kind"] == "decoder")
     assert decoder["processing_input"] == configured["processing_input"]
-    assert service.resolve_settings()["SIGNAL.setup"]["outputs"] == ["O2", "O1"]
+    runtime = service.resolve_settings()
+    assert "SIGNAL.setup" not in runtime
+    assert next(binding for binding in runtime["PLUGINS.bindings"]
+                if binding["slot"] == "processing.decoder")["processing_input"] == configured["processing_input"]
     cleared = http.put(path, json={"name": configured["name"], "parameters": configured["parameters"],
         "expected_revision": configured["revision"], "processing_input": None})
     assert cleared.status_code == 200, cleared.text
     assert cleared.json()["data"]["processing_input"] == profile["processing_input"]
-    assert service.resolve_settings()["SIGNAL.setup"]["outputs"] == ["O2", "O1"]
+    assert service.resolve_settings() == runtime
 
 
 def test_new_decoder_with_null_input_uses_explicit_default(client):

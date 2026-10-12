@@ -145,6 +145,7 @@ class TestAcquisitionStatus:
 
 def _observation_service():
     from omnibci.application.events import CommandResult
+    from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
     from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
     observed = SourceMetadata("test", 250, (ChannelDescriptor(0, "C3", "unknown"),), 1,
                               connection_id="connection", provenance="device-reported")
@@ -155,10 +156,42 @@ def _observation_service():
     executor = MagicMock()
     executor.request.return_value = CommandResult("read", "GetSourceMetadata", True, data=result)
     service = AcquisitionAppService(executor)
-    binding = object()
+    binding = ProfileBinding("acquisition.source", "acquisition",
+        "00000000-0000-0000-0000-000000000001", PluginSelection("test.source", "default", "1"),
+        {"sample_rate": 250, "channel_number": 2}, profile_revision=1)
     provider, recorder = MagicMock(return_value=binding), MagicMock(return_value=object())
     service.set_metadata_recorder(provider, recorder)
     return service, executor, provider, recorder, binding, observed, effective, result
+
+
+def test_cached_metadata_belongs_to_the_observed_acquisition_profile():
+    from dataclasses import replace
+    service, _, _, _, binding, _, effective, _ = _observation_service()
+    service.get_metadata()
+    assert service.cached_metadata_for(binding.to_dict()) == effective.to_dict()
+    other_profile = replace(binding, profile_id="00000000-0000-0000-0000-000000000002")
+    assert service.cached_metadata_for(other_profile.to_dict()) is None
+    assert service.cached_metadata_for(replace(binding, parameters={"sample_rate": 500}).to_dict()) is None
+    assert service.cached_metadata_for(replace(binding, manual_montage=effective).to_dict()) is None
+    assert service.cached_metadata_for(None) is None
+    assert service.cached_metadata_for(replace(binding, profile_revision=2).to_dict()) == effective.to_dict()
+
+
+@pytest.mark.parametrize("invalidation", ["disconnect", "reset", "worker-disconnect", "failed-read"])
+def test_metadata_ownership_is_cleared_with_the_observation(invalidation):
+    service, executor, _, _, binding, _, _, _ = _observation_service()
+    service.get_metadata()
+    if invalidation == "disconnect":
+        service.handle_disconnect(DisconnectDataProviderCommand())
+    elif invalidation == "reset":
+        service.reset()
+    elif invalidation == "worker-disconnect":
+        service.on_acquisition_state(Event(EventType.AcquisitionState, AcquisitionSnapshot(False, False)))
+    else:
+        executor.request.side_effect = RuntimeError("Metadata unavailable")
+        with pytest.raises(RuntimeError, match="unavailable"):
+            service.get_metadata()
+    assert service.cached_metadata_for(binding.to_dict()) is None
 
 
 def test_metadata_records_observation_separately_from_manual_effective_values():

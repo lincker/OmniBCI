@@ -1,0 +1,55 @@
+# Decoder starter: every active field below belongs to the public plugin contract.
+# This demo classifies the sign of an Oz window mean; it is not a BCI model.
+
+# Manifest document format; independent of package, constructor and schema versions.
+manifest_version = 2
+
+[package]
+# Publisher and id form the case-sensitive installed identity: example.oz-polarity-demo.
+id = "oz-polarity-demo"
+publisher = "example"
+# Package release version. Change this when distributing changed package contents.
+version = "0.1.0"
+# Constructor API: __init__(self, *, parameters, context).
+api_version = "2"
+# Optional OS restriction; omit to allow every supported OS.
+# platforms = ["darwin", "linux", "win32"]
+# Optional exact OmniBCI version requirement; ranges are not supported.
+# host_version = "1.0.0"
+
+# Optional installed host-library requirements; exact distribution versions only.
+# These are compatibility checks, not a request to install dependencies.
+# [package.requires]
+# numpy = "2.4.4"
+
+[[contributions]]
+# Stable identifier within this package; unique across all its contributions.
+id = "oz-polarity"
+# Selects the SDK port implemented by the entrypoint class.
+kind = "decoder"
+# Prepared signal metadata plus declarative channel requirements. Older hosts reject 2.
+signal_input_contract = 2
+# Package-relative Python module and class; decoder.py defines OzPolarityDemo.
+entrypoint = "decoder:OzPolarityDemo"
+# Human-readable labels displayed in the plugin selector.
+display_name = "Oz Polarity Demo"
+description = "Tutorial only: reports target 1 for a nonnegative Oz mean, otherwise target 2."
+
+[contributions.configuration]
+# Package-relative JSON Schema for editable algorithm parameters and their defaults.
+schema = "default.schema.json"
+# Version of this parameter schema, independent of the package version.
+schema_version = 1
+
+[contributions.channel_requirements]
+# Human-readable rationale. It is displayed to users and does not run validation.
+description = "This tutorial deliberately reads Oz by name. Extra EEG inputs are accepted but ignored."
+# Optional type constraint for every final input row; omit to accept any signal type.
+signal_type = "eeg"
+# Minimum final signal-channel count, excluding trigger and reference-only rows.
+min_count = 1
+# Mandatory channel-name subset; extra inputs are allowed and order is not prescribed.
+required_names = ["Oz"]
+# Ordered initial selection for a new Profile; users may edit it subject to requirements.
+# Empty means use all source channels. Existing Profiles are never overwritten.
+default_names = ["Oz"]

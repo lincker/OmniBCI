@@ -99,6 +99,11 @@ Built-in plugins live in `omnibci/infrastructure/plugins`. The plugin catalog
 reads each plugin's `manifest.toml` without importing its Python code. Concrete
 implementations are loaded on demand at the relevant execution boundary.
 
+To write a third-party Decoder, open **Extensions → Decoder developer guide**
+in the app, or read [the authoring guide](docs/decoder-plugin-development.md).
+The [executable starter](examples/decoder_plugin/) includes a commented manifest,
+Python implementation and Profile parameter schema.
+
 Configure the user plugin directory with the `OMNIBCI_PLUGIN_DIR` environment
 variable or `PLUGINS.user_dir` in the user configuration directory's
 `settings.toml`. Restart the backend after changing this deployment setting.

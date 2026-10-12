@@ -85,8 +85,13 @@ def test_initialization_creates_explicit_decoder_input_only_without_legacy_setup
     expected = None if legacy else ProcessingInput()
     assert decoder.processing_input == expected
     assert service.repository.get_profile(decoder.profile_id).processing_input == expected
-    assert service.materialize(result.snapshot)["SIGNAL.setup"] == (
-        setup if legacy else ProcessingInput().as_signal_setup("file_reader").to_dict())
+    materialized = service.materialize(result.snapshot)
+    if legacy:
+        assert materialized["SIGNAL.setup"] == setup
+    else:
+        assert "SIGNAL.setup" not in materialized
+        assert next(binding for binding in materialized["PLUGINS.bindings"]
+                    if binding["slot"] == "processing.decoder")["processing_input"] == expected.to_dict()
     files = {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")}
 
     repeated = initialize({**settings, "SIGNAL.setup": {"source_id": "different-device"}})

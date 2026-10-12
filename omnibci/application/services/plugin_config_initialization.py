@@ -95,7 +95,9 @@ class SettingsPluginConfigInitializer:
                 kind=definition.kind, selection=selection,
                 parameters=legacy_parameters(definition, settings),
                 configuration_version=definition.configuration_version,
-                processing_input=ProcessingInput() if kind == "decoder" and "SIGNAL.setup" not in settings else None,
+                processing_input=(ProcessingInput(outputs=definition.channel_requirements.default_names
+                                                  if definition.channel_requirements else ())
+                                  if kind == "decoder" and "SIGNAL.setup" not in settings else None),
             )
             drafts[profile_id] = profile
             bindings.append((slot, profile.profile_id))

@@ -41,7 +41,7 @@ function editorFor(profile: PluginProfile | undefined, definitions: PluginDefini
     : definitions.find((item) => item.schema && item.available) ?? definitions.find((item) => item.schema);
   return { profile: null, plugin: plugin ?? (definition ? selectionKey(definition.selection) : ""), name: "",
     parameters: definition?.schema ? initialSchemaValue(definition.schema) as Record<string, unknown> : {}, manualMontage: null,
-    processingInput: definition?.kind === "decoder" ? emptyProcessingInput() : null };
+    processingInput: definition?.kind === "decoder" ? emptyProcessingInput(definition.channel_requirements?.default_names) : null };
 }
 
 export function PluginProfiles({ module, engineRunning, engineAvailable = true, navigation,
@@ -321,6 +321,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
           }} />}
         {slot.kind === "decoder" && definition && <ProcessingInput key={`${editor.profile?.profile_id ?? editor.plugin}:${editor.profile?.revision ?? "new"}`}
           value={editor.processingInput} busy={busy}
+          decoderSelection={definition.selection} channelRequirements={definition.channel_requirements}
           configurationRevision={`${runtime.status?.accepted_revision}:${runtime.status?.applied_revision}`}
           onChange={(processingInput) => { setEditor({ ...editor, processingInput }); setNotice(""); }} />}
         {errors.length > 0 && <ul className="schema-errors" role="alert">{errors.map((message) => <li key={message}>{message}</li>)}</ul>}

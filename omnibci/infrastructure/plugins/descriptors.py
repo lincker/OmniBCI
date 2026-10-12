@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from omnibci.application.plugin_profiles import PluginSelection
+from omnibci.domain.decoder_input import DecoderChannelRequirements
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +108,7 @@ class PluginDescriptor:
     configuration_schema: Mapping[str, Any] | None = None
     configuration_version: int | None = None
     signal_input_contract: int | None = None
+    channel_requirements: DecoderChannelRequirements | None = None
 
     def supports_platform(self, platform_name: str) -> bool:
         """Both package and contribution constraints must permit the host."""

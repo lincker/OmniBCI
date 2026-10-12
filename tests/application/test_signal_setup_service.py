@@ -34,9 +34,11 @@ def signal_service(tmp_path):
     engine = SimpleNamespace(admission=None, is_engine_ready=True, applied_snapshot=snapshot,
                              configuration_change=lambda idle: nullcontext())
     profiles = SimpleNamespace(repository=SimpleNamespace(get_activation=lambda: ActivationSnapshot({}, ())),
-                               materialize=lambda activation: {})
+                               materialize=lambda activation: {},
+                               catalog=SimpleNamespace(get=lambda *args: SimpleNamespace(channel_requirements=None)))
     acquisition = SimpleNamespace(lifecycle_lock=RLock(), cached_metadata=metadata.to_dict(),
                                   handle_get_status=lambda query: SimpleNamespace(streaming=False))
+    acquisition.cached_metadata_for = lambda binding: deepcopy(acquisition.cached_metadata)
     acquisition.get_metadata = lambda **kwargs: deepcopy(acquisition.cached_metadata)
     calls = []
 
@@ -176,7 +178,7 @@ def test_legacy_configuration_requires_no_metadata_or_preparation(signal_service
 def test_invalid_preview_does_not_write_or_prepare(signal_service):
     service, metadata, setup, calls = signal_service
     with pytest.raises(ConfigProfileValidationError, match="Missing signal dependency"):
-        service.preview_input({"outputs": ["missing"]}, metadata.to_dict())
+        service.preview_input({"outputs": ["missing"]})
     assert service.read()["setup"] is None
     assert not calls
 
@@ -203,7 +205,7 @@ def test_processing_input_cannot_redeclare_acquisition_metadata(signal_service, 
     assert not calls
 
 
-def test_decoder_input_read_distinguishes_saved_accepted_and_active(signal_service):
+def test_decoder_input_read_uses_pinned_input_without_saved_draft(signal_service):
     from uuid import uuid4
     from omnibci.application.plugin_profiles import PluginProfile, PluginSelection, ProfileBinding
     from omnibci.domain.montage import ProcessingInput
@@ -214,17 +216,194 @@ def test_decoder_input_read_distinguishes_saved_accepted_and_active(signal_servi
     binding = ProfileBinding("processing.decoder", "decoder", profile.profile_id, selection,
                              {}, profile_revision=1, processing_input=profile.processing_input)
     accepted = ActivationSnapshot({}, (binding,))
-    accepted_setup = {"source_id": "source", **profile.processing_input.to_dict()}
+    accepted_setup = profile.processing_input.as_signal_setup("source").to_dict()
     service.profiles.repository.get_activation = lambda: accepted
     service.profiles.repository.get_profile = lambda profile_id: profile
     service.profiles.materialize = lambda activation: {"SIGNAL.setup": accepted_setup,
         "PLUGINS.bindings": [binding.to_dict()], "ACQUISITION.signal_source": "source"}
     service.engine.applied_snapshot["PLUGINS.bindings"] = [binding.to_dict()]
-    active = deepcopy(service.engine.applied_snapshot["SIGNAL.setup"])
+    service.engine.applied_snapshot["PLUGINS.bindings"][0]["processing_input"] = ProcessingInput(outputs=("M1",)).to_dict()
     profile = replace(profile, processing_input=ProcessingInput(outputs=("M1",)))
     result = service.read()
     assert result["selected_decoder_profile_id"] == profile.profile_id
-    assert result["setup"]["outputs"] == ["M1"]
+    assert result["setup"]["outputs"] == ["O1"]
+    assert result["processing_input"]["outputs"] == ["O1"]
+    assert result["accepted_input"]["outputs"] == ["O1"]
+    assert result["active_input"]["outputs"] == ["M1"]
     assert result["accepted_setup"] == accepted_setup
-    assert result["active_setup"] == active
+    assert result["active_setup"]["outputs"] == ["M1"]
     assert result["legacy_setup"] is None
+
+
+def modern_binding(service, metadata, *, profile_id="source-a", outputs=("O1",)):
+    from omnibci.domain.montage import ProcessingInput
+    source = {"slot": "acquisition.source", "profile_id": profile_id,
+              "profile_revision": 1, "selection": {"plugin_id": "test.source"},
+              "parameters": {"sample_rate": 500, "channel_number": 3},
+              "manual_montage": metadata.to_dict()}
+    snapshot = {**service.engine.applied_snapshot,
+                "PLUGINS.bindings": [source, {"slot": "processing.decoder",
+                    "selection": {"package_id": "test.decoder", "contribution_id": "default", "version": "1"},
+                    "processing_input": ProcessingInput(outputs=outputs).to_dict()}]}
+    snapshot.pop("SIGNAL.setup", None)
+    service.profiles.repository.get_profile = lambda profile_id: None
+    service.engine.applied_snapshot = deepcopy(snapshot)
+    service.profiles.materialize = lambda activation: deepcopy(snapshot)
+    return snapshot
+
+
+def test_preview_uses_edited_decoder_requirements_without_changing_selected_input(signal_service):
+    from omnibci.domain.decoder_input import DecoderChannelRequirements
+    service, metadata, _, calls = signal_service
+    snapshot = modern_binding(service, metadata)
+    before = deepcopy(snapshot)
+    edited = {"package_id": "test.edited", "contribution_id": "default", "version": "1"}
+    service.profiles.catalog.get = lambda kind, selection: SimpleNamespace(
+        channel_requirements=DecoderChannelRequirements(
+            required_names=("M1",) if selection.package_id == "test.edited" else ("O1",)))
+
+    assert service.preview_input({"outputs": ["O1"]})["plan"]["output_channels"][0]["name"] == "O1"
+    with pytest.raises(ConfigProfileValidationError, match="M1"):
+        service.preview_input({"outputs": ["O1"]}, decoder_selection=edited)
+    plan = service.preview_input({"outputs": ["M1"]}, decoder_selection=edited)["plan"]
+    assert plan["output_channels"][0]["name"] == "M1"
+    assert service.engine.applied_snapshot == before
+    assert not calls
+
+
+def test_preparation_rejects_missing_algorithm_channel_before_worker_command(signal_service):
+    from omnibci.domain.decoder_input import DecoderChannelRequirements
+    service, metadata, _, calls = signal_service
+    modern_binding(service, metadata)
+    service.profiles.catalog.get = lambda *args: SimpleNamespace(
+        channel_requirements=DecoderChannelRequirements(required_names=("M1",)))
+    with pytest.raises(ConfigProfileValidationError, match="M1"):
+        service.prepare()
+    assert not calls
+
+
+def test_modern_preparation_and_session_use_native_input_without_global_setup(signal_service):
+    service, metadata, _, calls = signal_service
+    snapshot = modern_binding(service, metadata)
+    plan = service.prepare_session()
+    assert "SIGNAL.setup" not in snapshot
+    assert "setup" not in plan
+    assert plan["processing_input"]["outputs"] == ["O1"]
+    assert plan["source"] == metadata.to_dict()
+    assert service.read()["readiness"]["ready"]
+    assert len(calls) == 1
+
+
+def test_source_switch_uses_selected_profile_metadata_and_recompiles_mapping(signal_service):
+    from omnibci.application.processing_source import acquisition_binding_key
+    service, metadata, _, calls = signal_service
+    selected = modern_binding(service, metadata)
+    owner = acquisition_binding_key(selected["PLUGINS.bindings"][0])
+    service.acquisition.cached_metadata_for = lambda binding: (
+        deepcopy(service.acquisition.cached_metadata) if acquisition_binding_key(binding) == owner else None)
+    service.prepare()
+    before = service.read()
+    reordered = replace(metadata, connection_id="new", channels=(
+        replace(metadata.channels[1], index=0), replace(metadata.channels[0], index=1)))
+    selected["PLUGINS.bindings"][0].update(profile_id="source-b", manual_montage=reordered.to_dict())
+    selected["CONFIG.revision"] = "b" * 64
+    after = service.read()
+    assert after["source_binding"]["profile_id"] == "source-b"
+    assert after["source_binding"]["state"] == "selected"
+    assert after["source_binding"]["metadata_origin"] == "profile"
+    assert after["source_metadata"]["connection_id"] == ""
+    assert before["source_revision"] != after["source_revision"]
+    assert not after["readiness"]["ready"]
+    assert service.preview_input({"outputs": ["O1"]})["plan"]["coefficients"] == [[0.0, 1.0]]
+    # Runtime preparation keeps the applied source until the new selection is applied.
+    service.prepare()
+    assert calls[-1][1]["plan"]["coefficients"] == [[1.0, 0.0]]
+    service.engine.applied_snapshot = deepcopy(selected)
+    service.acquisition.cached_metadata = reordered.to_dict()
+    owner = acquisition_binding_key(selected["PLUGINS.bindings"][0])
+    service.prepare()
+    assert calls[-1][1]["plan"]["coefficients"] == [[0.0, 1.0]]
+    assert service.read()["readiness"]["ready"]
+
+
+def test_stale_preview_revision_rejected_after_reconnect(signal_service):
+    from omnibci.application.plugin_profiles import ProfileRevisionConflict
+    service, metadata, _, calls = signal_service
+    modern_binding(service, metadata)
+    revision = service.read()["source_revision"]
+    service.acquisition.cached_metadata = replace(metadata, connection_id="new-connection").to_dict()
+    with pytest.raises(ProfileRevisionConflict, match="source changed"):
+        service.preview_input({"outputs": ["O1"]}, expected_source_revision=revision)
+    assert not calls
+    context = service.read()
+    preview = service.preview_input({"outputs": ["O1"]}, expected_source_revision=context["source_revision"])
+    assert preview["source_revision"] == context["source_revision"]
+
+
+def test_metadata_revision_update_preserves_prepared_binding_but_generation_does_not(signal_service):
+    service, metadata, _, _ = signal_service
+    selected = modern_binding(service, metadata)
+    service.prepare()
+    before = service.read()
+    selected["PLUGINS.bindings"][0]["profile_revision"] += 1
+    service.engine.applied_snapshot = deepcopy(selected)
+    assert service.read()["readiness"]["ready"]
+    assert service.read()["source_revision"] == before["source_revision"]
+    service.engine.applied_snapshot["CONFIG.generation"] = "next-generation"
+    assert not service.read()["readiness"]["ready"]
+    assert service.read()["source_revision"] != before["source_revision"]
+
+
+def test_modern_preparation_rejects_foreign_source_before_worker_command(signal_service):
+    service, metadata, _, calls = signal_service
+    modern_binding(service, metadata)
+    service.acquisition.cached_metadata = replace(metadata, source_id="other-device").to_dict()
+    with pytest.raises(ConfigProfileValidationError, match="different acquisition source"):
+        service.prepare()
+    assert not calls
+
+
+def test_profile_metadata_conflict_is_reported_instead_of_previewing_unapplied_facts(signal_service):
+    service, metadata, _, _ = signal_service
+    snapshot = modern_binding(service, metadata)
+    service.acquisition.cached_metadata = None
+    service.profiles.repository.get_profile = lambda profile_id: SimpleNamespace(
+        name="Conflicting source",
+        parameters=snapshot["PLUGINS.bindings"][0]["parameters"],
+        selection=SimpleNamespace(to_dict=lambda: snapshot["PLUGINS.bindings"][0]["selection"]),
+        acquisition_montage=replace(metadata, original_reference="M2"))
+    context = service.read()
+    assert context["source_metadata"] is None
+    assert context["source_binding"]["profile_name"] == "Conflicting source"
+    assert context["source_binding"]["metadata_origin"] == "unavailable"
+    assert "reference" in context["source_error"]
+    with pytest.raises(ConfigProfileValidationError, match="reference"):
+        service.preview_input({"outputs": ["O1"]})
+
+
+def test_explicit_runtime_rebuild_resolves_changed_source_observation(signal_service):
+    service, metadata, _, calls = signal_service
+    selected = modern_binding(service, metadata, outputs=())
+    service.prepare()
+    changed = replace(metadata, connection_id="next-connection", channels=(
+        replace(metadata.channels[0], name="O2"), metadata.channels[1]))
+    service.acquisition.cached_metadata = changed.to_dict()
+    with pytest.raises(ConfigProfileValidationError, match="metadata changed"):
+        service.prepare()
+    selected["PLUGINS.bindings"][0]["profile_revision"] += 1
+    selected["CONFIG.generation"] = "rebuilt"
+    service.engine.applied_snapshot = deepcopy(selected)
+    service.prepare()
+    assert calls[-1][1]["plan"]["output_channels"][0]["name"] == "O2"
+    assert service.read()["readiness"]["ready"]
+
+
+def test_stopped_engine_uses_profile_metadata_even_if_old_cache_survives(signal_service):
+    service, metadata, _, _ = signal_service
+    modern_binding(service, metadata)
+    service.engine.is_engine_ready = False
+    context = service.read()
+    assert context["source_binding"]["state"] == "selected"
+    assert context["source_binding"]["metadata_origin"] == "profile"
+    assert context["source_metadata"]["connection_id"] == ""
+    assert not context["readiness"]["ready"]

@@ -4,6 +4,10 @@ The catalog reads manifests without importing plugin Python. A package is an
 installation unit; each contribution is an independently selectable capability
 within that package. Loading executes only the selected contribution's entrypoint.
 
+For required Decoder files, an annotated starter, packaging and testing, see
+[Write a Decoder plugin](decoder-plugin-development.md). The same guide and
+starter files are available offline under **Extensions → Decoder developer guide**.
+
 ## Manifest version 2
 
 ```toml
@@ -128,14 +132,24 @@ The class implements its domain port; a registry decorator and `plugin_type`
 attribute are no longer required. The manifest owns its selection identity.
 
 Processing contributions that support prepared channel input declare
-`signal_input_contract = 1` beside their contribution `kind`. Their context adds
-`acquired_signal` and `input_signal`, both immutable `SourceMetadata` values.
+`signal_input_contract = 1` beside their contribution `kind`. Decoder
+contributions can declare `signal_input_contract = 2` together with
+`[contributions.channel_requirements]` to add minimum count, signal type and
+required names, plus ordered defaults for new Profiles. Contract 2 requires that
+section and is currently Decoder-only; older hosts reject the unsupported
+capability rather than ignoring its requirements. The
+[Decoder authoring guide](decoder-plugin-development.md#manifest-and-channel-requirements)
+describes every field, with comments in the executable starter manifest.
+
+Both prepared input contracts add `acquired_signal` and `input_signal` to the
+context, as immutable `SourceMetadata` values.
 `channel_names` retains the original acquired-channel meaning; the ordered
 `input_signal.channels` describes the actual decoder/filter/detector input,
 including units, references, and optional positions in meters. The final trigger
 row remains outside channel arithmetic. Undeclared plugins retain the legacy
-identity path and reject transformed input before streaming. The bundled CCA,
-FBCCA, epoch detector, and baseline filter declare this contract.
+identity path and reject transformed input before streaming. The bundled CCA
+and FBCCA declare contract 2 with flexible EEG input and no mandatory electrode
+names. The bundled epoch detector and baseline filter retain contract 1.
 
 API `1` keeps its existing constructor arguments and alias checks. Constructor
 errors never cause a retry using a different API. All bundled contributions use

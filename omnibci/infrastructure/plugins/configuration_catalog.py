@@ -22,6 +22,7 @@ class CatalogConfigurationAdapter:
             configuration_version=descriptor.configuration_version,
             available=descriptor.supports_platform(sys.platform),
             controls=deepcopy(dict(descriptor.controls)),
+            channel_requirements=descriptor.channel_requirements,
         )
 
     def list(self, kind: str) -> list[PluginConfiguration]:

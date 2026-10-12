@@ -7,14 +7,17 @@ import numpy as np
 import pytest
 
 from omnibci.domain.montage import (
+    ChannelBinding,
     ChannelDescriptor,
     ProcessingInput,
     ResolvedSignalPlan,
     SignalSetup,
     SourceMetadata,
+    compile_processing_plan,
     compile_signal_plan,
     merge_source_montage,
 )
+from omnibci.domain.decoder_input import DecoderChannelRequirements
 from omnibci.domain.signal import SignalChunk
 
 
@@ -42,16 +45,180 @@ def test_processing_input_resolves_named_channels_against_each_source():
     channel_input = ProcessingInput.from_dict({"outputs": ["O2", "O1"],
         "reference": {"mode": "single", "channels": ["M1"]}})
     assert ProcessingInput.from_dict(channel_input.to_dict()) == channel_input
-    first = compile_signal_plan(source(), channel_input.as_signal_setup("test-source"))
+    first = compile_processing_plan(source(), channel_input)
     second_source = source(("M1", "O2", "O1"), source_id="second-source")
-    second = compile_signal_plan(second_source, channel_input.as_signal_setup("second-source"))
+    second = compile_processing_plan(second_source, channel_input)
     assert [channel.name for channel in first.output_channels] == ["O2", "O1"]
     assert [channel.name for channel in second.output_channels] == ["O2", "O1"]
     np.testing.assert_allclose(first.apply(chunk()).raw_data[:2, 0], [28e-6, 8e-6])
     np.testing.assert_allclose(second.apply(chunk(values=(2, 30, 10))).raw_data[:2, 0], [28e-6, 8e-6])
     np.testing.assert_array_equal(second.apply(chunk(values=(2, 30, 10))).raw_data[-1], [0, 3, 0])
+    assert first.source == source()
+    assert second.source == second_source
+    assert first.processing_input == second.processing_input == channel_input
+    assert first.setup is second.setup is None
     with pytest.raises(ValueError, match="O2"):
-        compile_signal_plan(source(("O1", "M1")), channel_input.as_signal_setup("test-source"))
+        compile_processing_plan(source(("O1", "M1")), channel_input)
+
+
+def test_explicit_bindings_order_source_samples_under_algorithm_names():
+    observed = source(("CH1", "CH2", "REF"))
+    first_channel = replace(observed.channels[0], name_provenance="generated",
+        position=(0.01, -0.08, 0.04), coordinate_frame="head", position_provenance="file-reported")
+    observed = replace(observed, channels=(first_channel, *observed.channels[1:]))
+    value = {"outputs": [{"name": "O2", "source": "CH2"}, {"name": "Oz", "source": "CH1"}]}
+    channel_input = ProcessingInput.from_dict(value)
+    plan = compile_processing_plan(observed, channel_input)
+    assert channel_input.outputs == (ChannelBinding("O2", "CH2"), ChannelBinding("Oz", "CH1"))
+    assert channel_input.to_dict()["outputs"] == value["outputs"]
+    assert plan.coefficients == ((0.0, 1.0, 0.0), (1.0, 0.0, 0.0))
+    assert [channel.name for channel in plan.output_channels] == ["O2", "Oz"]
+    assert plan.output_channels[1] == replace(first_channel, index=1, name="Oz",
+                                            name_provenance=None, reference="Cz")
+    assert observed.channels[0] == first_channel
+    DecoderChannelRequirements(signal_type="eeg", min_count=2,
+        required_names=("Oz", "O2")).validate_channels(plan.output_channels)
+    raw = chunk((10, 30, 2))
+    result = plan.apply(raw)
+    np.testing.assert_array_equal(result.data[:, 0], [30, 10])
+    np.testing.assert_array_equal(result.triggers, raw.triggers)
+    assert not plan.is_identity
+    assert not np.shares_memory(result.raw_data, raw.raw_data)
+    assert ResolvedSignalPlan.from_dict(json.loads(json.dumps(plan.to_dict()))) == plan
+    legacy = channel_input.as_signal_setup(observed.source_id)
+    assert SignalSetup.from_dict(legacy.to_dict()) == legacy
+    assert compile_signal_plan(observed, legacy).output_channels == plan.output_channels
+
+
+def test_bindings_can_mix_with_same_name_shorthand_and_follow_source_reordering():
+    channel_input = ProcessingInput.from_dict({"outputs": ["O1", {"name": "Oz", "source": "CH2"}]})
+    first = compile_processing_plan(source(("CH2", "O1")), channel_input)
+    second = compile_processing_plan(source(("O1", "CH2")), channel_input)
+    np.testing.assert_array_equal(first.apply(chunk((30, 10))).data[:, 0], [10, 30])
+    np.testing.assert_array_equal(second.apply(chunk((10, 30))).data[:, 0], [10, 30])
+    assert channel_input.to_dict()["outputs"] == ["O1", {"name": "Oz", "source": "CH2"}]
+    generated = source(("CH1",))
+    generated = replace(generated, channels=(replace(generated.channels[0], name_provenance="generated"),))
+    plan = compile_processing_plan(generated, ProcessingInput(outputs=(ChannelBinding("CH1", "CH1"),)))
+    assert plan.is_identity
+    assert plan.output_channels[0].name_provenance == "generated"
+
+
+@pytest.mark.parametrize("reference,expected", [
+    ({"mode": "single", "channels": ["REF"]}, [28e-6, 8e-6]),
+    ({"mode": "average", "channels": ["CH1", "REF"]}, [24e-6, 4e-6]),
+])
+def test_bound_outputs_rereference_using_original_source_names(reference, expected):
+    channel_input = ProcessingInput.from_dict({
+        "outputs": [{"name": "O2", "source": "CH2"}, {"name": "Oz", "source": "CH1"}],
+        "reference": reference,
+    })
+    plan = compile_processing_plan(source(("CH1", "CH2", "REF")), channel_input)
+    np.testing.assert_allclose(plan.apply(chunk((10, 30, 2))).data[:, 0], expected)
+    assert [channel.name for channel in plan.output_channels] == ["O2", "Oz"]
+    assert all(channel.unit == "V" for channel in plan.output_channels)
+
+
+@pytest.mark.parametrize("value,match", [
+    ({"outputs": [{"name": "Oz", "source": "CH1"}, {"name": "Oz", "source": "CH2"}]}, "unique"),
+    ({"outputs": [{"name": "Oz", "source": "CH1"}, "Oz"]}, "unique"),
+    ({"outputs": [{"name": "Oz", "source": "CH1"}, {"name": "O2", "source": "CH1"}]}, "more than once"),
+    ({"outputs": [{"name": "Oz", "source": "CH1"}, "CH1"]}, "more than once"),
+    ({"outputs": [{"name": "Oz", "source": "CH1"}], "reference": {"mode": "bipolar"}}, "bipolar"),
+    ({"outputs": [{"name": "", "source": "CH1"}]}, "nonempty"),
+    ({"outputs": [{"name": "Oz", "source": " "}]}, "nonempty"),
+    ({"outputs": [{"source": "CH1"}]}, "requires name"),
+    ({"outputs": [{"name": "Oz", "source": "CH1", "positive": "CH1", "negative": "CH2"}]}, "Unknown"),
+])
+def test_invalid_explicit_bindings_are_rejected(value, match):
+    with pytest.raises(ValueError, match=match):
+        ProcessingInput.from_dict(value)
+
+
+@pytest.mark.parametrize("value,match", [
+    ({"outputs": [{"name": "O1", "source": "Missing"}]}, "Missing signal dependency: Missing"),
+    ({"outputs": [{"name": "O1", "source": "CH1"}], "excluded_channels": ["CH1"]}, "Excluded"),
+    ({"outputs": [{"name": "O1", "source": "CH1"}],
+      "reference": {"mode": "single", "channels": ["O1"]}}, "Missing signal dependency: O1"),
+])
+def test_explicit_binding_dependencies_are_resolved_against_acquisition(value, match):
+    with pytest.raises(ValueError, match=match):
+        compile_processing_plan(source(("CH1", "CH2")), ProcessingInput.from_dict(value))
+
+
+@pytest.mark.parametrize("signal_type", ["trigger", "stim", "ground"])
+def test_binding_cannot_disguise_non_signal_rows(signal_type):
+    observed = source(("CH1",))
+    observed = replace(observed, channels=(replace(observed.channels[0], signal_type=signal_type),))
+    with pytest.raises(ValueError, match="cannot be a signal dependency"):
+        compile_processing_plan(observed, ProcessingInput(outputs=(ChannelBinding("Oz", "CH1"),)))
+
+
+def test_alias_preserves_signal_type_for_decoder_requirements():
+    observed = source(("CH1",))
+    observed = replace(observed, channels=(replace(observed.channels[0], signal_type="eog"),))
+    plan = compile_processing_plan(observed, ProcessingInput(outputs=(ChannelBinding("Oz", "CH1"),)))
+    with pytest.raises(ValueError, match="eeg"):
+        DecoderChannelRequirements(signal_type="eeg", required_names=("Oz",)).validate_channels(plan.output_channels)
+
+
+@pytest.mark.parametrize("value", [
+    {},
+    {"outputs": ["O2", "O1"], "excluded_channels": ["Oz"]},
+    {"outputs": ["O1"], "reference": {"mode": "single", "channels": ["M1"]}},
+    {"outputs": ["O1", "O2"], "reference": {"mode": "average", "channels": ["M1", "M2"]}},
+    {"outputs": [{"name": "Left", "source": "O1"}, "O2"],
+     "reference": {"mode": "single", "channels": ["M1"]}},
+    {"outputs": [{"name": "O1-O2", "positive": "O1", "negative": "O2"}],
+     "reference": {"mode": "bipolar"}},
+])
+def test_processing_input_preserves_channel_transformations(value):
+    channel_input = ProcessingInput.from_dict(value)
+    plan = compile_processing_plan(source(), channel_input, "revision-one")
+    legacy = compile_signal_plan(source(), setup(**value), "revision-one")
+    assert plan.coefficients == legacy.coefficients
+    assert plan.output_channels == legacy.output_channels
+    assert plan.warnings == legacy.warnings
+    np.testing.assert_array_equal(plan.apply(chunk()).raw_data, legacy.apply(chunk()).raw_data)
+    serialized = json.loads(json.dumps(plan.to_dict()))
+    assert serialized["processing_input"] == channel_input.to_dict()
+    assert "setup" not in serialized
+    assert ResolvedSignalPlan.from_dict(serialized) == plan
+    assert pickle.loads(pickle.dumps(plan)) == plan
+
+
+def test_processing_input_plan_rejects_legacy_setup_and_tampering():
+    channel_input = ProcessingInput(outputs=("O2", "O1"))
+    plan = compile_processing_plan(source(), channel_input)
+    with pytest.raises(ValueError, match="both legacy setup and processing input"):
+        replace(plan, setup=setup())
+    serialized = plan.to_dict()
+    serialized["setup"] = setup().to_dict()
+    with pytest.raises(ValueError, match="both legacy setup and processing input"):
+        ResolvedSignalPlan.from_dict(serialized)
+    serialized = plan.to_dict(include_fingerprint=False)
+    serialized["processing_input"]["outputs"].reverse()
+    with pytest.raises(ValueError, match="compiled"):
+        ResolvedSignalPlan.from_dict(serialized)
+
+
+def test_processing_input_fingerprint_excludes_runtime_identity_but_tracks_source_binding():
+    channel_input = ProcessingInput(outputs=("O2", "O1"))
+    first = compile_processing_plan(source(), channel_input, "revision-one")
+    second = compile_processing_plan(source(connection_id="reconnected"), channel_input, "revision-two")
+    assert first.fingerprint == second.fingerprint
+    assert first.fingerprint != compile_processing_plan(source(source_id="second-source"), channel_input).fingerprint
+
+
+def test_legacy_plan_keeps_its_serialized_shape_and_fingerprint():
+    plan = compile_signal_plan(source(), setup(outputs=["O2", "O1"]), "legacy-revision")
+    serialized = plan.to_dict()
+    assert set(serialized) == {
+        "source", "output_channels", "coefficients", "config_revision", "warnings", "setup", "fingerprint",
+    }
+    assert serialized["fingerprint"] == "3f59248ec9f959514c448aa4694fbabeceb992083d690f92536ed20063155691"
+    assert ResolvedSignalPlan.from_dict(serialized) == plan
+    assert plan.processing_input is None
 
 
 @pytest.mark.parametrize("value", [

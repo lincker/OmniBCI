@@ -166,7 +166,8 @@ def test_file_reader_session_id_matches_websocket_and_rest(
                     client.get(f"/api/v1/sessions/{session_id}/trials")
                 )
                 assert session["session_id"] == session_id
-                assert session["signal_plan"]["setup"]["outputs"] == []
+                assert session["signal_plan"]["processing_input"]["outputs"] == []
+                assert "setup" not in session["signal_plan"]
                 assert session["trial_count"] >= 1
                 assert trials
                 assert trials[0]["trial_number"] == trial_message["trial_number"]

@@ -6296,6 +6296,25 @@
         ],
         "title": "ChannelAssignmentModel"
       },
+      "ChannelBindingModel": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "source"
+        ],
+        "title": "ChannelBindingModel"
+      },
       "ConfigEntry": {
         "properties": {
           "key": {
@@ -6482,6 +6501,54 @@
           "expected_source_revision"
         ],
         "title": "CreateVersionProfileRequest"
+      },
+      "DecoderChannelRequirementsResponse": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "signal_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal Type"
+          },
+          "min_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Min Count",
+            "default": 1
+          },
+          "required_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Required Names"
+          },
+          "default_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Default Names"
+          }
+        },
+        "type": "object",
+        "title": "DecoderChannelRequirementsResponse"
       },
       "EngineStatusResponse": {
         "properties": {
@@ -7169,6 +7236,16 @@
             },
             "type": "object",
             "title": "Controls"
+          },
+          "channel_requirements": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecoderChannelRequirementsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -7308,10 +7385,21 @@
           "processing_input": {
             "$ref": "#/components/schemas/ProcessingInputModel"
           },
-          "metadata": {
+          "expected_source_revision": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/SourceMetadataModel"
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Source Revision"
+          },
+          "decoder_selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginSelectionResponse"
               },
               {
                 "type": "null"
@@ -7341,6 +7429,9 @@
                   "type": "string"
                 },
                 {
+                  "$ref": "#/components/schemas/ChannelBindingModel"
+                },
+                {
                   "$ref": "#/components/schemas/BipolarOutputModel"
                 }
               ]
@@ -7362,6 +7453,71 @@
         "additionalProperties": false,
         "type": "object",
         "title": "ProcessingInputModel"
+      },
+      "ProcessingSourceBindingModel": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
+          },
+          "profile_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Name"
+          },
+          "profile_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Revision"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "selected"
+            ],
+            "title": "State"
+          },
+          "metadata_origin": {
+            "type": "string",
+            "enum": [
+              "connected",
+              "profile",
+              "unavailable"
+            ],
+            "title": "Metadata Origin"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_id",
+          "state",
+          "metadata_origin"
+        ],
+        "title": "ProcessingSourceBindingModel"
       },
       "ProfileBindingResponse": {
         "properties": {
@@ -8360,12 +8516,17 @@
             },
             "type": "array",
             "title": "Warnings"
+          },
+          "source_revision": {
+            "type": "string",
+            "title": "Source Revision"
           }
         },
         "type": "object",
         "required": [
           "plan",
-          "warnings"
+          "warnings",
+          "source_revision"
         ],
         "title": "SignalPreviewResponse"
       },
@@ -8407,6 +8568,9 @@
               "anyOf": [
                 {
                   "type": "string"
+                },
+                {
+                  "$ref": "#/components/schemas/ChannelBindingModel"
                 },
                 {
                   "$ref": "#/components/schemas/BipolarOutputModel"
@@ -8501,10 +8665,75 @@
             ],
             "title": "Selected Decoder Profile Id"
           },
+          "selected_decoder_selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginSelectionResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "source_metadata": {
             "anyOf": [
               {
                 "$ref": "#/components/schemas/SourceMetadataModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Error"
+          },
+          "source_binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingSourceBindingModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_revision": {
+            "type": "string",
+            "title": "Source Revision"
+          },
+          "processing_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingInputModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "accepted_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingInputModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "active_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingInputModel"
               },
               {
                 "type": "null"
@@ -8561,6 +8790,7 @@
         },
         "type": "object",
         "required": [
+          "source_revision",
           "setup",
           "revision",
           "accepted_setup",

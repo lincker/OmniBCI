@@ -9,6 +9,7 @@ import logging
 from threading import RLock
 from omnibci.application.runtime_admission import admitted
 from omnibci.application.plugin_profiles import ProfileRevisionConflict, PluginProfileStorageError
+from omnibci.application.processing_source import acquisition_binding_key
 from typing import Optional
 
 from omnibci.shared.events import EventType, Event
@@ -55,6 +56,7 @@ class AcquisitionAppService:
         self.lifecycle_lock = lifecycle_lock or RLock()
         self._prepare_signal = None
         self._metadata = None
+        self._metadata_owner = None
         self._metadata_binding = None
         self._metadata_recorder = None
 
@@ -71,6 +73,13 @@ class AcquisitionAppService:
     def cached_metadata(self) -> dict | None:
         """Return the last confirmed metadata; disconnect invalidates this view."""
         return self._metadata.to_dict() if self._metadata is not None else None
+
+    def cached_metadata_for(self, binding: dict | None) -> dict | None:
+        """Return an observation only for the acquisition selection that owns it."""
+        with self.lifecycle_lock:
+            if acquisition_binding_key(binding) != self._metadata_owner:
+                return None
+            return self.cached_metadata
 
     # ------------------------------------------------------------------
     # Command handlers
@@ -95,6 +104,7 @@ class AcquisitionAppService:
     def handle_disconnect(self, cmd: DisconnectDataProviderCommand) -> None:
         with self.lifecycle_lock:
             self._metadata = None
+            self._metadata_owner = None
             self._put_event(EventType.DisconnectDataProvider)
         logger.info("DisconnectDataProvider event dispatched")
 
@@ -140,6 +150,7 @@ class AcquisitionAppService:
         self._connected = False
         self._streaming = False
         self._metadata = None
+        self._metadata_owner = None
 
     # ------------------------------------------------------------------
     # EventBus listeners (registered in bootstrap.register_engine_listeners)
@@ -157,6 +168,7 @@ class AcquisitionAppService:
         self._streaming = snap.streaming
         if not snap.connected:
             self._metadata = None
+            self._metadata_owner = None
 
     # ------------------------------------------------------------------
     # Query handlers
@@ -171,6 +183,8 @@ class AcquisitionAppService:
                 raise ProfileRevisionConflict("Acquisition profile observation storage is unavailable")
             binding = self._metadata_binding(profile_id) if self._metadata_binding is not None else None
             self._metadata = None
+            self._metadata_owner = None
+            owner = acquisition_binding_key(binding.to_dict() if binding is not None else None)
             include_observation = self._metadata_recorder is not None or allow_manual_fallback
             payload = {"refresh": refresh}
             if include_observation:
@@ -205,6 +219,7 @@ class AcquisitionAppService:
             except (TypeError, ValueError) as exc:
                 raise RuntimeError("Source returned invalid acquisition metadata") from exc
             self._metadata = metadata
+            self._metadata_owner = owner
             return metadata.to_dict()
 
     def handle_get_status(self, query: GetAcquisitionStatusQuery) -> AcquisitionStatusResult:

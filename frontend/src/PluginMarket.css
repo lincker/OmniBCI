@@ -36,6 +36,26 @@
 .plugin-market .market-version-preview h3 { font-size: 13px; font-weight: 500; }
 .plugin-market .market-version-preview pre { padding: 12px; overflow: auto; max-height: 260px; background: var(--control-bg); font-size: 12px; }
 .plugin-market .market-version-preview > p { font-size: 12px; line-height: 1.6; }
+.plugin-market .decoder-guide { max-width: 940px; font-size: 13px; line-height: 1.7; }
+.plugin-market .decoder-guide p { margin: 10px 0; }
+.plugin-market .decoder-guide-intro { max-width: 720px; }
+.plugin-market .decoder-guide section { border-top: 1px solid var(--border-soft); padding: 22px 0; margin-top: 22px; }
+.plugin-market .decoder-guide h2 { margin: 0 0 12px; font-size: 15px; font-weight: 500; }
+.plugin-market .decoder-guide a { color: var(--accent); text-underline-offset: 3px; }
+.plugin-market .decoder-guide a:hover { text-decoration: underline; }
+.plugin-market .decoder-guide-download { display: inline-block; border: 1px solid var(--border); border-radius: 4px; padding: 6px 12px; }
+.plugin-market .decoder-guide-files { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 16px 0; }
+.plugin-market .decoder-guide-files > div { border: 1px solid var(--border-soft); padding: 12px 14px; border-radius: 4px; }
+.plugin-market .decoder-guide-files a { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+.plugin-market .decoder-guide-files p { color: var(--muted); font-size: 12px; margin-bottom: 0; }
+.plugin-market .decoder-guide dl { display: grid; grid-template-columns: 145px minmax(0, 1fr); gap: 12px 18px; padding: 16px; border: 1px solid var(--border-soft); }
+.plugin-market .decoder-guide dt, .plugin-market .decoder-guide code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.plugin-market .decoder-guide dd { margin: 0; }
+.plugin-market .decoder-guide details { margin: 12px 0; border: 1px solid var(--border-soft); border-radius: 4px; }
+.plugin-market .decoder-guide summary { cursor: pointer; padding: 10px 14px; font-weight: 500; }
+.plugin-market .decoder-guide pre { white-space: pre-wrap; overflow: auto; max-height: 500px; padding: 14px; margin: 0; background: var(--control-bg); }
+.plugin-market .decoder-guide li { margin: 8px 0; }
+.plugin-market .decoder-guide ul, .plugin-market .decoder-guide ol { padding-left: 22px; }
 @media (max-width: 800px) {
   .plugin-market .explorer { width: 170px; }
   .plugin-market .market-body { padding: 0 18px 24px; }
@@ -46,7 +66,11 @@
   .plugin-market { flex-direction: column; }
   .plugin-market .explorer { width: 100%; overflow: visible; border-right: 0; }
   .plugin-market .explorer-heading, .plugin-market .explorer-footer { display: none; }
-  .plugin-market .workspace-navigation { display: flex; padding: 0; }
+  .plugin-market .workspace-navigation { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0; }
+  .plugin-market .workspace-navigation > :last-child { grid-column: 1 / -1; }
   .plugin-market .market-toolbar { flex-wrap: wrap; }
   .plugin-market .market-search { min-width: 180px; }
+  .plugin-market .decoder-guide-files { grid-template-columns: 1fr; }
+  .plugin-market .decoder-guide dl { grid-template-columns: 1fr; gap: 4px; }
+  .plugin-market .decoder-guide dd { margin-bottom: 12px; }
 }

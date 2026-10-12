@@ -26,4 +26,5 @@ def read_signal_setup(service=Depends(get_signal_setup_service)):
 def preview_signal_setup(body: PreviewSignalSetupRequest, service=Depends(get_signal_setup_service)):
     return ApiResponse(data=service.preview_input(
         body.processing_input.model_dump(exclude_none=True),
-        body.metadata.model_dump(exclude_none=True) if body.metadata is not None else None))
+        expected_source_revision=body.expected_source_revision,
+        decoder_selection=body.decoder_selection.model_dump() if body.decoder_selection else None))

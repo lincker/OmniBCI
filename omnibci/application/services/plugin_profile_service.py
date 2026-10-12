@@ -15,6 +15,7 @@ from omnibci.application.plugin_profiles import (
 )
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfigurationCatalog
+from omnibci.application.processing_source import materialize_processing_binding
 from omnibci.domain.montage import ProcessingInput, SourceMetadata, merge_source_montage
 
 
@@ -83,7 +84,9 @@ class PluginProfileService:
             definition, values = self._parameters(kind, selection, parameters)
             _validate_manual_montage(kind, definition, values, manual_montage)
             if processing_input is _UNSET:
-                processing_input = ProcessingInput() if kind == "decoder" else None
+                requirements = definition.channel_requirements
+                processing_input = (ProcessingInput(outputs=requirements.default_names if requirements else ())
+                                    if kind == "decoder" else None)
             profile = PluginProfile(
                 profile_id=str(uuid4()), name=name, kind=kind, selection=selection,
                 parameters=values, configuration_version=definition.configuration_version,
@@ -278,9 +281,14 @@ class PluginProfileService:
             "actuation.effector": "ACTUATION.effector",
         }
         filters = []
+        bindings = []
         for binding in snapshot.bindings:
             _validate_source_metadata(binding)
             definition = self.catalog.get(binding.kind, binding.selection)
+            bindings.append(materialize_processing_binding(
+                binding, requires_channels=definition.channel_requirements is not None,
+                legacy_setup=result.get("SIGNAL.setup"),
+            ))
             if binding.slot in aliases:
                 result[aliases[binding.slot]] = definition.plugin_type
             if binding.kind == "acquisition":
@@ -295,7 +303,7 @@ class PluginProfileService:
             source_id = result.get("ACQUISITION.signal_source")
             if source_id is None:
                 raise PluginSchemaError("Decoder processing input requires an acquisition source")
-            result["SIGNAL.setup"] = decoder.processing_input.as_signal_setup(source_id).to_dict()
+            result.pop("SIGNAL.setup", None)
         result["CONFIG.revision"] = snapshot.revision
-        result["PLUGINS.bindings"] = [binding.to_dict() for binding in snapshot.bindings]
+        result["PLUGINS.bindings"] = bindings
         return result

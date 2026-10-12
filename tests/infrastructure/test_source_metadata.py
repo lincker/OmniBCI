@@ -183,8 +183,17 @@ async def test_failed_device_read_allows_manual_effective_metadata_without_inven
 
 
 @pytest.mark.asyncio
-async def test_prepared_start_rejects_missing_or_stale_receipt_before_starting_source():
+@pytest.mark.parametrize("modern", [False, True])
+async def test_prepared_start_rejects_missing_or_stale_receipt_before_starting_source(modern):
     worker, source, bus = _worker()
+    if modern:
+        from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
+        from omnibci.domain.montage import ProcessingInput
+        worker._metadata_settings = {key: value for key, value in SETTINGS.items() if key != "SIGNAL.setup"}
+        worker._metadata_settings["PLUGINS.bindings"] = [ProfileBinding(
+            "processing.decoder", "decoder", None, PluginSelection("test.decoder", "default", "1"),
+            {}, processing_input=ProcessingInput(),
+        ).to_dict()]
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
     receipt = {"generation": worker.generation, "config_revision": worker.config_revision,
                "connection_id": worker.connection_id, "source_fingerprint": worker._metadata.fingerprint,
@@ -195,6 +204,22 @@ async def test_prepared_start_rejects_missing_or_stale_receipt_before_starting_s
         assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
     source.start_stream.assert_not_awaited()
     worker._validate_signal_receipt(receipt)
+
+
+@pytest.mark.asyncio
+async def test_historical_decoder_projection_blocks_stream_before_preparation():
+    from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
+    from omnibci.application.processing_source import materialize_processing_binding
+    worker, source, bus = _worker()
+    binding = ProfileBinding("processing.decoder", "decoder", None,
+                             PluginSelection("test.decoder", "default", "1"), {})
+    worker._metadata_settings = {key: value for key, value in SETTINGS.items() if key != "SIGNAL.setup"}
+    worker._metadata_settings["PLUGINS.bindings"] = [materialize_processing_binding(
+        binding, requires_channels=True, legacy_setup=None)]
+    await worker.execute((AcquisitionCommand.start_stream, CommandRequest("unprepared-start")))
+    assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
+    source.start_stream.assert_not_awaited()
+    assert binding.processing_input is None
 
 
 @pytest.mark.asyncio

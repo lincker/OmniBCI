@@ -41,16 +41,24 @@ def load_configured_plugin(snapshot: dict, slot: str, kind: str, expected_base,
     if (context is not None and context.input_signal is not None
             and context.acquired_signal is not None
             and context.input_signal != context.acquired_signal
-            and descriptor.signal_input_contract != 1):
-        raise PluginLoadError(f"{slot}: plugin must declare signal_input_contract = 1 for transformed input")
+            and descriptor.signal_input_contract not in {1, 2}):
+        raise PluginLoadError(f"{slot}: plugin must declare signal_input_contract = 1 or 2 for transformed input")
     if ((descriptor.api_version == "2" or descriptor.configuration_version is not None)
             and descriptor.configuration_version != binding.configuration_version):
         raise PluginLoadError(f"{slot}: configuration schema migration required")
     parameters = deepcopy(binding.parameters)
+    context = context or plugin_context(snapshot)
+    if descriptor.channel_requirements is not None:
+        if context.input_signal is None:
+            raise PluginLoadError(f"{slot}: channel requirements need prepared input; configure the decoder profile input first")
+        try:
+            descriptor.channel_requirements.validate_channels(context.input_signal.channels)
+        except ValueError as exc:
+            raise PluginLoadError(f"{slot}: {exc}") from exc
     if descriptor.api_version == "2":
         return loader.instantiate(
             descriptor, expected_base, parameters=parameters,
-            context=context or plugin_context(snapshot),
+            context=context,
         )
     if parameters:
         raise PluginLoadError(f"{slot}: configurable plugins require constructor API 2")

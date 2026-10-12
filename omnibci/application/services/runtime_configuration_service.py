@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 from omnibci.application.plugin_profiles import ActivationSnapshot, ProfileRevisionConflict
 from omnibci.application.plugin_schema import PluginSchemaError
+from omnibci.application.processing_source import processing_input
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,10 @@ class RuntimeConfigurationService:
         settings = tuple(sorted(key for key in old_settings.keys() | snapshot.settings.keys()
                                 if old_settings.get(key) != snapshot.settings.get(key)))
         strategy = self._strategy(slots, settings, old, new)
+        if (running and strategy == "trial_boundary" and materialized
+                and processing_input(self.engine.applied_snapshot or {}) != processing_input(materialized)):
+            # Historical profiles may acquire an identity input only in their runtime projection.
+            strategy = "rebuild"
         if strategy == "no_change" and current is not None and snapshot.revision != current.revision:
             strategy = "rebuild"
         if self.executor is not None and strategy not in self.executor.supported_strategies:
@@ -121,7 +126,7 @@ class RuntimeConfigurationService:
             self.engine.generation if running else None, running, strategy,
             tuple(slots), settings,
             "continuation" if running and strategy == "rebuild" else "preserve",
-            tuple(errors), self._signal_summary(materialized.get("SIGNAL.setup")),
+            tuple(errors), self._signal_summary(materialized),
         )
         with self._lock:
             self._plans[plan.plan_id] = PlannedConfiguration(plan, snapshot, monotonic())
@@ -130,12 +135,12 @@ class RuntimeConfigurationService:
         return plan
 
     @staticmethod
-    def _signal_summary(setup):
-        if setup is None:
-            return None
-        from omnibci.domain.montage import SignalSetup
+    def _signal_summary(snapshot):
         try:
-            setup = SignalSetup.from_dict(setup).to_dict()
+            value = processing_input(snapshot)
+            if value is None:
+                return None
+            setup = value.to_dict()
         except (ValueError, TypeError):
             return "Invalid signal setup; correct the validation errors before applying"
         outputs = setup.get("outputs", [])

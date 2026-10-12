@@ -14,7 +14,7 @@ from omnibci.application.services.plugin_profile_service import PluginProfileSer
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.services.signal_setup_service import SignalSetupService
-from omnibci.bootstrap import assemble, register_engine_listeners
+from omnibci.bootstrap import _acquisition_montage_binding, assemble, register_engine_listeners
 from omnibci.domain.montage import ProcessingInput
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
@@ -33,6 +33,7 @@ class Replay(SignalSource):
     def __init__(self, *, parameters, context):
         super().__init__()
         self.size = parameters['size']
+        self.sample_rate = parameters['sample_rate']
         if self.size == 0:
             raise ValueError('candidate construction failed')
         self.path = parameters['log']
@@ -50,7 +51,10 @@ class Replay(SignalSource):
         await asyncio.sleep(.01)
         self.cursor += self.size
         return np.zeros((2,self.size))
-    async def get_metadata(self): return {}
+    async def get_metadata(self):
+        return {'sample_rate': self.sample_rate, 'output_channel_count': 2,
+                'channel_labels': ['CH1'], 'channel_types': ['eeg'], 'channel_units': ['V'],
+                'provenance': 'protocol-defined'}
     @property
     def supports_checkpoint(self): return True
     def checkpoint(self):
@@ -109,6 +113,10 @@ schema_version=1
 
 
 def wire_signal_preparation(profiles, engine, container):
+    container.acquisition_service.set_metadata_recorder(
+        lambda profile_id: _acquisition_montage_binding(engine, profiles, profile_id),
+        profiles.record_acquisition_montage,
+    )
     service = SignalSetupService(
         SimpleNamespace(read_saved=lambda: (profiles.settings_source(), "saved")), profiles, engine,
         container.acquisition_service, container.command_results, SignalLayoutProvider(),
@@ -171,8 +179,8 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         continuation = container.session_service.active_session_id
         continued = container.session_repository.find_by_id(continuation)
         assert continued.continuation_of == previous_session
-        assert continued.signal_plan['setup']['outputs'] == ['CH1']
-        assert container.session_repository.find_by_id(previous_session).signal_plan['setup']['outputs'] == []
+        assert continued.signal_plan['processing_input']['outputs'] == ['CH1']
+        assert container.session_repository.find_by_id(previous_session).signal_plan['processing_input']['outputs'] == []
         assert signal.read()['readiness']['ready'] is True
 
         # A dormant output selection still updates the pinned runtime context;

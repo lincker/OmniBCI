@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from omnibci.application.plugin_profiles import ActivationSnapshot, PluginSelection, ProfileBinding, ProfileRevisionConflict
+from omnibci.application.processing_source import processing_input
 from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, ReferenceSpec, SourceMetadata
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.services.plugin_profile_service import PluginProfileService
@@ -25,6 +26,24 @@ def service(tmp_path, monkeypatch):
 def create_source(service, name="Replay", **parameters):
     plugin = service.catalog.legacy("acquisition", "file_reader")
     return service.create("acquisition", plugin.selection, name, parameters)
+
+
+def test_decoder_defaults_initialize_once_and_never_replace_explicit_all_channels(service, monkeypatch):
+    from omnibci.domain.decoder_input import DecoderChannelRequirements
+    definition = service.catalog.legacy("decoder", "THUBCI_SSVEP_classic40CCA")
+    definition = replace(definition, channel_requirements=DecoderChannelRequirements(default_names=("O1", "Oz")))
+    monkeypatch.setattr(service.catalog, "get", lambda *args: definition)
+    initialized = service.create("decoder", definition.selection, "Defaults", {})
+    assert initialized.processing_input.outputs == ("O1", "Oz")
+    explicit = service.create("decoder", definition.selection, "All channels", {}, processing_input=ProcessingInput())
+    assert explicit.processing_input.outputs == ()
+    definition = replace(definition, channel_requirements=DecoderChannelRequirements(default_names=("O2",)))
+    retained = service.update(initialized.profile_id, name="Renamed", parameters=initialized.parameters,
+                              expected_revision=initialized.revision)
+    assert retained.processing_input.outputs == ("O1", "Oz")
+    retained_all = service.update(explicit.profile_id, name="Still all", parameters=explicit.parameters,
+                                  expected_revision=explicit.revision)
+    assert retained_all.processing_input.outputs == ()
 
 
 def _source_montage(*, missing=False):
@@ -200,31 +219,37 @@ def complete_selections(service, selections=()):
     return selections
 
 
-def test_decoder_inputs_switch_independently_and_resolve_against_current_source(service):
+@pytest.mark.parametrize("outputs", [("O2", "O1"), ({"name": "O2", "source": "CH2"}, "O1")])
+def test_decoder_inputs_switch_independently_and_resolve_against_current_source(service, outputs):
     definition = service.catalog.legacy("decoder", "THUBCI_SSVEP_classic40CCA")
-    first_input = ProcessingInput(outputs=("O2", "O1"), reference=ReferenceSpec("single", ("M1",)),
-                                  excluded_channels=("Oz",))
+    first_input = ProcessingInput.from_dict({"outputs": list(outputs),
+        "reference": {"mode": "single", "channels": ["M1"]}, "excluded_channels": ["Oz"]})
     first = service.create("decoder", definition.selection, "Visual", {}, processing_input=first_input)
+    assert service.repository.get_profile(first.profile_id).processing_input == first_input
     second = service.create("decoder", definition.selection, "Motor", {},
                              processing_input=ProcessingInput(outputs=("C3", "C4")))
     selections = complete_selections(service, [{"slot": "processing.decoder", "profile_id": first.profile_id}])
     accepted = service.accept(service.propose(selections), expected_revision=None)
-    assert service.resolve_settings()["SIGNAL.setup"] == first_input.as_signal_setup("file_reader").to_dict()
+    assert processing_input(service.resolve_settings()) == first_input
+    assert "SIGNAL.setup" not in service.resolve_settings()
 
     edited = service.update(first.profile_id, name=first.name, parameters=first.parameters,
                             expected_revision=first.revision, processing_input=ProcessingInput(outputs=("Oz",)))
-    assert service.resolve_settings()["SIGNAL.setup"]["outputs"] == ["O2", "O1"]
+    assert processing_input(service.resolve_settings()) == first_input
     other_selections = [dict(item, profile_id=second.profile_id) if item["slot"] == "processing.decoder" else item
                         for item in selections]
     second_activation = service.accept(service.propose(other_selections), expected_revision=accepted.revision)
-    assert service.resolve_settings()["SIGNAL.setup"]["outputs"] == ["C3", "C4"]
+    assert processing_input(service.resolve_settings()) == second.processing_input
+    assert "SIGNAL.setup" not in service.resolve_settings()
 
     source_definition = service.catalog.legacy("acquisition", "neuroscan_curry8_reader")
     source = service.create("acquisition", source_definition.selection, "Device", {})
     changed_source = [dict(item, profile_id=source.profile_id) if item["slot"] == "acquisition.source" else item
                       for item in selections]
     service.accept(service.propose(changed_source), expected_revision=second_activation.revision)
-    assert service.resolve_settings()["SIGNAL.setup"] == edited.processing_input.as_signal_setup("neuroscan_curry8_reader").to_dict()
+    assert processing_input(service.resolve_settings()) == edited.processing_input
+    assert service.resolve_settings()["ACQUISITION.signal_source"] == "neuroscan_curry8_reader"
+    assert "SIGNAL.setup" not in service.resolve_settings()
     fresh = PluginProfileService(TomlPluginProfileRepository(service.repository.root), service.catalog,
                                   settings_source=service.settings_source)
     assert fresh.resolve_settings() == service.resolve_settings()
@@ -254,7 +279,8 @@ def test_legacy_decoder_input_is_read_unchanged_until_explicitly_configured(serv
     assert service.resolve_settings()["SIGNAL.setup"] == legacy_setup
     selected = service.accept(service.propose(selections), expected_revision=accepted.revision)
     assert selected.settings["SIGNAL.setup"] == legacy_setup
-    assert service.resolve_settings()["SIGNAL.setup"] == ProcessingInput().as_signal_setup("file_reader").to_dict()
+    assert processing_input(service.resolve_settings()) == ProcessingInput()
+    assert "SIGNAL.setup" not in service.resolve_settings()
 
 
 def test_new_decoder_profile_has_explicit_input_and_ignores_global_legacy_setup(service):
@@ -263,7 +289,8 @@ def test_new_decoder_profile_has_explicit_input_and_ignores_global_legacy_setup(
     selected = service.accept(service.propose(selections), expected_revision=None)
     decoder = next(binding for binding in selected.bindings if binding.kind == "decoder")
     assert decoder.processing_input == ProcessingInput()
-    assert service.resolve_settings()["SIGNAL.setup"] == ProcessingInput().as_signal_setup("file_reader").to_dict()
+    assert processing_input(service.resolve_settings()) == ProcessingInput()
+    assert "SIGNAL.setup" not in service.resolve_settings()
 
 
 def test_processing_input_cannot_be_saved_to_an_acquisition_profile(service):
@@ -566,9 +593,37 @@ def test_saved_signal_setup_does_not_rewrite_legacy_activation_or_revision(servi
     candidate = service.propose(selections, include_host_settings=True, refresh_slots=[])
 
     assert "SIGNAL.setup" not in restored.settings
-    assert materialized["SIGNAL.setup"] == ProcessingInput().as_signal_setup("file_reader").to_dict()
+    assert processing_input(materialized) == ProcessingInput()
+    assert "SIGNAL.setup" not in materialized
     assert restored.revision == previous.revision == candidate.revision
     assert service.repository.get_activation() == previous
+    assert {path: path.read_bytes() for path in original_files} == original_files
+
+
+def test_historical_decoder_uses_transient_identity_without_rewriting_profiles(service, monkeypatch):
+    from omnibci.application.processing_source import requires_signal_preparation
+    from omnibci.domain.decoder_input import DecoderChannelRequirements
+    selections = complete_selections(service)
+    decoder = service.repository.get_profile(selections[1]["profile_id"])
+    legacy = service.repository.save_profile(replace(decoder, processing_input=None),
+                                              expected_revision=decoder.revision)
+    accepted = service.accept(service.propose(selections), expected_revision=None)
+    original_files = {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")}
+    get = service.catalog.get
+
+    def with_suggested_defaults(kind, selection):
+        definition = get(kind, selection)
+        return (replace(definition, channel_requirements=DecoderChannelRequirements(default_names=("Oz",)))
+                if kind == "decoder" else definition)
+
+    monkeypatch.setattr(service.catalog, "get", with_suggested_defaults)
+    runtime = service.materialize(accepted)
+    assert processing_input(runtime) == ProcessingInput()
+    assert requires_signal_preparation(runtime)
+    assert runtime["CONFIG.revision"] == accepted.revision
+    assert service.repository.get_activation() == accepted
+    assert service.repository.get_profile(legacy.profile_id) == legacy
+    assert accepted.bindings[1].processing_input is None
     assert {path: path.read_bytes() for path in original_files} == original_files
 
 

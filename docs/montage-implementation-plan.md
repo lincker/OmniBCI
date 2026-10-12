@@ -13,13 +13,18 @@ evidence remains required.
 2. In **Setup > Processing > Decoder > Channel input**, configure the selected
    decoder profile's ordered outputs, exclusions, and original, single, average,
    or bipolar software reference. Channel names resolve against the current
-   acquisition montage; source facts are read-only here.
+   selected Acquisition montage automatically; source facts are read-only here.
+   Decoder profiles store no source reference and need no rebind action. The
+   source summary identifies the selected or active Acquisition profile and
+   whether its information comes from a connection or the saved profile.
 3. Average reference uses an explicit pool. Reference-only channels need not be
    algorithm outputs. Rereferencing requires established voltage units and a
    compatible original reference; unknown facts stay unknown.
-4. Preview, save the decoder profile, then review and apply it. Switching decoder
-   profiles restores their independent input configurations. Saving alone never
-   changes accepted or running values. A changed input requires a rebuild and
+4. Preview, save the decoder profile, then review and apply it. A source change
+   invalidates an earlier preview; refresh source information and preview again.
+   Switching decoder profiles restores their independent input configurations.
+   Saving alone never changes accepted or running values. A changed input
+   requires a rebuild and
    fresh preparation; a missing channel blocks preparation before recording.
 5. Start recording. The connected source and processing worker must acknowledge
    preparation before the session is created or the source starts fetching.
@@ -102,9 +107,25 @@ electrode name. Known device/file facts cannot be edited through the profile API
 
 Decoder profiles own `processing_input`: ordered outputs, software reference,
 and excluded channels. The field is copied into the accepted decoder binding.
-The runtime projects it into `SignalSetup` using the currently selected source
-identity; the compiler and real-time transform remain shared. A generated plan
-is an immutable runtime result, not another editable configuration source.
+Processing reads that pinned input directly and binds it to `SourceMetadata`
+from the currently selected Acquisition. Managed and standalone engine nodes
+retain the same canonical binding and generate no `SIGNAL.setup` projection for
+modern input. `compile_processing_plan` and the legacy compiler share channel
+transformation logic. A generated plan is an immutable runtime result, not
+another editable configuration source.
+
+`GET /api/v1/config/signal` exposes `source_binding` with the Acquisition profile,
+selection state, and metadata origin, plus an opaque `source_revision` freshness
+token. `processing_input`, `accepted_input`, and `active_input` describe pinned
+configuration; saved profile drafts do not replace those values. The legacy
+`setup`, `accepted_setup`, and `active_setup` read views remain available for
+compatibility. `POST /api/v1/config/signal/preview` accepts the draft
+`processing_input` and optional `expected_source_revision`. Source metadata is
+resolved by the server from Acquisition; metadata overrides are rejected. The
+revision guard rejects source changes before preview, and a change during
+compilation also rejects the stale result.
+Conflicting source facts are exposed as `source_error` without hiding the selected
+profile. Preview and preparation reject that conflict.
 
 Existing profiles without the field retain legacy `SIGNAL.setup` behavior until
 explicit adoption. The retired global editor, global write API, separate signal
@@ -124,8 +145,8 @@ includes the event row.
 | `SourceMetadata` | Source identity; connection identity; sample rate; ordered signal descriptors; adapter output row count; native event description; normalized trigger index; field provenance | Acquisition observation |
 | Signal descriptor | Source row identifier/index, original label, signal type, unit and established scale; missing optional facts remain unknown | Acquisition observation plus explicit missing-field declarations |
 | `ProcessingInput` | Schema version; ordered outputs; software reference; exclusions | Decoder profile and pinned binding |
-| `SignalSetup` | Current source identity plus processing input; legacy assignments/layout/source declarations when reading old configuration | Derived runtime projection or read-only legacy compatibility |
-| `ResolvedSignalPlan` | Source description; resolved acquisition and processing layouts; input dependencies; transform; original/software references; template provenance; configuration revision and semantic fingerprint | Application preparation result |
+| `SignalSetup` | Legacy source identity, assignments, processing input, layout and source declarations | Read-only legacy configuration and API compatibility |
+| `ResolvedSignalPlan` | Source description; modern processing input or legacy setup; resolved acquisition and processing layouts; input dependencies; transform; original/software references; template provenance; configuration revision and semantic fingerprint | Application preparation result |
 | Plugin input description | Effective sample rate, ordered channels/types/units/reference and optional positions actually presented to the plugin | Derived processing context |
 
 Keep these as a small set of immutable value objects and nested records. Domain
@@ -195,10 +216,14 @@ multi-stream discovery are deferred until a concrete device requires them.
    migration, but identify whether they are declarations or observations.
 6. Add a read-only metadata endpoint under the acquisition API. A refresh that
    accesses the device is an explicit command with a bounded timeout. Invalidate
-   cached readiness on disconnect; an old response cannot describe a new
-   connection. Persist successful observations to the actual applied source's
-   profile. A saved profile changed since Apply must not receive observations
-   from the old connection. Saved montage remains available while disconnected.
+   cached metadata and readiness on disconnect; an old response cannot describe
+   a new connection. Cache observations under the owning acquisition profile,
+   exact plugin selection, parameters, and manual montage. A different profile
+   cannot inherit connected metadata from the same plugin. Persist successful
+   observations to the actual applied source's profile. A saved profile changed
+   since Apply must not receive observations from the old connection. Matching
+   saved observations and pinned manual montage
+   remain available offline as profile-origin metadata, without readiness.
 
 Relevant adapters: [Scan45](../omnibci/infrastructure/plugins/acquisition/neuroscan/scan45/scan45.py),
 [CURRY](../omnibci/infrastructure/plugins/acquisition/neuroscan/curry8/curry8.py),
@@ -221,14 +246,18 @@ unsupported fractional rate rather than rounding it.
 2. Pin input choices in the accepted decoder binding. Omitted fields in existing
    documents stay omitted, preserving old activation hashes and legacy behavior.
    New decoder profiles explicitly select all channels and original reference.
-3. Resolve channel names against the connected source at preparation. Source
-   reordering can change source indices without changing algorithm output order.
+3. Automatically bind to the current selected Acquisition without storing a
+   source reference in decoder profiles. Resolve channel names against the
+   applied connected source at preparation. Source reordering can change source
+   indices without changing algorithm output order.
    Missing channels, invalid references, or conflicting source facts block start.
-4. Preview decoder drafts without mutation. Source coordinates retain their
-   observed/manual provenance; legacy templates remain supported by the compiler.
-5. Project the pinned input consistently in managed and standalone engine nodes.
-   Review shows the derived channel plan. Input changes require a rebuild;
-   unrelated decoder parameters retain their supported trial-boundary behavior.
+4. Preview decoder drafts without mutation using Acquisition-owned metadata and
+   the source revision guard. Source coordinates retain their observed/manual
+   provenance; legacy templates remain supported by the compiler.
+5. Consume the pinned input consistently in managed and standalone engine nodes,
+   without a derived global setup. Review shows the derived channel plan. Input
+   changes require a rebuild; unrelated decoder parameters retain their supported
+   trial-boundary behavior.
 6. Preserve old global configurations as read-only compatibility data. Explicit
    adoption saves processing choices in a decoder profile; manual source fields
    must be completed in Acquisition. Remove replaced writers after validation.
@@ -248,8 +277,9 @@ CNT integration cover these boundaries.
 
 Deliver a pure compiler and executor, tested independently of devices and UI.
 
-The compiler accepts source metadata, resolved electrode bindings, and the
-processing input configuration. Ordered outputs are configured for the selected
+The modern compiler accepts Acquisition's source metadata and the pinned
+`ProcessingInput` directly. Legacy row assignments remain supported by
+`compile_signal_plan`. Ordered outputs are configured for the selected
 decoder. Changing decoder triggers revalidation. The bundled CCA/FBCCA receive
 the configured ordered subset; do not invent a mandatory anatomical channel set
 for them. Their final input validation occurs during prepared construction.
@@ -358,6 +388,9 @@ Runtime continuity rules:
 
 - Disconnect invalidates readiness. Reconnect obtains current metadata and a
   receipt for the new connection, even when channel content is unchanged.
+- A source switch invalidates connected metadata ownership and preview freshness.
+  Matching offline profile metadata remains inspectable but cannot authorize a
+  stream or reuse a receipt from the previous source.
 - Unexpected rate/order/type/unit changes invalidate the old binding. Reject
   automatic resume under the old context. Structural changes during streaming
   stop processing before a mismatching chunk is decoded. Unreported physical
@@ -395,9 +428,13 @@ Deliver the user-facing workflow after backend preparation is available.
 2. Acquisition shows source row, label, type, unit, field provenance, and optional
    position. There is no second writable source-description editor in Processing.
 3. Each decoder profile shows ordered algorithm outputs, reference mode/pool,
-   and excluded channels. Source information is read-only. Its existing profile
+   and excluded channels. Source information identifies the current Acquisition
+   binding and its connected, profile, or unavailable metadata origin. It is
+   read-only and follows Acquisition selection automatically. Its existing profile
    revision and Review/Apply workflow also govern channel input changes.
 4. Preview displays the resolved source-to-output mapping and actionable errors.
+   It uses the current source revision and clears obsolete results after a source
+   change; the browser cannot supply replacement source metadata.
    Offline editing is allowed, but it is not evidence that the connected source
    has been validated. Start remains a backend-gated action.
 5. Review includes the selected decoder input, shows semantic changes

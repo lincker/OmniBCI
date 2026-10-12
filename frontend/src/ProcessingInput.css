@@ -1,6 +1,45 @@
 .processing-input .input-source { font-size: 0.75rem; color: var(--muted); margin: 1rem 0; }
+.processing-input > .setting-description, .processing-input > .input-source, .processing-input > .processing-flow, .processing-input > .channel-binding-panels, .processing-input > .channel-requirements, .processing-input > .actions { margin-left: 1rem; margin-right: 1rem; }
 .processing-input .input-source p { margin: 0.375rem 0; }
 .processing-input .signal-pair { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 0.5rem; margin-bottom: 0.5rem; }
 .processing-input .signal-pair input { min-width: 0; width: 100%; }
 .processing-input .actions { flex-wrap: wrap; }
+.processing-input .processing-flow { display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 0; margin: 1rem; list-style: none; font-size: 0.75rem; }
+.processing-input .processing-flow li { display: flex; align-items: center; gap: 0.5rem; }
+.processing-input .processing-flow li:not(:last-child)::after { content: "→"; color: var(--muted); }
+.processing-input .processing-flow small { color: var(--muted); }
+.processing-input .channel-binding-panels { display: grid; grid-template-columns: minmax(13rem, 0.85fr) minmax(20rem, 1.4fr); gap: 1rem; margin: 1rem; }
+.processing-input .channel-panel { min-width: 0; border: 1px solid var(--border); border-radius: 0.5rem; padding: 1rem; }
+.processing-input .channel-panel-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.processing-input .channel-panel-heading h3 { font-size: 0.875rem; margin: 0; }
+.processing-input .channel-panel-heading > span, .processing-input .channel-help, .processing-input .channel-requirements { color: var(--muted); font-size: 0.75rem; line-height: 1.6; }
+.processing-input .channel-help { margin: 0.625rem 0; }
+.processing-input .channel-requirements { padding: 0.5rem 0; border-bottom: 1px solid var(--border-soft); }
+.processing-input .channel-requirements p { margin: 0.25rem 0; }
+.processing-input .source-channel-list, .processing-input .target-channel-list { list-style: none; padding: 0; margin: 0.75rem 0; max-height: 32rem; overflow-y: auto; }
+.processing-input .source-channel-list li { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.75rem; margin-bottom: 0.375rem; border: 1px solid var(--border-soft); border-radius: 0.375rem; }
+.processing-input .source-channel-list li.is-bound { background: var(--accent-soft); }
+.processing-input .source-channel-list strong { font-size: 0.8125rem; }
+.processing-input .source-channel-list span { display: block; font-size: 0.6875rem; color: var(--muted); margin-top: 0.2rem; }
+.processing-input .source-channel-list button { flex: none; font-size: 0.75rem; }
+.processing-input .channel-selection-mode { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-top: 0.75rem; font-size: 0.75rem; }
+.processing-input .channel-selection-mode button { font-size: 0.75rem; }
+.processing-input .target-channel-list li { display: flex; gap: 0.625rem; border: 1px solid var(--border-soft); border-radius: 0.375rem; padding: 0.75rem; margin-bottom: 0.5rem; }
+.processing-input .binding-row-number { flex: none; font-size: 0.75rem; color: var(--muted); padding-top: 1.5rem; }
+.processing-input .binding-row-content { min-width: 0; flex: 1; }
+.processing-input .binding-fields { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: end; gap: 0.5rem; }
+.processing-input .binding-fields label { min-width: 0; }
+.processing-input .binding-fields label > span { display: block; font-size: 0.6875rem; color: var(--muted); margin-bottom: 0.375rem; }
+.processing-input .binding-fields input, .processing-input .binding-fields select { width: 100%; font-size: 0.75rem; }
+.processing-input .binding-arrow { line-height: 2rem; color: var(--muted); }
+.processing-input .binding-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.375rem; margin-top: 0.5rem; }
+.processing-input .binding-row-actions button { padding: 0.2rem 0.5rem; min-height: 1.75rem; font-size: 0.75rem; }
+.processing-input .binding-status { flex: 1; font-size: 0.6875rem; color: var(--muted); }
+.processing-input .channel-error { font-size: 0.75rem; color: var(--err); margin: 0.5rem 0 0; }
+.processing-input .target-channel-list .is-missing { border-color: var(--err); }
+.processing-input .required-channel-slots { border: 1px dashed var(--border); border-radius: 0.375rem; padding: 0.75rem; font-size: 0.75rem; }
+.processing-input .required-channel-slots > p:first-child { margin: 0 0 0.75rem; font-weight: 600; }
+.processing-input .required-channel-slots label { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; margin: 0.5rem 0; }
+.processing-input .required-channel-slots select { max-width: 100%; font-size: 0.75rem; }
+@media (max-width: 900px) { .processing-input .channel-binding-panels { grid-template-columns: 1fr; } }
 @media (max-width: 700px) { .processing-input .signal-pair { grid-template-columns: 1fr; } }

@@ -37,6 +37,52 @@ OpenAPI. Configure these check names as required in branch protection.
 
 ## What these checks establish
 
+The two-panel Processing channel binding update on 2026-10-12 passed 372 focused
+backend tests and all 96 frontend tests. One recording integration test required
+a rerun with loopback sockets enabled after the sandbox blocked engine startup.
+Production build, generated REST type consistency, and all six architecture
+contracts passed. Browser checks against an isolated backend verified subset
+selection, explicit source-to-input aliases, ordering, mapping preview, unchanged
+Acquisition metadata, profile save/reload, dynamic all-channel selection, and
+responsive layout at 1440 by 1000 and 390 by 844. Runtime coverage confirms that
+bound signals enter Epoch and baseline buffering before ordered window filters
+and decoding. The complete backend suite was not repeated for this update.
+
+Decoder channel requirements and the offline authoring guide on 2026-10-12 were
+verified locally with Python 3.14 on macOS. The full backend run produced 2,603
+passes, one skip, and 11 failures in historical test fixtures that omitted typed
+source metadata or prepared decoder context. Those fixtures were corrected
+without weakening the live update, rollback, or plugin-construction assertions;
+all failed cases passed in focused follow-ups. The final combined configuration,
+source, runtime, and worker recheck passed 284 tests; a separate batch passed all
+39 live rebuild, rollback, and narrow-apply tests. Legacy profile compatibility
+also covers transient all-source input preparation without rewriting saved
+profiles or revisions.
+The complete backend suite was not repeated after the fixture corrections.
+
+All 90 frontend tests, TypeScript checking, production build, generated REST type
+consistency, and six architecture contracts passed. The executable Decoder starter
+passed three ZIP installation, discovery, construction, and named-channel tests.
+Browser checks at 1365 by 900 and 390 by 844 verified the guide layout, offline
+access, and downloaded manifest bytes against the source file. No desktop release
+package was rebuilt for this follow-up; physical-device and other-OS checks remain
+release validation work.
+
+The Processing source-binding refactor on 2026-10-11 was verified locally with
+Python 3.14 on macOS. The full backend run produced 2,553 passes, one skip, and
+two failures from integration assertions that still expected the retired
+modern-plan `setup` field. After updating those assertions to `processing_input`
+and wiring acquisition ownership in the rebuild test fixture, all 39 live rebuild,
+rollback, and narrow-apply tests passed. The session REST/WebSocket end-to-end
+test and real CNT mapping integration also passed separately. The complete suite
+was not repeated after these test-only corrections; production code was unchanged.
+Coverage includes same-plugin source profile switches, channel reordering,
+reconnection, stale preview rejection, pinned inputs versus saved drafts,
+inspectable source conflicts, and legacy plan serialization. All 82 frontend
+tests, TypeScript checking, production build, OpenAPI/REST consistency, and all
+six architecture contracts passed. Tests that bind loopback or Unix sockets ran
+outside the restricted execution sandbox.
+
 The acquisition-profile montage follow-up on 2026-10-10 passed focused backend
 batches of 195 configuration/API/domain checks, 125 profile/storage checks, 26
 signal/API-contract checks, 61 acquisition/bootstrap checks, and 34 processing/API

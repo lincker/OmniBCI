@@ -13,6 +13,7 @@ from omnibci.application.events import (
     CommandResult,
     StreamBarrier,
 )
+from omnibci.application.processing_source import requires_signal_preparation
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.acquisition.metadata import source_metadata
@@ -322,7 +323,7 @@ class Acquisition:
                 "DATA_SOURCE_NOT_CONNECTED",
                 "Cannot start stream before the data source is connected",
             )
-        if self._metadata_settings.get("SIGNAL.setup") is not None:
+        if requires_signal_preparation(self._metadata_settings):
             self._validate_signal_receipt(receipt)
         if self.data_source.is_streaming:
             self._emit_state()

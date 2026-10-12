@@ -9,6 +9,7 @@ from omnibci.application.activation_settings import RUNTIME_HOST_SETTING_KEYS
 from omnibci.application.plugin_profiles import ProfileBinding
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfigurationCatalog
+from omnibci.application.processing_source import materialize_processing_binding
 
 
 _ROLE_KINDS = {
@@ -187,6 +188,7 @@ def materialize_node_configuration(configuration: NodeConfiguration,
     """Validate exact local capabilities and derive their runtime aliases locally."""
     result = configuration.settings
     filters = []
+    bindings = []
     for binding in configuration.bindings:
         definition = catalog.get(binding.kind, binding.selection)
         if definition.kind != binding.kind or definition.selection != binding.selection:
@@ -200,6 +202,10 @@ def materialize_node_configuration(configuration: NodeConfiguration,
         parameters = validate_parameters(definition.schema, binding.parameters)
         if _canonical(parameters) != _canonical(binding.parameters):
             raise PluginSchemaError(f"{binding.slot}: snapshot must include resolved defaults")
+        bindings.append(materialize_processing_binding(
+            binding, requires_channels=definition.channel_requirements is not None,
+            legacy_setup=result.get("SIGNAL.setup"),
+        ))
         if binding.slot in _ALIASES:
             result[_ALIASES[binding.slot]] = definition.plugin_type
         if binding.kind == "acquisition":
@@ -219,10 +225,8 @@ def materialize_node_configuration(configuration: NodeConfiguration,
         result["ALGORITHM.filters"] = filters
         decoder = next(binding for binding in configuration.bindings if binding.kind == "decoder")
         if decoder.processing_input is not None:
-            result["SIGNAL.setup"] = decoder.processing_input.as_signal_setup(
-                result["ACQUISITION.signal_source"],
-            ).to_dict()
-    result["PLUGINS.bindings"] = [binding.to_dict() for binding in configuration.bindings]
+            result.pop("SIGNAL.setup", None)
+    result["PLUGINS.bindings"] = bindings
     result["CONFIG.revision"] = configuration.revision
     if configuration.generation is not None:
         result["CONFIG.generation"] = configuration.generation
