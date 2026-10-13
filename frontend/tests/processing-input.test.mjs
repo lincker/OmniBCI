@@ -1,4 +1,4 @@
-/** Decoder input previews and explicit imports preserve profile-owned drafts. */
+/** Decoder channel mappings preserve source descriptors and reject stale previews. */
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import React from "react";
@@ -6,29 +6,31 @@ import { createServer } from "vite";
 
 const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
 after(() => server.close());
-const { ProcessingInput, processingInputErrors } = await server.ssrLoadModule("/src/ProcessingInput.tsx");
+const { translate } = await server.ssrLoadModule("/src/i18n.tsx");
+const english = { language: "en", t: (key, params) => translate("en", key, params) };
+const { ProcessingInput, processingInputErrors, emptyProcessingInput } = await server.ssrLoadModule("/src/ProcessingInput.tsx");
 const { signalConfigApi: api } = await server.ssrLoadModule("/src/api/signal-config.ts");
 const { pluginConfigApi } = await server.ssrLoadModule("/src/api/plugin-config.ts");
 const { ApiError } = await server.ssrLoadModule("/src/api/client.ts");
 const clone = (value) => structuredClone(value);
 const source = { source_id: "file_reader", sample_rate: 500, trigger_row_index: 3, provenance: "file-reported", connection_id: "connection-1",
-  channels: ["C3", "C4", "M1"].map((name, index) => ({ index, name, signal_type: "eeg", unit: "V" })), original_reference: "Cz" };
-const setup = { schema_version: 1, source_id: source.source_id,
-  assignments: source.channels.map((channel) => ({ source_index: channel.index, expected_name: channel.name, electrode: channel.name })),
-  outputs: ["C3", "C4"], reference: { mode: "original", channels: [] }, excluded_channels: [] };
+  channels: ["C3", "C4", "M1"].map((name, index) => ({ channel_id: `sample-${index}`, index, name, signal_type: "eeg", unit: "V" })) };
+const output = (name) => ({ name, source_channel_id: source.channels.find((channel) => channel.name === name)?.channel_id ?? name });
+const mapping = (...names) => ({ schema_version: 2, outputs: names.map(output) });
 const sourceBinding = { source_id: source.source_id, profile_id: "lab-recording", profile_name: "Lab recording", profile_revision: 3,
-  state: "selected", metadata_origin: "profile" };
+  state: "active", metadata_origin: "connected" };
 const decoderSelection = { package_id: "example.motor", contribution_id: "main", version: "1.0.0" };
 const channelRequirements = { description: "Use the motor channels for this decoder.", signal_type: "eeg", min_count: 2,
   required_names: ["C3"], default_names: ["C4", "C3"] };
-const sourceConfig = (metadata = source, revision = "source-1") => ({ source_metadata: clone(metadata), source_revision: revision,
-  source_binding: { ...sourceBinding, metadata_origin: metadata ? "profile" : "unavailable" } });
+const sourceConfig = (descriptor = source, revision = "source-1") => ({ acquisition_descriptor: clone(descriptor), source_revision: revision,
+  source_binding: { ...sourceBinding, metadata_origin: descriptor ? "connected" : "unavailable" } });
 const dependenciesEqual = (a, b) => a && b && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
 
 function harness(props) {
   const hooks = [];
   let cursor = 0, dirty = true, tree, effects = [];
   const dispatcher = {
+    useContext: () => english,
     useState(initial) {
       const index = cursor++;
       hooks[index] ??= { value: typeof initial === "function" ? initial() : initial };
@@ -95,302 +97,269 @@ async function click(view, label) {
 async function change(view, label, value, type = "input") {
   input(view, label, type).props.onChange({ target: { value } }); await view.settle();
 }
-async function withInput(action, { legacy = null, value = undefined, sourceMetadata = source,
+async function withInput(action, { value = mapping("C3", "C4"), descriptor = source,
   requirements = undefined, selection = undefined } = {}) {
   const originalApi = { ...api };
   const calls = { change: [], preview: [] };
-  api.get = async () => ({ ...sourceConfig(sourceMetadata), legacy_setup: clone(legacy) });
+  api.get = async () => sourceConfig(descriptor);
   api.preview = async (processing_input, expected_source_revision, decoder_selection) => {
     calls.preview.push(clone({ processing_input, expected_source_revision, decoder_selection }));
-    return { plan: { source: clone(sourceMetadata), output_channels: [{ index: 0, name: "C4", signal_type: "eeg", unit: "V", reference: "M1" }],
-      coefficients: [[0, 1, -1]], warnings: [], fingerprint: "plan" }, source_revision: expected_source_revision,
-      warnings: ["Reference M1 is not an output channel."] };
+    const outputs = processing_input.outputs.length ? processing_input.outputs : descriptor.channels.map((channel) => ({ name: channel.name, source_channel_id: channel.channel_id }));
+    const indices = outputs.map((row) => descriptor.channels.findIndex((channel) => channel.channel_id === row.source_channel_id));
+    return { plan: { source: clone(descriptor), source_indices: indices,
+      output_channels: outputs.map((row, index) => ({ ...descriptor.channels[indices[index]], name: row.name,
+        signal_type: row.signal_type ?? descriptor.channels[indices[index]]?.signal_type })),
+      processing_input: clone(processing_input), config_revision: "accepted-1", fingerprint: "plan" },
+      source_revision: expected_source_revision, warnings: [] };
   };
-  const props = { value: value === undefined ? { schema_version: 1, outputs: ["C3", "C4"], reference: { mode: "original", channels: [] }, excluded_channels: [] } : clone(value),
-    busy: false, configurationRevision: "accepted-1", decoderSelection: selection, channelRequirements: requirements, onChange: (next) => {
-      calls.change.push(clone(next)); props.value = next; view.rerender();
-    } };
+  const props = { value: clone(value), busy: false, configurationRevision: "accepted-1", decoderSelection: selection,
+    channelRequirements: requirements, onChange: (next) => { calls.change.push(clone(next)); props.value = next; view.rerender(); } };
   const view = harness(props);
   try { await view.settle(); await action(view, calls); }
   finally { view.dispose(); Object.assign(api, originalApi); }
 }
 
-test("ordered channels and reference-only dependencies reach the preview without saving", async () => {
+test("mapping orders stable channel IDs and decoder names without altering Acquisition metadata", async () => {
+  const original = clone(source);
   await withInput(async (view, calls) => {
-    await change(view, "Reference mode", "single", "select");
-    await change(view, "Reference channels", "M1");
-    await click(view, "Remove input 1");
+    await click(view, "Move input 2 up");
+    await change(view, "Input 1 name", "MotorRight");
     await click(view, "Preview mapping");
-    assert.deepEqual(calls.preview[0].processing_input.reference, { mode: "single", channels: ["M1"] });
-    assert.deepEqual(calls.preview[0].processing_input.outputs, ["C4"]);
-    assert.equal(calls.preview[0].expected_source_revision, "source-1");
-    assert.match(text(view.tree), /Reference M1 is not an output channel/);
-    await change(view, "Input 1 source", "C3", "select");
-    await change(view, "Input 1 name", "C3");
-    assert.doesNotMatch(text(view.tree), /Reference M1 is not an output channel/);
-    assert.equal(elements(view.tree).some((element) => element.type === "button" && /Save|apply/.test(text(element))), false);
-  });
+    assert.deepEqual(calls.preview[0], { processing_input: { schema_version: 2, outputs: [
+      { source_channel_id: "sample-1", name: "MotorRight" }, output("C3"),
+    ] }, expected_source_revision: "source-1", decoder_selection: decoderSelection });
+    assert.match(text(view.tree), /C4 → MotorRight/);
+    assert.match(text(view.tree), /sample values and events preserved/);
+    assert.deepEqual(source, original);
+    assert.doesNotMatch(text(view.tree), /reference|bipolar|exclusion|template|position|electrode|import/i);
+  }, { selection: decoderSelection });
 });
 
-test("reference fields retain a typed delimiter while parsing channel names", async () => {
-  await withInput(async (view) => {
-    await change(view, "Reference mode", "average", "select");
-    await change(view, "Reference channels", "C4,");
-    assert.equal(input(view, "Reference channels").props.value, "C4,");
-    await change(view, "Reference channels", "C4, C3");
-    assert.deepEqual(view.props.value.reference.channels, ["C4", "C3"]);
-    view.props.value = { ...view.props.value, reference: { mode: "average", channels: ["M1"] } }; view.rerender(); await view.settle();
-    assert.equal(input(view, "Reference channels").props.value, "M1", "Discard restores saved values");
-  });
-});
-
-test("source facts are visible only as read-only context", async () => {
-  await withInput(async (view) => {
-    assert.match(text(view.tree), /Acquisition channels3 available/);
-    assert.match(text(view.tree), /Original reference: Cz/);
-    assert.match(text(view.tree), /managed in Acquisition/);
-    assert.match(text(view.tree), /Data source: Lab recording · file_reader · profile revision 3/);
-    assert.match(text(view.tree), /Selected for next engine start · Saved Acquisition profile information/);
-    assert.match(text(view.tree), /automatically uses the current Acquisition source/);
-    assert.equal(elements(view.tree).some((element) => element.props["aria-label"] === "Source identifier"), false);
-    assert.doesNotMatch(text(view.tree), /Electrode template|Source identifier/);
-  });
-});
-
-test("plugin requirements describe final input without replacing a saved all-source selection", async () => {
+test("unknown Curry8 channel types are declared explicitly without changing the descriptor", async () => {
+  const descriptor = { ...clone(source), source_id: "curry8", channels: source.channels.map((channel) => ({ ...channel, signal_type: "unknown" })) };
+  const original = clone(descriptor);
   await withInput(async (view, calls) => {
-    assert.match(text(view.tree), /Use the motor channels for this decoder/);
-    assert.match(text(view.tree), /Signal type: eeg · Minimum channel count: 2/);
-    assert.match(text(view.tree), /Required channels: C3/);
-    assert.match(text(view.tree), /Plugin default channels: C4, C3/);
-    assert.match(text(view.tree), /This set enters Epoch before filters and Decoder/);
-    assert.match(text(view.tree), /All follows the current Acquisition source/);
+    assert.equal(input(view, "Input 1 type", "select").props.value, "");
+    assert.equal(calls.change.length, 0, "Decoder requirements must not infer EEG declarations");
+    await change(view, "Input 1 type", "eeg", "select");
+    assert.deepEqual(view.props.value.outputs[0], { ...output("C3"), signal_type: "eeg" });
+    assert.match(text(view.tree), /Declared for this mapping/);
+    await click(view, "Preview mapping");
+    assert.equal(calls.preview[0].processing_input.outputs[0].signal_type, "eeg");
+    await change(view, "Input 1 type", "", "select");
+    assert.equal("signal_type" in view.props.value.outputs[0], false);
+    assert.deepEqual(descriptor, original);
+  }, { descriptor, requirements: channelRequirements });
+});
+
+test("reported channel types stay read-only and a conflicting declaration must be cleared explicitly", async () => {
+  await withInput(async (view, calls) => {
+    assert.equal(elements(view.tree).some((element) => element.props["aria-label"] === "Input 1 type"), false);
+    assert.match(text(view.tree), /Reported by source/);
+    assert.match(text(view.tree), /Saved ECG declaration conflicts/);
+    assert.equal(button(view, "Preview mapping").props.disabled, true);
+    assert.equal(calls.change.length, 0);
+    await click(view, "Use reported type");
+    assert.equal("signal_type" in view.props.value.outputs[0], false);
+    assert.equal(button(view, "Preview mapping").props.disabled, false);
+  }, { value: { schema_version: 2, outputs: [{ ...output("C3"), signal_type: "ecg" }] } });
+});
+
+test("duplicate display names remain distinct through channel IDs and row labels", async () => {
+  const descriptor = { ...clone(source), channels: [
+    { channel_id: "amplifier-a", index: 0, name: "EEG", signal_type: "unknown" },
+    { channel_id: "amplifier-b", index: 1, name: "EEG", signal_type: "unknown" },
+  ], trigger_row_index: 2 };
+  await withInput(async (view, calls) => {
+    const options = elements(input(view, "Input 1 source", "select")).filter((element) => element.type === "option");
+    assert.deepEqual(options.map((option) => [option.props.value, text(option)]), [["amplifier-a", "EEG (row 1)"], ["amplifier-b", "EEG (row 2)"]]);
+    await change(view, "Input 1 source", "amplifier-b", "select");
+    await click(view, "Preview mapping");
+    assert.deepEqual(calls.preview[0].processing_input.outputs, [{ source_channel_id: "amplifier-b", name: "C3" }]);
+    assert.equal(button(view, "Use plugin defaults").props.disabled, true, "Duplicate labels cannot choose a source ID implicitly");
+  }, { descriptor, value: { schema_version: 2, outputs: [{ source_channel_id: "amplifier-a", name: "C3" }] },
+    requirements: { default_names: ["EEG"] } });
+});
+
+test("plugin defaults require a connected descriptor with unique labels and never create source IDs from names", async () => {
+  assert.deepEqual(emptyProcessingInput(["C3"]), mapping());
+  await withInput(async (view, calls) => {
     assert.deepEqual(view.props.value.outputs, []);
     assert.equal(calls.change.length, 0);
-    assert.equal(elements(view.tree).some((element) => element.props["aria-label"] === "Source identifier"), false);
-    await click(view, "Preview mapping");
-    assert.deepEqual(calls.preview[0].decoder_selection, decoderSelection);
-  }, { requirements: channelRequirements, selection: decoderSelection,
-    value: { schema_version: 1, outputs: [], reference: { mode: "original", channels: [] }, excluded_channels: [] } });
-});
-
-test("plugin defaults are explicit and preserve reference and exclusions", async () => {
-  await withInput(async (view, calls) => {
-    await change(view, "Reference mode", "single", "select");
-    await change(view, "Reference channels", "M1");
-    await change(view, "Excluded channels", "C3");
     await click(view, "Use plugin defaults");
-    assert.deepEqual(view.props.value.outputs, ["C4", "C3"]);
-    assert.deepEqual(view.props.value.reference, { mode: "single", channels: ["M1"] });
-    assert.deepEqual(view.props.value.excluded_channels, ["C3"]);
-    assert.equal(calls.preview.length, 0);
-    assert.equal(input(view, "Input 1 name").props.value, "C4");
-    assert.equal(input(view, "Input 2 name").props.value, "C3");
-  }, { requirements: channelRequirements });
-});
-
-test("plugin defaults do not discard bipolar derivations", async () => {
-  const value = { schema_version: 1, outputs: [{ name: "C3-C4", positive: "C3", negative: "C4" }],
-    reference: { mode: "bipolar", channels: [] }, excluded_channels: [] };
-  await withInput(async (view, calls) => {
-    assert.equal(button(view, "Use plugin defaults").props.disabled, true);
-    assert.match(text(view.tree), /Choose a non-bipolar reference mode/);
-    assert.deepEqual(view.props.value, value);
-    assert.equal(calls.change.length, 0);
-  }, { requirements: channelRequirements, value });
-});
-
-test("plugins without a declaration do not invent requirements or named defaults", async () => {
+    assert.deepEqual(view.props.value, mapping("C4", "C3"));
+    assert.equal(view.props.value.outputs.some((row) => "signal_type" in row), false);
+    assert.match(text(view.tree), /Required channels: C3/);
+  }, { value: mapping(), requirements: channelRequirements });
   await withInput(async (view) => {
-    assert.match(text(view.tree), /This plugin has not declared channel requirements/);
-    assert.equal(elements(view.tree).some((element) => element.type === "button" && text(element) === "Use plugin defaults"), false);
-    assert.doesNotMatch(text(view.tree), /Minimum channel count/);
+    assert.equal(button(view, "Use plugin defaults").props.disabled, true);
+    assert.match(text(view.tree), /require unambiguous channel names/);
+  }, { value: mapping(), descriptor: null, requirements: channelRequirements });
+});
+
+test("profiles without a mapping create a fresh identity mapping without importing legacy settings", async () => {
+  await withInput(async (view, calls) => {
+    assert.equal(calls.change.length, 0);
+    assert.doesNotMatch(text(view.tree), /import|reference|bipolar|template|montage/i);
+    await click(view, "Create channel mapping");
+    assert.deepEqual(calls.change, [mapping()]);
+  }, { value: null, requirements: channelRequirements });
+});
+
+test("an unavailable descriptor keeps saved mappings editable and directs metadata retrieval to Acquisition", async () => {
+  await withInput(async (view) => {
+    assert.match(text(view.tree), /connect the data source and select Get Metadata/);
+    assert.equal(button(view, "Preview mapping").props.disabled, true);
+    await change(view, "Input 1 name", "Motor");
+    assert.equal(view.props.value.outputs[0].name, "Motor");
+  }, { descriptor: null });
+});
+
+test("All becomes an ordered subset and removing the last row never switches back to All", async () => {
+  await withInput(async (view, calls) => {
+    await click(view, "Use C4 only");
+    assert.deepEqual(view.props.value, mapping("C4"));
+    assert.equal(button(view, "Remove input 1").props.disabled, true);
+    await change(view, "Add source channel", "sample-0", "select");
+    await click(view, "Move input 2 up");
+    assert.deepEqual(view.props.value, mapping("C3", "C4"));
+    await click(view, "Remove input 2");
+    assert.deepEqual(view.props.value, mapping("C3"));
+    assert.equal(button(view, "Remove input 1").props.disabled, true);
+    await click(view, "Use all channels");
+    await click(view, "Preview mapping");
+    assert.deepEqual(calls.preview.at(-1).processing_input, mapping());
+  }, { value: mapping() });
+});
+
+test("declaring a type in All materializes channel IDs without silently declaring other channels", async () => {
+  const descriptor = { ...clone(source), channels: source.channels.map((channel) => ({ ...channel, signal_type: "unknown" })) };
+  await withInput(async (view) => {
+    await change(view, "Input 2 type", "eog", "select");
+    assert.deepEqual(view.props.value.outputs, [output("C3"), { ...output("C4"), signal_type: "eog" }, output("M1")]);
+  }, { value: mapping(), descriptor });
+});
+
+test("duplicate decoder names, source IDs, missing IDs and invalid types prevent a valid mapping", async () => {
+  await withInput(async (view) => {
+    const usedOption = elements(input(view, "Input 2 source", "select")).find((element) => element.type === "option" && element.props.value === "sample-0");
+    assert.equal(usedOption.props.disabled, true);
+    await change(view, "Input 2 name", "C3");
+    assert.match(text(view.tree), /Algorithm channel names must be unique/);
+    assert.equal(button(view, "Preview mapping").props.disabled, true);
+    await change(view, "Input 2 name", "");
+    assert.match(text(view.tree), /Input channel names cannot be empty/);
+  });
+  assert.deepEqual(processingInputErrors({ schema_version: 2, outputs: [output("C3"), { ...output("C3"), name: "Motor" }] }), ["Each Acquisition channel can be bound only once."]);
+  assert.deepEqual(processingInputErrors({ schema_version: 2, outputs: [{ source_channel_id: "", name: "C3" }] }), ["Each input needs an Acquisition channel ID."]);
+  assert.deepEqual(processingInputErrors({ schema_version: 2, outputs: [{ ...output("C3"), signal_type: "trigger" }] }), ["Declare a channel type from EEG, EOG, ECG, EMG, or MISC."]);
+});
+
+test("repairing a missing channel ID retains the decoder name and clears the previous source type declaration", async () => {
+  await withInput(async (view, calls) => {
+    assert.match(text(view.tree), /Channel old-id is unavailable/);
+    assert.equal(button(view, "Preview mapping").props.disabled, true);
+    await change(view, "Input 1 source", "sample-1", "select");
+    assert.deepEqual(view.props.value.outputs, [{ source_channel_id: "sample-1", name: "Oz" }]);
+    await click(view, "Preview mapping");
+    assert.equal(calls.preview[0].processing_input.outputs[0].name, "Oz");
+  }, { value: { schema_version: 2, outputs: [{ source_channel_id: "old-id", name: "Oz", signal_type: "eog" }] } });
+});
+
+test("preview failures retain mapping and report the error", async () => {
+  await withInput(async (view) => {
+    api.preview = async () => { throw new ApiError(400, "INVALID_MAPPING", "Decoder requires two EEG channels."); };
+    await click(view, "Preview mapping");
+    assert.match(text(view.tree), /Decoder requires two EEG channels/);
+    assert.deepEqual(view.props.value, mapping("C3", "C4"));
   });
 });
 
-test("changing the edited decoder or its requirements rejects stale previews and preserves the draft", async () => {
-  await withInput(async (view, calls) => {
-    await click(view, "Preview mapping");
-    assert.deepEqual(calls.preview[0].decoder_selection, decoderSelection);
-    const savedPreview = api.preview;
-    let resolvePreview;
-    api.preview = () => new Promise((resolve) => { resolvePreview = resolve; });
+test("changing the edited decoder requirements invalidates a late preview without changing the draft", async () => {
+  await withInput(async (view) => {
+    let finish;
+    api.preview = () => new Promise((resolve) => { finish = resolve; });
     await click(view, "Preview mapping");
     view.props.decoderSelection = { ...decoderSelection, version: "2.0.0" };
-    view.rerender(); await view.settle();
-    resolvePreview({ source_revision: "source-1", plan: { source, output_channels: source.channels,
-      coefficients: [], fingerprint: "stale-decoder", warnings: [] }, warnings: [] });
+    view.props.channelRequirements = { min_count: 3 }; view.rerender(); await view.settle();
+    finish({ source_revision: "source-1", plan: { source, source_indices: [0], output_channels: [source.channels[0]] }, warnings: [] });
     await view.settle();
-    assert.doesNotMatch(text(view.tree), /trigger preserved/);
-    assert.deepEqual(view.props.value.outputs, ["C3", "C4"]);
-    api.preview = savedPreview;
-    await click(view, "Preview mapping");
-    assert.equal(calls.preview.at(-1).decoder_selection.version, "2.0.0");
-    assert.match(text(view.tree), /trigger preserved/);
-    view.props.channelRequirements = { ...channelRequirements, min_count: 3 };
-    view.rerender(); await view.settle();
-    assert.doesNotMatch(text(view.tree), /trigger preserved/);
+    assert.doesNotMatch(text(view.tree), /sample values and events preserved/);
     assert.match(text(view.tree), /Minimum channel count: 3/);
-  }, { requirements: channelRequirements, selection: decoderSelection });
+    assert.deepEqual(view.props.value, mapping("C3", "C4"));
+  }, { selection: decoderSelection, requirements: channelRequirements });
 });
 
-test("offline input remains editable and directs source declarations to Acquisition", async () => {
-  await withInput(async (view) => {
-    assert.match(text(view.tree), /Source information is unavailable/);
-    assert.match(text(view.tree), /Offline preview does not validate a connected device/);
-    assert.equal(button(view, "Preview mapping").props.disabled, true);
-    await click(view, "Remove input 1");
-    assert.deepEqual(view.props.value.outputs, ["C4"]);
-  }, { sourceMetadata: null });
-});
-
-test("a source montage conflict keeps its Acquisition context visible and explains why preview is unavailable", async () => {
-  await withInput(async (view) => {
-    api.get = async () => ({ ...sourceConfig(null, "source-conflict"),
-      source_error: "Manual montage conflicts with the source channel unit for C3." });
-    await click(view, "Refresh source");
-    assert.match(text(view.tree), /Data source: Lab recording · file_reader · profile revision 3/);
-    const alert = elements(view.tree).find((element) => element.props.role === "alert");
-    assert.equal(text(alert), "Manual montage conflicts with the source channel unit for C3.");
-    assert.doesNotMatch(text(view.tree), /Read the source or fill its missing montage information/);
-    assert.equal(button(view, "Preview mapping").props.disabled, true);
-    await click(view, "Remove input 1");
-    assert.deepEqual(view.props.value.outputs, ["C4"]);
-  });
-});
-
-test("legacy input is adopted explicitly and source declarations are not copied", async () => {
-  await withInput(async (view, calls) => {
-    assert.equal(calls.change.length, 0);
-    assert.match(text(view.tree), /Move that information to the Acquisition profile/);
-    assert.equal(elements(view.tree).some((element) => element.type === "input"), false);
-    await click(view, "Import previous channel selection");
-    assert.deepEqual(calls.change[0], { schema_version: 1, outputs: ["C3", "C4"], reference: { mode: "original", channels: [] }, excluded_channels: [] });
-    assert.match(text(view.tree), /Move that information to the Acquisition profile/, "The warning remains visible while saving the imported draft");
-    assert.equal("assignments" in view.props.value, false);
-    assert.equal("source_id" in view.props.value, false);
-  }, { value: null, legacy: setup });
-});
-
-test("bipolar pairs preserve their positive and negative inputs", async () => {
-  await withInput(async (view) => {
-    await change(view, "Reference mode", "bipolar", "select");
-    await click(view, "Add bipolar pair");
-    assert.equal(button(view, "Preview mapping").props.disabled, true);
-    await change(view, "Pair 1 name", "C3-C4");
-    await change(view, "Pair 1 positive", "C3");
-    await change(view, "Pair 1 negative", "C4");
-    assert.deepEqual(view.props.value.outputs, [{ name: "C3-C4", positive: "C3", negative: "C4" }]);
-    assert.deepEqual(processingInputErrors(view.props.value), []);
-  });
-});
-
-test("preview failures preserve bindings and show the missing source channel", async () => {
-  await withInput(async (view) => {
-    assert.match(text(view.tree), /Source P3 is unavailable/);
-    api.preview = async () => { throw new ApiError(400, "INVALID_MAPPING", "Channel P3 is unavailable in the source montage."); };
-    await click(view, "Preview mapping");
-    assert.match(text(view.tree), /Channel P3 is unavailable/);
-    assert.equal(input(view, "Input 1 source", "select").props.value, "P3");
-  }, { value: { schema_version: 1, outputs: ["P3"], reference: { mode: "original", channels: [] }, excluded_channels: [] } });
-});
-
-test("changing the acquisition selection invalidates a previous preview without changing the decoder draft", async () => {
-  await withInput(async (view) => {
-    await click(view, "Preview mapping");
-    assert.match(text(view.tree), /trigger preserved/);
-    api.get = async () => sourceConfig({ ...source, channels: [{ index: 0, name: "P3", signal_type: "eeg" }] }, "source-2");
-    view.props.configurationRevision = "accepted-2"; view.rerender(); await view.settle();
-    assert.doesNotMatch(text(view.tree), /trigger preserved/);
-    assert.match(text(view.tree), /Acquisition channels1 available/);
-    assert.match(text(view.tree), /Source C3 is unavailable/);
-    assert.deepEqual(view.props.value.outputs, ["C3", "C4"]);
-  });
-});
-
-test("profile API stores decoder input with revision checks and preview has no global save endpoint", async () => {
+test("profile and preview APIs serialize only channel mappings and type declarations", async () => {
   const originalFetch = globalThis.fetch;
   const requests = [];
   globalThis.fetch = async (url, options) => {
     requests.push({ url, method: options.method, body: JSON.parse(options.body) });
     return new Response(JSON.stringify({ data: {} }), { status: 200, headers: { "Content-Type": "application/json" } });
   };
-  const processing_input = { schema_version: 1, outputs: ["C4", "C3"], reference: { mode: "single", channels: ["M1"] }, excluded_channels: [] };
-  const selection = { package_id: "example.decoder", contribution_id: "main", version: "1.0.0" };
+  const processing_input = { schema_version: 2, outputs: [{ ...output("C4"), signal_type: "eeg" }] };
   try {
-    await pluginConfigApi.create("decoder", selection, "Motor", {}, undefined, processing_input);
-    await pluginConfigApi.update({ profile_id: "motor", revision: 3 }, "Motor", {}, undefined, processing_input);
-    await api.preview(processing_input, "source-1", selection);
+    await pluginConfigApi.create("decoder", decoderSelection, "Motor", {}, processing_input);
+    await pluginConfigApi.update({ profile_id: "motor", revision: 3 }, "Motor", {}, processing_input);
+    await api.preview(processing_input, "source-1", decoderSelection);
     assert.deepEqual(requests[0].body.processing_input, processing_input);
-    assert.equal(requests[1].body.expected_revision, 3);
-    assert.deepEqual(requests[1].body.processing_input, processing_input);
-    assert.equal(requests[2].url, "/api/v1/config/signal/preview");
-    assert.deepEqual(requests[2].body, { processing_input, expected_source_revision: "source-1", decoder_selection: selection });
+    assert.deepEqual(requests[1].body, { name: "Motor", parameters: {}, expected_revision: 3, processing_input });
+    assert.deepEqual(requests[2].body, { processing_input, expected_source_revision: "source-1", decoder_selection: decoderSelection });
     assert.equal(api.save, undefined);
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test("preview refreshes changed Acquisition context and requires review before resolving the unchanged draft", async () => {
+const previewShown = (view) => /sample values and events preserved/.test(text(view.tree));
+test("a changed Acquisition descriptor must be reviewed before previewing the unchanged mapping", async () => {
   await withInput(async (view, calls) => {
-    assert.match(text(view.tree), /Acquisition channels3 available/);
-    const refreshed = { ...clone(source), connection_id: "connection-2", original_reference: "M2",
-      channels: ["P3", "P4", "M1"].map((name, index) => ({ index, name, signal_type: "eeg", unit: "V" })) };
-    api.get = async () => sourceConfig(refreshed, "source-2");
+    const next = { ...clone(source), sample_rate: 1000, connection_id: "connection-2" };
+    api.get = async () => sourceConfig(next, "source-2");
     await click(view, "Preview mapping");
-    assert.equal(calls.preview.length, 0, "A changed source needs an explicit preview against its displayed context");
-    assert.match(text(view.tree), /Acquisition channels3 available/);
-    assert.match(text(view.tree), /Original reference: M2/);
+    assert.equal(calls.preview.length, 0);
+    assert.match(text(view.tree), /1000 Hz/);
     assert.match(text(view.tree), /source information changed/);
-    assert.doesNotMatch(text(view.tree), /trigger preserved/);
+    assert.equal(previewShown(view), false);
     await click(view, "Preview mapping");
     assert.equal(calls.preview[0].expected_source_revision, "source-2");
-    assert.match(text(view.tree), /trigger preserved/);
-    await click(view, "Use P4 only");
-    assert.match(text(view.tree), /Acquisition channels3 available/, "The current source remains visible after editing the input");
-  }, { value: { schema_version: 1, outputs: [], reference: { mode: "original", channels: [] }, excluded_channels: [] } });
-});
-
-test("refreshing a reconnected source invalidates the preview without changing the decoder draft", async () => {
-  await withInput(async (view) => {
-    await click(view, "Preview mapping");
-    const draft = clone(view.props.value);
-    api.get = async () => ({ ...sourceConfig({ ...source, connection_id: "connection-2" }, "source-2"),
-      source_binding: { ...sourceBinding, state: "active", metadata_origin: "connected" } });
-    await click(view, "Refresh source");
-    assert.match(text(view.tree), /Applied Acquisition source · Connected source information/);
-    assert.doesNotMatch(text(view.tree), /trigger preserved/);
-    assert.deepEqual(view.props.value, draft);
+    assert.equal(previewShown(view), true);
   });
 });
 
-test("a source refresh rejects a late preview from the previous connection", async () => {
+test("refreshing a reconnected source invalidates preview and retains decoder mappings", async () => {
   await withInput(async (view) => {
-    let resolvePreview;
-    api.preview = () => new Promise((resolve) => { resolvePreview = resolve; });
     await click(view, "Preview mapping");
-    assert.equal(typeof resolvePreview, "function");
     api.get = async () => sourceConfig({ ...source, connection_id: "connection-2" }, "source-2");
     await click(view, "Refresh source");
-    resolvePreview({ source_revision: "source-1", plan: { source, output_channels: source.channels, coefficients: [], fingerprint: "stale", warnings: [] }, warnings: [] });
-    await view.settle();
-    assert.doesNotMatch(text(view.tree), /trigger preserved/);
-    assert.match(text(view.tree), /source information changed/);
-    assert.deepEqual(view.props.value.outputs, ["C3", "C4"]);
+    assert.equal(previewShown(view), false);
+    assert.deepEqual(view.props.value, mapping("C3", "C4"));
   });
 });
 
-test("a preview response cannot replace the displayed Acquisition context", async () => {
+test("a late preview from a previous connection is discarded", async () => {
   await withInput(async (view) => {
-    api.preview = async () => ({ source_revision: "source-2", plan: { source: { ...source, original_reference: "Pz" },
-      output_channels: source.channels, coefficients: [], fingerprint: "other-source", warnings: [] }, warnings: [] });
+    let finish;
+    api.preview = () => new Promise((resolve) => { finish = resolve; });
     await click(view, "Preview mapping");
-    assert.match(text(view.tree), /Original reference: Cz/);
-    assert.doesNotMatch(text(view.tree), /trigger preserved/);
+    api.get = async () => sourceConfig({ ...source, connection_id: "connection-2" }, "source-2");
+    await click(view, "Refresh source");
+    finish({ source_revision: "source-1", plan: { source, source_indices: [0], output_channels: [source.channels[0]] }, warnings: [] });
+    await view.settle();
+    assert.equal(previewShown(view), false);
     assert.match(text(view.tree), /source information changed/);
   });
 });
 
-test("returning to the window refreshes Acquisition context and removes its listener on unmount", async () => {
+test("a preview response cannot replace the displayed Acquisition descriptor", async () => {
+  await withInput(async (view) => {
+    api.preview = async () => ({ source_revision: "source-2", plan: { source: { ...source, sample_rate: 1000 }, source_indices: [], output_channels: [] }, warnings: [] });
+    await click(view, "Preview mapping");
+    assert.match(text(view.tree), /500 Hz/);
+    assert.doesNotMatch(text(view.tree), /1000 Hz/);
+    assert.equal(previewShown(view), false);
+  });
+});
+
+test("returning to the window refreshes the descriptor and removes its listener on unmount", async () => {
   const previousWindow = globalThis.window;
   const windowEvents = new EventTarget();
   globalThis.window = windowEvents;
@@ -399,132 +368,60 @@ test("returning to the window refreshes Acquisition context and removes its list
     await withInput(async (view) => {
       await click(view, "Preview mapping");
       api.get = async () => { reads += 1; return sourceConfig({ ...source, connection_id: "connection-2" }, "source-2"); };
-      windowEvents.dispatchEvent(new Event("focus"));
-      await view.settle();
+      windowEvents.dispatchEvent(new Event("focus")); await view.settle();
       assert.equal(reads, 1);
-      assert.doesNotMatch(text(view.tree), /trigger preserved/);
-      assert.match(text(view.tree), /source information changed/);
-      assert.deepEqual(view.props.value.outputs, ["C3", "C4"]);
+      assert.equal(previewShown(view), false);
+      assert.deepEqual(view.props.value, mapping("C3", "C4"));
     });
     windowEvents.dispatchEvent(new Event("focus"));
-    assert.equal(reads, 1, "Unmount removes the focus listener");
+    assert.equal(reads, 1);
   } finally {
     if (previousWindow === undefined) delete globalThis.window;
     else globalThis.window = previousWindow;
   }
 });
 
-test("an older source request cannot overwrite a newer configuration or restore its preview", async () => {
+test("an older descriptor request cannot overwrite a newer runtime configuration", async () => {
   await withInput(async (view) => {
     await click(view, "Preview mapping");
-    let resolveSource;
-    api.get = () => new Promise((resolve) => { resolveSource = resolve; });
+    let finish;
+    api.get = () => new Promise((resolve) => { finish = resolve; });
     await click(view, "Refresh source");
-    api.get = async () => sourceConfig({ ...source, original_reference: "Pz" }, "source-2");
+    api.get = async () => sourceConfig({ ...source, sample_rate: 1000 }, "source-2");
     view.props.configurationRevision = "accepted-2"; view.rerender(); await view.settle();
-    resolveSource(sourceConfig()); await view.settle();
-    assert.match(text(view.tree), /Original reference: Pz/);
-    assert.doesNotMatch(text(view.tree), /trigger preserved/);
+    finish(sourceConfig()); await view.settle();
+    assert.match(text(view.tree), /1000 Hz/);
+    assert.equal(previewShown(view), false);
     assert.equal(button(view, "Preview mapping").props.disabled, false);
   });
 });
 
-test("All can become an ordered subset and removing the last input never means All", async () => {
+test("All follows new descriptor channels while an explicit subset remains unchanged", async () => {
   await withInput(async (view, calls) => {
-    assert.deepEqual(view.props.value.outputs, []);
-    await click(view, "Use C4 only");
-    assert.deepEqual(view.props.value.outputs, ["C4"]);
-    assert.equal(button(view, "Remove input 1").props.disabled, true);
-    await click(view, "Add C3");
-    assert.deepEqual(view.props.value.outputs, ["C4", "C3"]);
-    await click(view, "Move input 2 up");
-    assert.deepEqual(view.props.value.outputs, ["C3", "C4"]);
-    await click(view, "Remove input 2");
-    assert.deepEqual(view.props.value.outputs, ["C3"]);
-    assert.equal(button(view, "Remove input 1").props.disabled, true);
-    assert.match(text(view.tree), /Keep at least one selected input/);
-    await click(view, "Use all channels");
-    assert.deepEqual(view.props.value.outputs, []);
-    await click(view, "Preview mapping");
-    assert.deepEqual(calls.preview.at(-1).processing_input.outputs, []);
-  }, { value: { schema_version: 1, outputs: [], reference: { mode: "original", channels: [] }, excluded_channels: [] } });
-});
-
-test("required slots bind an Acquisition source under an explicit algorithm name before Epoch", async () => {
-  await withInput(async (view, calls) => {
-    assert.match(text(view.tree), /Required channels to bind/);
-    await change(view, "Bind required Oz", "C4", "select");
-    assert.deepEqual(view.props.value.outputs, ["C3", { name: "Oz", source: "C4" }]);
-    assert.equal(elements(view.tree).some((element) => element.props["aria-label"] === "Bind required Oz"), false);
-    const left = elements(view.tree).find((element) => element.props["aria-label"] === "Available Acquisition channels");
-    assert.match(text(left), /C4Row 2 · eeg · V→ Oz/);
-    const flow = elements(view.tree).find((element) => element.props["aria-label"] === "Processing data flow");
-    assert.equal(text(flow), "AcquisitionChannel bindingEpochFilters (optional)Decoder");
-    assert.match(text(view.tree), /Epoch timing and baseline settings remain/);
-    await click(view, "Preview mapping");
-    assert.deepEqual(calls.preview.at(-1).processing_input.outputs, ["C3", { name: "Oz", source: "C4" }]);
-    assert.deepEqual(source.channels.map((channel) => channel.name), ["C3", "C4", "M1"]);
-  }, { requirements: { ...channelRequirements, required_names: ["C3", "Oz"], default_names: [] },
-    value: { schema_version: 1, outputs: ["C3"], reference: { mode: "original", channels: [] }, excluded_channels: [] } });
-});
-
-test("binding an already selected source to a required slot replaces its name once", async () => {
-  await withInput(async (view) => {
-    await change(view, "Bind required Oz", "C4", "select");
-    assert.deepEqual(view.props.value.outputs, ["C3", { name: "Oz", source: "C4" }, "M1"]);
-    assert.equal(input(view, "Input 2 source", "select").props.value, "C4");
-    assert.equal(input(view, "Input 2 name").props.value, "Oz");
-    await change(view, "Input 2 name", "C4");
-    assert.deepEqual(view.props.value.outputs, ["C3", "C4", "M1"]);
-    assert.deepEqual(processingInputErrors(view.props.value), []);
-  }, { requirements: { ...channelRequirements, required_names: ["Oz"], default_names: [] },
-    value: { schema_version: 1, outputs: [], reference: { mode: "original", channels: [] }, excluded_channels: [] } });
-});
-
-test("duplicate names and sources cannot produce a valid binding preview", async () => {
-  await withInput(async (view) => {
-    const secondSource = input(view, "Input 2 source", "select");
-    const usedOption = elements(secondSource).find((element) => element.type === "option" && element.props.value === "C3");
-    assert.equal(usedOption.props.disabled, true);
-    assert.equal(button(view, "Add C3").props.disabled, true);
-    await change(view, "Input 2 name", "C3");
-    assert.match(text(view.tree), /Algorithm channel names must be unique/);
-    assert.equal(button(view, "Preview mapping").props.disabled, true);
-    await change(view, "Input 2 name", "");
-    assert.match(text(view.tree), /Input channel names cannot be empty/);
-    assert.equal(button(view, "Preview mapping").props.disabled, true);
-    const duplicateSources = { ...view.props.value, outputs: ["C3", { name: "Oz", source: "C3" }] };
-    assert.deepEqual(processingInputErrors(duplicateSources), ["Each Acquisition channel can be bound only once."]);
-  });
-});
-
-test("a missing aliased source can be repaired without renaming its algorithm input", async () => {
-  const value = { schema_version: 1, outputs: [{ name: "Oz", source: "Old7" }],
-    reference: { mode: "single", channels: ["M1"] }, excluded_channels: [] };
-  await withInput(async (view, calls) => {
-    assert.match(text(view.tree), /Source Old7 is unavailable/);
-    assert.equal(calls.change.length, 0);
-    await change(view, "Input 1 source", "C4", "select");
-    assert.deepEqual(view.props.value.outputs, [{ name: "Oz", source: "C4" }]);
-    assert.deepEqual(view.props.value.reference, value.reference);
-    assert.doesNotMatch(text(view.tree), /Source Old7 is unavailable/);
-    await click(view, "Preview mapping");
-    assert.deepEqual(calls.preview.at(-1).processing_input.outputs, [{ name: "Oz", source: "C4" }]);
-  }, { value });
-});
-
-test("All follows refreshed source channels while an explicit subset remains unchanged", async () => {
-  await withInput(async (view, calls) => {
-    const refreshed = { ...clone(source), channels: [...source.channels, { index: 3, name: "Oz", signal_type: "eeg", unit: "V" }], trigger_row_index: 4 };
-    api.get = async () => sourceConfig(refreshed, "source-2");
+    const next = { ...clone(source), channels: [...source.channels, { channel_id: "sample-3", index: 3, name: "Oz", signal_type: "eeg" }], trigger_row_index: 4 };
+    api.get = async () => sourceConfig(next, "source-2");
     await click(view, "Refresh source");
     assert.equal(input(view, "Input 4 name").props.value, "Oz");
-    assert.deepEqual(view.props.value.outputs, []);
+    assert.deepEqual(view.props.value, mapping());
     assert.equal(calls.change.length, 0);
     await click(view, "Use Oz only");
     api.get = async () => sourceConfig(source, "source-3");
     await click(view, "Refresh source");
-    assert.deepEqual(view.props.value.outputs, ["Oz"]);
-    assert.match(text(view.tree), /Source Oz is unavailable/);
-  }, { value: { schema_version: 1, outputs: [], reference: { mode: "original", channels: [] }, excluded_channels: [] } });
+    assert.deepEqual(view.props.value.outputs, [{ source_channel_id: "sample-3", name: "Oz" }]);
+    assert.match(text(view.tree), /Channel sample-3 is unavailable/);
+  }, { value: mapping() });
+});
+
+test("changing a source display name preserves mappings to its stable channel ID", async () => {
+  await withInput(async (view, calls) => {
+    const next = clone(source); next.channels[0].name = "Renamed electrode";
+    api.get = async () => sourceConfig(next, "source-2");
+    await click(view, "Refresh source");
+    assert.equal(input(view, "Input 1 source", "select").props.value, "sample-0");
+    assert.equal(input(view, "Input 1 name").props.value, "C3");
+    assert.deepEqual(view.props.value, mapping("C3", "C4"));
+    assert.equal(calls.change.length, 0);
+    assert.equal(button(view, "Preview mapping").props.disabled, false);
+    assert.doesNotMatch(text(view.tree), /Channel sample-0 is unavailable/);
+  });
 });

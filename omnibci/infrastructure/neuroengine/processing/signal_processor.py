@@ -333,7 +333,7 @@ class SignalProcessor:
     # ------------------------------------------------------------------
 
     def _prepare_signal(self, request):
-        from omnibci.domain.montage import ResolvedSignalPlan
+        from omnibci.domain.channel_mapping import ResolvedSignalPlan
         from .signal_configuration import load_signal_pipeline
         try:
             payload = request.payload
@@ -348,8 +348,7 @@ class SignalProcessor:
                     or receipt["config_revision"] != self.config_revision
                     or receipt["connection_id"] != plan.source.connection_id
                     or not receipt["connection_id"]
-                    or (plan.processing_input is not None
-                        and receipt["source_fingerprint"] != plan.source.fingerprint)
+                    or receipt["source_fingerprint"] != plan.source.fingerprint
                     or receipt["plan_fingerprint"] != plan.fingerprint
                     or plan.config_revision != self.config_revision):
                 raise ValueError("Signal preparation belongs to a different runtime or connection")

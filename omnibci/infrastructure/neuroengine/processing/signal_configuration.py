@@ -8,11 +8,9 @@ from omnibci.sdk import PluginContext
 
 def signal_context(snapshot, plan):
     source = plan.source
-    references = {channel.reference for channel in plan.output_channels}
     output = source if plan.is_identity else replace(
         source, channels=plan.output_channels,
         trigger_row_index=len(plan.output_channels),
-        original_reference=next(iter(references)) if len(references) == 1 else None,
     )
     return PluginContext(
         sample_rate=source.sample_rate,

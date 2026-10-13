@@ -7,7 +7,7 @@ import pytest
 
 from omnibci.application.plugin_profiles import ActivationSnapshot, PluginSelection, ProfileBinding, ProfileRevisionConflict
 from omnibci.application.processing_source import processing_input
-from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, ReferenceSpec, SourceMetadata
+from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
@@ -34,165 +34,77 @@ def test_decoder_defaults_initialize_once_and_never_replace_explicit_all_channel
     definition = replace(definition, channel_requirements=DecoderChannelRequirements(default_names=("O1", "Oz")))
     monkeypatch.setattr(service.catalog, "get", lambda *args: definition)
     initialized = service.create("decoder", definition.selection, "Defaults", {})
-    assert initialized.processing_input.outputs == ("O1", "Oz")
+    assert initialized.processing_input.outputs == ()
     explicit = service.create("decoder", definition.selection, "All channels", {}, processing_input=ProcessingInput())
     assert explicit.processing_input.outputs == ()
     definition = replace(definition, channel_requirements=DecoderChannelRequirements(default_names=("O2",)))
     retained = service.update(initialized.profile_id, name="Renamed", parameters=initialized.parameters,
                               expected_revision=initialized.revision)
-    assert retained.processing_input.outputs == ("O1", "Oz")
+    assert retained.processing_input.outputs == ()
     retained_all = service.update(explicit.profile_id, name="Still all", parameters=explicit.parameters,
                                   expected_revision=explicit.revision)
     assert retained_all.processing_input.outputs == ()
 
 
-def _source_montage(*, missing=False):
-    return SourceMetadata("file_reader", 250, tuple(
-        ChannelDescriptor(index, f"CH{index + 1}" if missing else name,
-                          signal_type="unknown" if missing else "eeg",
-                          unit=None if missing else "V", name_provenance="generated" if missing else None)
-        for index, name in enumerate(("O1", "O2"))
-    ), 2, connection_id="connection-one", provenance="file-reported")
+def _source_montage():
+    return {"source_id": "file_reader", "sample_rate": 250, "trigger_row_index": 2,
+            "channels": [{"index": index, "name": name, "unit": "V"}
+                         for index, name in enumerate(("O1", "O2"))]}
 
 
-def _source_binding(profile):
-    return ProfileBinding("acquisition.source", "acquisition", profile.profile_id,
-                          profile.selection, profile.parameters, profile.configuration_version,
-                          profile.revision, manual_montage=profile.manual_montage)
+@pytest.mark.parametrize("field", ["manual_montage", "acquisition_montage"])
+def test_profile_writes_cannot_accept_source_metadata(service, field):
+    definition = service.catalog.legacy("acquisition", "file_reader")
+    with pytest.raises(TypeError, match=field):
+        service.create("acquisition", definition.selection, "Source", {}, **{field: _source_montage()})
+    profile = create_source(service)
+    with pytest.raises(TypeError, match=field):
+        service.update(profile.profile_id, name=profile.name, parameters=profile.parameters,
+                       expected_revision=profile.revision, **{field: _source_montage()})
+    assert service.repository.get_profile(profile.profile_id) == profile
 
 
-def test_observed_montage_cache_is_idempotent_and_does_not_apply_configuration(service, monkeypatch):
+def test_saved_legacy_montage_is_ignored_by_selection_and_cleared_on_profile_edit(service):
     profile = create_source(service, sample_rate=250, channel_number=3)
+    legacy = service.repository.save_profile(
+        replace(profile, legacy={"manual_montage": _source_montage(), "acquisition_montage": _source_montage()}),
+        expected_revision=profile.revision,
+    )
     selections = complete_selections(service, [{"slot": "acquisition.source", "profile_id": profile.profile_id}])
     accepted = service.accept(service.propose(selections), expected_revision=None)
-    activation_bytes = (service.repository.root / "activation.toml").read_bytes()
-    binding = _source_binding(profile)
-    monkeypatch.setattr(service, "change_guard", lambda *_: pytest.fail("Acquisition reads must not take the engine change guard"))
-
-    cached = service.record_acquisition_montage(binding, _source_montage())
-    assert cached.revision == profile.revision + 1
-    assert cached.acquisition_montage.connection_id == ""
-    repeated = service.record_acquisition_montage(binding, replace(_source_montage(), connection_id="reconnected"))
-    assert repeated == cached
-    assert service.repository.get_activation() == accepted
-    assert (service.repository.root / "activation.toml").read_bytes() == activation_bytes
-    assert service.propose(selections).revision == accepted.revision
+    source = next(binding for binding in accepted.bindings if binding.kind == "acquisition")
+    assert source.legacy == {}
     assert "ACQUISITION.manual_montage" not in service.resolve_settings()
+    assert service.repository.get_profile(profile.profile_id) == legacy
 
-
-@pytest.mark.parametrize("change", ["no_profile", "other_profile", "parameters", "selection", "configuration_version", "deleted"])
-def test_observation_never_overwrites_an_unrelated_or_changed_saved_profile(service, change):
-    profile = create_source(service, sample_rate=250, channel_number=3)
-    binding = _source_binding(profile)
-    if change == "no_profile":
-        binding = replace(binding, profile_id=None, profile_revision=0)
-    elif change == "other_profile":
-        binding = replace(binding, profile_id=str(uuid4()))
-    elif change == "parameters":
-        binding = replace(binding, parameters={**binding.parameters, "sample_rate": 500})
-    elif change == "selection":
-        binding = replace(binding, selection=replace(binding.selection, version="different"))
-    elif change == "configuration_version":
-        binding = replace(binding, configuration_version=2)
-    else:
-        service.delete(profile.profile_id, expected_revision=profile.revision)
-    assert service.record_acquisition_montage(binding, _source_montage()) is None
-    if change != "deleted":
-        assert service.repository.get_profile(profile.profile_id) == profile
-
-
-def test_observation_cas_conflict_preserves_concurrent_user_edit(service, monkeypatch):
-    profile = create_source(service, sample_rate=250, channel_number=3)
-    save = service.repository.save_profile
-
-    def competing_save(candidate, expected_revision):
-        save(replace(profile, name="User edit"), expected_revision=profile.revision)
-        return save(candidate, expected_revision=expected_revision)
-
-    monkeypatch.setattr(service.repository, "save_profile", competing_save)
-    assert service.record_acquisition_montage(_source_binding(profile), _source_montage()) is None
-    retained = service.repository.get_profile(profile.profile_id)
-    assert retained.name == "User edit"
-    assert retained.acquisition_montage is None
-
-
-def test_regular_edit_retains_observation_and_parameter_change_invalidates_it(service):
-    profile = create_source(service, sample_rate=250, channel_number=3)
-    cached = service.record_acquisition_montage(_source_binding(profile), _source_montage())
-    renamed = service.update(cached.profile_id, name="Renamed", parameters=cached.parameters,
-                             expected_revision=cached.revision)
-    assert renamed.acquisition_montage == cached.acquisition_montage
-    changed = service.update(renamed.profile_id, name=renamed.name,
-                             parameters={**renamed.parameters, "data_file_path": "another.cnt"},
-                             expected_revision=renamed.revision)
-    assert changed.acquisition_montage is None
-    with pytest.raises(TypeError, match="acquisition_montage"):
-        service.update(changed.profile_id, name=changed.name, parameters=changed.parameters,
-                       expected_revision=changed.revision, acquisition_montage=_source_montage())
-
-
-def test_manual_montage_is_saved_selected_and_materialized_independently(service):
-    definition = service.catalog.legacy("acquisition", "file_reader")
-    profile = service.create("acquisition", definition.selection, "Manual", {"sample_rate": 250, "channel_number": 3},
-                             manual_montage=_source_montage())
-    assert profile.manual_montage.provenance == "user-declared"
-    selections = complete_selections(service, [{"slot": "acquisition.source", "profile_id": profile.profile_id}])
-    accepted = service.accept(service.propose(selections), expected_revision=None)
-    frozen = next(binding for binding in accepted.bindings if binding.kind == "acquisition")
-    assert frozen.manual_montage == profile.manual_montage
-    assert service.resolve_settings()["ACQUISITION.manual_montage"] == profile.manual_montage.to_dict()
-    renamed = service.update(profile.profile_id, name="Renamed", parameters=profile.parameters,
-                             expected_revision=profile.revision)
-    assert renamed.manual_montage == profile.manual_montage
-    cleared = service.update(profile.profile_id, name=renamed.name, parameters=renamed.parameters,
-                             expected_revision=renamed.revision, manual_montage=None)
-    assert cleared.manual_montage is None
+    updated = service.update(legacy.profile_id, name="Updated source",
+                             parameters={**legacy.parameters, "sample_rate": 500},
+                             expected_revision=legacy.revision)
+    assert updated.legacy == {}
+    assert updated.parameters["sample_rate"] == 500
     assert service.repository.get_activation() == accepted
-    assert service.propose(selections).revision != accepted.revision
-    assert service.resolve_settings()["ACQUISITION.manual_montage"] == profile.manual_montage.to_dict()
 
 
-@pytest.mark.parametrize("change", ["source", "rate", "rows"])
-def test_manual_montage_must_match_its_acquisition_profile(service, change):
-    observed = _source_montage()
-    if change == "source":
-        observed = replace(observed, source_id="another-source")
-    elif change == "rate":
-        observed = replace(observed, sample_rate=500)
-    else:
-        observed = replace(observed, channels=observed.channels[:1], trigger_row_index=1)
-    definition = service.catalog.legacy("acquisition", "file_reader")
-    with pytest.raises(PluginSchemaError, match="Manual montage"):
-        service.create("acquisition", definition.selection, "Invalid", {"sample_rate": 250, "channel_number": 3},
-                       manual_montage=observed)
-
-
-def test_manual_montage_fills_missing_fields_but_cannot_replace_observed_labels(service):
+def test_legacy_activation_retains_hash_and_storage_without_materializing_montage(service):
     profile = create_source(service, sample_rate=250, channel_number=3)
-    cached = service.record_acquisition_montage(_source_binding(profile), _source_montage(missing=True))
-    supplemented = service.update(cached.profile_id, name=cached.name, parameters=cached.parameters,
-                                  expected_revision=cached.revision, manual_montage=_source_montage())
-    assert supplemented.acquisition_montage.channels[0].name == "CH1"
-    assert supplemented.manual_montage.channels[0].name == "O1"
-    observed = service.record_acquisition_montage(_source_binding(supplemented), _source_montage())
-    conflicting = replace(_source_montage(), channels=(replace(_source_montage().channels[0], name="C3"), _source_montage().channels[1]))
-    with pytest.raises(PluginSchemaError, match="changed"):
-        service.update(observed.profile_id, name=observed.name, parameters=observed.parameters,
-                       expected_revision=observed.revision, manual_montage=conflicting)
-    assert service.repository.get_profile(observed.profile_id) == observed
+    selections = complete_selections(service, [{"slot": "acquisition.source", "profile_id": profile.profile_id}])
+    candidate = service.propose(selections)
+    legacy = ActivationSnapshot(candidate.settings, tuple(
+        replace(binding, legacy={"manual_montage": _source_montage()}) if binding.kind == "acquisition" else binding
+        for binding in candidate.bindings
+    ))
+    service.repository.save_activation(legacy, expected_revision=None)
+    path = service.repository.root / "activation.toml"
+    before = path.read_bytes()
 
+    runtime = service.resolve_settings()
 
-def test_parameter_edits_require_manual_montage_to_remain_consistent_or_be_cleared(service):
-    definition = service.catalog.legacy("acquisition", "file_reader")
-    profile = service.create("acquisition", definition.selection, "Manual", {"sample_rate": 250, "channel_number": 3},
-                             manual_montage=_source_montage())
-    parameters = {**profile.parameters, "sample_rate": 500}
-    with pytest.raises(PluginSchemaError, match="rate and output rows"):
-        service.update(profile.profile_id, name=profile.name, parameters=parameters,
-                       expected_revision=profile.revision)
-    updated = service.update(profile.profile_id, name=profile.name, parameters=parameters,
-                             expected_revision=profile.revision, manual_montage=None)
-    assert updated.manual_montage is None
+    assert "ACQUISITION.manual_montage" not in runtime
+    assert all("manual_montage" not in binding for binding in runtime["PLUGINS.bindings"])
+    assert service.repository.get_activation().revision == legacy.revision
+    assert path.read_bytes() == before
+    refreshed = service.propose(selections, refresh_slots=["acquisition.source"])
+    assert next(binding for binding in refreshed.bindings if binding.kind == "acquisition").legacy == {}
 
 
 REQUIRED_SELECTIONS = (
@@ -219,22 +131,22 @@ def complete_selections(service, selections=()):
     return selections
 
 
-@pytest.mark.parametrize("outputs", [("O2", "O1"), ({"name": "O2", "source": "CH2"}, "O1")])
-def test_decoder_inputs_switch_independently_and_resolve_against_current_source(service, outputs):
+@pytest.mark.parametrize("names", [("O2", "O1"), ("Occipital right", "Occipital left")])
+def test_decoder_inputs_switch_independently_and_resolve_against_current_source(service, names):
     definition = service.catalog.legacy("decoder", "THUBCI_SSVEP_classic40CCA")
-    first_input = ProcessingInput.from_dict({"outputs": list(outputs),
-        "reference": {"mode": "single", "channels": ["M1"]}, "excluded_channels": ["Oz"]})
+    first_input = ProcessingInput(outputs=tuple(ChannelBinding(name, f"channel-{index}", "eeg")
+                                                for index, name in enumerate(names)))
     first = service.create("decoder", definition.selection, "Visual", {}, processing_input=first_input)
     assert service.repository.get_profile(first.profile_id).processing_input == first_input
     second = service.create("decoder", definition.selection, "Motor", {},
-                             processing_input=ProcessingInput(outputs=("C3", "C4")))
+                             processing_input=ProcessingInput(outputs=(ChannelBinding("C3", "channel-0"), ChannelBinding("C4", "channel-1"))))
     selections = complete_selections(service, [{"slot": "processing.decoder", "profile_id": first.profile_id}])
     accepted = service.accept(service.propose(selections), expected_revision=None)
     assert processing_input(service.resolve_settings()) == first_input
     assert "SIGNAL.setup" not in service.resolve_settings()
 
     edited = service.update(first.profile_id, name=first.name, parameters=first.parameters,
-                            expected_revision=first.revision, processing_input=ProcessingInput(outputs=("Oz",)))
+                            expected_revision=first.revision, processing_input=ProcessingInput(outputs=(ChannelBinding("Oz", "channel-0"),)))
     assert processing_input(service.resolve_settings()) == first_input
     other_selections = [dict(item, profile_id=second.profile_id) if item["slot"] == "processing.decoder" else item
                         for item in selections]
@@ -257,30 +169,38 @@ def test_decoder_inputs_switch_independently_and_resolve_against_current_source(
     assert fresh.repository.get_profile(second.profile_id).processing_input == second.processing_input
 
 
-def test_legacy_decoder_input_is_read_unchanged_until_explicitly_configured(service):
-    legacy_setup = {"source_id": "file_reader", "outputs": ["Occipital"],
-                    "assignments": [{"source_index": 0, "electrode": "Occipital", "expected_name": "O1"}]}
-    service.settings_source = lambda: {"SIGNAL.setup": legacy_setup}
+def test_legacy_decoder_input_is_preserved_but_blocked_until_explicitly_configured(service):
     selections = complete_selections(service)
-    decoder_id = next(item["profile_id"] for item in selections if item["slot"] == "processing.decoder")
-    decoder = service.repository.get_profile(decoder_id)
-    legacy = service.repository.save_profile(replace(decoder, processing_input=None),
-                                              expected_revision=decoder.revision)
-    accepted = service.accept(service.propose(selections), expected_revision=None)
+    candidate = service.propose(selections)
+    decoder = next(binding for binding in candidate.bindings if binding.kind == "decoder")
+    profile = service.repository.get_profile(decoder.profile_id)
+    old_input = {"schema_version": 1, "outputs": ["O1"],
+                 "reference": {"mode": "single", "channels": ["M1"]}}
+    legacy = service.repository.save_profile(replace(profile, processing_input=None,
+        legacy={"processing_input": old_input}), expected_revision=profile.revision)
+    accepted = ActivationSnapshot({**candidate.settings, "SIGNAL.setup": {"outputs": ["O1"]}}, tuple(
+        replace(binding, processing_input=None, legacy={"processing_input": old_input})
+        if binding.kind == "decoder" else binding for binding in candidate.bindings))
+    service.repository.save_activation(accepted, expected_revision=None)
+    path = service.repository.root / "activation.toml"
+    before = path.read_bytes()
+
     renamed = service.update(legacy.profile_id, name="Legacy renamed", parameters=legacy.parameters,
-                              expected_revision=legacy.revision)
+                             expected_revision=legacy.revision)
     assert renamed.processing_input is None
-    assert service.resolve_settings()["SIGNAL.setup"] == legacy_setup
-    assert service.propose(selections).revision == accepted.revision
+    assert renamed.legacy["processing_input"] == old_input
+    with pytest.raises(PluginSchemaError, match="Legacy montage"):
+        service.resolve_settings()
+    with pytest.raises(PluginSchemaError, match="Legacy montage"):
+        service.accept(service.propose(selections), expected_revision=accepted.revision)
+    assert path.read_bytes() == before
 
     configured = service.update(renamed.profile_id, name=renamed.name, parameters=renamed.parameters,
-                                expected_revision=renamed.revision, processing_input=None)
-    assert configured.processing_input == ProcessingInput()
-    assert service.resolve_settings()["SIGNAL.setup"] == legacy_setup
+                                expected_revision=renamed.revision, processing_input=ProcessingInput())
+    assert configured.legacy == {}
     selected = service.accept(service.propose(selections), expected_revision=accepted.revision)
-    assert selected.settings["SIGNAL.setup"] == legacy_setup
+    assert "SIGNAL.setup" not in selected.settings
     assert processing_input(service.resolve_settings()) == ProcessingInput()
-    assert "SIGNAL.setup" not in service.resolve_settings()
 
 
 def test_new_decoder_profile_has_explicit_input_and_ignores_global_legacy_setup(service):
@@ -408,8 +328,9 @@ def test_new_activation_excludes_plugin_settings_but_keeps_host_and_context(serv
 
     candidate = service.propose(selections)
 
-    assert candidate.settings == host
-    assert service.propose(selections, include_host_settings=True).settings == host
+    expected = {key: value for key, value in host.items() if key != "ACQUISITION.channel_names"}
+    assert candidate.settings == expected
+    assert service.propose(selections, include_host_settings=True).settings == expected
     assert inputs == {**host, **LEGACY_PLUGIN_SETTINGS}
     assert service.repository.get_activation() is None
 
@@ -457,7 +378,8 @@ def test_materialization_uses_bindings_instead_of_old_plugin_setting_copies(serv
     assert runtime["ALGORITHM.decoder"] == "THUBCI_SSVEP_classic40CCA"
     assert runtime["ALGORITHM.filters"] == []
     assert runtime["CONFIG.revision"] == previous.revision
-    assert {key: runtime[key] for key in host} == host
+    assert runtime["ALGORITHM.baseline_duration"] == host["ALGORITHM.baseline_duration"]
+    assert "ACQUISITION.channel_names" not in runtime
     assert previous.settings == {**host, **LEGACY_PLUGIN_SETTINGS}
     assert runtime["PLUGINS.bindings"] == [binding.to_dict() for binding in previous.bindings]
 
@@ -549,7 +471,7 @@ def test_saved_global_signal_setup_cannot_be_added_to_an_existing_activation(ser
     assert service.repository.get_activation() == previous
 
 
-def test_general_host_refresh_preserves_unreviewed_signal_setup(service):
+def test_general_host_refresh_ignores_retired_signal_setup(service):
     signal = {"source_id": "test-source", "outputs": ["O1"]}
     service.settings_source = lambda: {"NEUROENGINE.queue_size": 64, "SIGNAL.setup": signal}
     selections = complete_selections(service)
@@ -561,11 +483,11 @@ def test_general_host_refresh_preserves_unreviewed_signal_setup(service):
 
     candidate = service.propose(selections, include_host_settings=True, refresh_slots=[])
 
-    assert candidate.settings == {"NEUROENGINE.queue_size": 128, "SIGNAL.setup": signal}
+    assert candidate.settings == {"NEUROENGINE.queue_size": 128}
     assert service.repository.get_activation() == previous
 
 
-def test_legacy_signal_setup_survives_removal_from_saved_host_settings(service):
+def test_new_channel_mapping_retires_global_signal_setup(service):
     service.settings_source = lambda: {
         "NEUROENGINE.queue_size": 64, "SIGNAL.setup": {"source_id": "test-source"},
     }
@@ -575,8 +497,8 @@ def test_legacy_signal_setup_survives_removal_from_saved_host_settings(service):
 
     candidate = service.propose(selections, include_host_settings=True, refresh_slots=[])
 
-    assert candidate.settings == {"NEUROENGINE.queue_size": 128, "SIGNAL.setup": {"source_id": "test-source"}}
-    assert "SIGNAL.setup" in previous.settings
+    assert candidate.settings == {"NEUROENGINE.queue_size": 128}
+    assert "SIGNAL.setup" not in previous.settings
     assert service.repository.get_activation() == previous
 
 

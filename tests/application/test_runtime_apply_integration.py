@@ -14,13 +14,12 @@ from omnibci.application.services.plugin_profile_service import PluginProfileSer
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.services.signal_setup_service import SignalSetupService
-from omnibci.bootstrap import _acquisition_montage_binding, assemble, register_engine_listeners
-from omnibci.domain.montage import ProcessingInput
+from omnibci.bootstrap import _acquisition_binding, assemble, register_engine_listeners
+from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
-from omnibci.infrastructure.signal_layouts import SignalLayoutProvider
 
 
 SOURCE = '''
@@ -113,13 +112,10 @@ schema_version=1
 
 
 def wire_signal_preparation(profiles, engine, container):
-    container.acquisition_service.set_metadata_recorder(
-        lambda profile_id: _acquisition_montage_binding(engine, profiles, profile_id),
-        profiles.record_acquisition_montage,
-    )
+    container.acquisition_service.set_metadata_binding(lambda: _acquisition_binding(engine))
     service = SignalSetupService(
         SimpleNamespace(read_saved=lambda: (profiles.settings_source(), "saved")), profiles, engine,
-        container.acquisition_service, container.command_results, SignalLayoutProvider(),
+        container.acquisition_service, container.command_results,
     )
     container.acquisition_service.set_signal_preparer(service.prepare)
     container.session_service.set_signal_preparer(service.prepare_session, container.acquisition_service.lifecycle_lock)
@@ -167,7 +163,7 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         # A changed decoder input prepares a new graph and records its own plan.
         decoder = profiles.repository.get_profile(bindings[1]['profile_id'])
         profiles.update(decoder.profile_id, name=decoder.name, parameters=decoder.parameters,
-                        processing_input=ProcessingInput(outputs=("CH1",)), expected_revision=decoder.revision)
+                        processing_input=ProcessingInput(outputs=(ChannelBinding("CH1", "channel-0"),)), expected_revision=decoder.revision)
         previous_generation, previous_session = engine.generation, continuation
         plan = runtime.plan(bindings, expected_revision=engine.applied_revision)
         assert plan.strategy == 'rebuild'
@@ -179,7 +175,7 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         continuation = container.session_service.active_session_id
         continued = container.session_repository.find_by_id(continuation)
         assert continued.continuation_of == previous_session
-        assert continued.signal_plan['processing_input']['outputs'] == ['CH1']
+        assert continued.signal_plan['processing_input']['outputs'] == [{'source_channel_id': 'channel-0', 'name': 'CH1'}]
         assert container.session_repository.find_by_id(previous_session).signal_plan['processing_input']['outputs'] == []
         assert signal.read()['readiness']['ready'] is True
 

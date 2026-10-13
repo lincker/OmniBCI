@@ -15,7 +15,7 @@ class OzPolarityDemo(Decoder):
     def __init__(self, *, parameters: PluginParameters, context: PluginContext) -> None:
         if context.input_signal is None:
             raise ValueError("Oz Polarity Demo requires prepared input metadata")
-        # These names describe matrix rows after mapping and re-referencing.
+        # These names describe matrix rows after channel selection and ordering.
         # context.channel_names describes the original source instead.
         names = [channel.name for channel in context.input_signal.channels]
         if "Oz" not in names:

@@ -9,7 +9,7 @@ from omnibci.application.activation_settings import RUNTIME_HOST_SETTING_KEYS
 from omnibci.application.plugin_profiles import ProfileBinding
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfigurationCatalog
-from omnibci.application.processing_source import materialize_processing_binding
+from omnibci.application.processing_source import materialize_processing_binding, processing_input
 
 
 _ROLE_KINDS = {
@@ -70,10 +70,6 @@ def _validate_settings(role: str, settings: dict) -> None:
         raise PluginSchemaError("ACQUISITION.channel_names must be a list of strings")
     for key, value in settings.items():
         if key in _CONTEXT_KEYS:
-            continue
-        if key == "SIGNAL.setup":
-            from omnibci.domain.montage import SignalSetup
-            SignalSetup.from_dict(value)
             continue
         if key == "debug" or key.endswith((".enabled", ".auto_spawn")):
             valid = type(value) is bool
@@ -163,6 +159,8 @@ def project_node_configuration(runtime_snapshot: dict, role: str) -> NodeConfigu
     _validate_role(role)
     if not isinstance(runtime_snapshot, dict) or not isinstance(runtime_snapshot.get("PLUGINS.bindings"), list):
         raise PluginSchemaError("Node projection requires pinned runtime bindings")
+    if role == "engine":
+        processing_input(runtime_snapshot)
     bindings = tuple(ProfileBinding.from_dict(item) for item in runtime_snapshot["PLUGINS.bindings"])
     if len({binding.slot for binding in bindings}) != len(bindings):
         raise PluginSchemaError("Duplicate activation slot")
@@ -204,7 +202,6 @@ def materialize_node_configuration(configuration: NodeConfiguration,
             raise PluginSchemaError(f"{binding.slot}: snapshot must include resolved defaults")
         bindings.append(materialize_processing_binding(
             binding, requires_channels=definition.channel_requirements is not None,
-            legacy_setup=result.get("SIGNAL.setup"),
         ))
         if binding.slot in _ALIASES:
             result[_ALIASES[binding.slot]] = definition.plugin_type
@@ -213,19 +210,10 @@ def materialize_node_configuration(configuration: NodeConfiguration,
                 if _canonical(parameters.get(key)) != _canonical(result[f"ACQUISITION.{key}"]):
                     raise PluginSchemaError(f"ACQUISITION.{key} disagrees with the pinned source")
             result.update({f"ACQUISITION.{key}": value for key, value in parameters.items()})
-            if binding.manual_montage is not None:
-                if (binding.manual_montage.source_id != definition.plugin_type
-                        or binding.manual_montage.sample_rate != parameters["sample_rate"]
-                        or binding.manual_montage.output_row_count != parameters["channel_number"]):
-                    raise PluginSchemaError("Manual montage disagrees with the pinned source")
-                result["ACQUISITION.manual_montage"] = binding.manual_montage.to_dict()
         elif binding.kind == "filter":
             filters.append(definition.plugin_type)
     if configuration.role == "engine":
         result["ALGORITHM.filters"] = filters
-        decoder = next(binding for binding in configuration.bindings if binding.kind == "decoder")
-        if decoder.processing_input is not None:
-            result.pop("SIGNAL.setup", None)
     result["PLUGINS.bindings"] = bindings
     result["CONFIG.revision"] = configuration.revision
     if configuration.generation is not None:

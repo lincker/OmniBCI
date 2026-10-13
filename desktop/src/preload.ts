@@ -26,6 +26,7 @@ const api: DesktopApi = {
   chooseRecordingFile: () => ipcRenderer.invoke("recording:choose-file"),
   saveResults: (input: SaveResultsInput) => ipcRenderer.invoke("results:save", input),
   setEditorState: state => ipcRenderer.send("editor:state", state),
+  setLanguage: language => ipcRenderer.send("app:language", language),
   openLogs: () => ipcRenderer.invoke("logs:open"),
   requestQuit: () => ipcRenderer.invoke("app:quit"),
 };

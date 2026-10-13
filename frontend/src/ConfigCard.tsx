@@ -6,18 +6,19 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, ApiError, type ConfigData, type ConfigEntry } from "./api/client";
 import { ConfigDialog, type ConfigDialogProps } from "./ConfigDialog";
+import { useI18n, type Translate, type TranslationKey } from "./i18n";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
 import { pluginConfigApi } from "./api/plugin-config";
 import type { RuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
 
-const fieldLabels: Record<string, string> = {
-  "ALGORITHM.baseline_duration": "Baseline duration (s)",
-  "NEUROENGINE.queue_size": "Queue capacity",
+const fieldLabels: Record<string, TranslationKey> = {
+  "ALGORITHM.baseline_duration": "settings.baselineDuration",
+  "NEUROENGINE.queue_size": "settings.queueCapacity",
 };
-function parseInput(raw: string, type: string): number {
+function parseInput(raw: string, type: string, t: Translate): number {
   const value = Number(raw);
   if (!raw.trim() || !Number.isFinite(value) || (type === "int" && !Number.isSafeInteger(value))) {
-    throw new Error(`Enter a valid ${type === "int" ? "integer" : "number"}.`);
+    throw new Error(t(type === "int" ? "settings.validInteger" : "settings.validNumber"));
   }
   return value;
 }
@@ -27,9 +28,12 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
   onDirtyChange: (dirty: boolean) => void; onBusyChange: (busy: boolean) => void;
   runtime: RuntimeConfiguration;
 }) {
+  const { t } = useI18n();
+  const translateRef = useRef(t);
+  translateRef.current = t;
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<TranslationKey | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
   const [dialog, setDialog] = useState<Omit<ConfigDialogProps, "onCancel"> | null>(null);
@@ -40,7 +44,7 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
     const id = ++request.current;
     const cfg = await api.getConfig();
     if (id !== request.current) return;
-    if (!cfg) throw new Error("Host settings are unavailable");
+    if (!cfg) throw new Error(translateRef.current("settings.unavailableError"));
     setConfig(cfg);
   }, []);
   useEffect(() => {
@@ -52,10 +56,10 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
 
   const confirmDiscard = (action: () => void) => {
     if (!dirty) { action(); return; }
-    setDialog({ title: "Unsaved changes", message: "Discard unsaved host settings?",
-      confirmLabel: "Discard changes", onConfirm: () => { setDialog(null); action(); } });
+    setDialog({ title: t("settings.unsaved"), message: t("settings.discardPrompt"),
+      confirmLabel: t("settings.discardChanges"), onConfirm: () => { setDialog(null); action(); } });
   };
-  const run = async (action: () => Promise<void>, success: string) => {
+  const run = async (action: () => Promise<void>, success: TranslationKey) => {
     setBusy(true); setError(null); setNotice(null);
     try {
       await action();
@@ -65,7 +69,7 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
     } catch (e) {
       const message = e instanceof ApiError ? `[${e.code}] ${e.message}` : String(e);
       setError(e instanceof ApiError && e.status === 409
-        ? `${message}. Your edits are preserved. Refresh settings before saving again.` : message);
+        ? t("settings.conflict", { message }) : message);
     }
     finally { setBusy(false); }
   };
@@ -76,20 +80,20 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
       for (const entry of config.entries) {
         const raw = draft[entry.key];
         if (fieldLabels[entry.key] && raw !== undefined) {
-          try { updates[entry.key] = parseInput(raw, entry.type); }
-          catch (e) { throw new Error(`${fieldLabels[entry.key]}: ${(e as Error).message}`); }
+          try { updates[entry.key] = parseInput(raw, entry.type, t); }
+          catch (e) { throw new Error(`${t(fieldLabels[entry.key])}: ${(e as Error).message}`); }
         }
       }
     } catch (e) { setError(String(e)); return; }
     void run(async () => { await api.patchConfig(updates, config.revision); },
-      "Host settings saved. Review and apply them to update the runtime.");
+      "settings.saved");
   };
   const reviewHostSettings = async () => {
     setBusy(true); setError(null);
     try {
       const activation = await pluginConfigApi.activation();
       if (!activation || activation.bindings.some((binding) => !binding.profile_id)) {
-        throw new Error("Save profiles for the selected plugins before applying host settings.");
+        throw new Error(t("settings.saveProfiles"));
       }
       await runtime.review({
         bindings: activation.bindings.map((binding) => ({ slot: binding.slot, profile_id: binding.profile_id! })),
@@ -108,48 +112,48 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
       if (raw === saved) delete next[entry.key]; else next[entry.key] = raw;
       return next;
     });
-    const label = fieldLabels[entry.key];
+    const label = t(fieldLabels[entry.key]);
     return <div className={`setting-row ${draft[entry.key] !== undefined ? "modified" : ""}`} key={entry.key}>
       <label className="setting-label" htmlFor={fieldId}>{label}</label>
-      <p className="setting-description">{entry.description}</p>
+      <p className="setting-description">{entry.key === "NEUROENGINE.queue_size" ? t("settings.queueDescription") : t("settings.baselineDuration")}</p>
       <input id={fieldId} aria-label={label} disabled={busy} value={raw} type="number"
         step={entry.type === "int" ? 1 : "any"} onChange={(event) => onChange(event.target.value)} />
     </div>;
   };
 
-  return <section className="settings-workspace" aria-label="General settings" onKeyDown={(event) => {
+  return <section className="settings-workspace" aria-label={t("settings.general")} onKeyDown={(event) => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
       event.preventDefault(); if (!busy && dirty && !dialog) save();
     }
   }}>
     <aside className="explorer">
       {navigation}
-      <div className="explorer-footer"><span className="eyebrow">Host settings</span>
-        <p>Console preferences and shared engine settings. Configure plugins in Setup.</p></div>
+      <div className="explorer-footer"><span className="eyebrow">{t("settings.host")}</span>
+        <p>{t("settings.explorerHint")}</p></div>
     </aside>
     <div className="settings-editor">
-      <div className="breadcrumbs">Settings <Icon name="chevron" /> General</div>
-      <header className="editor-heading"><div><p className="eyebrow">Preferences</p><h1>General settings</h1>
-        <p>Preferences for the console and shared engine settings.</p></div><button className="icon-button" aria-label="Refresh settings" title="Refresh settings" disabled={busy}
-          onClick={() => confirmDiscard(() => void run(async () => {}, "Settings refreshed."))}><Icon name="refresh" /></button></header>
-      {notice && <p className="inline-message success" role="status">{notice}</p>}
+      <div className="breadcrumbs">{t("settings.settings")} <Icon name="chevron" /> {t("settings.generalShort")}</div>
+      <header className="editor-heading"><div><p className="eyebrow">{t("settings.preferences")}</p><h1>{t("settings.general")}</h1>
+        <p>{t("settings.description")}</p></div><button className="icon-button" aria-label={t("settings.refresh")} title={t("settings.refresh")} disabled={busy}
+          onClick={() => confirmDiscard(() => void run(async () => {}, "settings.refreshed"))}><Icon name="refresh" /></button></header>
+      {notice && <p className="inline-message success" role="status">{t(notice)}</p>}
       {error && <p className="inline-message error" role="alert">{error}</p>}
-      {config && <p className="inline-message">Save host settings, then review and apply them to the runtime.</p>}
+      {config && <p className="inline-message">{t("settings.applyHint")}</p>}
       <div className="settings-scroll">
-        {!config && <div className="empty-state"><Icon name="settings" /><h2>{busy ? "Loading settings…" : "Settings unavailable"}</h2>
-          {!busy && <button onClick={() => void run(async () => {}, "Settings refreshed.")}>Try again</button>}</div>}
+        {!config && <div className="empty-state"><Icon name="settings" /><h2>{busy ? t("settings.loading") : t("settings.unavailable")}</h2>
+          {!busy && <button onClick={() => void run(async () => {}, "settings.refreshed")}>{t("settings.tryAgain")}</button>}</div>}
         {preferences}
         <div className="module-fields">
           {entries.length > 0 && <div className="setting-group" data-group="Engine">
-            <h2>Engine</h2>{entries.map(renderEntry)}</div>}
+            <h2>{t("settings.engine")}</h2>{entries.map(renderEntry)}</div>}
         </div>
       </div>
-      <footer className="editor-footer"><span className="save-state">{dirty ? <><span className="unsaved-dot" />{Object.keys(draft).length} unsaved changes</> : "All changes saved"}</span>
+      <footer className="editor-footer"><span className="save-state">{dirty ? <><span className="unsaved-dot" />{t("settings.unsavedCount", { count: Object.keys(draft).length })}</> : t("settings.allSaved")}</span>
         <div className="actions">
-          <button disabled={busy || !dirty} onClick={() => confirmDiscard(() => setDraft({}))}>Discard</button>
-          <button className="primary" disabled={busy || !dirty} onClick={save}>Save settings</button>
+          <button disabled={busy || !dirty} onClick={() => confirmDiscard(() => setDraft({}))}>{t("settings.discard")}</button>
+          <button className="primary" disabled={busy || !dirty} onClick={save}>{t("settings.save")}</button>
           <button disabled={busy || dirty || runtime.blocked || !config}
-            onClick={() => void reviewHostSettings()}>Review and apply host settings</button>
+            onClick={() => void reviewHostSettings()}>{t("settings.review")}</button>
         </div>
       </footer>
     </div>

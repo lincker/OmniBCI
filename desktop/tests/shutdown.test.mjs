@@ -46,7 +46,8 @@ await build({ entryPoints: [fileURLToPath(new URL("../src/main.ts", import.meta.
     builder.onLoad({ filter: /[\\/]src[\\/]main\.ts$/ }, async args => ({
       contents: await readFile(args.path, "utf8") + `
         export const fixture = { connection, disconnect, saveResults,
-          reset(owned) { backend = owned; window = {}; editor = { dirty: false, busy: false }; exported.clear(); },
+          setLanguage(value) { language = value; },
+          reset(owned) { language = "en"; backend = owned; window = {}; editor = { dirty: false, busy: false }; exported.clear(); },
           getBackend() { return backend; },
         };
       `, loader: "ts",
@@ -136,4 +137,17 @@ test("an interrupted final reply still waits for exit and releases backend owner
   assert.equal(owned.exited, true);
   assert.equal(fixture.getBackend(), undefined);
   assert.equal(fixture.connection.info.status, "disconnected");
+});
+
+
+test("native shutdown confirmations follow Chinese without changing cancellation behavior", async () => {
+  fixture.setLanguage("zh");
+  hooks.responses.push(1, 2);
+  assert.equal(await fixture.disconnect(), false);
+  assert.equal(hooks.messages[0].message, "停止本地后端？");
+  assert.deepEqual(hooks.messages[0].buttons, ["取消", "停止并继续"]);
+  assert.equal(hooks.messages[1].message, "有 1 个会话的结果尚未导出。");
+  assert.deepEqual(hooks.messages[1].buttons, ["导出 JSON", "放弃结果", "取消断开"]);
+  assert.deepEqual(owned.calls, ["prepare_shutdown", "resume"]);
+  assert.equal(fixture.connection.info.status, "ready");
 });

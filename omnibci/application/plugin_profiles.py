@@ -4,11 +4,11 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 from uuid import UUID
 
-from omnibci.domain.montage import ProcessingInput, SourceMetadata
+from omnibci.domain.channel_mapping import ProcessingInput
 
 
 class PluginProfileValidationError(ValueError):
@@ -80,43 +80,37 @@ def _fields(data: dict, required: set[str], optional: set[str] = frozenset()) ->
         raise PluginProfileValidationError("Document has missing or unknown fields")
 
 
-def _montage(value, kind: str, *, manual: bool = False) -> SourceMetadata | None:
-    if value is None:
-        return None
-    if kind != "acquisition" or not isinstance(value, SourceMetadata):
-        raise PluginProfileValidationError("Montage metadata requires an acquisition profile and SourceMetadata")
-    if manual:
-        channels = tuple(replace(channel, position_provenance="user-declared")
-                         if channel.position is not None else channel for channel in value.channels)
-        return replace(value, connection_id="", provenance="user-declared", channels=channels)
-    return replace(value, connection_id="")
-
-
-def _montage_data(value: SourceMetadata) -> dict:
-    data = value.to_dict()
-    data.pop("connection_id", None)
-    return data
-
-
 def _processing_input(value, kind: str) -> ProcessingInput | None:
     if value is not None and (kind != "decoder" or not isinstance(value, ProcessingInput)):
         raise PluginProfileValidationError("processing_input requires a decoder profile and ProcessingInput")
     return value
 
 
-def _parse_profile_fields(data: dict, fields: tuple[str, ...]) -> dict:
+def _legacy_fields(value, kind: str, processing_input) -> dict:
+    data = _object_data(value, "legacy fields")
+    allowed = {"acquisition_montage", "manual_montage"} if kind == "acquisition" else {"processing_input"} if kind == "decoder" else set()
+    if set(data) - allowed or processing_input is not None and "processing_input" in data:
+        raise PluginProfileValidationError("Invalid legacy profile fields")
+    return data
+
+
+def _parse_profile_fields(data: dict) -> dict:
     result = dict(data)
-    for name in fields:
-        if name in result:
-            try:
-                result[name] = SourceMetadata.from_dict(result[name])
-            except (ValueError, TypeError) as exc:
-                raise PluginProfileValidationError(f"Invalid {name}: {exc}") from exc
+    legacy = {key: result.pop(key) for key in ("acquisition_montage", "manual_montage") if key in result}
     if "processing_input" in result:
-        try:
-            result["processing_input"] = ProcessingInput.from_dict(result["processing_input"])
-        except (ValueError, TypeError) as exc:
-            raise PluginProfileValidationError(f"Invalid processing_input: {exc}") from exc
+        value = result.pop("processing_input")
+        if not isinstance(value, dict):
+            raise PluginProfileValidationError("processing_input must be an object")
+        if type(value.get("schema_version", 1)) is not int:
+            raise PluginProfileValidationError("processing_input schema_version must be an integer")
+        if value.get("schema_version", 1) == 1:
+            legacy["processing_input"] = value
+        else:
+            try:
+                result["processing_input"] = ProcessingInput.from_dict(value)
+            except (ValueError, TypeError) as exc:
+                raise PluginProfileValidationError(f"Invalid processing_input: {exc}") from exc
+    result["legacy"] = legacy
     return result
 
 
@@ -158,9 +152,9 @@ class PluginProfile:
     configuration_version: int = 1
     revision: int = 0
     format_version: int = 2
-    acquisition_montage: SourceMetadata | None = None
-    manual_montage: SourceMetadata | None = None
     processing_input: ProcessingInput | None = None
+    # Inert raw fields preserve old files and revision hashes until explicit replacement.
+    legacy: dict = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         validate_profile_id(self.profile_id)
@@ -177,9 +171,12 @@ class PluginProfile:
         _positive_integer(self.revision, "revision", minimum=0)
         object.__setattr__(self, "name", self.name.strip())
         object.__setattr__(self, "parameters", _object_data(self.parameters, "parameters"))
-        object.__setattr__(self, "acquisition_montage", _montage(self.acquisition_montage, self.kind))
-        object.__setattr__(self, "manual_montage", _montage(self.manual_montage, self.kind, manual=True))
         object.__setattr__(self, "processing_input", _processing_input(self.processing_input, self.kind))
+        object.__setattr__(self, "legacy", _legacy_fields(self.legacy, self.kind, self.processing_input))
+
+    @property
+    def processing_input_requires_review(self) -> bool:
+        return "processing_input" in self.legacy
 
     def to_dict(self) -> dict:
         data = {
@@ -188,9 +185,7 @@ class PluginProfile:
             "parameters": _object_data(self.parameters, "parameters"),
             "configuration_version": self.configuration_version, "revision": self.revision,
         }
-        for name in ("acquisition_montage", "manual_montage"):
-            if getattr(self, name) is not None:
-                data[name] = _montage_data(getattr(self, name))
+        data.update(_object_data(self.legacy, "legacy fields"))
         if self.processing_input is not None:
             data["processing_input"] = self.processing_input.to_dict()
         return data
@@ -200,7 +195,7 @@ class PluginProfile:
         _fields(data, {"format_version", "profile_id", "name", "kind", "selection",
                        "parameters", "configuration_version", "revision"},
                 {"acquisition_montage", "manual_montage", "processing_input"})
-        return cls(**{**_parse_profile_fields(data, ("acquisition_montage", "manual_montage")),
+        return cls(**{**_parse_profile_fields(data),
                       "selection": PluginSelection.from_dict(data["selection"])})
 
 
@@ -215,8 +210,8 @@ class ProfileBinding:
     parameters: dict
     configuration_version: int = 1
     profile_revision: int = 0
-    manual_montage: SourceMetadata | None = None
     processing_input: ProcessingInput | None = None
+    legacy: dict = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.slot, str):
@@ -235,8 +230,12 @@ class ProfileBinding:
         _positive_integer(self.profile_revision, "profile_revision",
                           minimum=0 if self.profile_id is None else 1)
         object.__setattr__(self, "parameters", _object_data(self.parameters, "parameters"))
-        object.__setattr__(self, "manual_montage", _montage(self.manual_montage, self.kind, manual=True))
         object.__setattr__(self, "processing_input", _processing_input(self.processing_input, self.kind))
+        object.__setattr__(self, "legacy", _legacy_fields(self.legacy, self.kind, self.processing_input))
+
+    @property
+    def processing_input_requires_review(self) -> bool:
+        return "processing_input" in self.legacy
 
     def to_dict(self) -> dict:
         data = {
@@ -247,8 +246,7 @@ class ProfileBinding:
         }
         if self.profile_id is not None:
             data["profile_id"] = self.profile_id
-        if self.manual_montage is not None:
-            data["manual_montage"] = _montage_data(self.manual_montage)
+        data.update(_object_data(self.legacy, "legacy fields"))
         if self.processing_input is not None:
             data["processing_input"] = self.processing_input.to_dict()
         return data
@@ -257,7 +255,7 @@ class ProfileBinding:
     def from_dict(cls, data: dict) -> ProfileBinding:
         _fields(data, {"slot", "kind", "selection", "parameters", "configuration_version",
                        "profile_revision"}, {"profile_id", "manual_montage", "processing_input"})
-        return cls(**{**_parse_profile_fields(data, ("manual_montage",)), "profile_id": data.get("profile_id"),
+        return cls(**{**_parse_profile_fields(data), "profile_id": data.get("profile_id"),
                       "selection": PluginSelection.from_dict(data["selection"])})
 
 

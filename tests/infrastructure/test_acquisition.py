@@ -84,7 +84,7 @@ class _FakeDataSource:
 
     async def get_metadata(self):
         self.calls.append("get_metadata")
-        return "fake-metadata"
+        return {"device": "Fake source"}
 
 
 class _FakeQueue:
@@ -280,8 +280,9 @@ class TestAcquisitionCommandDispatch:
 
     def test_get_metadata_queries_source(self):
         a = _acq()
+        _run(a.execute(AcquisitionCommand.connect))
         _run(a.execute(AcquisitionCommand.get_metadata))
-        assert a.data_source.calls == ["get_metadata"]
+        assert a.data_source.calls == ["connect", "get_metadata"]
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +375,22 @@ class TestStateProjectionEmission:
         assert self._snaps(bus)[-1] == (True, False)
         _run(acq._on_stop_stream())
         assert self._snaps(bus)[-1] == (True, False)
+
+    def test_snapshots_identify_reconnections_even_when_both_are_connected(self):
+        acq, bus = self._make(_FakeDataSource())
+        _run(acq._on_connect())
+        first = bus.events[-1].data
+        assert first.connection_id == acq.connection_id
+        assert first.connection_id
+        _run(acq._on_connect())
+        assert bus.events[-1].data.connection_id == first.connection_id
+        _run(acq._on_disconnect())
+        assert bus.events[-1].data.connection_id is None
+        _run(acq._on_connect())
+        second = bus.events[-1].data
+        assert first.connected and second.connected
+        assert second.connection_id == acq.connection_id
+        assert first.connection_id != second.connection_id
 
     def test_eof_closes_stream_and_emits_truth(self):
         """EOF stops the source and projects streaming=False to clients."""

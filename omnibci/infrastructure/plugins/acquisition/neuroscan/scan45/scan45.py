@@ -194,6 +194,10 @@ class Scan45DataReader(SignalSource):
     async def get_metadata(self):
         """Return profile declarations without reading an unimplemented header."""
         return {
+            "metadata_supported": False,
+            "metadata_origin": "configuration",
+            "message": "Device metadata retrieval is not implemented; values describe the configured stream.",
+            "channel_count": self.channel_number - 1,
             "output_channel_count": self.channel_number,
             "sample_rate": self._sample_rate,
             "channel_labels": [],

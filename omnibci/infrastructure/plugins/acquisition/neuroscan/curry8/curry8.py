@@ -264,10 +264,12 @@ class Curry8DataReader(SignalSource):
     async def get_metadata(self) -> dict:
         if not self._is_connected:
             raise RuntimeError("Connect to CURRY before requesting metadata")
-        if self._metadata is None:
+        if not self._is_streaming:
+            self._metadata = None
             await self._load_metadata()
         metadata = self._metadata
-        assert metadata is not None
+        if metadata is None:
+            raise RuntimeError("Stop the CURRY stream before requesting new metadata")
         return {
             "device": "Neuroscan CURRY 8",
             "protocol_version": metadata.protocol_version,
@@ -386,6 +388,10 @@ class Curry8DataReader(SignalSource):
                         and header.request == expected_info
                     ):
                         return body
+                    if (not self._is_streaming
+                            and header.code in (DataCode.EEG, DataCode.EVENTS, DataCode.IMPEDANCES)):
+                        # A stopped stream can leave complete data packets ahead of the reply.
+                        continue
                     self._handle_info(header)
         except TimeoutError as exc:
             raise Curry8ProtocolError(

@@ -29,7 +29,7 @@
     },
     "channel_number": {
       "type": "integer",
-      "title": "Output channels including event row",
+      "title": "Output rows including event row",
       "default": 10,
       "x-scope": "portable",
       "x-apply": "module",

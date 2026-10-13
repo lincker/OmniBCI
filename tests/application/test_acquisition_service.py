@@ -127,59 +127,89 @@ class TestAcquisitionStatus:
         assert result.streaming is False
 
     def test_metadata_is_confirmed_then_invalidated_on_disconnect(self):
-        from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
-        metadata = SourceMetadata("test", 250, (ChannelDescriptor(0, "C3"),), 1,
+        from omnibci.domain.acquisition_descriptor import ChannelDescriptor, AcquisitionDescriptor
+        metadata = AcquisitionDescriptor("test", 250, (ChannelDescriptor(0, "C3"),), 1,
                                   connection_id="connection", provenance="device-reported")
         executor = MagicMock()
-        executor.request.return_value.data = metadata.to_dict()
+        executor.request.return_value.data = _metadata_response(metadata)
         service = AcquisitionAppService(executor)
-        assert service.get_metadata(refresh=True) == metadata.to_dict()
+        assert service.get_metadata(refresh=True) == {key: _metadata_response(metadata)[key]
+                                                    for key in ("source_id", "connection_id", "metadata", "descriptor")}
         executor.request.assert_called_once_with(EventType.GetSourceMetadata, {"refresh": True}, timeout_s=5.0)
-        assert service.cached_metadata == metadata.to_dict()
+        assert service.cached_descriptor == metadata.to_dict()
         status = service.handle_get_status(GetAcquisitionStatusQuery())
-        assert status.sample_rate == 250 and status.channel_count == 2
+        assert status.sample_rate == 250 and status.channel_count == 1
         assert status.metadata_available and status.metadata_provenance == "device-reported"
         service.on_acquisition_state(Event(EventType.AcquisitionState, AcquisitionSnapshot(False, False)))
-        assert service.cached_metadata is None
+        assert service.cached_descriptor is None
+
+    def test_configured_dimensions_are_not_reported_as_source_metadata(self):
+        service = AcquisitionAppService(MagicMock(), settings={
+            "ACQUISITION.signal_source": "test", "ACQUISITION.channel_number": 9,
+            "ACQUISITION.sample_rate": 1000,
+        })
+        status = service.handle_get_status(GetAcquisitionStatusQuery())
+        assert status.source == "test"
+        assert status.channel_count is None
+        assert status.sample_rate is None
+        assert status.metadata_available is False
 
 
-def _observation_service():
+def _metadata_response(metadata):
+    return {"source_id": metadata.source_id, "connection_id": metadata.connection_id,
+            "metadata": {"device": "Test amplifier", "sample_rate": metadata.sample_rate,
+                         "channel_count": metadata.signal_channel_count,
+                         "provenance": metadata.provenance, "controls": {"recording": True},
+                         "optional": None},
+            "descriptor": metadata.to_dict(), "descriptor_error": None}
+
+
+def _metadata_service():
     from omnibci.application.events import CommandResult
     from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
-    from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
-    observed = SourceMetadata("test", 250, (ChannelDescriptor(0, "C3", "unknown"),), 1,
+    from omnibci.domain.acquisition_descriptor import ChannelDescriptor, AcquisitionDescriptor
+    metadata = AcquisitionDescriptor("test", 250, (ChannelDescriptor(0, "C3", unit="uV"),), 1,
                               connection_id="connection", provenance="device-reported")
-    effective = SourceMetadata("test", 250, (ChannelDescriptor(0, "C3", unit="uV"),), 1,
-                               connection_id="connection", original_reference="Cz", provenance="device-reported")
-    result = {"observation": observed.to_dict(), "metadata": effective.to_dict(),
-              "metadata_error": None, "observation_error": None}
+    response = _metadata_response(metadata)
     executor = MagicMock()
-    executor.request.return_value = CommandResult("read", "GetSourceMetadata", True, data=result)
+    executor.request.return_value = CommandResult("read", "GetSourceMetadata", True, data=response)
     service = AcquisitionAppService(executor)
     binding = ProfileBinding("acquisition.source", "acquisition",
         "00000000-0000-0000-0000-000000000001", PluginSelection("test.source", "default", "1"),
         {"sample_rate": 250, "channel_number": 2}, profile_revision=1)
-    provider, recorder = MagicMock(return_value=binding), MagicMock(return_value=object())
-    service.set_metadata_recorder(provider, recorder)
-    return service, executor, provider, recorder, binding, observed, effective, result
+    provider = MagicMock(return_value=binding.to_dict())
+    service.set_metadata_binding(provider)
+    return service, executor, provider, binding, metadata, response
 
 
-def test_cached_metadata_belongs_to_the_observed_acquisition_profile():
+def test_raw_metadata_preserves_plugin_fields_and_exposes_acquisition_descriptor():
+    service, executor, provider, _, metadata, response = _metadata_service()
+    value = service.get_metadata(refresh=True)
+    assert value == {key: response[key] for key in ("source_id", "connection_id", "metadata", "descriptor")}
+    assert value["metadata"]["controls"] == {"recording": True}
+    assert value["metadata"]["optional"] is None
+    value["metadata"]["controls"]["recording"] = False
+    assert service._raw_metadata["metadata"]["controls"]["recording"] is True
+    assert service.cached_descriptor == metadata.to_dict()
+    provider.assert_called_once_with()
+    executor.request.assert_called_once_with(EventType.GetSourceMetadata, {"refresh": True}, timeout_s=5.0)
+
+
+def test_cached_signal_metadata_belongs_to_the_running_acquisition_binding():
     from dataclasses import replace
-    service, _, _, _, binding, _, effective, _ = _observation_service()
+    service, _, _, binding, metadata, _ = _metadata_service()
     service.get_metadata()
-    assert service.cached_metadata_for(binding.to_dict()) == effective.to_dict()
+    assert service.cached_descriptor_for(binding.to_dict()) == metadata.to_dict()
     other_profile = replace(binding, profile_id="00000000-0000-0000-0000-000000000002")
-    assert service.cached_metadata_for(other_profile.to_dict()) is None
-    assert service.cached_metadata_for(replace(binding, parameters={"sample_rate": 500}).to_dict()) is None
-    assert service.cached_metadata_for(replace(binding, manual_montage=effective).to_dict()) is None
-    assert service.cached_metadata_for(None) is None
-    assert service.cached_metadata_for(replace(binding, profile_revision=2).to_dict()) == effective.to_dict()
+    assert service.cached_descriptor_for(other_profile.to_dict()) is None
+    assert service.cached_descriptor_for(replace(binding, parameters={"sample_rate": 500}).to_dict()) is None
+    assert service.cached_descriptor_for(None) is None
+    assert service.cached_descriptor_for(replace(binding, profile_revision=2).to_dict()) == metadata.to_dict()
 
 
 @pytest.mark.parametrize("invalidation", ["disconnect", "reset", "worker-disconnect", "failed-read"])
-def test_metadata_ownership_is_cleared_with_the_observation(invalidation):
-    service, executor, _, _, binding, _, _, _ = _observation_service()
+def test_raw_and_signal_metadata_are_cleared_with_the_connection(invalidation):
+    service, executor, _, binding, _, _ = _metadata_service()
     service.get_metadata()
     if invalidation == "disconnect":
         service.handle_disconnect(DisconnectDataProviderCommand())
@@ -191,82 +221,98 @@ def test_metadata_ownership_is_cleared_with_the_observation(invalidation):
         executor.request.side_effect = RuntimeError("Metadata unavailable")
         with pytest.raises(RuntimeError, match="unavailable"):
             service.get_metadata()
-    assert service.cached_metadata_for(binding.to_dict()) is None
+    assert service.cached_descriptor_for(binding.to_dict()) is None
+    assert service._raw_metadata is None
+    assert service.handle_get_status(GetAcquisitionStatusQuery()).metadata_available is False
 
 
-def test_metadata_records_observation_separately_from_manual_effective_values():
-    service, executor, provider, recorder, binding, observed, effective, _ = _observation_service()
-    assert service.get_metadata(refresh=True, profile_id="target") == effective.to_dict()
-    provider.assert_called_once_with("target")
-    recorder.assert_called_once_with(binding, observed)
-    assert recorder.call_args.args[1].channels[0].unit is None
-    executor.request.assert_called_once_with(EventType.GetSourceMetadata,
-                                            {"refresh": True, "include_observation": True}, timeout_s=5.0)
-
-
-def test_device_observation_is_saved_before_reporting_effective_configuration_conflict():
+def test_raw_metadata_remains_available_when_processing_cannot_normalize_it():
     from omnibci.application.services.command_result_service import CommandRejectedError
-    service, _, _, recorder, binding, observed, _, result = _observation_service()
-    result["metadata"] = None
-    result["metadata_error"] = "Source sample rate 250 differs from configured 500"
-    with pytest.raises(CommandRejectedError, match="sample rate 250"):
-        service.get_metadata(refresh=True, profile_id="target")
-    recorder.assert_called_once_with(binding, observed)
-    assert service.cached_metadata is None
+    service, _, _, _, _, response = _metadata_service()
+    response["descriptor"] = None
+    response["descriptor_error"] = "Source does not report a sample rate"
+    assert service.get_metadata()["metadata"] == response["metadata"]
+    assert service.handle_get_status(GetAcquisitionStatusQuery()).metadata_available is True
+    with pytest.raises(CommandRejectedError, match="sample rate") as rejected:
+        service.get_descriptor()
+    assert rejected.value.result.error_code == "INVALID_ACQUISITION_DESCRIPTOR"
+    assert service._raw_metadata["metadata"] == response["metadata"]
+    assert service.cached_descriptor is None
 
 
-def test_manual_fallback_is_available_to_prepare_but_explicit_read_reports_device_failure():
-    from omnibci.application.services.command_result_service import CommandRejectedError
-    service, _, _, recorder, _, _, effective, result = _observation_service()
-    result["observation"] = None
-    result["observation_error"] = "Device has no metadata command"
-    assert service.get_metadata(allow_manual_fallback=True) == effective.to_dict()
-    recorder.assert_not_called()
-    with pytest.raises(CommandRejectedError, match="no metadata command"):
-        service.get_metadata(refresh=True)
-    assert service.cached_metadata is None
+@pytest.mark.parametrize("rate, count, expected_rate, expected_count", [
+    (1000.0, 64, 1000, 64), (250, 1, 250, 1),
+    (None, None, None, None), (True, False, None, None),
+    (-1, 0, None, None), (249.5, "64", None, None),
+])
+def test_status_uses_valid_reported_dimensions_without_a_processing_description(rate, count, expected_rate, expected_count):
+    service, _, _, _, _, response = _metadata_service()
+    response["descriptor"] = None
+    response["descriptor_error"] = "Source does not describe signal rows"
+    response["metadata"].update(sample_rate=rate, channel_count=count, output_channel_count=65)
+    service.get_metadata()
+    status = service.handle_get_status(GetAcquisitionStatusQuery())
+    assert status.sample_rate == expected_rate
+    assert status.channel_count == expected_count
 
 
-def test_explicit_read_reports_a_concurrent_profile_edit_instead_of_claiming_save():
-    from omnibci.application.plugin_profiles import ProfileRevisionConflict
-    service, _, _, recorder, _, _, effective, _ = _observation_service()
-    recorder.return_value = None
-    with pytest.raises(ProfileRevisionConflict, match="observation was not saved"):
-        service.get_metadata(profile_id="target")
-    assert service.get_metadata(allow_manual_fallback=True) == effective.to_dict()
+def test_status_does_not_present_configuration_metadata_as_device_dimensions():
+    service, _, _, _, _, response = _metadata_service()
+    response["metadata"].update(metadata_supported=False, metadata_origin="configuration")
+    service.get_metadata()
+    status = service.handle_get_status(GetAcquisitionStatusQuery())
+    assert status.sample_rate is None
+    assert status.channel_count is None
+    assert status.metadata_available is True
 
 
-def test_profile_guard_rejects_before_reading_source():
-    from omnibci.application.plugin_profiles import ProfileRevisionConflict
-    service, executor, provider, recorder, _, _, effective, _ = _observation_service()
-    service._metadata = effective
-    provider.side_effect = ProfileRevisionConflict("Requested profile is not the applied source")
-    with pytest.raises(ProfileRevisionConflict, match="not the applied"):
-        service.get_metadata(profile_id="target")
-    executor.request.assert_not_called()
-    recorder.assert_not_called()
-    assert service.cached_metadata == effective.to_dict()
+def test_processing_receives_only_normalized_signal_metadata():
+    service, _, _, _, metadata, _ = _metadata_service()
+    assert service.get_descriptor() == metadata.to_dict()
 
 
-def test_invalid_worker_observation_is_reported_as_invalid_metadata():
-    service, _, _, recorder, _, _, _, result = _observation_service()
-    result["observation"] = {"invalid": True}
-    with pytest.raises(RuntimeError, match="invalid acquisition metadata observation"):
+def test_reconnect_changes_status_identity_and_invalidates_previous_connection_metadata():
+    service, _, _, binding, _, _ = _metadata_service()
+    service.get_metadata()
+    assert service.handle_get_status(GetAcquisitionStatusQuery()).connection_id == "connection"
+    service.on_acquisition_state(Event(EventType.AcquisitionState, AcquisitionSnapshot(True, False, "connection")))
+    assert service.cached_descriptor_for(binding.to_dict()) is not None
+    service.on_acquisition_state(Event(EventType.AcquisitionState, AcquisitionSnapshot(True, False, "reconnected")))
+    status = service.handle_get_status(GetAcquisitionStatusQuery())
+    assert status.connected is True
+    assert status.connection_id == "reconnected"
+    assert status.metadata_available is False
+    assert service.cached_descriptor_for(binding.to_dict()) is None
+    assert service._raw_metadata is None
+    service.on_acquisition_state(Event(EventType.AcquisitionState, AcquisitionSnapshot(False, False)))
+    assert service.handle_get_status(GetAcquisitionStatusQuery()).connection_id is None
+
+
+@pytest.mark.parametrize("change", [
+    {"metadata": []}, {"connection_id": ""}, {"source_id": None}, {"descriptor_error": []},
+    {"descriptor": {"invalid": True}},
+])
+def test_invalid_worker_metadata_is_rejected(change):
+    service, _, _, _, _, response = _metadata_service()
+    response.update(change)
+    with pytest.raises(RuntimeError, match="invalid acquisition"):
         service.get_metadata()
-    recorder.assert_not_called()
+    assert service.cached_descriptor is None
+    assert service._raw_metadata is None
 
 
-def test_connect_keeps_success_when_metadata_is_unavailable_but_exposes_storage_failure():
-    from omnibci.application.plugin_profiles import PluginProfileStorageError
-    service, executor, _, recorder, _, _, _, result = _observation_service()
-    result["observation"] = None
-    result["metadata"] = None
-    result["metadata_error"] = "Source has no metadata"
+def test_signal_metadata_must_match_the_raw_metadata_connection():
+    service, _, _, _, _, response = _metadata_service()
+    response["descriptor"]["connection_id"] = "stale"
+    with pytest.raises(RuntimeError, match="different source connection"):
+        service.get_metadata()
+    assert service.cached_descriptor is None
+
+
+def test_connect_waits_for_an_explicit_metadata_request():
+    service, executor, provider, *_ = _metadata_service()
     service.handle_connect(ConnectDataProviderCommand())
-    assert executor.request.call_args_list[0].args == (EventType.ConnectDataProvider, None)
-    recorder.assert_not_called()
-    service, executor, _, recorder, *_ = _observation_service()
-    recorder.side_effect = PluginProfileStorageError("disk full")
-    with pytest.raises(PluginProfileStorageError, match="Source connected.*could not be saved"):
-        service.handle_connect(ConnectDataProviderCommand())
-    assert executor.request.call_args_list[0].args == (EventType.ConnectDataProvider, None)
+    executor.request.assert_called_once_with(EventType.ConnectDataProvider, None)
+    provider.assert_not_called()
+    assert service.cached_descriptor is None
+    assert service._raw_metadata is None

@@ -24,6 +24,7 @@ export interface DesktopApi {
   chooseRecordingFile(): Promise<string | null>;
   saveResults(input: SaveResultsInput): Promise<{ canceled: boolean }>;
   setEditorState(state: { dirty: boolean; busy: boolean }): void;
+  setLanguage(language: "en" | "zh"): void;
   openLogs(): Promise<void>;
   requestQuit(): Promise<void>;
 }

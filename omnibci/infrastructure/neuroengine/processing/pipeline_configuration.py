@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 
 from omnibci.application.plugin_schema import validate_parameters
+from omnibci.application.processing_source import validate_plan_binding
 from omnibci.domain.ports.algorithm import Decoder, Filter
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.runtime_configuration import (
@@ -28,7 +29,7 @@ def load_filters(snapshot: dict, context: PluginContext) -> list[Filter]:
 
 def _binding_content(binding):
     return (binding.slot, binding.kind, binding.selection,
-            binding.configuration_version, binding.parameters, binding.manual_montage,
+            binding.configuration_version, binding.parameters,
             binding.processing_input)
 
 
@@ -91,7 +92,11 @@ def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int,
     if ({key: value for key, value in current.items() if key not in mirrors}
             != {key: value for key, value in snapshot.items() if key not in mirrors}):
         raise ValueError("Host configuration changes require a module restart")
-    if (snapshot.get("ACQUISITION.sample_rate", sample_rate) != sample_rate
+    expected_rate = snapshot.get("ACQUISITION.sample_rate", sample_rate)
+    if signal_plan is not None:
+        validate_plan_binding(snapshot, signal_plan)
+        expected_rate = signal_plan.source.sample_rate
+    if (expected_rate != sample_rate
             or snapshot.get("ALGORITHM.baseline_duration", baseline_duration) != baseline_duration):
         raise ValueError("Pipeline context differs from the running sample rate or baseline")
 

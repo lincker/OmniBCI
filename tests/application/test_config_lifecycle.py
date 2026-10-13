@@ -128,7 +128,7 @@ async def test_bootstrap_shares_pinned_plugin_selection_between_status_and_engin
             bindings.append({"slot": slot, "profile_id": selected.profile_id})
         accepted = profiles.repository.get_activation()
         profiles.accept(profiles.propose(bindings), expected_revision=accepted.revision)
-        assert container.acquisition_service._device_metadata() == ("neuroscan_scan45_reader", 500, 10)
+        assert container.acquisition_service._device_metadata() == ("neuroscan_scan45_reader", None, None)
         with patch("omnibci.application.services.engine_service.Thread"):
             await container.engine_service.handle_start_engine(StartEngineCommand())
         snapshot = builder.call_args.kwargs["settings_snapshot"]

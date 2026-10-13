@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import struct
+from unittest.mock import AsyncMock, MagicMock, call
 
 import numpy as np
 import pytest
@@ -234,6 +235,86 @@ def test_protocol_802_native_int16_samples_are_supported():
         driver._parse_eeg(packet),
         np.asarray([[1, 2], [10, 20]], dtype=np.int16),
     )
+
+
+@pytest.mark.asyncio
+async def test_metadata_requeries_the_stopped_device_and_keeps_event_rows_separate():
+    driver = Curry8DataReader(parameters={})
+    driver._is_connected = True
+    driver._protocol_version = 803
+    driver._request_info = AsyncMock(side_effect=[
+        _BASIC_INFO.pack(_BASIC_INFO.size, 3, 1000, 4, 1, 0),
+        _channel_info(("Fz", "Cz", "Pz")),
+        _BASIC_INFO.pack(_BASIC_INFO.size, 2, 500, 4, 1, 0),
+        _channel_info(("C3", "C4")),
+    ])
+
+    first = await driver.get_metadata()
+    refreshed = await driver.get_metadata()
+
+    assert first["channel_count"] == 3
+    assert first["output_channel_count"] == 4
+    assert refreshed["sample_rate"] == 500
+    assert refreshed["channel_count"] == 2
+    assert refreshed["output_channel_count"] == 3
+    assert refreshed["channel_labels"] == ["C3", "C4"]
+    assert driver._request_info.await_args_list == [
+        call(ClientRequest.BASIC_INFO, InfoType.BASIC_INFO),
+        call(ClientRequest.CHANNEL_INFO, InfoType.CHANNEL_INFO),
+    ] * 2
+
+    driver._is_streaming = True
+    assert await driver.get_metadata() == refreshed
+    assert driver._request_info.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_metadata_without_a_streaming_cache_never_reads_the_stream_socket():
+    driver = Curry8DataReader(parameters={})
+    driver._is_connected = driver._is_streaming = True
+    driver._request_info = AsyncMock()
+
+    with pytest.raises(RuntimeError, match="Stop the CURRY stream"):
+        await driver.get_metadata()
+
+    driver._request_info.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stopped_metadata_skips_queued_stream_packets():
+    driver = Curry8DataReader(parameters={})
+    driver._is_connected = driver._is_streaming = True
+    driver._protocol_version = 803
+    driver.reader = asyncio.StreamReader()
+    driver.writer = MagicMock(drain=AsyncMock())
+    driver.reader.feed_data(b"".join([
+        _packet(b"DATA", DataCode.EEG, BlockType.FLOAT32, np.zeros((2, 3), dtype="<f4").tobytes()),
+        _packet(b"DATA", DataCode.EVENTS, BlockType.EVENT_LIST, _event(7, 1, "target")),
+        _packet(b"DATA", DataCode.IMPEDANCES, BlockType.FLOAT32, np.zeros(3, dtype="<f4").tobytes()),
+        _packet(b"DATA", DataCode.INFO, InfoType.BASIC_INFO,
+                _BASIC_INFO.pack(_BASIC_INFO.size, 3, 1000, 4, 1, 0)),
+        _packet(b"DATA", DataCode.INFO, InfoType.CHANNEL_INFO, _channel_info(("Fz", "Cz", "Pz"))),
+    ]))
+
+    await driver.stop_stream()
+    metadata = await driver.get_metadata()
+
+    assert metadata["channel_count"] == 3
+    assert metadata["sample_rate"] == 1000
+    assert metadata["channel_labels"] == ["Fz", "Cz", "Pz"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code,message", [(99, "Unexpected packet"), (DataCode.EEG, "Timed out")])
+async def test_stopped_metadata_rejects_unexpected_or_missing_reply(code, message):
+    driver = Curry8DataReader(parameters={}, timeout=0.01)
+    driver._is_connected = True
+    driver.reader = asyncio.StreamReader()
+    driver.writer = MagicMock(drain=AsyncMock())
+    driver.reader.feed_data(_packet(b"DATA", code, BlockType.FLOAT32, np.zeros(3, dtype="<f4").tobytes()))
+
+    with pytest.raises(Curry8ProtocolError, match=message):
+        await driver.get_metadata()
 
 
 def test_stream_lifecycle_decodes_eeg_and_aligns_events():

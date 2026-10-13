@@ -2,25 +2,32 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import numpy as np
 import pytest
 
 from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
 from omnibci.domain.decoder_input import DecoderChannelRequirements
-from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, ReferenceSpec, SourceMetadata, compile_processing_plan
+from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor, ChannelDescriptor
+from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 from omnibci.domain.ports.algorithm import Decoder
+from omnibci.domain.signal import SignalChunk
+from omnibci.infrastructure.acquisition.metadata import acquisition_descriptor
 from omnibci.infrastructure.neuroengine.processing.signal_configuration import signal_context
+from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8.curry8 import Curry8DataReader, Curry8Metadata
 from omnibci.infrastructure.plugins.loader import PluginLoadError
+from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
 from omnibci.sdk import PluginContext
 
 
-def configured(requirements, outputs=("O1",), *, signal_type="eeg", reference=None):
-    source = SourceMetadata("source", 250, (
+def configured(requirements, outputs=("O1",), *, signal_type="eeg"):
+    source = AcquisitionDescriptor("source", 250, (
         ChannelDescriptor(0, "O1", signal_type=signal_type, unit="uV"),
-        ChannelDescriptor(1, "Oz", unit="uV"),
-        ChannelDescriptor(2, "M1", signal_type="reference", unit="uV"),
-    ), 3, original_reference="Cz")
-    inputs = ProcessingInput(outputs=outputs, reference=reference or ReferenceSpec())
+        ChannelDescriptor(1, "Oz", signal_type="eeg", unit="uV"),
+        ChannelDescriptor(2, "M1", signal_type="eeg", unit="uV"),
+    ), 3)
+    ids = {channel.name: channel.channel_id for channel in source.channels}
+    inputs = ProcessingInput(outputs=tuple(ChannelBinding(name, ids[name]) for name in outputs))
     selection = PluginSelection("test.decoder", "default", "1")
     binding = ProfileBinding("processing.decoder", "decoder", None, selection, {}, processing_input=inputs)
     snapshot = {"PLUGINS.bindings": [binding.to_dict()]}
@@ -36,8 +43,7 @@ def configured(requirements, outputs=("O1",), *, signal_type="eeg", reference=No
     (DecoderChannelRequirements(required_names=("Oz",)), {}),
     (DecoderChannelRequirements(min_count=2), {}),
     (DecoderChannelRequirements(signal_type="eeg"), {"signal_type": "eog"}),
-    (DecoderChannelRequirements(required_names=("M1",)),
-     {"reference": ReferenceSpec(mode="single", channels=("M1",))}),
+    (DecoderChannelRequirements(required_names=("M1",)), {}),
 ])
 def test_invalid_final_input_never_constructs_decoder(requirements, fields):
     snapshot, context, catalog = configured(requirements, **fields)
@@ -74,3 +80,41 @@ def test_undeclared_legacy_plugin_keeps_its_existing_construction_path():
     load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
                            context=PluginContext(sample_rate=250), catalog=catalog, loader=loader)
     loader.instantiate.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_curry_unknown_types_require_processing_declaration_before_builtin_cca():
+    reader = Curry8DataReader(parameters={}, context=PluginContext())
+    reader._is_connected = reader._is_streaming = True
+    reader._metadata = Curry8Metadata(803, 2, 500, 4, False, False, ("C3", "C4"))
+    raw_metadata = await reader.get_metadata()
+    source = acquisition_descriptor(raw_metadata, source_id=reader.plugin_type, connection_id="curry-connection")
+    assert "channel_types" not in raw_metadata
+    assert all(channel.signal_type == "unknown" for channel in source.channels)
+    catalog = PluginCatalog()
+    definition = catalog.resolve("decoder", "THUBCI_SSVEP_classic40CCA")
+    undeclared = ProcessingInput()
+    binding = ProfileBinding("processing.decoder", "decoder", None, definition.selection,
+                             {"window_duration": 1.0, "offset_time": 0}, processing_input=undeclared)
+    snapshot = {"PLUGINS.bindings": [binding.to_dict()]}
+    with pytest.raises(PluginLoadError, match="eeg"):
+        load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder, catalog=catalog,
+                               context=signal_context(snapshot, compile_processing_plan(source, undeclared)))
+
+    declared = ProcessingInput(outputs=(ChannelBinding("Right", "channel-1", "eeg"),))
+    binding = ProfileBinding("processing.decoder", "decoder", None, definition.selection,
+                             binding.parameters, processing_input=declared)
+    snapshot = {"PLUGINS.bindings": [binding.to_dict()]}
+    plan = compile_processing_plan(source, declared)
+    decoder = load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
+                                     catalog=catalog, context=signal_context(snapshot, plan))
+    times = np.arange(501) / source.sample_rate
+    signal = np.sin(2 * np.pi * 8 * times)
+    chunk = SignalChunk(123, 1, np.vstack((np.zeros(501), signal, np.zeros(501))))
+    mapped = plan.apply(chunk)
+    np.testing.assert_array_equal(mapped.data[0], signal)
+    np.testing.assert_array_equal(mapped.triggers, chunk.triggers)
+    assert decoder.should_decode(mapped.data)
+    assert decoder.decode(mapped.data, mapped.data[:, -1:]).target_id == 1
+    assert all(channel.signal_type == "unknown" for channel in source.channels)
+    assert "channel_types" not in raw_metadata

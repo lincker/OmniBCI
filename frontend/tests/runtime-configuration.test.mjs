@@ -9,7 +9,8 @@ const server = await createServer({ server: { middlewareMode: true, hmr: false, 
 after(() => server.close());
 const { RuntimeConfigurationReview, RuntimeConfigurationStatus } = await server.ssrLoadModule("/src/RuntimeConfiguration.tsx");
 const { RunConsole } = await server.ssrLoadModule("/src/RunConsole.tsx");
-const { I18nProvider } = await server.ssrLoadModule("/src/i18n.tsx");
+const { I18nProvider, translate } = await server.ssrLoadModule("/src/i18n.tsx");
+const english = { language: "en", t: (key, params) => translate("en", key, params) };
 const { TrialResults } = await server.ssrLoadModule("/src/TrialResults.tsx");
 const { readTrialControls } = await server.ssrLoadModule("/src/plugin-controls.ts");
 globalThis.window = { localStorage: { getItem: () => "en" }, navigator: { language: "en" } };
@@ -19,7 +20,7 @@ const plan = { plan_id: "plan-1", expected_revision: status.accepted_revision, t
   generation: status.generation, running: true, strategy: "trial_boundary", session_effect: "preserve", changed_slots: ["processing.decoder"], changed_settings: [], errors: [] };
 const baseRuntime = { status, plan, operation: null, blocked: false, inProgress: false, recoveryRequired: false, submitting: false,
   uncertain: false, error: null, requestError: null, review: noop, apply: noop, dismissPlan: noop, refresh: noop, retryUnconfirmed: noop };
-const render = (component, props) => renderToStaticMarkup(React.createElement(component, props));
+const render = (component, props) => renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(component, props)));
 function buttonDisabled(html, label) {
   const tag = [...html.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)]
     .find(([, , body]) => body.replace(/<[^>]*>/g, "") === label);
@@ -40,8 +41,8 @@ test("review presents the impact before Apply and blocks invalid plans", () => {
   assert.match(rebuild, /Pause and rebuild the engine/);
   assert.match(rebuild, /continuation session/);
   const channels = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan,
-    signal_summary: "Outputs: C4, C3; reference: average (M1, M2)" } } });
-  assert.match(channels, /Outputs: C4, C3; reference: average \(M1, M2\)/);
+    signal_summary: "Channels: C4, C3; types: EEG" } } });
+  assert.match(channels, /Channels: C4, C3; types: EEG/);
 });
 
 for (const [field, value] of [["accepted_revision", "changed"], ["applied_revision", "changed"], ["generation", "changed"], ["running", false]]) {
@@ -131,16 +132,22 @@ test("trial controls validate supported fields and numeric defaults before rende
   }
 });
 
-test("Run reports exclusions when the decoder selects all remaining source channels", () => {
+for (const [name, activeInput, expected] of [
+  ["ordered mapped names", { schema_version: 2, outputs: [
+    { source_channel_id: "sample-1", name: "right", signal_type: "eeg" },
+    { source_channel_id: "sample-0", name: "left" },
+  ] }, "right, left"],
+  ["all-source identity", { schema_version: 2, outputs: [] }, "All source channels"],
+  ["no active mapping", null, "No active channel mapping"],
+]) test(`Run reports ${name} from the active channel mapping`, () => {
   const dispatcher = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
   const previous = dispatcher.current;
   let stateIndex = 0;
-  const activeSetup = { outputs: [], reference: { mode: "original", channels: [] }, excluded_channels: ["EOG", "M1"] };
   // Seed the signal poll's data; the first poll contains stimulation data and its error.
   dispatcher.current = {
-    useState: (initial) => [stateIndex++ === 2 ? { active_setup: activeSetup, readiness: { ready: true } }
+    useState: (initial) => [stateIndex++ === 2 ? { active_input: activeInput, readiness: { ready: true } }
       : typeof initial === "function" ? initial() : initial, noop],
-    useContext: () => ({ t: (key) => key }), useRef: (value) => ({ current: value }),
+    useContext: () => english, useRef: (value) => ({ current: value }),
     useCallback: (callback) => callback, useEffect: noop,
   };
   let tree;
@@ -151,6 +158,6 @@ test("Run reports exclusions when the decoder selects all remaining source chann
       onBusyChange: noop, onEditSetup: noop, onResults: noop });
   } finally { dispatcher.current = previous; }
   const html = renderToStaticMarkup(React.createElement(I18nProvider, null, tree));
-  assert.match(html, /All source channels except EOG, M1/);
-  assert.doesNotMatch(html, /All source channels<\/strong>/);
+  assert.ok(html.includes(`<strong>${expected}</strong>`));
+  assert.doesNotMatch(html, /Active reference mode|montage|excluded channels/i);
 });

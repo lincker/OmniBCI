@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from omnibci.application.services.plugin_package_service import PluginPackageService
 from omnibci.application.services.plugin_profile_service import PluginProfileService
-from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, ReferenceSpec, SourceMetadata
+from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
@@ -80,11 +80,13 @@ def test_version_proposal_serializes_channel_configuration(client, monkeypatch, 
     http, svc = client
     alias = "THUBCI_SSVEP_classic40CCA" if kind == "decoder" else "file_reader"
     definition = svc.profiles.catalog.legacy(kind, alias)
-    values = ({"processing_input": ProcessingInput(outputs=("O2", "O1"),
-               reference=ReferenceSpec("single", ("M1",)))} if kind == "decoder" else {
-        "manual_montage": SourceMetadata("file_reader", 500, (ChannelDescriptor(0, "O1", unit="V"),), 1)})
+    values = ({"processing_input": ProcessingInput(outputs=(ChannelBinding("O2", "channel-1", "eeg"), ChannelBinding("O1", "channel-0", "eeg")))} if kind == "decoder" else {
+        "manual_montage": {"source_id": "file_reader", "sample_rate": 500, "channels": [{"index": 0, "name": "O1"}]}})
     parameters = {} if kind == "decoder" else {"sample_rate": 500, "channel_number": 2}
-    source = svc.profiles.create(kind, definition.selection, "Versioned profile", parameters, **values)
+    source = svc.profiles.create(kind, definition.selection, "Versioned profile", parameters,
+                                 **(values if kind == "decoder" else {}))
+    if kind == "acquisition":
+        source = svc.profiles.repository.save_profile(replace(source, legacy=values), expected_revision=source.revision)
     target = replace(definition, selection=replace(definition.selection, version="99.0.0"))
     monkeypatch.setattr(svc.store, "get_package", lambda *_: SimpleNamespace(error=None, available=True, enabled=True))
     monkeypatch.setattr(svc.store, "configuration", lambda *_: target)
@@ -94,8 +96,11 @@ def test_version_proposal_serializes_channel_configuration(client, monkeypatch, 
     assert proposal.status_code == 200, proposal.text
     copied = http.post("/plugin-packages/version-profiles", json={**body, "expected_source_revision": source.revision})
     assert copied.status_code == 201, copied.text
-    field = "processing_input" if kind == "decoder" else "manual_montage"
-    assert copied.json()["data"][field] == proposal.json()["data"][field]
+    if kind == "decoder":
+        assert copied.json()["data"]["processing_input"] == proposal.json()["data"]["processing_input"]
+    else:
+        assert "manual_montage" not in copied.json()["data"]
+        assert "manual_montage" not in proposal.json()["data"]
 
 
 @pytest.mark.parametrize("body", [{"enabled": "true"}, {"enabled": True, "unknown": 1}])

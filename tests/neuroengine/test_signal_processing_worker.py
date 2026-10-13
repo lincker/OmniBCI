@@ -57,7 +57,7 @@ class TestFilterLoading:
 class TestAlgorithmLoading:
     def test_prepared_pipeline_uses_host_sample_rate_without_global_reads(self, monkeypatch):
         from omnibci.application.plugin_profiles import ProfileBinding
-        from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, SourceMetadata, compile_processing_plan
+        from omnibci.domain.channel_mapping import ChannelDescriptor, ProcessingInput, AcquisitionDescriptor, compile_processing_plan
         from omnibci.infrastructure.neuroengine.processing.signal_configuration import load_signal_pipeline
         from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
         snapshot = {"ACQUISITION.sample_rate": 250, "CONFIG.revision": "test-revision"}
@@ -72,7 +72,7 @@ class TestAlgorithmLoading:
             bindings.append(ProfileBinding(slot, kind, None, descriptor.selection, parameters,
                                            processing_input=ProcessingInput() if kind == "decoder" else None).to_dict())
         snapshot["PLUGINS.bindings"] = bindings
-        source = SourceMetadata("file_reader", snapshot["ACQUISITION.sample_rate"],
+        source = AcquisitionDescriptor("file_reader", snapshot["ACQUISITION.sample_rate"],
                                 (ChannelDescriptor(0, "O1", signal_type="eeg", unit="V"),), 1)
         plan = compile_processing_plan(source, ProcessingInput(), config_revision=snapshot["CONFIG.revision"])
         monkeypatch.setattr(conf_module.settings, "get", lambda *a, **k: pytest.fail("global settings read"))

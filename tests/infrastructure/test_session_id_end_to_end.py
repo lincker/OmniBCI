@@ -20,7 +20,6 @@ from omnibci.infrastructure.repositories.session_repository import (
 )
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.signal_setup_service import SignalSetupService
-from omnibci.infrastructure.signal_layouts import SignalLayoutProvider
 
 
 _ROOT = Path(__file__).parents[2]
@@ -83,7 +82,7 @@ def test_file_reader_session_id_matches_websocket_and_rest(
         )
         signal = SignalSetupService(
             SimpleNamespace(read_saved=lambda: (seed, "saved")), profiles, engine_service,
-            container.acquisition_service, container.command_results, SignalLayoutProvider(),
+            container.acquisition_service, container.command_results,
         )
         container.acquisition_service.set_signal_preparer(signal.prepare)
         container.session_service.set_signal_preparer(signal.prepare_session, container.acquisition_service.lifecycle_lock)

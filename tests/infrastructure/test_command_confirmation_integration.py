@@ -120,8 +120,14 @@ def test_connect_round_trips_through_event_bus_worker_and_broker() -> None:
             assert result.ok is True
             assert result.command == "ConnectDataProvider"
             assert source.is_connected is True
+            assert isinstance(acquisition.connection_id, str)
+            assert acquisition.connection_id
             assert observed_states == [
-                AcquisitionSnapshot(connected=True, streaming=False)
+                AcquisitionSnapshot(
+                    connected=True,
+                    streaming=False,
+                    connection_id=acquisition.connection_id,
+                )
             ]
             assert broker.pending_count == 0
         finally:

@@ -1,7 +1,9 @@
 """Acquisition domain service and worker command contracts."""
 import asyncio
+import json
 import logging
 import time
+from copy import deepcopy
 from uuid import uuid4
 from enum import Enum
 from typing import Optional, Protocol, runtime_checkable
@@ -16,7 +18,7 @@ from omnibci.application.events import (
 from omnibci.application.processing_source import requires_signal_preparation
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.domain.signal import SignalChunk
-from omnibci.infrastructure.acquisition.metadata import source_metadata
+from omnibci.infrastructure.acquisition.metadata import acquisition_descriptor
 from omnibci.shared.events import Event, EventType
 
 logger = logging.getLogger(__name__)
@@ -108,10 +110,9 @@ class Acquisition:
         self._last_sequence = -1
         self._fetch_failure: str | None = None
         self._metadata_settings = metadata_settings or {}
-        self._metadata = None
-        self._observation = None
-        self._metadata_error = None
-        self._observation_error = None
+        self._descriptor = None
+        self._raw_metadata = None
+        self._descriptor_error = None
         self.connection_id = uuid4().hex if getattr(data_source, "is_connected", False) else None
 
     def run(self) -> None:
@@ -283,17 +284,17 @@ class Acquisition:
                 "Data source did not enter the connected state",
             )
         self.connection_id = uuid4().hex
-        self._metadata = None
-        self._observation = None
-        self._metadata_error = self._observation_error = None
+        self._descriptor = None
+        self._raw_metadata = None
+        self._descriptor_error = None
         self.status = AcquisitionState.running
         self._emit_state()
 
     async def _on_disconnect(self) -> None:
         self.connection_id = None
-        self._metadata = None
-        self._observation = None
-        self._metadata_error = self._observation_error = None
+        self._descriptor = None
+        self._raw_metadata = None
+        self._descriptor_error = None
         # A successful disconnect means no reader coroutine remains alive.
         # Some SignalSource implementations (including FileReader) do not
         # implicitly stop their stream in disconnect(), so enforce the order
@@ -378,72 +379,50 @@ class Acquisition:
         self.should_exit = True
 
     async def _on_get_metadata(self, request=None):
-        if request is None and not self._metadata_settings:
-            # Preserve direct legacy worker commands without a metadata contract.
-            return await self.data_source.get_metadata()
-        if not self.data_source.is_connected:
+        if not self.data_source.is_connected or self.connection_id is None:
             raise AcquisitionCommandRejected("DATA_SOURCE_NOT_CONNECTED", "Connect the source before reading metadata")
         payload = request.payload if request else None
         refresh = isinstance(payload, dict) and payload.get("refresh") is True
-        include_observation = isinstance(payload, dict) and payload.get("include_observation") is True
-        if self.connection_id is None:
-            raise AcquisitionCommandRejected("DATA_SOURCE_NOT_CONNECTED", "Reconnect the source before reading metadata")
+        source_id = self._metadata_settings.get("ACQUISITION.signal_source") or getattr(
+            self.data_source, "plugin_type", type(self.data_source).__name__,
+        )
         if self.data_source.is_streaming or self.fetch_task is not None:
-            if self._metadata is not None and not refresh:
-                return self._metadata_response(include_observation)
+            if self._raw_metadata is not None and not refresh:
+                return self._metadata_response(source_id)
             raise AcquisitionCommandRejected("METADATA_REQUIRES_STOP", "Stop the stream before reading source metadata")
-        if self._metadata is None or refresh:
-            self._metadata = self._observation = None
-            self._metadata_error = self._observation_error = None
-            source_id = self._metadata_settings.get("ACQUISITION.signal_source") or getattr(
-                self.data_source, "plugin_type", type(self.data_source).__name__,
-            )
+        if self._raw_metadata is None or refresh:
+            self._descriptor = self._raw_metadata = None
+            self._descriptor_error = None
             try:
                 info = await asyncio.wait_for(self.data_source.get_metadata(), timeout=3.0)
-            except Exception as exc:
-                info = None
-                self._observation_error = str(exc) or "Source metadata timed out"
-            else:
-                try:
-                    self._observation = source_metadata(
-                        info, self._metadata_settings, source_id=source_id, connection_id=self.connection_id,
-                        include_manual=False, validate_configuration=False,
-                    )
-                except (ValueError, TypeError) as exc:
-                    self._observation_error = str(exc)
-            manual = self._metadata_settings.get("ACQUISITION.manual_montage") or (
-                self._metadata_settings.get("SIGNAL.setup") or {}
-            ).get("manual_metadata")
+            except TimeoutError as exc:
+                raise AcquisitionCommandRejected("SOURCE_METADATA_TIMEOUT", "Source metadata request timed out") from exc
+            if not isinstance(info, dict):
+                raise ValueError("Source metadata must be a JSON object")
+            json.dumps(info, allow_nan=False)
+            self._raw_metadata = deepcopy(info)
             try:
-                if self._observation_error and info is None and manual is None:
-                    raise ValueError(self._observation_error)
-                self._metadata = source_metadata(
-                    info, self._metadata_settings, source_id=source_id, connection_id=self.connection_id,
-                )
-            except (ValueError, TypeError) as exc:
-                self._metadata_error = str(exc)
-        return self._metadata_response(include_observation)
+                self._descriptor = acquisition_descriptor(info, source_id=source_id, connection_id=self.connection_id)
+            except Exception as exc:
+                self._descriptor_error = str(exc) or "Source metadata cannot describe acquisition output"
+        return self._metadata_response(source_id)
 
-    def _metadata_response(self, include_observation):
-        if include_observation:
-            return {
-                "metadata": self._metadata.to_dict() if self._metadata is not None else None,
-                "observation": self._observation.to_dict() if self._observation is not None else None,
-                "metadata_error": self._metadata_error,
-                "observation_error": self._observation_error,
-            }
-        error = self._metadata_error or self._observation_error
-        if error is not None:
-            raise AcquisitionCommandRejected("INVALID_SOURCE_METADATA", error)
-        return self._metadata.to_dict()
+    def _metadata_response(self, source_id):
+        return {
+            "source_id": source_id,
+            "connection_id": self.connection_id,
+            "metadata": deepcopy(self._raw_metadata),
+            "descriptor": self._descriptor.to_dict() if self._descriptor is not None else None,
+            "descriptor_error": self._descriptor_error,
+        }
 
     def _validate_signal_receipt(self, receipt) -> None:
         expected = {
             "generation": self.generation, "config_revision": self.config_revision,
             "connection_id": self.connection_id,
-            "source_fingerprint": self._metadata.fingerprint if self._metadata else None,
+            "source_fingerprint": self._descriptor.fingerprint if self._descriptor else None,
         }
-        if (not isinstance(receipt, dict) or self._metadata is None
+        if (not isinstance(receipt, dict) or self._descriptor is None
                 or any(receipt.get(key) != value for key, value in expected.items())
                 or not isinstance(receipt.get("plan_fingerprint"), str)
                 or len(receipt["plan_fingerprint"]) != 64):
@@ -484,7 +463,6 @@ class Acquisition:
             )
 
     def preprocess(self, data: SignalChunk) -> SignalChunk:
-        # TODO: channel mapping per selected algorithm
         return data
 
     async def _finish_stream(self) -> None:
@@ -510,6 +488,7 @@ class Acquisition:
             AcquisitionSnapshot(
                 connected=self.data_source.is_connected,
                 streaming=self.data_source.is_streaming,
+                connection_id=self.connection_id,
             ),
         ))
 

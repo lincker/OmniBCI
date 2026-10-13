@@ -7,7 +7,7 @@ import pytest
 from omnibci import bootstrap
 from omnibci.application.plugin_profiles import ActivationSnapshot
 from omnibci.application.plugin_schema import PluginSchemaError
-from omnibci.domain.montage import ProcessingInput
+from omnibci.domain.channel_mapping import ProcessingInput
 from omnibci.bootstrap import _RuntimeSettings, build_container
 from omnibci.conf import OmniBCISettings
 from omnibci.infrastructure.config_paths import config_root
@@ -88,24 +88,20 @@ def test_status_reads_applied_values_while_engine_running():
 
 
 @pytest.mark.asyncio
-async def test_montage_binding_uses_applied_source_and_guards_explicit_profile_reads():
-    from omnibci.application.plugin_profiles import ProfileRevisionConflict
-    from omnibci.bootstrap import _acquisition_montage_binding
+async def test_metadata_binding_uses_the_running_source_without_reading_saved_profiles():
+    from omnibci.bootstrap import _acquisition_binding
     container = await build_container()
     profiles = container.plugin_profile_service
     accepted = profiles.repository.get_activation()
     binding = next(item for item in accepted.bindings if item.slot == "acquisition.source")
     engine = Mock(applied_snapshot=profiles.materialize(accepted))
-    assert _acquisition_montage_binding(engine, profiles, binding.profile_id) == binding
-    with pytest.raises(ProfileRevisionConflict, match="applied acquisition profile"):
-        _acquisition_montage_binding(engine, profiles, "another-profile")
+    assert _acquisition_binding(engine) == binding.to_dict()
     profile = profiles.repository.get_profile(binding.profile_id)
     profiles.update(profile.profile_id, name=profile.name,
                     parameters={**profile.parameters, "sample_rate": 250}, expected_revision=profile.revision)
-    with pytest.raises(ProfileRevisionConflict, match="differs from the running source"):
-        _acquisition_montage_binding(engine, profiles, binding.profile_id)
-    # An automatic observation still belongs to the running profile's pinned copy.
-    assert _acquisition_montage_binding(engine, profiles) == binding
+    assert _acquisition_binding(engine) == binding.to_dict()
+    engine.applied_snapshot = None
+    assert _acquisition_binding(engine) is None
 
 
 @pytest.mark.asyncio
@@ -227,7 +223,7 @@ async def test_existing_activation_keeps_its_revision_and_pinned_inputs(bootstra
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_keeps_legacy_decoder_input_absence_and_global_setup(bootstrap_settings):
+async def test_bootstrap_keeps_management_available_but_blocks_legacy_mapping_start(bootstrap_settings):
     first = await build_container()
     profiles = first.plugin_profile_service
     current = profiles.repository.get_activation()
@@ -241,7 +237,9 @@ async def test_bootstrap_keeps_legacy_decoder_input_absence_and_global_setup(boo
     restarted = await build_container()
 
     assert restarted.plugin_profile_service.repository.get_activation() == legacy
-    assert restarted.engine_service._snapshot_provider()["SIGNAL.setup"] == setup
+    with pytest.raises(RuntimeError, match="Legacy montage"):
+        restarted.engine_service._snapshot_provider()
+    assert restarted.plugin_profile_service.repository.list_profiles()
     assert _toml_files(profiles.repository.root) == files
 
 

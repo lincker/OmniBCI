@@ -9,63 +9,83 @@ from omnibci.application.plugin_profiles import (
     ActivationSnapshot, PluginProfile, PluginProfileValidationError,
     PluginSelection, ProfileBinding,
 )
-from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, ReferenceSpec, SourceMetadata
+from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 
 
-def _montage():
-    return SourceMetadata("test-source", 250, (
-        ChannelDescriptor(0, "O1", unit="V", position=(0.0, 0.01, 0.02),
-                          coordinate_frame="head", position_provenance="file-reported"),
-    ), 1, connection_id="live-connection", provenance="file-reported")
+def _legacy_montage():
+    return {"source_id": "test-source", "sample_rate": 250, "trigger_row_index": 1,
+            "channels": [{"index": 0, "name": "O1", "signal_type": "eeg", "unit": "V",
+                          "position": [0.0, 0.01, 0.02], "coordinate_frame": "head",
+                          "position_provenance": "file-reported"}], "provenance": "file-reported"}
 
 
-def test_profile_montages_round_trip_without_persisting_connection_identity():
-    observed = _montage()
+def test_historical_acquisition_fields_round_trip_as_inert_raw_data():
+    observed = _legacy_montage()
     profile = PluginProfile(str(uuid4()), "Source", "acquisition",
                             PluginSelection("acme.source", "main", "1.0.0"), {},
-                            acquisition_montage=observed, manual_montage=observed)
+                            legacy={"acquisition_montage": observed, "manual_montage": observed})
     exported = profile.to_dict()
-    assert "connection_id" not in exported["acquisition_montage"]
-    assert "connection_id" not in exported["manual_montage"]
-    assert profile.acquisition_montage.connection_id == ""
-    assert profile.acquisition_montage.channels[0].position_provenance == "file-reported"
-    assert profile.manual_montage.provenance == "user-declared"
-    assert profile.manual_montage.channels[0].position_provenance == "user-declared"
-    assert observed.connection_id == "live-connection"
+    assert exported["acquisition_montage"] == observed
+    assert exported["manual_montage"] == observed
+    assert not hasattr(profile, "acquisition_montage")
+    assert not hasattr(profile, "manual_montage")
     assert PluginProfile.from_dict(exported) == profile
-    exported["manual_montage"]["channels"][0]["name"] = "Changed"
-    assert profile.manual_montage.channels[0].name == "O1"
+    observed["channels"][0]["name"] = "Input changed"
+    exported["manual_montage"]["channels"][0]["name"] = "Export changed"
+    assert profile.legacy["manual_montage"]["channels"][0]["name"] == "O1"
 
 
-def test_montage_fields_are_acquisition_only_and_omitted_for_legacy_documents():
+def test_historical_acquisition_fields_are_not_accepted_on_other_kinds():
     profile = PluginProfile(str(uuid4()), "Decoder", "decoder",
                             PluginSelection("acme.decoder", "main", None), {})
     assert "acquisition_montage" not in profile.to_dict()
     assert "manual_montage" not in profile.to_dict()
     assert PluginProfile.from_dict(profile.to_dict()) == profile
     for field in ("acquisition_montage", "manual_montage"):
-        with pytest.raises(PluginProfileValidationError, match="acquisition"):
-            replace(profile, **{field: _montage()})
-    with pytest.raises(PluginProfileValidationError, match="acquisition"):
-        replace(_binding(), manual_montage=_montage())
+        with pytest.raises(PluginProfileValidationError, match="legacy"):
+            replace(profile, legacy={field: _legacy_montage()})
+    with pytest.raises(PluginProfileValidationError, match="legacy"):
+        replace(_binding(), legacy={"manual_montage": _legacy_montage()})
 
 
-def test_manual_montage_is_frozen_in_binding_and_affects_activation_revision():
-    binding = _binding("acquisition.source", "acquisition")
-    legacy = ActivationSnapshot({}, (binding,))
-    restored = ActivationSnapshot.from_dict(legacy.to_dict())
-    assert restored.revision == legacy.revision
-    assert "manual_montage" not in restored.bindings[0].to_dict()
-    manual = replace(binding, manual_montage=_montage())
-    selected = ActivationSnapshot({}, (manual,))
-    assert selected.revision != legacy.revision
-    assert ActivationSnapshot.from_dict(selected.to_dict()) == selected
-    assert selected.bindings[0].manual_montage.connection_id == ""
-    assert "acquisition_montage" not in selected.bindings[0].to_dict()
+def test_historical_fields_preserve_activation_revision_without_live_domain_objects():
+    binding = _binding("acquisition.source", "acquisition", legacy={"manual_montage": _legacy_montage()})
+    selected = ActivationSnapshot({}, (binding,))
+    document = selected.to_dict()
+    restored = ActivationSnapshot.from_dict(document)
+    assert restored == selected
+    assert restored.revision == document["revision"]
+    assert restored.bindings[0].to_dict()["manual_montage"] == _legacy_montage()
+    document["bindings"][0]["manual_montage"]["channels"][0]["name"] = "Changed"
+    assert selected.bindings[0].legacy["manual_montage"]["channels"][0]["name"] == "O1"
+    with pytest.raises(PluginProfileValidationError, match="revision"):
+        ActivationSnapshot.from_dict(document)
+
+
+def test_v1_processing_input_is_inert_and_requires_explicit_replacement():
+    legacy_input = {"schema_version": 1, "outputs": ["O1"],
+                    "reference": {"mode": "single", "channels": ["M1"]}, "excluded_channels": []}
+    profile = PluginProfile(str(uuid4()), "Decoder", "decoder",
+                            PluginSelection("acme.decoder", "main", None), {})
+    profile = PluginProfile.from_dict({**profile.to_dict(), "processing_input": legacy_input})
+    binding = ProfileBinding.from_dict({**_binding().to_dict(), "processing_input": legacy_input})
+    assert profile.processing_input is binding.processing_input is None
+    assert profile.processing_input_requires_review and binding.processing_input_requires_review
+    assert profile.to_dict()["processing_input"] == binding.to_dict()["processing_input"] == legacy_input
+    accepted = ActivationSnapshot({}, (binding,))
+    assert ActivationSnapshot.from_dict(accepted.to_dict()) == accepted
+    old_revision = accepted.revision
+    exported = accepted.to_dict()
+    exported["bindings"][0]["processing_input"]["outputs"].append("O2")
+    assert accepted.revision == old_revision
+    assert accepted.bindings[0].legacy["processing_input"]["outputs"] == ["O1"]
+    replacement = replace(profile, legacy={}, processing_input=ProcessingInput())
+    assert not replacement.processing_input_requires_review
+    assert replacement.to_dict()["processing_input"] == {"schema_version": 2, "outputs": []}
 
 
 def test_processing_input_is_decoder_only_and_frozen_in_activation():
-    channel_input = ProcessingInput(outputs=("O2", "O1"), reference=ReferenceSpec("single", ("M1",)))
+    channel_input = ProcessingInput(outputs=(ChannelBinding("O2", "channel-2", "eeg"), ChannelBinding("O1", "channel-0", "eeg")))
     profile = PluginProfile(str(uuid4()), "Decoder", "decoder",
                             PluginSelection("acme.decoder", "main", None), {},
                             processing_input=channel_input)
@@ -77,7 +97,8 @@ def test_processing_input_is_decoder_only_and_frozen_in_activation():
     assert selected.revision != legacy.revision
     exported = selected.to_dict()
     exported["bindings"][0]["processing_input"]["outputs"].reverse()
-    assert selected.bindings[0].processing_input.outputs == ("O2", "O1")
+    assert selected.bindings[0].processing_input == channel_input
+    assert not selected.bindings[0].processing_input_requires_review
     with pytest.raises(PluginProfileValidationError, match="decoder"):
         replace(profile, kind="filter")
     with pytest.raises(PluginProfileValidationError, match="decoder"):

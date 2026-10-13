@@ -15,7 +15,7 @@ const { DecoderDeveloperGuide } = await server.ssrLoadModule("/src/DecoderDevelo
 const { pluginMarketApi } = await server.ssrLoadModule("/src/api/plugin-market.ts");
 globalThis.window = { location: { hash: "#extensions" }, localStorage: { getItem: () => "en" }, navigator: { language: "en" } };
 Object.defineProperty(globalThis, "localStorage", { configurable: true, value: window.localStorage });
-const render = (component, props) => renderToStaticMarkup(React.createElement(component, props));
+const render = (component, props) => renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(component, props)));
 
 test("Extensions hash opens the library without a routine configuration status bar", () => {
   const html = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(App)));

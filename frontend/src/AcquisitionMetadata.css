@@ -1,0 +1,9 @@
+.acquisition-metadata .source-metadata-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 1rem; font-size: 0.75rem; }
+.acquisition-metadata dt { color: var(--muted); margin-bottom: 0.5rem; }
+.acquisition-metadata dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.acquisition-metadata .source-metadata-table { overflow-x: auto; margin: 1rem 0; }
+.acquisition-metadata table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+.acquisition-metadata th, .acquisition-metadata td { padding: 0.5rem; text-align: left; border-bottom: 1px solid var(--border-soft); }
+.acquisition-metadata .source-metadata-raw { margin-top: 1rem; font-size: 0.75rem; }
+.acquisition-metadata summary { cursor: pointer; }
+.acquisition-metadata pre { overflow-x: auto; padding: 1rem; background: var(--bg); }

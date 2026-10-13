@@ -21,6 +21,7 @@ def test_real_cnt_lifecycle_and_first_chunk():
             assert reader.is_connected is True
             assert type(reader.reader_adapter).__name__ == "CNTReaderAdapter"
             metadata = await reader.get_metadata()
+            assert metadata["channel_count"] == 9
             assert metadata["output_channel_count"] == 10
             assert metadata["sample_rate"] == 1000
             assert len(metadata["channel_labels"]) == 9

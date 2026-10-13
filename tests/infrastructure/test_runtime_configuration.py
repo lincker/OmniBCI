@@ -67,7 +67,7 @@ def test_pinned_loading_does_not_import_legacy_mapping():
         from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
         from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
         from omnibci.sdk import Decoder, PluginContext
-        from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
+        from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor, ChannelDescriptor
 
         catalog = PluginCatalog()
         descriptor = catalog.resolve("decoder", "THUBCI_SSVEP_classic40CCA")
@@ -81,7 +81,7 @@ def test_pinned_loading_does_not_import_legacy_mapping():
         assert load_configured_plugin(
             {"PLUGINS.bindings": [binding.to_dict()]}, "processing.decoder", "decoder", Decoder,
             catalog=catalog, loader=CaptureLoader,
-            context=PluginContext(input_signal=SourceMetadata("source", 250, (ChannelDescriptor(0, "Oz"),), 1)),
+            context=PluginContext(input_signal=AcquisitionDescriptor("source", 250, (ChannelDescriptor(0, "Oz", signal_type="eeg"),), 1)),
         ) == {"window_duration": 2.5, "offset_time": 0}
         assert "omnibci.application.legacy_plugin_config" not in sys.modules
     """)], capture_output=True, text=True, timeout=30)

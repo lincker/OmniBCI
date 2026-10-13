@@ -1,7 +1,7 @@
 """
 /api/v1/acquisition — Data acquisition control endpoints.
 """
-from omnibci.application.plugin_profiles import ProfileRevisionConflict, PluginProfileStorageError
+from omnibci.application.plugin_profiles import ProfileRevisionConflict
 from fastapi import APIRouter, Depends, status
 
 from omnibci.presentation.dependencies import get_acquisition_service
@@ -11,8 +11,7 @@ from omnibci.presentation.errors import (
     command_error_to_api_error,
 )
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
-from omnibci.presentation.schemas.acquisition import AcquisitionStatusResponse
-from omnibci.presentation.schemas.signal_setup import SourceMetadataModel
+from omnibci.presentation.schemas.acquisition import AcquisitionMetadataResponse, AcquisitionStatusResponse
 from omnibci.application.commands.acquisition_commands import (
     ConnectDataProviderCommand,
     DisconnectDataProviderCommand,
@@ -44,8 +43,6 @@ def connect(svc: AcquisitionAppService = Depends(get_acquisition_service)):
         raise command_error_to_api_error(e)
     except ProfileRevisionConflict:
         raise
-    except PluginProfileStorageError as e:
-        raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.SERVICE_UNAVAILABLE, str(e))
     except RuntimeError as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
@@ -120,29 +117,24 @@ def get_status(svc: AcquisitionAppService = Depends(get_acquisition_service)):
             channel_count=result.channel_count,
             metadata_available=result.metadata_available,
             metadata_provenance=result.metadata_provenance,
+            connection_id=result.connection_id,
         )
     )
 
 
-def _metadata_response(svc: AcquisitionAppService, *, refresh: bool = False, profile_id: str | None = None):
+def _metadata_response(svc: AcquisitionAppService, *, refresh: bool = False):
     try:
-        kwargs = {"refresh": refresh}
-        if profile_id is not None:
-            kwargs["profile_id"] = profile_id
-        return ApiResponse(data=svc.get_metadata(**kwargs))
+        return ApiResponse(data=svc.get_metadata(refresh=refresh))
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
         raise command_error_to_api_error(e)
     except ProfileRevisionConflict:
         raise
-    except PluginProfileStorageError as e:
-        raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.SERVICE_UNAVAILABLE, str(e))
     except RuntimeError as e:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
 
 @router.get(
-    "/metadata", response_model=ApiResponse[SourceMetadataModel], responses=COMMAND_EXECUTION_RESPONSES,
-    response_model_exclude_none=True,
+    "/metadata", response_model=ApiResponse[AcquisitionMetadataResponse], responses=COMMAND_EXECUTION_RESPONSES,
     summary="Read metadata for the current source connection",
 )
 def get_metadata(svc: AcquisitionAppService = Depends(get_acquisition_service)):
@@ -150,9 +142,8 @@ def get_metadata(svc: AcquisitionAppService = Depends(get_acquisition_service)):
 
 
 @router.post(
-    "/metadata/refresh", response_model=ApiResponse[SourceMetadataModel], responses=COMMAND_EXECUTION_RESPONSES,
-    response_model_exclude_none=True,
+    "/metadata/refresh", response_model=ApiResponse[AcquisitionMetadataResponse], responses=COMMAND_EXECUTION_RESPONSES,
     summary="Refresh metadata while the source is stopped",
 )
-def refresh_metadata(profile_id: str | None = None, svc: AcquisitionAppService = Depends(get_acquisition_service)):
-    return _metadata_response(svc, refresh=True, profile_id=profile_id)
+def refresh_metadata(svc: AcquisitionAppService = Depends(get_acquisition_service)):
+    return _metadata_response(svc, refresh=True)

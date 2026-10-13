@@ -52,7 +52,7 @@ class OmniBCISettings:
             if not prefix and key in {"META", "PROFILES"}:
                 continue
             dotted = f"{prefix}{key}"
-            if dotted == "SIGNAL.setup":
+            if dotted in {"SIGNAL.setup", "ACQUISITION.manual_montage"}:
                 flat[dotted] = value.unwrap() if hasattr(value, "unwrap") else deepcopy(value)
             elif hasattr(value, "items") and not isinstance(value, (str, list)):
                 flat.update(cls._flatten(value, prefix=f"{dotted}."))
@@ -91,7 +91,9 @@ class OmniBCISettings:
         document = self._parse(content, path) if content is not None else tomlkit.document()
         overrides = self._flatten(document)
         if self._explicit_path is None:
-            self._validate_host_keys(overrides)
+            self._validate_host_keys({key: value for key, value in overrides.items()
+                                      if key not in {"SIGNAL.setup", "ACQUISITION.channel_names",
+                                                     "ACQUISITION.manual_montage"}})
             if {"META", "PROFILES"} & document.keys():
                 raise ConfigProfileValidationError("Retired profile metadata is not a host setting")
         return {**base, **overrides}, self._hash(defaults, content), document, defaults

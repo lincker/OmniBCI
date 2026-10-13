@@ -27,7 +27,7 @@ from omnibci.domain.ports.effector import Effector
 from omnibci.domain.ports.paradigm import Paradigm
 from omnibci.domain.ports.renderer import Color, Rect, Renderer, TextureHandle
 from omnibci.domain.signal import SignalChunk
-from omnibci.domain.montage import SourceMetadata
+from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor
 
 
 PluginParameters = Mapping[str, Any]
@@ -44,9 +44,9 @@ class PluginContext:
     supplied as an absolute string path by the host; no filesystem access occurs
     while creating this context.
 
-    ``acquired_signal`` describes normalized source rows. ``input_signal``
-    describes the actual channels, units, references and positions supplied to
-    this processing plugin after the prepared channel transform. Both are absent
+    ``acquired_signal`` describes normalized acquisition rows. ``input_signal``
+    describes the channel IDs, names, types and units supplied to this processing
+    plugin after channel selection and ordering. Both are absent
     in the legacy path; ``channel_names`` keeps its acquired-channel meaning.
     """
 
@@ -54,14 +54,14 @@ class PluginContext:
     channel_names: tuple[str, ...] = ()
     config_revision: str | None = None
     resource_root: str | None = None
-    acquired_signal: SourceMetadata | None = None
-    input_signal: SourceMetadata | None = None
+    acquired_signal: AcquisitionDescriptor | None = None
+    input_signal: AcquisitionDescriptor | None = None
 
     def __post_init__(self) -> None:
         for field in ("acquired_signal", "input_signal"):
             value = getattr(self, field)
-            if value is not None and not isinstance(value, SourceMetadata):
-                raise ValueError(f"{field} must be SourceMetadata or None")
+            if value is not None and not isinstance(value, AcquisitionDescriptor):
+                raise ValueError(f"{field} must be AcquisitionDescriptor or None")
         if self.sample_rate is not None and (
             isinstance(self.sample_rate, bool)
             or not isinstance(self.sample_rate, (int, float))
@@ -87,5 +87,5 @@ class PluginContext:
 __all__ = [
     "Color", "Decoder", "Effector", "EpochDetector", "Filter", "FilterContext",
     "Paradigm", "PluginContext", "PluginParameters", "Prediction", "Rect",
-    "Renderer", "SignalChunk", "SignalSource", "SourceMetadata", "TextureHandle", "TriggerEmitter",
+    "Renderer", "SignalChunk", "SignalSource", "AcquisitionDescriptor", "TextureHandle", "TriggerEmitter",
 ]

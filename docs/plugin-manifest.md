@@ -135,19 +135,20 @@ Processing contributions that support prepared channel input declare
 `signal_input_contract = 1` beside their contribution `kind`. Decoder
 contributions can declare `signal_input_contract = 2` together with
 `[contributions.channel_requirements]` to add minimum count, signal type and
-required names, plus ordered defaults for new Profiles. Contract 2 requires that
+required names, plus ordered name suggestions for channel mapping. Contract 2 requires that
 section and is currently Decoder-only; older hosts reject the unsupported
 capability rather than ignoring its requirements. The
 [Decoder authoring guide](decoder-plugin-development.md#manifest-and-channel-requirements)
 describes every field, with comments in the executable starter manifest.
 
 Both prepared input contracts add `acquired_signal` and `input_signal` to the
-context, as immutable `SourceMetadata` values.
+context, as immutable `AcquisitionDescriptor` values.
 `channel_names` retains the original acquired-channel meaning; the ordered
 `input_signal.channels` describes the actual decoder/filter/detector input,
-including units, references, and optional positions in meters. The final trigger
-row remains outside channel arithmetic. Undeclared plugins retain the legacy
-identity path and reject transformed input before streaming. The bundled CCA
+including source channel IDs, signal types and optional units. The final trigger
+row remains separate. Channel mapping selects and orders rows without changing
+sample values. Undeclared plugins retain the legacy identity path and reject
+changed input before streaming. The bundled CCA
 and FBCCA declare contract 2 with flexible EEG input and no mandatory electrode
 names. The bundled epoch detector and baseline filter retain contract 1.
 

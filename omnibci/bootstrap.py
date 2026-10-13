@@ -1,7 +1,6 @@
 """Composition root for application services and infrastructure adapters."""
 
 import logging
-import json
 from dataclasses import dataclass
 from typing import Callable, Iterable, Tuple
 
@@ -23,7 +22,6 @@ from omnibci.application.services.plugin_installation_service import PluginInsta
 from omnibci.application.services.plugin_package_service import PluginPackageService
 from omnibci.application.services.plugin_market_service import PluginMarketService
 from omnibci.application.plugin_packages import package_references_from_settings
-from omnibci.application.plugin_profiles import ProfileBinding, ProfileRevisionConflict, PluginProfileNotFoundError
 from omnibci.domain.repositories import SessionRepository
 from omnibci.infrastructure.backend_logging import BackendLogging
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
@@ -230,15 +228,11 @@ async def build_container(*, host_settings: dict | None = None,
                          admission=engine_service.admission)
     container.config_service = config_service
     container.plugin_profile_service = plugin_profiles
-    container.acquisition_service.set_metadata_recorder(
-        lambda profile_id: _acquisition_montage_binding(engine_service, plugin_profiles, profile_id),
-        plugin_profiles.record_acquisition_montage,
-    )
+    container.acquisition_service.set_metadata_binding(lambda: _acquisition_binding(engine_service))
     from omnibci.application.services.signal_setup_service import SignalSetupService
-    from omnibci.infrastructure.signal_layouts import SignalLayoutProvider
     container.signal_setup_service = SignalSetupService(
         settings, plugin_profiles, engine_service, container.acquisition_service,
-        container.command_results, SignalLayoutProvider(),
+        container.command_results,
     )
     container.acquisition_service.set_signal_preparer(container.signal_setup_service.prepare)
     container.session_service.set_signal_preparer(
@@ -269,25 +263,11 @@ async def build_container(*, host_settings: dict | None = None,
     return container
 
 
-def _acquisition_montage_binding(engine, profiles, profile_id=None):
+def _acquisition_binding(engine):
     """Resolve the running source, never a saved selection awaiting Apply."""
     snapshot = engine.applied_snapshot or {}
-    value = next((binding for binding in snapshot.get("PLUGINS.bindings", ())
-                  if binding.get("slot") == "acquisition.source"), None)
-    binding = ProfileBinding.from_dict(value) if value is not None else None
-    if profile_id is None:
-        return binding
-    if binding is None or binding.profile_id != profile_id:
-        raise ProfileRevisionConflict("Connect the applied acquisition profile before reading its montage")
-    try:
-        saved = profiles.repository.get_profile(profile_id)
-    except PluginProfileNotFoundError as exc:
-        raise ProfileRevisionConflict("Acquisition profile no longer exists") from exc
-    if (saved.kind != binding.kind or saved.selection != binding.selection
-            or saved.configuration_version != binding.configuration_version
-            or json.dumps(saved.parameters, sort_keys=True) != json.dumps(binding.parameters, sort_keys=True)):
-        raise ProfileRevisionConflict("Acquisition profile differs from the running source; Apply it before reading montage")
-    return binding
+    return next((binding for binding in snapshot.get("PLUGINS.bindings", ())
+                 if binding.get("slot") == "acquisition.source"), None)
 
 
 class _RuntimeSettings:

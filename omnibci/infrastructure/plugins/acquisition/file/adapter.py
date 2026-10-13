@@ -9,7 +9,7 @@ import numpy as np
 
 
 class ReaderAdapter(ABC):
-    """文件读取器接口"""
+    """File reader interface."""
 
     def __init__(self, file_path):
         super().__init__()
@@ -25,7 +25,7 @@ class ReaderAdapter(ABC):
 
 
 class CNTReaderAdapter(ReaderAdapter):
-    """CNT文件读取器"""
+    """CNT file reader."""
 
     def __init__(self, file_path):
         super().__init__(file_path)
@@ -47,6 +47,7 @@ class CNTReaderAdapter(ReaderAdapter):
 
     def get_metadata(self):
         return {
+            "channel_count": len(self.file.ch_names),
             "output_channel_count": len(self.file.ch_names) + 1,
             "sample_rate": self.file.info["sfreq"],
             "channel_labels": list(self.file.ch_names),
@@ -65,8 +66,7 @@ class CNTReaderAdapter(ReaderAdapter):
         }
 
     async def read_chunk(self, start: int, end: int):
-        # EOF: numpy 越界切片返回空数组而非 None，上游 FileReader 以
-        # `raw_data is None` 判断流结束，因此这里显式返回 None。
+        # FileReader recognizes None as EOF; NumPy would return an empty slice.
         if start >= self.data.shape[1]:
             return None
         chunk = self.data[:, start:end]

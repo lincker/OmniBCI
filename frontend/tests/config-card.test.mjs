@@ -6,6 +6,8 @@ import { createServer } from "vite";
 
 const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
 after(() => server.close());
+const { translate } = await server.ssrLoadModule("/src/i18n.tsx");
+const english = { language: "en", t: (key, params) => translate("en", key, params) };
 const { ConfigCard } = await server.ssrLoadModule("/src/ConfigCard.tsx");
 const sameDependencies = (a, b) => !!a && !!b && a.length === b.length && a.every((value, i) => Object.is(value, b[i]));
 
@@ -14,6 +16,7 @@ function harness(props) {
   let cursor = 0, pending = true, tree;
   let effects = [];
   const dispatcher = {
+    useContext: () => english,
     useState(initial) {
       const i = cursor++;
       if (!hooks[i]) hooks[i] = { value: typeof initial === "function" ? initial() : initial };

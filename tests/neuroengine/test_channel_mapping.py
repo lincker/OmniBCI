@@ -8,10 +8,10 @@ import pytest
 
 from omnibci.application.events import CommandRequest, StreamBarrier
 from omnibci.application.plugin_profiles import ProfileBinding
-from omnibci.domain.montage import (
-    ChannelDescriptor, ProcessingInput, SignalSetup, SourceMetadata,
-    compile_processing_plan, compile_signal_plan,
+from omnibci.domain.channel_mapping import (
+    ChannelBinding, ProcessingInput, compile_processing_plan,
 )
+from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor, ChannelDescriptor
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.neuroengine.processing import pipeline_configuration, signal_configuration
@@ -22,40 +22,31 @@ from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
 
 
-def _plan(*, reference=True, modern=False):
-    source = SourceMetadata(
-        "test-source", 250,
-        tuple(ChannelDescriptor(i, name, unit="V") for i, name in enumerate(("O1", "O2", "M1"))),
-        3, connection_id="connection-one", original_reference="Cz",
-    )
-    setup = SignalSetup.from_dict({
-        "source_id": source.source_id, "outputs": ["O2", "O1"],
-        "reference": {"mode": "single", "channels": ["M1"]} if reference else {"mode": "original"},
-    })
-    if modern:
-        return compile_processing_plan(source, ProcessingInput(
-            outputs=setup.outputs, reference=setup.reference), config_revision="revision-one")
-    return compile_signal_plan(source, setup, config_revision="revision-one")
+
+
+
+
+def _plan():
+    source = AcquisitionDescriptor("test-source", 250, tuple(
+        ChannelDescriptor(i, name, signal_type="eeg", unit="V")
+        for i, name in enumerate(("O1", "O2", "M1"))), 3, connection_id="connection-one")
+    return compile_processing_plan(source, ProcessingInput(outputs=(
+        ChannelBinding("O2", "channel-1"), ChannelBinding("O1", "channel-0"))),
+        config_revision="revision-one")
 
 
 def _snapshot(plan):
-    snapshot = {
+    from omnibci.application.plugin_profiles import PluginSelection
+    return {
         "CONFIG.revision": plan.config_revision, "CONFIG.generation": "generation-one",
         "ACQUISITION.sample_rate": plan.source.sample_rate,
         "ACQUISITION.signal_source": plan.source.source_id,
         "ACQUISITION.channel_names": [c.name for c in plan.source.channels],
         "ALGORITHM.baseline_duration": 0.008,
-        "PLUGINS.bindings": [],
+        "PLUGINS.bindings": [ProfileBinding("processing.decoder", "decoder", None,
+            PluginSelection("test.decoder", "default", "1"), {},
+            processing_input=plan.processing_input).to_dict()],
     }
-    if plan.processing_input is not None:
-        from omnibci.application.plugin_profiles import PluginSelection
-        snapshot["PLUGINS.bindings"] = [ProfileBinding(
-            "processing.decoder", "decoder", None, PluginSelection("test.decoder", "default", "1"),
-            {}, processing_input=plan.processing_input,
-        ).to_dict()]
-    else:
-        snapshot["SIGNAL.setup"] = plan.setup.to_dict()
-    return snapshot
 
 
 def _receipt(plan):
@@ -119,11 +110,10 @@ def _prepare(monkeypatch, processor, plan):
     return decoder, detector, signal_filter, load
 
 
-@pytest.mark.parametrize("modern", [False, True])
-def test_worker_with_explicit_setup_starts_control_loop_before_plugin_construction(monkeypatch, modern):
+def test_worker_with_explicit_setup_starts_control_loop_before_plugin_construction(monkeypatch):
     from omnibci.conf import settings
     monkeypatch.setattr(settings, "use_snapshot", lambda _: None)
-    plan = _plan(modern=modern)
+    plan = _plan()
     worker = SignalProcessingWorker(command_queue=MagicMock(), settings_snapshot=_snapshot(plan))
     worker._load_algorithm = MagicMock(side_effect=AssertionError("premature plugin construction"))
     worker._run_processor = MagicMock()
@@ -140,7 +130,7 @@ def test_historical_decoder_projection_waits_for_observed_input_before_loading(m
     historical = ProfileBinding("processing.decoder", "decoder", None,
                                 PluginSelection("test.decoder", "default", "1"), {})
     snapshot = {"PLUGINS.bindings": [materialize_processing_binding(
-        historical, requires_channels=True, legacy_setup=None)]}
+        historical, requires_channels=True)]}
     worker = SignalProcessingWorker(command_queue=MagicMock(), settings_snapshot=snapshot)
     worker._load_algorithm = MagicMock(side_effect=AssertionError("premature plugin construction"))
     worker._run_processor = MagicMock()
@@ -150,9 +140,8 @@ def test_historical_decoder_projection_waits_for_observed_input_before_loading(m
     assert historical.processing_input is None
 
 
-@pytest.mark.parametrize("modern", [False, True])
-def test_prepare_binds_observed_rate_and_is_idempotent(monkeypatch, modern):
-    plan = _plan(modern=modern)
+def test_prepare_binds_observed_rate_and_is_idempotent(monkeypatch):
+    plan = _plan()
     processor = _processor(plan)
     decoder, detector, _, load = _prepare(monkeypatch, processor, plan)
     assert processor._decoder is decoder
@@ -190,9 +179,8 @@ def test_stale_preparation_does_not_construct_or_replace_plugins(monkeypatch, fi
 def test_preparation_cannot_substitute_an_unaccepted_setup(monkeypatch):
     plan = _plan()
     processor = _processor(plan)
-    changed = compile_signal_plan(plan.source, SignalSetup.from_dict({
-        **plan.setup.to_dict(), "outputs": ["O1"],
-    }), config_revision=plan.config_revision)
+    changed = compile_processing_plan(plan.source, ProcessingInput(outputs=(
+        ChannelBinding("O1", "channel-0"),)), config_revision=plan.config_revision)
     load = MagicMock()
     monkeypatch.setattr(signal_configuration, "load_signal_pipeline", load)
     processor._prepare_signal(_request(changed))
@@ -202,34 +190,17 @@ def test_preparation_cannot_substitute_an_unaccepted_setup(monkeypatch):
     load.assert_not_called()
 
 
-def test_legacy_template_preserves_the_unenriched_observation_fingerprint(monkeypatch):
-    original = _plan()
-    source = replace(original.source, channels=(
-        replace(original.source.channels[0], position=(0.0, -0.08, 0.04),
-                coordinate_frame="head", position_provenance="test template 1"),
-        *original.source.channels[1:],
-    ))
-    plan = compile_signal_plan(source, replace(original.setup, template="template"), original.config_revision)
-    processor = _processor(plan)
-    load = MagicMock(return_value=(_Decoder(), _Detector(), []))
-    monkeypatch.setattr(signal_configuration, "load_signal_pipeline", load)
-    receipt = {**_receipt(plan), "source_fingerprint": original.source.fingerprint}
-    assert receipt["source_fingerprint"] != plan.source.fingerprint
-    processor._prepare_signal(_request(plan, receipt))
-    assert processor.event_bus.put_event.call_args.args[0].data.ok
-    assert processor._signal_plan == plan
-    load.assert_called_once()
 
 
 @pytest.mark.parametrize("mismatch", ["source", "input", "source-fingerprint"])
 def test_native_preparation_rejects_a_different_source_input_or_observation(monkeypatch, mismatch):
-    plan = _plan(modern=True)
+    plan = _plan()
     processor = _processor(plan)
     if mismatch == "source":
         plan = compile_processing_plan(replace(plan.source, source_id="different-source"),
                                        plan.processing_input, plan.config_revision)
     elif mismatch == "input":
-        plan = compile_processing_plan(plan.source, ProcessingInput(outputs=("M1",)), plan.config_revision)
+        plan = compile_processing_plan(plan.source, ProcessingInput(outputs=(ChannelBinding("M1", "channel-2"),)), plan.config_revision)
     receipt = _receipt(plan)
     if mismatch == "source-fingerprint":
         receipt["source_fingerprint"] = "f" * 64
@@ -254,9 +225,8 @@ def test_new_connection_cannot_replace_an_active_epoch(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("modern", [False, True])
-async def test_data_and_session_start_are_rejected_before_preparation(modern):
-    plan = _plan(modern=modern)
+async def test_data_and_session_start_are_rejected_before_preparation():
+    plan = _plan()
     processor = _processor(plan)
     processor.data_manager.get_data.return_value = SignalChunk(10, 1, np.zeros((4, 2)))
     with pytest.raises(RuntimeError, match="not been prepared"):
@@ -266,9 +236,8 @@ async def test_data_and_session_start_are_rejected_before_preparation(modern):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("modern", [False, True])
-async def test_montage_precedes_detector_baseline_window_and_latest(monkeypatch, modern):
-    plan = _plan(modern=modern)
+async def test_channel_mapping_precedes_detector_baseline_window_and_latest(monkeypatch):
+    plan = _plan()
     processor = _processor(plan)
     decoder, detector, signal_filter, _ = _prepare(monkeypatch, processor, plan)
     chunks = [
@@ -281,9 +250,9 @@ async def test_montage_precedes_detector_baseline_window_and_latest(monkeypatch,
     await processor._current_state.run()
     await processor._current_state.run()
     await processor._current_state.run()
-    np.testing.assert_array_equal(signal_filter.baseline, [[29, 30], [9, 10]])
-    np.testing.assert_array_equal(decoder.window, [[31, 32, 33], [11, 12, 13]])
-    np.testing.assert_array_equal(decoder.latest, [[32, 33], [12, 13]])
+    np.testing.assert_array_equal(signal_filter.baseline, [[31, 32], [11, 12]])
+    np.testing.assert_array_equal(decoder.window, [[33, 34, 35], [13, 14, 15]])
+    np.testing.assert_array_equal(decoder.latest, [[34, 35], [14, 15]])
     assert signal_filter.sample_rate == 250
     for observed, original in zip(detector.seen, chunks, strict=True):
         np.testing.assert_array_equal(observed.triggers, original.triggers)
@@ -296,15 +265,15 @@ async def test_montage_precedes_detector_baseline_window_and_latest(monkeypatch,
 
 @pytest.mark.asyncio
 async def test_bound_channels_enter_epoch_before_ordered_filters_and_decoder(monkeypatch):
-    plan = _plan(modern=True)
+    plan = _plan()
     processor = _processor(plan)
     calls = []
 
     class BaselineFilter(Filter):
         def apply(self, data, ctx):
             calls.append("baseline")
-            np.testing.assert_array_equal(ctx.baseline, [[29, 30], [9, 10]])
-            np.testing.assert_array_equal(data, [[31, 32, 33], [11, 12, 13]])
+            np.testing.assert_array_equal(ctx.baseline, [[31, 32], [11, 12]])
+            np.testing.assert_array_equal(data, [[33, 34, 35], [13, 14, 15]])
             return data - ctx.baseline.mean(axis=1, keepdims=True)
 
     class ScaleFilter(Filter):
@@ -334,10 +303,10 @@ async def test_bound_channels_enter_epoch_before_ordered_filters_and_decoder(mon
 
     assert calls == ["baseline", "scale", "decoder"]
     epoch = processor.current_epoch.build_epoch()
-    np.testing.assert_array_equal(epoch.baseline, [[29, 30], [9, 10]])
-    np.testing.assert_array_equal(epoch.window, [[31, 32, 33], [11, 12, 13]])
+    np.testing.assert_array_equal(epoch.baseline, [[31, 32], [11, 12]])
+    np.testing.assert_array_equal(epoch.window, [[33, 34, 35], [13, 14, 15]])
     np.testing.assert_array_equal(decoder.window, [[3, 5, 7], [3, 5, 7]])
-    np.testing.assert_array_equal(decoder.latest, [[32, 33], [12, 13]])
+    np.testing.assert_array_equal(decoder.latest, [[34, 35], [14, 15]])
     assert epoch.event_id == 1
     assert epoch.channel_count == 2
     assert epoch.sample_rate == 250
@@ -366,25 +335,15 @@ def test_input_context_preserves_acquired_names_and_describes_ordered_outputs():
     assert tuple(c.name for c in context.input_signal.channels) == ("O2", "O1")
     assert context.input_signal.trigger_row_index == 2
     assert context.acquired_signal == plan.source
-    assert context.input_signal.original_reference == "M1"
     assert context.sample_rate == 250
 
 
-def test_different_bipolar_references_are_not_reported_as_one_common_reference():
-    plan = _plan()
-    setup = SignalSetup.from_dict({"source_id": plan.source.source_id, "reference": {"mode": "bipolar"}, "outputs": [
-        {"name": "O1-M1", "positive": "O1", "negative": "M1"},
-        {"name": "O2-O1", "positive": "O2", "negative": "O1"},
-    ]})
-    plan = compile_signal_plan(plan.source, setup, config_revision=plan.config_revision)
-    context = signal_configuration.signal_context(_snapshot(plan), plan)
-    assert context.input_signal.original_reference is None
-    assert [c.reference for c in context.input_signal.channels] == ["M1", "O1"]
 
 
 def _bindings():
     catalog = PluginCatalog()
-    return [ProfileBinding(slot, kind, None, catalog.resolve_legacy(kind, alias).selection, parameters).to_dict()
+    return [ProfileBinding(slot, kind, None, catalog.resolve_legacy(kind, alias).selection, parameters,
+                          processing_input=_plan().processing_input if kind == "decoder" else None).to_dict()
             for slot, kind, alias, parameters in (
                 ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA", {"window_duration": 1.0, "offset_time": 0.0}),
                 ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
@@ -402,7 +361,7 @@ def test_legacy_plugin_requires_signal_contract_only_for_transformed_input():
         load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
                                context=signal_configuration.signal_context(snapshot, plan), catalog=catalog, loader=loader)
     loader.instantiate.assert_not_called()
-    identity = compile_signal_plan(plan.source)
+    identity = compile_processing_plan(plan.source, ProcessingInput())
     load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
                            context=signal_configuration.signal_context(snapshot, identity), catalog=catalog, loader=loader)
     loader.instantiate.assert_called_once()
@@ -421,7 +380,6 @@ def test_trial_pipeline_replacement_receives_current_transformed_context(monkeyp
     assert context.config_revision == "revision-two"
     assert context.acquired_signal == plan.source
     assert context.input_signal.channels == plan.output_channels
-    assert context.input_signal.original_reference == "M1"
 
 
 @pytest.mark.parametrize("update", ["output_context", "trial_pipeline"])

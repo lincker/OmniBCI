@@ -203,7 +203,10 @@ def test_invalid_initial_settings_can_be_repaired_without_restarting_backend(
         assert snapshot["ACQUISITION.channel_number"] == 9
         assert _data(client, "/config/runtime")["applied_revision"] == accepted["revision"]
         assert _data(client, "/engine/status")["running"] is True
-        assert _data(client, "/acquisition/status")["sample_rate"] == 250
+        source_status = _data(client, "/acquisition/status")
+        assert source_status["sample_rate"] is None
+        assert source_status["channel_count"] is None
+        assert source_status["metadata_available"] is False
         assert client.post("/api/v1/engine/stop").status_code == 200
 
 

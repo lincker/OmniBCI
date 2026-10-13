@@ -14,7 +14,7 @@ from omnibci.application.plugin_profiles import (
     ProfileRevisionConflict,
 )
 from omnibci.application.services.plugin_profile_service import PluginProfileService
-from omnibci.domain.montage import ProcessingInput
+from omnibci.domain.channel_mapping import ProcessingInput
 
 
 # Stable identities let interrupted initialization resume without duplicates.
@@ -58,7 +58,6 @@ class SettingsPluginConfigInitializer:
                               selection=profile.selection, parameters=profile.parameters,
                               configuration_version=profile.configuration_version,
                               profile_revision=max(1, profile.revision),
-                              manual_montage=profile.manual_montage,
                               processing_input=profile.processing_input)
 
     def _ensure_profile(self, draft: PluginProfile) -> PluginProfile:
@@ -95,9 +94,7 @@ class SettingsPluginConfigInitializer:
                 kind=definition.kind, selection=selection,
                 parameters=legacy_parameters(definition, settings),
                 configuration_version=definition.configuration_version,
-                processing_input=(ProcessingInput(outputs=definition.channel_requirements.default_names
-                                                  if definition.channel_requirements else ())
-                                  if kind == "decoder" and "SIGNAL.setup" not in settings else None),
+                processing_input=ProcessingInput() if kind == "decoder" and "SIGNAL.setup" not in settings else None,
             )
             drafts[profile_id] = profile
             bindings.append((slot, profile.profile_id))
@@ -126,6 +123,8 @@ class SettingsPluginConfigInitializer:
             add(f"processing.filter.{instance_id}", "filter", alias,
                 name=f"Initial filter {index + 1}: {alias}"[:64])
 
+        if "SIGNAL.setup" in settings:
+            raise PluginConfigMigrationError("Legacy montage configuration must be replaced with a channel mapping before initialization")
         host_settings = activation_host_settings(settings)
         if warnings:
             host_settings["CONFIG.initialization_warnings"] = list(warnings)

@@ -6,7 +6,6 @@ PLUGIN_SETTING_KEYS = frozenset({
     "ACQUISITION.signal_source", "ACQUISITION.sample_rate", "ACQUISITION.channel_number",
     "ACQUISITION.DATA_PROVIDER_IP", "ACQUISITION.DATA_PROVIDER_PORT",
     "ACQUISITION.data_file_path", "ACQUISITION.file_reader_chunk_size",
-    "ACQUISITION.manual_montage",
     "ACQUISITION.trigger", "ACQUISITION.parallel_port_address",
     "ALGORITHM.decoder", "ALGORITHM.epoch_detector", "ALGORITHM.filters",
     "ALGORITHM.window_duration", "ALGORITHM.offset_time",
@@ -21,7 +20,7 @@ RUNTIME_HOST_SETTING_KEYS = frozenset({
     "NEUROENGINE.startup_timeout_s", "debug", "ACTUATION.enabled",
     "ACTUATION.server_ip", "ACTUATION.server_port", "ACTUATION.watchdog_timeout_s",
     "ACTUATION.max_command_age_s", "ACTUATION.auto_spawn",
-    "STIMULATION.renderer", "STIMULATION.auto_spawn", "ACQUISITION.channel_names", "SIGNAL.setup",
+    "STIMULATION.renderer", "STIMULATION.auto_spawn",
 })
 
 BACKEND_STARTUP_DEFAULTS = {
@@ -33,6 +32,7 @@ BACKEND_STARTUP_DEFAULTS = {
 }
 
 _RETIRED_SETTING_KEYS = frozenset({
+    "SIGNAL.setup", "ACQUISITION.channel_names", "ACQUISITION.manual_montage",
     "ACQUISITION.file_reader_play_speed", "project_name", "version",
     "CONSTANT.ASYNC_SLEEP_TIME", "NEUROENGINE.COMMAND_SERVER_IP", "NEUROENGINE.COMMAND_SERVER_PORT",
 })

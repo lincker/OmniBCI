@@ -140,21 +140,15 @@ class RuntimeConfigurationService:
             value = processing_input(snapshot)
             if value is None:
                 return None
-            setup = value.to_dict()
+            outputs = value.to_dict()["outputs"]
         except (ValueError, TypeError):
-            return "Invalid signal setup; correct the validation errors before applying"
-        outputs = setup.get("outputs", [])
-        names = [item["name"] if isinstance(item, dict) else item for item in outputs]
-        reference = setup.get("reference", {})
-        parts = ["Outputs: " + (", ".join(names) or "all available channels"),
-                 "Reference: " + reference.get("mode", "original")]
-        if reference.get("channels"):
-            parts[-1] += " (" + ", ".join(reference["channels"]) + ")"
-        if setup.get("excluded_channels"):
-            parts.append("Excluded: " + ", ".join(setup["excluded_channels"]))
-        if setup.get("template"):
-            parts.append("Template: " + setup["template"])
-        return "; ".join(parts)
+            return "Invalid channel mapping; correct the validation errors before applying"
+        descriptions = [item["name"] if item["name"] == item["source_channel_id"]
+                        else f"{item['source_channel_id']} → {item['name']}" for item in outputs]
+        for index, item in enumerate(outputs):
+            if item.get("signal_type"):
+                descriptions[index] += f" ({item['signal_type']})"
+        return "Channels: " + (", ".join(descriptions) or "all source channels")
 
     def resolve_plan(self, plan_id: str) -> PlannedConfiguration:
         with self._lock:
@@ -254,7 +248,7 @@ class RuntimeConfigurationService:
         if binding is None:
             return None
         return (binding.kind, binding.selection, binding.parameters, binding.configuration_version,
-                binding.manual_montage, binding.processing_input)
+                binding.processing_input)
 
     def _strategy(self, slots, settings, old, new):
         if not slots and not settings:
