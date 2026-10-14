@@ -11,7 +11,7 @@ from omnibci.application.plugin_profiles import ProfileBinding
 from omnibci.domain.channel_mapping import (
     ChannelBinding, ProcessingInput, compile_processing_plan,
 )
-from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor, ChannelDescriptor
+from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.neuroengine.processing import pipeline_configuration, signal_configuration
@@ -27,7 +27,7 @@ from omnibci.infrastructure.plugins.runtime_configuration import load_configured
 
 
 def _plan():
-    source = AcquisitionDescriptor("test-source", 250, tuple(
+    source = SignalInfo("test-source", 250, tuple(
         ChannelDescriptor(i, name, signal_type="eeg", unit="V")
         for i, name in enumerate(("O1", "O2", "M1"))), 3, connection_id="connection-one")
     return compile_processing_plan(source, ProcessingInput(outputs=(

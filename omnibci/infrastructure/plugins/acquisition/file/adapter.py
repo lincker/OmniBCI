@@ -7,8 +7,8 @@ from abc import ABC, abstractmethod
 import mne
 import numpy as np
 
-from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor
-from omnibci.infrastructure.acquisition.metadata import acquisition_descriptor
+from omnibci.domain.signal_info import SignalInfo
+from omnibci.infrastructure.acquisition.metadata import signal_info
 
 
 class ReaderAdapter(ABC):
@@ -54,8 +54,8 @@ class CNTReaderAdapter(ReaderAdapter):
         """Return file information captured before selecting output channels."""
         return self._metadata
 
-    def describe_output(self, *, source_id: str, connection_id: str) -> AcquisitionDescriptor:
-        return acquisition_descriptor(
+    def describe_output(self, *, source_id: str, connection_id: str) -> SignalInfo:
+        return signal_info(
             source_id=source_id, connection_id=connection_id,
             signal_channel_count=len(self.file.ch_names),
             sample_rate=self.file.info["sfreq"],

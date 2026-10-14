@@ -1,8 +1,8 @@
 """Select and name acquisition rows without changing sample values or events."""
 from dataclasses import dataclass, field, replace
 
-from omnibci.domain.acquisition_descriptor import (
-    AcquisitionDescriptor,
+from omnibci.domain.signal_info import (
+    SignalInfo,
     ChannelDescriptor,
     fingerprint,
     integer,
@@ -69,7 +69,7 @@ class ProcessingInput:
 
 @dataclass(frozen=True)
 class ResolvedSignalPlan:
-    source: AcquisitionDescriptor
+    source: SignalInfo
     output_channels: tuple[ChannelDescriptor, ...]
     source_indices: tuple[int, ...]
     processing_input: ProcessingInput
@@ -77,7 +77,7 @@ class ResolvedSignalPlan:
     requires_data_mapping: bool = field(init=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.source, AcquisitionDescriptor) or not isinstance(self.processing_input, ProcessingInput):
+        if not isinstance(self.source, SignalInfo) or not isinstance(self.processing_input, ProcessingInput):
             raise ValueError("Plan requires an acquisition descriptor and processing input")
         outputs = sequence(self.output_channels, "output_channels")
         indices = sequence(self.source_indices, "source_indices")
@@ -134,7 +134,7 @@ class ResolvedSignalPlan:
         if not {"source", "output_channels", "source_indices", "processing_input"} <= data.keys():
             raise ValueError("signal plan requires source, output_channels, source_indices, and processing_input")
         expected_fingerprint = data.pop("fingerprint", None)
-        data["source"] = AcquisitionDescriptor.from_dict(data["source"])
+        data["source"] = SignalInfo.from_dict(data["source"])
         data["output_channels"] = tuple(ChannelDescriptor.from_dict(c) for c in sequence(data["output_channels"], "output_channels"))
         data["processing_input"] = ProcessingInput.from_dict(data["processing_input"])
         result = cls(**data)
@@ -147,11 +147,11 @@ class ResolvedSignalPlan:
 
 
 def compile_processing_plan(
-    descriptor: AcquisitionDescriptor,
+    descriptor: SignalInfo,
     processing_input: ProcessingInput,
     config_revision: str = "",
 ) -> ResolvedSignalPlan:
-    if not isinstance(descriptor, AcquisitionDescriptor) or not isinstance(processing_input, ProcessingInput):
+    if not isinstance(descriptor, SignalInfo) or not isinstance(processing_input, ProcessingInput):
         raise ValueError("Channel mapping requires an acquisition descriptor and processing input")
     by_id = {channel.channel_id: channel for channel in descriptor.channels}
     requested = processing_input.outputs or tuple(

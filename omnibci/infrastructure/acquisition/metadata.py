@@ -1,10 +1,10 @@
 """Describe the adapter's normalized output independently of raw source fields."""
 from math import isfinite
 
-from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor, ChannelDescriptor
+from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 
 
-def acquisition_descriptor(
+def signal_info(
     *,
     source_id: str,
     connection_id: str,
@@ -16,7 +16,7 @@ def acquisition_descriptor(
     channel_ids: list[str] | tuple[str, ...] | None = None,
     native_event: str = "final-row",
     provenance: str = "protocol-defined",
-) -> AcquisitionDescriptor:
+) -> SignalInfo:
     """Describe adapter output, whose final row contains trigger events."""
     if (isinstance(sample_rate, bool) or not isinstance(sample_rate, (int, float))
             or not isfinite(sample_rate) or sample_rate <= 0 or int(sample_rate) != sample_rate):
@@ -47,8 +47,12 @@ def acquisition_descriptor(
             name_provenance="generated" if generated else None,
             signal_type=types[index], unit=units[index],
         ))
-    return AcquisitionDescriptor(
+    return SignalInfo(
         source_id=source_id, sample_rate=int(sample_rate), connection_id=connection_id,
         channels=tuple(channels), trigger_row_index=signal_channel_count,
         native_event=native_event, provenance=provenance,
     )
+
+
+# Keep the unchanged Scan45 plugin compatible with the renamed builder.
+acquisition_descriptor = signal_info

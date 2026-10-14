@@ -13,7 +13,7 @@ class ChannelDescriptorModel(BaseModel):
     name_provenance: Literal["generated"] | None = None
 
 
-class AcquisitionDescriptorModel(BaseModel):
+class SignalInfoModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     source_id: str
@@ -31,7 +31,7 @@ class AcquisitionMetadataResponse(BaseModel):
     source_id: str
     connection_id: str
     metadata: str
-    descriptor: AcquisitionDescriptorModel | None
+    descriptor: SignalInfoModel | None
 
 
 class AcquisitionStatusResponse(BaseModel):

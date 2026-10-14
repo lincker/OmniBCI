@@ -6,7 +6,7 @@ import pickle
 import numpy as np
 import pytest
 
-from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor, ChannelDescriptor
+from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.channel_mapping import (
     ChannelBinding,
     ProcessingInput,
@@ -22,7 +22,7 @@ def source(names=("C3", "C4", "AUX"), **overrides):
                   channels=tuple(ChannelDescriptor(i, name, unit="uV", channel_id=f"id-{name}") for i, name in enumerate(names)),
                   trigger_row_index=len(names), connection_id="connection", provenance="device-reported")
     values.update(overrides)
-    return AcquisitionDescriptor(**values)
+    return SignalInfo(**values)
 
 
 def test_mapping_preserves_values_trigger_dtype_and_source_metadata():
@@ -143,7 +143,7 @@ def test_mapping_and_plan_round_trip_and_freeze():
     plan = compile_processing_plan(source(), mapping, "revision")
     assert ResolvedSignalPlan.from_dict(json.loads(json.dumps(plan.to_dict()))) == plan
     assert pickle.loads(pickle.dumps(plan)) == plan
-    assert AcquisitionDescriptor.from_dict(json.loads(json.dumps(plan.source.to_dict()))) == plan.source
+    assert SignalInfo.from_dict(json.loads(json.dumps(plan.source.to_dict()))) == plan.source
 
 
 @pytest.mark.parametrize("field,value", [
@@ -180,7 +180,7 @@ def test_invalid_source_dimensions_are_rejected():
         data = observed.to_dict()
         data[key] = value
         with pytest.raises(ValueError):
-            AcquisitionDescriptor.from_dict(data)
+            SignalInfo.from_dict(data)
 
 
 def test_generated_names_stay_marked_until_renamed():
@@ -200,7 +200,7 @@ def test_channel_ids_identify_duplicate_or_changed_display_names():
     plan = compile_processing_plan(observed, mapping)
     renamed = replace(observed, channels=(observed.channels[0], replace(observed.channels[1], name="Updated")))
     assert compile_processing_plan(renamed, mapping).source_indices == plan.source_indices == (1,)
-    assert AcquisitionDescriptor.from_dict(observed.to_dict()) == observed
+    assert SignalInfo.from_dict(observed.to_dict()) == observed
     with pytest.raises(ValueError, match="IDs must be unique"):
         replace(observed, channels=(observed.channels[0], replace(observed.channels[1], channel_id="left")))
 

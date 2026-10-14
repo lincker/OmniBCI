@@ -142,7 +142,7 @@ capability rather than ignoring its requirements. The
 describes every field, with comments in the executable starter manifest.
 
 Both prepared input contracts add `acquired_signal` and `input_signal` to the
-context, as immutable `AcquisitionDescriptor` values.
+context, as immutable `SignalInfo` values.
 `channel_names` retains the original acquired-channel meaning; the ordered
 `input_signal.channels` describes the actual decoder/filter/detector input,
 including source channel IDs, signal types and optional units. The final trigger

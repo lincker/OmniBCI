@@ -152,8 +152,8 @@ class TestAcquisitionStatus:
 
 class TestAcquisitionMetadata:
     def test_normalized_descriptor_is_exposed_separately_from_source_text(self, api_client, acquisition_service):
-        from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor, ChannelDescriptor
-        descriptor = AcquisitionDescriptor("test", 500, (ChannelDescriptor(0, "CH1"),), 1,
+        from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
+        descriptor = SignalInfo("test", 500, (ChannelDescriptor(0, "CH1"),), 1,
                                            connection_id="current")
         raw = '  Vendor reference: <unknown /> & value\r\n{"vendor_field": null}\n'
         acquisition_service.get_metadata = MagicMock(return_value={

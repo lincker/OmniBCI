@@ -5,7 +5,7 @@ import zipfile
 import numpy as np
 import pytest
 
-from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor, ChannelDescriptor
+from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.infrastructure.plugins.descriptors import PluginSelection
 from omnibci.infrastructure.plugins.loader import PluginLoadError, PluginLoader
 from omnibci.infrastructure.plugins.package_installer import PluginPackageInstaller
@@ -32,11 +32,11 @@ def descriptor(tmp_path):
 
 
 def context(*names):
-    source = AcquisitionDescriptor("tutorial", 4, tuple(
+    source = SignalInfo("tutorial", 4, tuple(
         ChannelDescriptor(index, name, signal_type="eeg", unit="uV")
         for index, name in enumerate(("Oz", "O2", "O1"))
     ), 3)
-    mapped = AcquisitionDescriptor("tutorial", 4, tuple(
+    mapped = SignalInfo("tutorial", 4, tuple(
         ChannelDescriptor(index, name, signal_type="eeg", unit="uV") for index, name in enumerate(names)
     ), len(names))
     return PluginContext(sample_rate=4, channel_names=("Oz", "O2", "O1"),

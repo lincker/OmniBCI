@@ -817,36 +817,6 @@ export interface components {
              */
             include_host_settings: boolean;
         };
-        /** AcquisitionDescriptorModel */
-        AcquisitionDescriptorModel: {
-            /** Source Id */
-            source_id: string;
-            /** Sample Rate */
-            sample_rate: number;
-            /** Channels */
-            channels: components["schemas"]["ChannelDescriptorModel"][];
-            /** Trigger Row Index */
-            trigger_row_index: number;
-            /**
-             * Connection Id
-             * @default
-             */
-            connection_id: string;
-            /**
-             * Native Event
-             * @default final-row
-             */
-            native_event: string;
-            /**
-             * Provenance
-             * @default protocol-defined
-             */
-            provenance: string;
-            /** Signal Channel Count */
-            signal_channel_count?: number | null;
-            /** Output Row Count */
-            output_row_count?: number | null;
-        };
         /** AcquisitionMetadataResponse */
         AcquisitionMetadataResponse: {
             /** Source Id */
@@ -855,7 +825,7 @@ export interface components {
             connection_id: string;
             /** Metadata */
             metadata: string;
-            descriptor: components["schemas"]["AcquisitionDescriptorModel"] | null;
+            descriptor: components["schemas"]["SignalInfoModel"] | null;
         };
         /** AcquisitionStatusResponse */
         AcquisitionStatusResponse: {
@@ -2048,6 +2018,36 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
+        /** SignalInfoModel */
+        SignalInfoModel: {
+            /** Source Id */
+            source_id: string;
+            /** Sample Rate */
+            sample_rate: number;
+            /** Channels */
+            channels: components["schemas"]["ChannelDescriptorModel"][];
+            /** Trigger Row Index */
+            trigger_row_index: number;
+            /**
+             * Connection Id
+             * @default
+             */
+            connection_id: string;
+            /**
+             * Native Event
+             * @default final-row
+             */
+            native_event: string;
+            /**
+             * Provenance
+             * @default protocol-defined
+             */
+            provenance: string;
+            /** Signal Channel Count */
+            signal_channel_count?: number | null;
+            /** Output Row Count */
+            output_row_count?: number | null;
+        };
         /** SignalPreviewResponse */
         SignalPreviewResponse: {
             /** Plan */
@@ -2075,7 +2075,7 @@ export interface components {
             /** Selected Decoder Profile Id */
             selected_decoder_profile_id?: string | null;
             selected_decoder_selection?: components["schemas"]["PluginSelectionResponse"] | null;
-            acquisition_descriptor?: components["schemas"]["AcquisitionDescriptorModel"] | null;
+            acquisition_descriptor?: components["schemas"]["SignalInfoModel"] | null;
             /** Source Error */
             source_error?: string | null;
             source_binding?: components["schemas"]["ProcessingSourceBindingModel"] | null;

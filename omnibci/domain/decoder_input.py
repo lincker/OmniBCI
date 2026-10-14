@@ -2,7 +2,7 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from omnibci.domain.acquisition_descriptor import ChannelDescriptor
+from omnibci.domain.signal_info import ChannelDescriptor
 
 
 def _names(value: object, field: str) -> tuple[str, ...]:

@@ -1,9 +1,34 @@
-# Acquisition descriptors and Processing channel mapping
+# Signal information and Processing channel mapping
 
-Acquisition adapts external data sources into a common signal stream and an
-`AcquisitionDescriptor`. Its `descriptor` describes the adapter output; source
+Acquisition adapts external data sources into a common signal stream and a
+`SignalInfo`. Its `descriptor` describes the adapter output; source
 `metadata` is opaque display text. Neither is an editable
 Plugin Profile parameter.
+
+The domain type is `SignalInfo` in `omnibci.domain.signal_info`, also exported by
+`omnibci.sdk`. The former `AcquisitionDescriptor` import and
+`acquisition_descriptor()` builder remain aliases for existing plugins, including
+the unchanged Scan45 implementation. REST payload keys `descriptor` and
+`acquisition_descriptor` retain their existing names and structure.
+
+## Architecture overview
+
+```mermaid
+flowchart LR
+    S["Device / File"] --> P
+    subgraph A["Acquisition"]
+        P["Source plugin<br/>Protocol parsing and data conversion"] --> R["Acquisition runtime<br/>Connection, reading, publishing"]
+        R --> O["SignalInfo<br/>SignalChunk"]
+    end
+    O --> M["Processing<br/>Channel mapping and type declarations"]
+    M --> E["Epoch → Filters → Decoder"]
+    C["Application runtime coordination"] -.-> R
+    C -.-> M
+```
+
+`SignalInfo` describes the normalized output; `SignalChunk` carries the sampled
+data. Dashed arrows represent application-level runtime coordination. Runtime
+data-matrix validation is reserved for future consideration.
 
 ## Acquisition workflow
 
@@ -48,13 +73,13 @@ fields as readable JSON text; File Reader displays file information captured
 before output channel selection. Acquisition-derived fields such as the extra
 event row are not inserted into that source text.
 
-`SignalSource.describe_output(...) -> AcquisitionDescriptor` describes the
+`SignalSource.describe_output(...) -> SignalInfo` describes the
 adapter's normalized output from the same observation, without querying again.
 The runtime, application and Processing never parse the display text. Plugins
 without a valid descriptor can still show metadata, but cannot prepare channel
 mapping.
 
-The shared `acquisition_descriptor()` builder accepts explicit keyword arguments:
+The shared `signal_info()` builder accepts explicit keyword arguments:
 `source_id`, `connection_id`, `sample_rate`, and `signal_channel_count` are
 required. Channel labels, types, units, and IDs are optional; `native_event`
 defaults to `final-row` and `provenance` to `protocol-defined`. Each plugin passes

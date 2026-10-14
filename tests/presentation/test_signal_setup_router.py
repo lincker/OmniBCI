@@ -7,7 +7,7 @@ import pytest
 
 from omnibci.application.services.signal_setup_service import SignalSetupService
 from omnibci.conf import OmniBCISettings
-from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor, ChannelDescriptor
+from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.presentation.errors import register_exception_handlers
 from omnibci.presentation.routers.signal_setup import router
 
@@ -59,7 +59,7 @@ def connected_descriptor(signal_client, signal_type="unknown"):
     service = signal_client.app.state.container.signal_setup_service
     service.engine.is_engine_ready = True
     service.engine.applied_snapshot = {"ACQUISITION.signal_source": "fixture"}
-    descriptor = AcquisitionDescriptor("fixture", 500, (
+    descriptor = SignalInfo("fixture", 500, (
         ChannelDescriptor(0, "CH1", signal_type=signal_type, unit="uV"),
         ChannelDescriptor(1, "CH1", unit="uV"),
     ), 2, connection_id="current-connection")

@@ -16,8 +16,8 @@ from enum import IntEnum
 import numpy as np
 
 from omnibci.domain.ports.acquisition import SignalSource
-from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor
-from omnibci.infrastructure.acquisition.metadata import acquisition_descriptor
+from omnibci.domain.signal_info import SignalInfo
+from omnibci.infrastructure.acquisition.metadata import signal_info
 from omnibci.sdk import PluginContext, PluginParameters
 
 logger = logging.getLogger(__name__)
@@ -253,12 +253,12 @@ class Curry8DataReader(SignalSource):
             raise RuntimeError("Stop the CURRY stream before requesting new metadata")
         return json.dumps(asdict(metadata), ensure_ascii=False, indent=2)
 
-    def describe_output(self, *, source_id: str, connection_id: str) -> AcquisitionDescriptor:
+    def describe_output(self, *, source_id: str, connection_id: str) -> SignalInfo:
         """Describe the output using the last successful device query."""
         metadata = self._metadata
         if not self._is_connected or metadata is None:
             raise RuntimeError("Get CURRY metadata before describing its output")
-        return acquisition_descriptor(
+        return signal_info(
             source_id=source_id, connection_id=connection_id,
             signal_channel_count=metadata.channel_count - 1,
             sample_rate=metadata.sample_rate,

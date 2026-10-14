@@ -8,7 +8,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from omnibci.conf.paths import resolve_config_path
-from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor
+from omnibci.domain.signal_info import SignalInfo
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.sdk import PluginContext, PluginParameters
 
@@ -169,7 +169,7 @@ class FileReader(SignalSource):
             raise ValueError("Reader not initialized. Call connect() first.")
         return self.reader_adapter.get_metadata()
 
-    def describe_output(self, *, source_id: str, connection_id: str) -> AcquisitionDescriptor:
+    def describe_output(self, *, source_id: str, connection_id: str) -> SignalInfo:
         """Describe the opened file's output without reading data or display text."""
         if self.reader_adapter is None:
             raise ValueError("Reader not initialized. Call connect() first.")

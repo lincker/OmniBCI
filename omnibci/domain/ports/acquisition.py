@@ -10,7 +10,7 @@ from typing import Any, Optional
 
 from numpy import typing as npt
 
-from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor
+from omnibci.domain.signal_info import SignalInfo
 
 class SignalSource(ABC):
     """
@@ -68,7 +68,7 @@ class SignalSource(ABC):
         text is opaque to the host and is never parsed to configure Processing.
         """
 
-    def describe_output(self, *, source_id: str, connection_id: str) -> AcquisitionDescriptor:
+    def describe_output(self, *, source_id: str, connection_id: str) -> SignalInfo:
         """Describe normalized output from the latest source observation.
 
         Called after get_metadata(), without another query. Implementations

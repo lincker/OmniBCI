@@ -12,14 +12,14 @@ from omnibci.application.services.plugin_profile_service import PluginProfileSer
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
-from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor, ChannelDescriptor
+from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 
 
 def prepared_signal_plan(snapshot):
     count = snapshot["ACQUISITION.channel_number"] - 1
     channels = tuple(ChannelDescriptor(index, f"EEG{index + 1}", signal_type="eeg") for index in range(count))
-    source = AcquisitionDescriptor(snapshot["ACQUISITION.signal_source"], snapshot["ACQUISITION.sample_rate"], channels, count)
+    source = SignalInfo(snapshot["ACQUISITION.signal_source"], snapshot["ACQUISITION.sample_rate"], channels, count)
     return compile_processing_plan(source, processing_input(snapshot) or ProcessingInput())
 
 
@@ -77,7 +77,7 @@ def test_source_change_requires_continuation(runtime):
 def test_retired_manual_source_montage_is_not_applied(runtime):
     service, selections, before = runtime
     profile = service.profiles.repository.get_profile(selections[0]["profile_id"])
-    manual = AcquisitionDescriptor("file_reader", profile.parameters["sample_rate"], tuple(
+    manual = SignalInfo("file_reader", profile.parameters["sample_rate"], tuple(
         ChannelDescriptor(index, f"C{index + 1}", unit="uV")
         for index in range(profile.parameters["channel_number"] - 1)), profile.parameters["channel_number"] - 1)
     service.profiles.repository.save_profile(replace(profile, legacy={"manual_montage": manual.to_dict()}),

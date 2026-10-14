@@ -11,7 +11,7 @@ from omnibci.application.processing_source import (
 )
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 from omnibci.application.runtime_admission import admitted
-from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor
+from omnibci.domain.signal_info import SignalInfo
 from omnibci.domain.channel_mapping import ProcessingInput, compile_processing_plan
 from omnibci.shared.events import EventType
 
@@ -61,7 +61,7 @@ class SignalSetupService:
         metadata = self.acquisition.cached_descriptor_for(source_binding) if active else None
         if metadata is not None:
             try:
-                validate_source_binding(selected, AcquisitionDescriptor.from_dict(metadata))
+                validate_source_binding(selected, SignalInfo.from_dict(metadata))
             except ValueError:
                 metadata = None
         receipt = deepcopy(self._receipt)
@@ -75,7 +75,7 @@ class SignalSetupService:
                      and self._bound_key == processing_binding_key(active)
                      and receipt["generation"] == active.get("CONFIG.generation")
                      and receipt["config_revision"] == active.get("CONFIG.revision")
-                     and receipt["source_fingerprint"] == AcquisitionDescriptor.from_dict(metadata).fingerprint
+                     and receipt["source_fingerprint"] == SignalInfo.from_dict(metadata).fingerprint
                      and receipt["connection_id"] == metadata.get("connection_id"))
         source_id = selected.get("ACQUISITION.signal_source")
         profile = self._profile(source_binding)
@@ -127,7 +127,7 @@ class SignalSetupService:
             if context["acquisition_descriptor"] is None:
                 raise ValueError(context["source_error"] or
                                  "Connect the acquisition source and get metadata before previewing processing input")
-            source = AcquisitionDescriptor.from_dict(context["acquisition_descriptor"])
+            source = SignalInfo.from_dict(context["acquisition_descriptor"])
             plan = compile_processing_plan(source, draft)
             self._validate_decoder_channels(decoder_selection or context["selected_decoder_selection"], plan)
             # A source switch while resolving a draft must not publish an obsolete preview.
@@ -151,7 +151,7 @@ class SignalSetupService:
             if not self.engine.is_engine_ready:
                 raise RuntimeError("Start the engine before preparing signal processing")
             status = self.acquisition.handle_get_status(GetAcquisitionStatusQuery())
-            metadata = AcquisitionDescriptor.from_dict(self.acquisition.get_descriptor(
+            metadata = SignalInfo.from_dict(self.acquisition.get_descriptor(
                 refresh=not status.streaming))
             source_key = processing_binding_key(snapshot)
             if (self._bound_key == source_key and self._receipt

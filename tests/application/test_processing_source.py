@@ -8,13 +8,13 @@ from omnibci.application.processing_source import (
     acquisition_binding_key, binding_for, materialize_processing_binding, processing_binding_key,
     processing_input, requires_signal_preparation, validate_plan_binding, validate_source_binding,
 )
-from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor, ChannelDescriptor
+from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 
 
 @pytest.fixture
 def source():
-    return AcquisitionDescriptor("file_reader", 250, tuple(
+    return SignalInfo("file_reader", 250, tuple(
         ChannelDescriptor(index, name, unit="uV") for index, name in enumerate(("C3", "C4", "M1"))),
         3, connection_id="connection-one")
 

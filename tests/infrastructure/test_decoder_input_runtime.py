@@ -7,7 +7,7 @@ import pytest
 
 from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
 from omnibci.domain.decoder_input import DecoderChannelRequirements
-from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor, ChannelDescriptor
+from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 from omnibci.domain.ports.algorithm import Decoder
 from omnibci.domain.signal import SignalChunk
@@ -20,7 +20,7 @@ from omnibci.sdk import PluginContext
 
 
 def configured(requirements, outputs=("O1",), *, signal_type="eeg"):
-    source = AcquisitionDescriptor("source", 250, (
+    source = SignalInfo("source", 250, (
         ChannelDescriptor(0, "O1", signal_type=signal_type, unit="uV"),
         ChannelDescriptor(1, "Oz", signal_type="eeg", unit="uV"),
         ChannelDescriptor(2, "M1", signal_type="eeg", unit="uV"),

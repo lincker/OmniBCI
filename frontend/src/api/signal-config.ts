@@ -5,7 +5,7 @@ import type { components } from "./rest-types";
 
 type S = components["schemas"];
 export type ChannelDescriptor = S["ChannelDescriptorModel"];
-export type AcquisitionDescriptor = S["AcquisitionDescriptorModel"];
+export type SignalInfo = S["SignalInfoModel"];
 export type ChannelBinding = S["ChannelBindingModel"];
 /** The read endpoint fills the output list even though request fields have defaults. */
 export type ProcessingInput = Omit<S["ProcessingInputModel"], "outputs"> & { outputs: ChannelBinding[] };
@@ -15,7 +15,7 @@ export type SignalConfiguration = Omit<S["SignalSetupResponse"], "processing_inp
   active_input?: ProcessingInput | null;
 };
 export type SignalPreview = Omit<S["SignalPreviewResponse"], "plan"> & {
-  plan: { source: AcquisitionDescriptor; source_indices: number[]; output_channels: ChannelDescriptor[];
+  plan: { source: SignalInfo; source_indices: number[]; output_channels: ChannelDescriptor[];
     processing_input: ProcessingInput; config_revision: string; fingerprint: string };
 };
 

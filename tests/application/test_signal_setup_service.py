@@ -13,7 +13,7 @@ from omnibci.application.plugin_profiles import ActivationSnapshot
 from omnibci.application.services.session_service import SessionAppService
 from omnibci.application.services.signal_setup_service import SignalSetupService
 from omnibci.conf import OmniBCISettings
-from omnibci.domain.acquisition_descriptor import ChannelDescriptor, AcquisitionDescriptor
+from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 from omnibci.shared.events import EventType
@@ -24,7 +24,7 @@ def signal_service(tmp_path):
     path = tmp_path / "settings.toml"
     path.write_text('[NEUROENGINE]\nqueue_size = 100\n', encoding="utf-8")
     settings = OmniBCISettings(path)
-    metadata = AcquisitionDescriptor("source", 500, (
+    metadata = SignalInfo("source", 500, (
         ChannelDescriptor(0, "O1", unit="uV"), ChannelDescriptor(1, "M1", unit="uV"),
     ), 2, connection_id="connection")
     setup = ProcessingInput(outputs=(ChannelBinding("O1", "channel-0"),)).to_dict()

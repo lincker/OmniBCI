@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_core import PydanticCustomError
 
 from omnibci.presentation.schemas.plugin_selection import PluginSelectionResponse
-from omnibci.presentation.schemas.acquisition import AcquisitionDescriptorModel
+from omnibci.presentation.schemas.acquisition import SignalInfoModel
 
 
 class SignalModel(BaseModel):
@@ -54,7 +54,7 @@ class SignalSetupResponse(BaseModel):
     selected_source_id: str | None = None
     selected_decoder_profile_id: str | None = None
     selected_decoder_selection: PluginSelectionResponse | None = None
-    acquisition_descriptor: AcquisitionDescriptorModel | None = None
+    acquisition_descriptor: SignalInfoModel | None = None
     source_error: str | None = None
     source_binding: ProcessingSourceBindingModel | None = None
     source_revision: str

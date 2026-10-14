@@ -6,7 +6,7 @@ import pytest
 
 from omnibci.application.events import CommandRequest
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime, AcquisitionCommand
-from omnibci.infrastructure.acquisition.metadata import acquisition_descriptor
+from omnibci.infrastructure.acquisition.metadata import signal_info
 from omnibci.shared.events import EventType
 
 
@@ -23,7 +23,7 @@ def test_processing_description_preserves_explicit_channel_details(sample_rate, 
               "channel_labels": sequence(["C3", "C4"]), "channel_types": sequence(["eeg", "eog"]),
               "channel_units": sequence(["V", "uV"]), "channel_ids": sequence(["left", "right"])}
     original = deepcopy(fields)
-    metadata = acquisition_descriptor(**fields, source_id="test_source", connection_id="connected")
+    metadata = signal_info(**fields, source_id="test_source", connection_id="connected")
     assert metadata.sample_rate == 250
     assert metadata.signal_channel_count == 2
     assert metadata.output_row_count == 3
@@ -44,7 +44,7 @@ def test_processing_description_preserves_explicit_channel_details(sample_rate, 
 def test_missing_optional_channel_details_are_internal_placeholders_only(optional):
     fields = {"sample_rate": 250, "signal_channel_count": 2, **optional}
     original = deepcopy(fields)
-    metadata = acquisition_descriptor(**fields, source_id="test_source", connection_id="connected")
+    metadata = signal_info(**fields, source_id="test_source", connection_id="connected")
     assert [channel.name for channel in metadata.channels] == ["CH1", "CH2"]
     assert [channel.channel_id for channel in metadata.channels] == ["channel-0", "channel-1"]
     assert all(channel.name_provenance == "generated" for channel in metadata.channels)
@@ -56,7 +56,7 @@ def test_missing_optional_channel_details_are_internal_placeholders_only(optiona
 
 def test_blank_channel_labels_use_generated_names_without_editing_input():
     labels = [None, "  ", ""]
-    descriptor = acquisition_descriptor(
+    descriptor = signal_info(
         source_id="test_source", connection_id="connected", sample_rate=250,
         signal_channel_count=3, channel_labels=labels,
     )
@@ -68,7 +68,7 @@ def test_blank_channel_labels_use_generated_names_without_editing_input():
 def test_acquisition_preserves_source_channel_ids_independently_of_duplicate_labels():
     fields = {**FIELDS, "channel_labels": ["EEG", "EEG"], "channel_ids": ["left", "right"]}
     original = deepcopy(fields)
-    descriptor = acquisition_descriptor(**fields, source_id="test_source", connection_id="connected")
+    descriptor = signal_info(**fields, source_id="test_source", connection_id="connected")
     assert [channel.channel_id for channel in descriptor.channels] == ["left", "right"]
     assert [channel.name for channel in descriptor.channels] == ["EEG", "EEG"]
     assert fields == original
@@ -76,7 +76,7 @@ def test_acquisition_preserves_source_channel_ids_independently_of_duplicate_lab
 
 def test_descriptor_normalizes_type_spelling_without_editing_source_metadata():
     fields = {**FIELDS, "channel_types": [" EEG ", "UNKNOWN"]}
-    descriptor = acquisition_descriptor(**fields, source_id="test_source", connection_id="connected")
+    descriptor = signal_info(**fields, source_id="test_source", connection_id="connected")
     assert [channel.signal_type for channel in descriptor.channels] == ["eeg", "unknown"]
     assert fields["channel_types"] == [" EEG ", "UNKNOWN"]
 
@@ -86,7 +86,7 @@ def test_processing_description_requires_explicit_required_fields(missing):
     fields = {**FIELDS, "source_id": "test_source", "connection_id": "connected"}
     fields.pop(missing)
     with pytest.raises(TypeError, match=missing):
-        acquisition_descriptor(**fields)
+        signal_info(**fields)
 
 
 @pytest.mark.parametrize("fields, message", [
@@ -103,13 +103,13 @@ def test_processing_description_requires_explicit_required_fields(missing):
 ])
 def test_invalid_processing_description_is_rejected(fields, message):
     with pytest.raises(ValueError, match=message):
-        acquisition_descriptor(**fields, source_id="test_source", connection_id="connected")
+        signal_info(**fields, source_id="test_source", connection_id="connected")
 
 
 def _worker(*, preparation_required=True):
     source = MagicMock(is_connected=True, is_streaming=False, plugin_type="plugin-implementation")
     source.get_metadata = AsyncMock(return_value=TEXT)
-    source.describe_output = MagicMock(side_effect=lambda **identity: acquisition_descriptor(**FIELDS, **identity))
+    source.describe_output = MagicMock(side_effect=lambda **identity: signal_info(**FIELDS, **identity))
     source.start_stream = AsyncMock()
     bus = MagicMock()
     worker = AcquisitionRuntime(source, MagicMock(), MagicMock(), event_bus=bus,
@@ -242,7 +242,7 @@ async def test_display_text_does_not_determine_the_output_descriptor(text):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("descriptor", [
     FIELDS,
-    acquisition_descriptor(**FIELDS, source_id="other-source", connection_id="stale"),
+    signal_info(**FIELDS, source_id="other-source", connection_id="stale"),
 ])
 async def test_invalid_or_stale_output_descriptor_is_not_used(descriptor):
     worker, source, bus = _worker()

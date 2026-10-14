@@ -5334,77 +5334,6 @@
         ],
         "title": "AcceptActivationRequest"
       },
-      "AcquisitionDescriptorModel": {
-        "properties": {
-          "source_id": {
-            "type": "string",
-            "title": "Source Id"
-          },
-          "sample_rate": {
-            "type": "integer",
-            "exclusiveMinimum": 0.0,
-            "title": "Sample Rate"
-          },
-          "channels": {
-            "items": {
-              "$ref": "#/components/schemas/ChannelDescriptorModel"
-            },
-            "type": "array",
-            "title": "Channels"
-          },
-          "trigger_row_index": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Trigger Row Index"
-          },
-          "connection_id": {
-            "type": "string",
-            "title": "Connection Id",
-            "default": ""
-          },
-          "native_event": {
-            "type": "string",
-            "title": "Native Event",
-            "default": "final-row"
-          },
-          "provenance": {
-            "type": "string",
-            "title": "Provenance",
-            "default": "protocol-defined"
-          },
-          "signal_channel_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Signal Channel Count"
-          },
-          "output_row_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Output Row Count"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "source_id",
-          "sample_rate",
-          "channels",
-          "trigger_row_index"
-        ],
-        "title": "AcquisitionDescriptorModel"
-      },
       "AcquisitionMetadataResponse": {
         "properties": {
           "source_id": {
@@ -5422,7 +5351,7 @@
           "descriptor": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/AcquisitionDescriptorModel"
+                "$ref": "#/components/schemas/SignalInfoModel"
               },
               {
                 "type": "null"
@@ -8401,6 +8330,77 @@
         ],
         "title": "SetPackageEnabledRequest"
       },
+      "SignalInfoModel": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "sample_rate": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Sample Rate"
+          },
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/ChannelDescriptorModel"
+            },
+            "type": "array",
+            "title": "Channels"
+          },
+          "trigger_row_index": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Trigger Row Index"
+          },
+          "connection_id": {
+            "type": "string",
+            "title": "Connection Id",
+            "default": ""
+          },
+          "native_event": {
+            "type": "string",
+            "title": "Native Event",
+            "default": "final-row"
+          },
+          "provenance": {
+            "type": "string",
+            "title": "Provenance",
+            "default": "protocol-defined"
+          },
+          "signal_channel_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal Channel Count"
+          },
+          "output_row_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Row Count"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_id",
+          "sample_rate",
+          "channels",
+          "trigger_row_index"
+        ],
+        "title": "SignalInfoModel"
+      },
       "SignalPreviewResponse": {
         "properties": {
           "plan": {
@@ -8490,7 +8490,7 @@
           "acquisition_descriptor": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/AcquisitionDescriptorModel"
+                "$ref": "#/components/schemas/SignalInfoModel"
               },
               {
                 "type": "null"

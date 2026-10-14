@@ -101,7 +101,7 @@ the process working directory or import backend settings and service objects.
 | `decode(self, window, latest) -> Prediction \| None` | Produce an integer target id, optionally a confidence value, or decline. |
 | `for_new_epoch(self)` | Optional for stateless decoders; stateful decoders must return an instance with isolated per-epoch working state. |
 
-`context.input_signal` is an `AcquisitionDescriptor` describing the ordered
+`context.input_signal` is a `SignalInfo` describing the ordered
 mapped input, including channel IDs, names, types, and units. Use its channels to
 resolve names to matrix row indices. `context.channel_names` and
 `context.acquired_signal` describe the original Acquisition, before mapping.

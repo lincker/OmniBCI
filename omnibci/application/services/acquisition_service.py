@@ -24,7 +24,7 @@ from omnibci.application.queries.acquisition_queries import (
 )
 from omnibci.application.events import AcquisitionSnapshot, CommandFailureKind, CommandResult, StreamDrainReceipt
 from omnibci.application.services.command_result_service import CommandExecutor, CommandRejectedError
-from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor
+from omnibci.domain.signal_info import SignalInfo
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +198,7 @@ class AcquisitionAppService:
         metadata = None
         if value["descriptor"] is not None:
             try:
-                metadata = AcquisitionDescriptor.from_dict(value["descriptor"])
+                metadata = SignalInfo.from_dict(value["descriptor"])
             except (TypeError, ValueError) as exc:
                 raise RuntimeError("Source returned invalid acquisition descriptor") from exc
             if (metadata.source_id != value["source_id"]

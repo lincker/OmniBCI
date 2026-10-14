@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from omnibci.domain.decoder_input import DecoderChannelRequirements
-from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor, ChannelDescriptor
+from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 
 
@@ -61,7 +61,7 @@ def test_defaults_are_suggestions_and_empty_defaults_allow_required_names():
 
 
 def test_unselected_channels_and_trigger_do_not_satisfy_output_requirements():
-    source = AcquisitionDescriptor(source_id="reader", sample_rate=250,
+    source = SignalInfo(source_id="reader", sample_rate=250,
                                    channels=channels("O1", "Oz", "M1"), trigger_row_index=3)
     plan = compile_processing_plan(source, ProcessingInput(outputs=(ChannelBinding("O1", "channel-0"),)))
     with pytest.raises(ValueError, match="at least 2"):

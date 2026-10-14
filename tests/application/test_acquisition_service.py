@@ -127,8 +127,8 @@ class TestAcquisitionStatus:
         assert result.streaming is False
 
     def test_metadata_is_confirmed_then_invalidated_on_disconnect(self):
-        from omnibci.domain.acquisition_descriptor import ChannelDescriptor, AcquisitionDescriptor
-        metadata = AcquisitionDescriptor("test", 250, (ChannelDescriptor(0, "C3"),), 1,
+        from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
+        metadata = SignalInfo("test", 250, (ChannelDescriptor(0, "C3"),), 1,
                                   connection_id="connection", provenance="device-reported")
         executor = MagicMock()
         executor.request.return_value.data = _metadata_response(metadata)
@@ -164,8 +164,8 @@ def _metadata_response(metadata):
 def _metadata_service():
     from omnibci.application.events import CommandResult
     from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
-    from omnibci.domain.acquisition_descriptor import ChannelDescriptor, AcquisitionDescriptor
-    metadata = AcquisitionDescriptor("test", 250, (ChannelDescriptor(0, "C3", unit="uV"),), 1,
+    from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
+    metadata = SignalInfo("test", 250, (ChannelDescriptor(0, "C3", unit="uV"),), 1,
                               connection_id="connection", provenance="device-reported")
     response = _metadata_response(metadata)
     executor = MagicMock()

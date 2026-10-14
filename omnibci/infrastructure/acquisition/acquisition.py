@@ -13,7 +13,7 @@ from omnibci.application.events import (
     CommandResult,
     StreamBarrier,
 )
-from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor
+from omnibci.domain.signal_info import SignalInfo
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.domain.signal import SignalChunk
 from omnibci.shared.events import Event, EventType
@@ -380,8 +380,8 @@ class AcquisitionRuntime:
                 descriptor = self.data_source.describe_output(
                     source_id=self.source_id, connection_id=self.connection_id,
                 )
-                if not isinstance(descriptor, AcquisitionDescriptor):
-                    raise ValueError("Source output description must be an AcquisitionDescriptor")
+                if not isinstance(descriptor, SignalInfo):
+                    raise ValueError("Source output description must be a SignalInfo")
                 if descriptor.source_id != self.source_id or descriptor.connection_id != self.connection_id:
                     raise ValueError("Acquisition descriptor belongs to a different source connection")
                 self._descriptor = descriptor

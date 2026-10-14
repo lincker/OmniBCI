@@ -10,7 +10,7 @@ from omnibci.application.plugin_profiles import ProfileBinding, PluginSelection
 from omnibci.application.processing_source import processing_input as selected_processing_input
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration
-from omnibci.domain.acquisition_descriptor import ChannelDescriptor, AcquisitionDescriptor
+from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
 from omnibci.domain.channel_mapping import ProcessingInput, ChannelBinding
 
 
@@ -128,7 +128,7 @@ def test_node_derives_historical_identity_input_without_changing_authoritative_b
 
 def test_engine_node_projection_ignores_retired_acquisition_montage(runtime):
     source = ProfileBinding.from_dict(runtime["PLUGINS.bindings"][0])
-    manual = AcquisitionDescriptor("local_acquisition", 1000, (ChannelDescriptor(0, "C3", unit="uV"),), 1)
+    manual = SignalInfo("local_acquisition", 1000, (ChannelDescriptor(0, "C3", unit="uV"),), 1)
     runtime["PLUGINS.bindings"][0] = replace(source, legacy={"manual_montage": manual.to_dict()}).to_dict()
     dto = NodeConfiguration.from_dict(project_node_configuration(runtime, "engine").to_dict())
     result = materialize_node_configuration(dto, LocalCatalog({"acquisition", "decoder", "epoch_detector"}))

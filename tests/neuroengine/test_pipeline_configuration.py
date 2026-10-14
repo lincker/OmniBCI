@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 from omnibci.application.plugin_profiles import ProfileBinding
-from omnibci.domain.channel_mapping import ChannelDescriptor, ProcessingInput, AcquisitionDescriptor, compile_processing_plan
+from omnibci.domain.channel_mapping import ChannelDescriptor, ProcessingInput, SignalInfo, compile_processing_plan
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.infrastructure.neuroengine.processing import pipeline_configuration as configuration
 
@@ -31,7 +31,7 @@ def selected_snapshot(revision="old"):
 def _build(before, after):
     channels = tuple(ChannelDescriptor(index, name, signal_type="eeg", unit="V")
                      for index, name in enumerate(before["ACQUISITION.channel_names"]))
-    source = AcquisitionDescriptor(before["ACQUISITION.signal_source"], before["ACQUISITION.sample_rate"],
+    source = SignalInfo(before["ACQUISITION.signal_source"], before["ACQUISITION.sample_rate"],
                             channels, len(channels), connection_id="test-connection")
     plan = compile_processing_plan(source, ProcessingInput.from_dict(
         before["PLUGINS.bindings"][1]["processing_input"]), config_revision=before["CONFIG.revision"])
@@ -63,7 +63,7 @@ def test_trial_update_uses_prepared_source_rate_instead_of_configured_default(pr
     after = deepcopy(before)
     after["CONFIG.revision"] = "new"
     after["PLUGINS.bindings"][1]["parameters"]["window_duration"] = 1.5
-    source = AcquisitionDescriptor("file_reader", 500, (
+    source = SignalInfo("file_reader", 500, (
         ChannelDescriptor(0, "O1", signal_type="eeg", unit="V"),
         ChannelDescriptor(1, "O2", signal_type="eeg", unit="V"),
     ), 2, connection_id="test-connection", provenance=provenance)
