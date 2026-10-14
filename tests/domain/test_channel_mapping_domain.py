@@ -59,6 +59,28 @@ def test_mapping_tracks_channel_ids_after_source_reordering():
         compile_processing_plan(source(("C3",)), mapping)
 
 
+@pytest.mark.parametrize("channel_ids, requires_data_mapping", [
+    ((), False),
+    (("id-C3", "id-C4", "id-AUX"), False),
+    (("id-C4", "id-C3", "id-AUX"), True),
+    (("id-C3", "id-C4"), True),
+])
+def test_data_mapping_requirement_depends_only_on_complete_physical_order(channel_ids, requires_data_mapping):
+    mapping = ProcessingInput(outputs=tuple(
+        ChannelBinding(f"Input {index}", channel_id, "eeg")
+        for index, channel_id in enumerate(channel_ids)
+    ))
+    plan = compile_processing_plan(source(), mapping, "revision")
+    assert plan.requires_data_mapping is requires_data_mapping
+    assert plan.is_identity is (not channel_ids)
+    restored = ResolvedSignalPlan.from_dict(json.loads(json.dumps(plan.to_dict())))
+    assert restored.requires_data_mapping is requires_data_mapping
+    assert restored.fingerprint == plan.fingerprint
+    assert replace(plan, config_revision="new-revision").requires_data_mapping is requires_data_mapping
+    with pytest.raises(FrozenInstanceError):
+        plan.requires_data_mapping = not requires_data_mapping
+
+
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_identity_preserves_nan_infinity_and_trigger_bits(dtype):
     observed = source(("C3",))
@@ -126,6 +148,7 @@ def test_mapping_and_plan_round_trip_and_freeze():
 
 @pytest.mark.parametrize("field,value", [
     ("source_indices", [1]), ("coefficients", [[1, 0, 0]]), ("setup", {}),
+    ("requires_data_mapping", False),
     ("output_channels", [{"index": 0, "name": "Wrong", "signal_type": "eeg"}]),
 ])
 def test_plan_deserialization_rejects_tampering_without_fingerprint(field, value):

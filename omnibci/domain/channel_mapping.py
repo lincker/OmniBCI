@@ -1,5 +1,5 @@
 """Select and name acquisition rows without changing sample values or events."""
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from omnibci.domain.acquisition_descriptor import (
     AcquisitionDescriptor,
@@ -74,6 +74,7 @@ class ResolvedSignalPlan:
     source_indices: tuple[int, ...]
     processing_input: ProcessingInput
     config_revision: str = ""
+    requires_data_mapping: bool = field(init=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.source, AcquisitionDescriptor) or not isinstance(self.processing_input, ProcessingInput):
@@ -98,6 +99,7 @@ class ResolvedSignalPlan:
             raise ValueError("config_revision must be a string")
         object.__setattr__(self, "output_channels", outputs)
         object.__setattr__(self, "source_indices", indices)
+        object.__setattr__(self, "requires_data_mapping", indices != tuple(range(self.source.signal_channel_count)))
 
     @property
     def fingerprint(self) -> str:
@@ -108,8 +110,7 @@ class ResolvedSignalPlan:
 
     @property
     def is_identity(self) -> bool:
-        return (self.source_indices == tuple(range(self.source.signal_channel_count))
-                and self.output_channels == self.source.channels)
+        return not self.requires_data_mapping and self.output_channels == self.source.channels
 
     def apply(self, chunk: SignalChunk) -> SignalChunk:
         rows = [*self.source_indices, self.source.trigger_row_index]
@@ -128,7 +129,8 @@ class ResolvedSignalPlan:
 
     @classmethod
     def from_dict(cls, value: dict) -> "ResolvedSignalPlan":
-        data = record(value, "signal plan", set(cls.__dataclass_fields__) | {"fingerprint"})
+        fields = {key for key, definition in cls.__dataclass_fields__.items() if definition.init}
+        data = record(value, "signal plan", fields | {"fingerprint"})
         if not {"source", "output_channels", "source_indices", "processing_input"} <= data.keys():
             raise ValueError("signal plan requires source, output_channels, source_indices, and processing_input")
         expected_fingerprint = data.pop("fingerprint", None)

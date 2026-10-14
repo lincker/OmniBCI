@@ -86,11 +86,20 @@ type. Without a declaration, it inherits the source type. A declaration cannot
 override a conflicting known source type and never mutates Acquisition metadata.
 Decoder requirements validate the resulting types, names and channel count.
 
-Compilation produces ordered `source_indices` and output descriptors. Applying
-the plan copies those rows and the original event row. It preserves sample
-values and dtype; there is no reference subtraction, bipolar derivation,
+Compilation produces ordered `source_indices`, output descriptors, and a derived
+`requires_data_mapping` flag. Processing reuses the incoming `SignalChunk` when
+all signal channels remain in their physical order, including when only names
+or type declarations change. Selecting a subset or changing the order requires
+mapping, which copies the selected rows and the original event row. It preserves
+sample values and dtype; there is no reference subtraction, bipolar derivation,
 position template, interpolation, scaling or other channel arithmetic.
 The mapped signal then enters Epoch processing, optional Filters and Decoder.
+
+The flag is computed when constructing a plan, including after IPC
+deserialization. It is not configurable, is omitted from serialized plan
+dictionaries, and does not change plan fingerprints. This avoids the mapping
+copy within Processing; cross-process queue transport retains its existing
+behavior.
 
 Saving a profile does not change a running experiment. Review and Apply pins
 its mapping, rebuilds when necessary, and prepares Processing against the

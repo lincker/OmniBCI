@@ -171,7 +171,8 @@ class SignalProcessor:
             if requires_signal_preparation(self._settings_snapshot or {}):
                 if self._signal_plan is None:
                     raise RuntimeError("Signal processing has not been prepared")
-                item = self._signal_plan.apply(item)
+                if self._signal_plan.requires_data_mapping:
+                    item = self._signal_plan.apply(item)
             self._last_sequence = item.sequence_id
         return item
 

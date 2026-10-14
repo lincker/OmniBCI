@@ -236,6 +236,76 @@ async def test_data_and_session_start_are_rejected_before_preparation():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mapping", ["implicit", "explicit", "renamed", "typed"])
+@pytest.mark.parametrize("dtype", [np.int16, np.float32])
+async def test_matching_physical_channels_reuse_chunk_with_effective_input_context(monkeypatch, mapping, dtype):
+    source = _plan().source
+    if mapping == "typed":
+        source = replace(source, channels=tuple(
+            replace(channel, signal_type="unknown") for channel in source.channels))
+    outputs = () if mapping == "implicit" else tuple(
+        ChannelBinding(
+            f"Input {channel.name}" if mapping == "renamed" else channel.name,
+            channel.channel_id, signal_type="eeg" if mapping == "typed" else None,
+        ) for channel in source.channels)
+    plan = compile_processing_plan(source, ProcessingInput(outputs=outputs), "revision-one")
+    processor = _processor(plan)
+    _prepare(monkeypatch, processor, plan)
+    raw = np.array([[10, 11], [30, 31], [2, 3], [0, 7]], dtype=dtype)
+    chunk = SignalChunk(12345, 42, raw)
+    processor.data_manager.get_data.return_value = chunk
+
+    observed = await processor.next_chunk()
+
+    assert observed is chunk
+    assert observed.raw_data is raw
+    assert observed.raw_data.dtype == dtype
+    np.testing.assert_array_equal(observed.triggers, [0, 7])
+    assert observed.timestamp == 12345
+    assert observed.sequence_id == 42
+    assert processor._last_sequence == 42
+    context = signal_configuration.signal_context(_snapshot(plan), plan)
+    assert context.acquired_signal is source
+    assert context.input_signal.channels == plan.output_channels
+    if mapping in {"renamed", "typed"}:
+        assert not plan.is_identity
+        assert context.input_signal is not source
+        if mapping == "renamed":
+            assert tuple(channel.name for channel in context.input_signal.channels) == (
+                "Input O1", "Input O2", "Input M1")
+            assert tuple(channel.name for channel in source.channels) == ("O1", "O2", "M1")
+        else:
+            assert all(channel.signal_type == "eeg" for channel in context.input_signal.channels)
+            assert all(channel.signal_type == "unknown" for channel in source.channels)
+    else:
+        assert plan.is_identity
+        assert context.input_signal is source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("indices", [(0, 2), (2, 0, 1)], ids=["ordered-subset", "reordered-all"])
+async def test_subset_or_reordered_channels_still_copy_selected_rows_and_events(monkeypatch, indices):
+    source = _plan().source
+    outputs = tuple(ChannelBinding(source.channels[index].name, source.channels[index].channel_id)
+                    for index in indices)
+    plan = compile_processing_plan(source, ProcessingInput(outputs=outputs), "revision-one")
+    processor = _processor(plan)
+    _prepare(monkeypatch, processor, plan)
+    raw = np.array([[10, 11], [30, 31], [2, 3], [0, 7]], dtype=np.int16)
+    chunk = SignalChunk(12345, 42, raw)
+    processor.data_manager.get_data.return_value = chunk
+
+    observed = await processor.next_chunk()
+
+    assert observed is not chunk
+    assert not np.shares_memory(observed.raw_data, raw)
+    np.testing.assert_array_equal(observed.raw_data, raw[[*indices, 3], :])
+    assert observed.raw_data.dtype == raw.dtype
+    assert observed.timestamp == chunk.timestamp
+    assert observed.sequence_id == chunk.sequence_id
+
+
+@pytest.mark.asyncio
 async def test_channel_mapping_precedes_detector_baseline_window_and_latest(monkeypatch):
     plan = _plan()
     processor = _processor(plan)
