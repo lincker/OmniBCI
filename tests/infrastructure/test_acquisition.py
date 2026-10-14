@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from omnibci.infrastructure.acquisition.acquisition import (
-    Acquisition,
+    AcquisitionRuntime,
     AcquisitionCommand,
     AcquisitionCommandRejected,
     AcquisitionState,
@@ -111,11 +111,13 @@ class _FakeDataManager:
         self.pushed.append(chunk)
 
 
-def _acq(data_source=None, queue=None, data_manager=None) -> Acquisition:
-    return Acquisition(
+def _acq(data_source=None, queue=None, data_manager=None) -> AcquisitionRuntime:
+    return AcquisitionRuntime(
         data_source=data_source or _FakeDataSource(),
         command_queue=queue or _FakeQueue(),
         data_manager=data_manager or _FakeDataManager(),
+        source_id="test-source",
+        preparation_required=False,
     )
 
 
@@ -182,11 +184,13 @@ class TestAcquisitionCommandDispatch:
 
     def test_confirmed_start_stream_rejects_when_not_connected(self):
         bus = _SpyBus()
-        a = Acquisition(
+        a = AcquisitionRuntime(
             data_source=_FakeDataSource(),
             command_queue=_FakeQueue(),
             data_manager=_FakeDataManager(),
             event_bus=bus,
+            source_id="test-source",
+            preparation_required=False,
         )
 
         _run(a.execute((
@@ -206,11 +210,13 @@ class TestAcquisitionCommandDispatch:
 
     def test_confirmed_connect_emits_state_before_success(self):
         bus = _SpyBus()
-        a = Acquisition(
+        a = AcquisitionRuntime(
             data_source=_FakeDataSource(),
             command_queue=_FakeQueue(),
             data_manager=_FakeDataManager(),
             event_bus=bus,
+            source_id="test-source",
+            preparation_required=False,
         )
 
         _run(a.execute((
@@ -230,11 +236,13 @@ class TestAcquisitionCommandDispatch:
                 raise OSError("device unavailable")
 
         bus = _SpyBus()
-        a = Acquisition(
+        a = AcquisitionRuntime(
             data_source=_BrokenSource(),
             command_queue=_FakeQueue(),
             data_manager=_FakeDataManager(),
             event_bus=bus,
+            source_id="test-source",
+            preparation_required=False,
         )
 
         _run(a.execute((
@@ -353,13 +361,15 @@ class _EOFDataSource(_FakeDataSource):
 
 class TestStateProjectionEmission:
     def _make(self, source):
-        from omnibci.infrastructure.acquisition.acquisition import Acquisition
+        from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime
         bus = _SpyBus()
-        acq = Acquisition(
+        acq = AcquisitionRuntime(
             data_source=source,
             command_queue=_FakeQueue(),
             data_manager=_FakeDataManager(),
             event_bus=bus,
+            source_id="test-source",
+            preparation_required=False,
         )
         return acq, bus
 
@@ -416,10 +426,12 @@ class TestStateProjectionEmission:
         assert self._snaps(bus)[-1] == (False, False)
 
     def test_no_bus_is_silent_noop(self):
-        from omnibci.infrastructure.acquisition.acquisition import Acquisition
-        acq = Acquisition(
+        from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime
+        acq = AcquisitionRuntime(
             data_source=_FakeDataSource(),
             command_queue=_FakeQueue(),
             data_manager=_FakeDataManager(),
+            source_id="test-source",
+            preparation_required=False,
         )
         _run(acq._on_connect())   # must not raise despite event_bus=None

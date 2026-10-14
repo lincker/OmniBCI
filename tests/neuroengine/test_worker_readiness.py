@@ -24,7 +24,7 @@ from omnibci.infrastructure.process_lifecycle import (
 
 
 @pytest.mark.parametrize("worker_type,service_path,run_name", [
-    (AcquisitionWorker, "omnibci.infrastructure.acquisition.worker.Acquisition", "_run"),
+    (AcquisitionWorker, "omnibci.infrastructure.acquisition.worker.AcquisitionRuntime", "_run"),
     (SignalProcessingWorker, "omnibci.infrastructure.neuroengine.processing.worker.SignalProcessor", "_run_processor"),
 ])
 def test_worker_reports_ready_after_construction_before_loop(worker_type, service_path, run_name):
@@ -52,7 +52,7 @@ def test_worker_reports_all_startup_failures_and_closes(worker_type, loader, sta
     reporter = MagicMock(spec=StartupReporter)
     worker = worker_type(MagicMock(), startup_reporter=reporter)
     setattr(worker, loader, MagicMock(side_effect=error))
-    with pytest.raises(type(error)):
+    with patch("omnibci.conf.settings.use_snapshot"), pytest.raises(type(error)):
         worker.run()
     reporter.failed.assert_called_once_with(stage, error)
     reporter.ready.assert_not_called()
@@ -60,7 +60,7 @@ def test_worker_reports_all_startup_failures_and_closes(worker_type, loader, sta
 
 
 @pytest.mark.parametrize("worker_type,loader,service_path,stage", [
-    (AcquisitionWorker, "_load_data_source", "omnibci.infrastructure.acquisition.worker.Acquisition", "acquisition"),
+    (AcquisitionWorker, "_load_data_source", "omnibci.infrastructure.acquisition.worker.AcquisitionRuntime", "acquisition"),
     (SignalProcessingWorker, "_load_algorithm", "omnibci.infrastructure.neuroengine.processing.worker.SignalProcessor", "processor"),
 ])
 def test_service_constructor_failure_never_reports_ready(worker_type, loader, service_path, stage):
@@ -69,7 +69,7 @@ def test_service_constructor_failure_never_reports_ready(worker_type, loader, se
     worker.data_source = MagicMock()
     setattr(worker, loader, MagicMock(return_value=(None, None, [])))
     error = ValueError("invalid service configuration")
-    with patch(service_path, side_effect=error), pytest.raises(ValueError):
+    with patch("omnibci.conf.settings.use_snapshot"), patch(service_path, side_effect=error), pytest.raises(ValueError):
         worker.run()
     reporter.failed.assert_called_once_with(stage, error)
     reporter.ready.assert_not_called()

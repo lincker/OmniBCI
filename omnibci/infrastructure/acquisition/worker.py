@@ -7,10 +7,11 @@ import multiprocessing as mp
 from copy import deepcopy
 from typing import Optional
 
+from omnibci.application.processing_source import requires_signal_preparation
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.infrastructure.process_lifecycle import StartupReporter
 from omnibci.infrastructure.acquisition.acquisition import (
-    Acquisition,
+    AcquisitionRuntime,
     CommandQueue,
     DataSink,
 )
@@ -18,12 +19,12 @@ from omnibci.infrastructure.acquisition.acquisition import (
 
 class AcquisitionWorker(mp.Process):
     """
-    Runs Acquisition in a dedicated subprocess.
+    Runs AcquisitionRuntime in a dedicated subprocess.
 
     Responsibilities:
       - Load the DataSource plugin specified in config.
-      - Construct the Acquisition domain service.
-      - Forward commands from the command_queue to Acquisition.execute().
+      - Construct the acquisition runtime with explicit source and preparation context.
+      - Forward commands from the command_queue to AcquisitionRuntime.execute().
     """
 
     def __init__(
@@ -36,7 +37,7 @@ class AcquisitionWorker(mp.Process):
     ) -> None:
         super().__init__()
         self.data_source: SignalSource
-        self.acquisitor: Optional[Acquisition] = None
+        self.runtime: Optional[AcquisitionRuntime] = None
         self.command_queue = command_queue
         self.data_manager = data_manager
         # EventBus serialization retains only its multiprocessing queue.
@@ -47,9 +48,8 @@ class AcquisitionWorker(mp.Process):
 
     def run(self) -> None:
         try:
-            if self.settings_snapshot is not None:
-                from omnibci.conf import settings
-                settings.use_snapshot(self.settings_snapshot)
+            from omnibci.conf import settings
+            settings.use_snapshot(self._settings_snapshot())
             self._startup_stage = "signal_source"
             self._load_data_source()
             self._startup_stage = "acquisition"
@@ -63,24 +63,31 @@ class AcquisitionWorker(mp.Process):
                 self.startup_reporter.close()
 
     def _run(self) -> None:
-        self.acquisitor = Acquisition(
+        snapshot = self._settings_snapshot()
+        self.runtime = AcquisitionRuntime(
             data_source=self.data_source,
             command_queue=self.command_queue,
             data_manager=self.data_manager,
             event_bus=self.event_bus,
-            generation=(self.settings_snapshot or {}).get("CONFIG.generation"),
-            config_revision=(self.settings_snapshot or {}).get("CONFIG.revision"),
-            **({"metadata_settings": self.settings_snapshot} if self.settings_snapshot is not None else {}),
+            source_id=snapshot.get("ACQUISITION.signal_source") or getattr(
+                self.data_source, "plugin_type", type(self.data_source).__name__),
+            preparation_required=requires_signal_preparation(snapshot),
+            generation=snapshot.get("CONFIG.generation"),
+            config_revision=snapshot.get("CONFIG.revision"),
         )
         if self.startup_reporter is not None:
             self.startup_reporter.ready()
         self._startup_stage = "run"
-        self.acquisitor.run()
+        self.runtime.run()
+
+    def _settings_snapshot(self) -> dict:
+        if self.settings_snapshot is None:
+            from omnibci.conf import settings
+            self.settings_snapshot = settings.snapshot()
+        return self.settings_snapshot
 
     def _load_data_source(self) -> None:
-        from omnibci.conf import settings
         from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
-        snapshot = self.settings_snapshot if self.settings_snapshot is not None else settings.snapshot()
         self.data_source = load_configured_plugin(
-            snapshot, "acquisition.source", "acquisition", SignalSource,
+            self._settings_snapshot(), "acquisition.source", "acquisition", SignalSource,
         )

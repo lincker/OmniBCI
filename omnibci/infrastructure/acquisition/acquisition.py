@@ -13,7 +13,6 @@ from omnibci.application.events import (
     CommandResult,
     StreamBarrier,
 )
-from omnibci.application.processing_source import requires_signal_preparation
 from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.domain.signal import SignalChunk
@@ -39,7 +38,6 @@ class DataSink(Protocol):
 
 
 class AcquisitionCommand(Enum):
-    start_acquisition = 'start acquisition'
     stop_acquisition  = 'stop acquisition'
     get_metadata      = 'get metadata'
     connect           = 'connect'
@@ -55,7 +53,6 @@ class AcquisitionCommand(Enum):
 class AcquisitionState(Enum):
     stop    = 'stop'
     running = 'running'
-    paused  = 'paused'
 
 
 class AcquisitionCommandRejected(RuntimeError):
@@ -79,7 +76,7 @@ _COMMAND_RESULT_NAMES = {
 }
 
 
-class Acquisition:
+class AcquisitionRuntime:
     """
     Runtime: drives a SignalSource to read EEG data and pushes
     SignalChunk objects into the shared DataManager buffer.
@@ -91,9 +88,11 @@ class Acquisition:
         command_queue: CommandQueue,
         data_manager: DataSink,
         event_bus=None,
+        *,
+        source_id: str,
+        preparation_required: bool,
         generation: str | None = None,
         config_revision: str | None = None,
-        metadata_settings: dict | None = None,
     ) -> None:
         self.data_source = data_source
         self.command_queue = command_queue
@@ -103,11 +102,12 @@ class Acquisition:
         self.data_manager = data_manager
         self.event_bus = event_bus  # Optional for projection-free unit tests.
         self.should_exit = False
+        self.source_id = source_id
+        self.preparation_required = preparation_required
         self.generation = generation
         self.config_revision = config_revision
         self._last_sequence = -1
         self._fetch_failure: str | None = None
-        self._metadata_settings = metadata_settings or {}
         self._descriptor = None
         self._raw_metadata: str | None = None
         self._descriptor_error = None
@@ -322,7 +322,7 @@ class Acquisition:
                 "DATA_SOURCE_NOT_CONNECTED",
                 "Cannot start stream before the data source is connected",
             )
-        if requires_signal_preparation(self._metadata_settings):
+        if self.preparation_required:
             self._validate_signal_receipt(receipt)
         if self.data_source.is_streaming:
             self._emit_state()
@@ -381,12 +381,9 @@ class Acquisition:
             raise AcquisitionCommandRejected("DATA_SOURCE_NOT_CONNECTED", "Connect the source before reading metadata")
         payload = request.payload if request else None
         refresh = isinstance(payload, dict) and payload.get("refresh") is True
-        source_id = self._metadata_settings.get("ACQUISITION.signal_source") or getattr(
-            self.data_source, "plugin_type", type(self.data_source).__name__,
-        )
         if self.data_source.is_streaming or self.fetch_task is not None:
             if self._raw_metadata is not None and not refresh:
-                return self._metadata_response(source_id)
+                return self._metadata_response()
             raise AcquisitionCommandRejected("METADATA_REQUIRES_STOP", "Stop the stream before reading source metadata")
         if self._raw_metadata is None or refresh:
             self._descriptor = self._raw_metadata = None
@@ -400,20 +397,20 @@ class Acquisition:
             self._raw_metadata = info
             try:
                 descriptor = self.data_source.describe_output(
-                    source_id=source_id, connection_id=self.connection_id,
+                    source_id=self.source_id, connection_id=self.connection_id,
                 )
                 if not isinstance(descriptor, AcquisitionDescriptor):
                     raise ValueError("Source output description must be an AcquisitionDescriptor")
-                if descriptor.source_id != source_id or descriptor.connection_id != self.connection_id:
+                if descriptor.source_id != self.source_id or descriptor.connection_id != self.connection_id:
                     raise ValueError("Acquisition descriptor belongs to a different source connection")
                 self._descriptor = descriptor
             except Exception as exc:
                 self._descriptor_error = str(exc) or "Source cannot describe acquisition output"
-        return self._metadata_response(source_id)
+        return self._metadata_response()
 
-    def _metadata_response(self, source_id):
+    def _metadata_response(self):
         return {
-            "source_id": source_id,
+            "source_id": self.source_id,
             "connection_id": self.connection_id,
             "metadata": self._raw_metadata,
             "descriptor": self._descriptor.to_dict() if self._descriptor is not None else None,
@@ -449,7 +446,6 @@ class Acquisition:
                     sequence_id=self._last_sequence + 1,
                 )
                 # TODO: Consider validating data matrices against the acquisition descriptor in the future.
-                chunk = self.preprocess(chunk)
                 self.data_manager.put_data(chunk)
                 self._last_sequence = chunk.sequence_id
                 packets_counter += 1
@@ -466,9 +462,6 @@ class Acquisition:
                 "Acquisition lost stream continuity; rebuild the source before resuming "
                 f"or creating a checkpoint ({self._fetch_failure})"
             )
-
-    def preprocess(self, data: SignalChunk) -> SignalChunk:
-        return data
 
     async def _finish_stream(self) -> None:
         """Close the stream from inside fetch() (EOF / fatal error) and

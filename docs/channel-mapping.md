@@ -61,6 +61,25 @@ belong to the exact source binding and connection; reconnect, source changes and
 metadata refresh invalidate readiness. Saved observations never substitute for
 current source metadata.
 
+## Acquisition runtime boundary
+
+`AcquisitionWorker` owns configuration and plugin construction. It pins one
+settings snapshot, loads the source, and passes only the required context to
+`AcquisitionRuntime`: `source_id`, `generation`, `config_revision`, and
+`preparation_required`.
+
+`source_id` identifies the configured source. `generation` identifies the current
+engine instance, while `config_revision` identifies its applied configuration.
+`preparation_required` determines whether starting a stream requires a valid
+Processing preparation receipt. The Worker derives it from the Processing input;
+the runtime does not read configuration or interpret decoder bindings. Changes
+to Processing input rebuild the runtime with a new preparation requirement.
+
+The runtime owns connection and stream lifecycle, source metadata inspection,
+and delivery of `SignalChunk` objects. Stopping still waits for the read task,
+and stream draining still sends a barrier after the final chunk. Channel mapping
+and signal processing remain downstream.
+
 ## Processing mapping
 
 A decoder profile owns an ordered `ProcessingInput` with schema version 2:

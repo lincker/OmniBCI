@@ -5,13 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from omnibci.application.events import CommandRequest
-from omnibci.infrastructure.acquisition.acquisition import Acquisition, AcquisitionCommand
+from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime, AcquisitionCommand
 from omnibci.infrastructure.acquisition.metadata import acquisition_descriptor
 from omnibci.shared.events import EventType
 
 
-SETTINGS = {"ACQUISITION.signal_source": "test_source", "ACQUISITION.sample_rate": 1000,
-            "ACQUISITION.channel_number": 10}
 RAW = {"sample_rate": 250, "channel_count": 2, "output_channel_count": 3,
        "channel_labels": ["C3", "C4"], "provenance": "device-reported",
        "native_event": "separate-event-packets", "device": "Test amplifier",
@@ -80,20 +78,15 @@ def test_invalid_processing_description_is_rejected(raw, message):
         acquisition_descriptor(raw, source_id="test_source", connection_id="connected")
 
 
-def _worker():
-    from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
-    from omnibci.domain.channel_mapping import ProcessingInput
-    source = MagicMock(is_connected=True, is_streaming=False)
+def _worker(*, preparation_required=True):
+    source = MagicMock(is_connected=True, is_streaming=False, plugin_type="plugin-implementation")
     source.get_metadata = AsyncMock(return_value=TEXT)
     source.describe_output = MagicMock(side_effect=lambda **identity: acquisition_descriptor(RAW, **identity))
     source.start_stream = AsyncMock()
     bus = MagicMock()
-    settings = {**SETTINGS, "PLUGINS.bindings": [ProfileBinding(
-        "processing.decoder", "decoder", None, PluginSelection("test.decoder", "default", "1"),
-        {}, processing_input=ProcessingInput(),
-    ).to_dict()]}
-    worker = Acquisition(source, MagicMock(), MagicMock(), event_bus=bus,
-                         generation="generation", config_revision="revision", metadata_settings=settings)
+    worker = AcquisitionRuntime(source, MagicMock(), MagicMock(), event_bus=bus,
+                                source_id="test_source", preparation_required=preparation_required,
+                                generation="generation", config_revision="revision")
     return worker, source, bus
 
 
@@ -103,11 +96,8 @@ def _result(bus):
 
 
 @pytest.mark.asyncio
-async def test_metadata_command_preserves_source_text_without_manual_overlays():
+async def test_metadata_command_preserves_source_text_and_uses_explicit_source_identity():
     worker, source, bus = _worker()
-    worker._metadata_settings = {**SETTINGS, "ACQUISITION.manual_montage": {"invalid": True},
-                                 "ACQUISITION.channel_names": ["Wrong", "Names"],
-                                 "SIGNAL.setup": {"manual_metadata": {"invalid": True}}}
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
     result = _result(bus)
     assert result.ok and result.command == "GetSourceMetadata"
@@ -170,7 +160,6 @@ async def test_failed_refresh_clears_cached_metadata_without_configuration_fallb
     worker, source, bus = _worker()
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
     source.get_metadata.side_effect = RuntimeError("Device has no metadata command")
-    worker._metadata_settings["ACQUISITION.manual_montage"] = {"sample_rate": 250}
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("refresh", {"refresh": True})))
     assert not _result(bus).ok
     assert "Device has no metadata command" in _result(bus).message
@@ -228,7 +217,7 @@ async def test_prepared_start_rejects_missing_or_stale_receipt_before_starting_s
                "connection_id": worker.connection_id, "source_fingerprint": worker._descriptor.fingerprint,
                "plan_fingerprint": "a" * 64}
     for payload in (None, {**receipt, "connection_id": "old"}, {**receipt, "config_revision": "old"},
-                    {**receipt, "source_fingerprint": "old"}):
+                    {**receipt, "source_fingerprint": "old"}, {**receipt, "generation": "old"}):
         await worker.execute((AcquisitionCommand.start_stream, CommandRequest("start", payload)))
         assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
     source.start_stream.assert_not_awaited()
@@ -236,19 +225,64 @@ async def test_prepared_start_rejects_missing_or_stale_receipt_before_starting_s
 
 
 @pytest.mark.asyncio
-async def test_historical_decoder_projection_blocks_stream_before_preparation():
-    from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
-    from omnibci.application.processing_source import materialize_processing_binding
+@pytest.mark.parametrize("preparation_required", [False, True])
+async def test_explicit_preparation_requirement_controls_start(preparation_required):
+    worker, source, bus = _worker(preparation_required=preparation_required)
+    async def start():
+        source.is_streaming = True
+    source.start_stream.side_effect = start
+    source.read_chunk = AsyncMock(return_value=None)
+    source.stop_stream = AsyncMock()
+    await worker.execute((AcquisitionCommand.start_stream, CommandRequest("start")))
+    if preparation_required:
+        assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
+        source.start_stream.assert_not_awaited()
+    else:
+        assert _result(bus).ok
+        source.start_stream.assert_awaited_once()
+        await worker.fetch_task
+
+
+@pytest.mark.asyncio
+async def test_prepared_start_accepts_receipt_after_revision_change_and_reconnection():
     worker, source, bus = _worker()
-    binding = ProfileBinding("processing.decoder", "decoder", None,
-                             PluginSelection("test.decoder", "default", "1"), {})
-    worker._metadata_settings = deepcopy(SETTINGS)
-    worker._metadata_settings["PLUGINS.bindings"] = [materialize_processing_binding(
-        binding, requires_channels=True)]
-    await worker.execute((AcquisitionCommand.start_stream, CommandRequest("unprepared-start")))
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
+    old_receipt = {"generation": worker.generation, "config_revision": worker.config_revision,
+                   "connection_id": worker.connection_id, "source_fingerprint": worker._descriptor.fingerprint,
+                   "plan_fingerprint": "a" * 64}
+    await worker.execute((AcquisitionCommand.update_revision, CommandRequest("revision", {
+        "generation": worker.generation, "expected_revision": worker.config_revision, "target_revision": "b" * 64,
+    })))
+    assert _result(bus).ok
+    await worker.execute((AcquisitionCommand.start_stream, CommandRequest("stale-revision", old_receipt)))
     assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
     source.start_stream.assert_not_awaited()
-    assert binding.processing_input is None
+
+    async def disconnect():
+        source.is_connected = False
+    async def connect():
+        source.is_connected = True
+    source.disconnect = disconnect
+    source.connect = connect
+    await worker._on_disconnect()
+    await worker._on_connect()
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("reconnected-metadata")))
+    stale_connection = {**old_receipt, "config_revision": worker.config_revision}
+    await worker.execute((AcquisitionCommand.start_stream, CommandRequest("stale-connection", stale_connection)))
+    assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
+    source.start_stream.assert_not_awaited()
+
+    async def start():
+        source.is_streaming = True
+    source.start_stream.side_effect = start
+    source.read_chunk = AsyncMock(return_value=None)
+    source.stop_stream = AsyncMock()
+    receipt = {**stale_connection, "connection_id": worker.connection_id,
+               "source_fingerprint": worker._descriptor.fingerprint}
+    await worker.execute((AcquisitionCommand.start_stream, CommandRequest("prepared-start", receipt)))
+    assert _result(bus).ok
+    source.start_stream.assert_awaited_once()
+    await worker.fetch_task
 
 
 @pytest.mark.asyncio
