@@ -200,8 +200,7 @@ class Scan45DataReader(SignalSource):
     def describe_output(self, *, source_id: str, connection_id: str) -> AcquisitionDescriptor:
         """Describe the configured stream until device querying is implemented."""
         return acquisition_descriptor({
-            "channel_count": self.channel_number - 1,
-            "output_channel_count": self.channel_number,
+            "signal_channel_count": self.channel_number - 1,
             "sample_rate": self._sample_rate,
             "channel_labels": [],
             "native_event": "final-row",

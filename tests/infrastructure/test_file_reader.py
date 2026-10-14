@@ -133,7 +133,7 @@ def test_cnt_metadata_preserves_native_info_before_output_channel_selection(monk
 
     assert adapter.get_metadata() == native_information
     assert "BadChannel" in adapter.get_metadata()
-    assert "output_channel_count" not in adapter.get_metadata()
+    assert "signal_channel_count" not in adapter.get_metadata()
     descriptor = adapter.describe_output(source_id="file_reader", connection_id="connection")
     assert [channel.name for channel in descriptor.channels] == ["C3"]
     assert descriptor.output_row_count == adapter.data.shape[0] == 2

@@ -31,7 +31,9 @@ source metadata text on the same page. The response is:
 
 This abbreviated example omits optional provenance and native-event details.
 `signal_channel_count` counts signal rows only. `output_row_count` includes the
-final normalized event row. Curry8 and File Reader derive actual dimensions
+final normalized event row. Plugins pass only `signal_channel_count` to the
+descriptor builder; the descriptor derives `output_row_count` by adding one
+for the event row. Curry8 and File Reader derive actual dimensions
 from their source instead of treating configured defaults as observed facts.
 Curry8's source channel count and labels already include the final event row.
 Its adapter preserves that row without appending another one, and excludes it

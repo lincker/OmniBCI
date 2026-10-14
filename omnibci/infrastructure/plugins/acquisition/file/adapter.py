@@ -56,8 +56,7 @@ class CNTReaderAdapter(ReaderAdapter):
 
     def describe_output(self, *, source_id: str, connection_id: str) -> AcquisitionDescriptor:
         return acquisition_descriptor({
-            "channel_count": len(self.file.ch_names),
-            "output_channel_count": len(self.file.ch_names) + 1,
+            "signal_channel_count": len(self.file.ch_names),
             "sample_rate": self.file.info["sfreq"],
             "channel_labels": list(self.file.ch_names),
             "channel_types": self.file.get_channel_types(),

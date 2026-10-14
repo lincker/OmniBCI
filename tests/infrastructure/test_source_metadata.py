@@ -10,7 +10,7 @@ from omnibci.infrastructure.acquisition.metadata import acquisition_descriptor
 from omnibci.shared.events import EventType
 
 
-RAW = {"sample_rate": 250, "channel_count": 2, "output_channel_count": 3,
+RAW = {"sample_rate": 250, "signal_channel_count": 2,
        "channel_labels": ["C3", "C4"], "provenance": "device-reported",
        "native_event": "separate-event-packets", "device": "Test amplifier",
        "protocol_version": 803, "capabilities": {"recording_control": False}}
@@ -35,7 +35,7 @@ def test_processing_description_uses_only_source_fields():
 
 
 def test_missing_optional_channel_details_are_internal_placeholders_only():
-    raw = {"sample_rate": 250, "output_channel_count": 3, "provenance": "user-declared"}
+    raw = {"sample_rate": 250, "signal_channel_count": 2, "provenance": "user-declared"}
     original = deepcopy(raw)
     metadata = acquisition_descriptor(raw, source_id="test_source", connection_id="connected")
     assert [channel.name for channel in metadata.channels] == ["CH1", "CH2"]
@@ -64,8 +64,8 @@ def test_descriptor_normalizes_type_spelling_without_editing_source_metadata():
     ({}, "positive integer sample rate"),
     ({**RAW, "sample_rate": 249.5}, "positive integer"),
     ({**RAW, "sample_rate": float("inf")}, "positive integer"),
-    ({**RAW, "output_channel_count": 1}, "signal row"),
-    ({**RAW, "channel_count": 3}, "signal channel count"),
+    ({"sample_rate": 250}, "signal channel count"),
+    ({**RAW, "signal_channel_count": 0}, "signal channel count"),
     ({**RAW, "channel_labels": ["C3"]}, "exactly 2"),
     ({**RAW, "channel_labels": "C3"}, "must be a sequence"),
     ({**RAW, "channel_units": ["V"]}, "signal row count"),

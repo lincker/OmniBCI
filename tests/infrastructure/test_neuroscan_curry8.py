@@ -281,7 +281,7 @@ async def test_metadata_requeries_the_stopped_device_and_keeps_event_rows_separa
     assert [channel.name for channel in refreshed_descriptor.channels] == ["C3", "C4"]
     assert refreshed_descriptor.trigger_row_index == 2
     assert refreshed_descriptor.native_event == "final-row"
-    assert "output_channel_count" not in refreshed
+    assert "signal_channel_count" not in refreshed
     assert "native_event" not in refreshed
     assert "provenance" not in refreshed
     assert driver._request_info.await_args_list == [
