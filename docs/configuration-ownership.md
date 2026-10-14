@@ -20,7 +20,7 @@ tables are existing names, not a proposal to rename every setting.
 | Configuration | Authoritative source | Single editing location | Application |
 | --- | --- | --- | --- |
 | Plugin parameters | A named Plugin Profile for an exact contribution and version | Setup, under that plugin | Save preserves the running values; Review and Apply selects a pinned copy |
-| Acquisition metadata | Connected source plugin's raw metadata and `SignalInfo` | Setup / Acquisition / Get Metadata, read-only | Connect and read; compare observed dimensions with Profile expectations; explicit adoption updates the draft before Save and Apply |
+| Acquisition metadata | Connected source plugin's raw metadata and `SignalInfo` | Setup / Acquisition / Get Metadata, read-only | New Profile drafts fill observed dimensions automatically; saved Profiles preserve expectations and show differences in red; Save and Apply establishes the baseline |
 | Plugin selection and filter order | Activation bindings | Setup, plugin/profile selectors and filter chain | Review and Apply |
 | Shared runtime settings | Host settings, copied into the candidate activation | Settings / General, grouped by subsystem | Review and Apply at a supported runtime boundary |
 | Channel mapping and type declarations | Decoder Plugin Profile `processing_input`, pinned in its activation binding | Setup / Processing / Decoder / Processing input | Profile Review and Apply; input changes rebuild and prepare processing before streaming |
@@ -297,7 +297,9 @@ runtime fields.
 
 Source Profiles retain `sample_rate` and `channel_number`; provided values must
 be positive integers. Curry8 and File Reader can connect without expectations
-so the user can read and confirm actual values. The comparison uses the pinned
+using an unsaved source binding. Get Metadata fills those values into new drafts;
+Save and Apply establishes a named experiment baseline. Existing Profiles keep
+their saved values and show missing or different parameters in red. The comparison uses the pinned
 source binding, never old host copies or saved edits that have not been applied.
 An unconfirmed or mismatched comparison blocks preparation and streaming, but
 does not hide source metadata. Observed values can be saved as a separately named

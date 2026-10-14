@@ -6577,6 +6577,31 @@
         "type": "object",
         "title": "DecoderChannelRequirementsResponse"
       },
+      "DraftSourceBindingRequest": {
+        "properties": {
+          "slot": {
+            "type": "string",
+            "const": "acquisition.source",
+            "title": "Slot"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/PluginSelectionResponse"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Parameters"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "slot",
+          "selection",
+          "parameters"
+        ],
+        "title": "DraftSourceBindingRequest"
+      },
       "EngineStatusResponse": {
         "properties": {
           "running": {
@@ -7867,7 +7892,14 @@
         "properties": {
           "bindings": {
             "items": {
-              "$ref": "#/components/schemas/SelectProfileBindingRequest"
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SelectProfileBindingRequest"
+                },
+                {
+                  "$ref": "#/components/schemas/DraftSourceBindingRequest"
+                }
+              ]
             },
             "type": "array",
             "title": "Bindings"

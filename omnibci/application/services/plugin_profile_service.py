@@ -97,7 +97,7 @@ class PluginProfileService:
 
     def propose(self, selections: list[dict], *, include_host_settings: bool = False,
                 refresh_slots: list[str] | None = None) -> ActivationSnapshot:
-        """Resolve an ordered set of slot/profile references into pinned copies."""
+        """Pin saved profiles or an unsaved acquisition connection configuration."""
         current = self.repository.get_activation()
         base = self.settings_source() if current is None or include_host_settings else current.settings
         if include_host_settings:
@@ -117,8 +117,18 @@ class PluginProfileService:
         previous = {binding.slot: binding for binding in current.bindings} if current else {}
         bindings = []
         for item in selections:
+            if (isinstance(item, dict) and set(item) == {"slot", "selection", "parameters"}
+                    and item["slot"] == "acquisition.source"):
+                selection = PluginSelection.from_dict(item["selection"])
+                definition, parameters = self._parameters("acquisition", selection, item["parameters"])
+                bindings.append(ProfileBinding(
+                    slot=item["slot"], kind="acquisition", profile_id=None,
+                    selection=selection, parameters=parameters,
+                    configuration_version=definition.configuration_version,
+                ))
+                continue
             if not isinstance(item, dict) or set(item) != {"slot", "profile_id"}:
-                raise PluginSchemaError("Each binding requires slot and profile_id")
+                raise PluginSchemaError("Each binding requires a saved profile or an acquisition source draft")
             retained = previous.get(item["slot"])
             if (refresh_slots is not None and item["slot"] not in refresh_slots
                     and retained is not None and retained.profile_id == item["profile_id"]):

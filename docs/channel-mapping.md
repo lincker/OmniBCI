@@ -32,10 +32,14 @@ data-matrix validation is reserved for future consideration.
 
 ## Acquisition workflow
 
-Choose a source plugin, fill its address and port or file path, then Connect.
-Get Metadata reads the connected source and displays the descriptor alongside
-source metadata text on the same page. It also compares the applied Profile's
-experiment expectations with the observed signal information. The response is:
+First choose **Use saved profile** or **New profile**. Select an existing Profile,
+or choose a source plugin and fill its address and port or file path, then Connect.
+New connection drafts can be applied without creating a Profile. Get Metadata
+reads the connected source and displays `SignalInfo` alongside the source text on
+the same page. For a new Curry8/File draft, it automatically fills the observed
+sample rate and total output rows; the user then chooses **Save profile**. For a
+saved Profile, it preserves and compares the applied experiment expectations,
+showing missing or different parameters in red. The response is:
 
 ```json
 {
@@ -110,8 +114,9 @@ current source metadata.
 The source Profile retains `sample_rate` and `channel_number` as expected
 experiment parameters. `channel_number` includes the event row and is compared
 with `SignalInfo.output_row_count`, not `signal_channel_count`. For Curry8 and
-File Reader, new Profiles have neither value until explicitly confirmed; their
-schemas retain both fields without defaults. Existing saved values are preserved.
+File Reader, new drafts have neither value until Get Metadata fills them from the
+source; their schemas retain both fields without defaults. Saving remains an
+explicit action. Existing saved values are preserved.
 
 Get Metadata returns `comparison` with expected and actual values and one status:
 
@@ -122,7 +127,10 @@ Get Metadata returns `comparison` with expected and actual values and one status
   Scan45's unchanged `user-declared` output information.
 
 A missing or invalid `SignalInfo` produces no comparison. Metadata reads never
-save or overwrite Profiles. For independently observed sources, unconfirmed or
+save or overwrite Profiles. New drafts display the source information without a
+comparison to an absent baseline. Their unsaved connection binding omits the
+expected dimensions; saving and applying the filled Profile establishes that
+baseline. For independently observed sources, unconfirmed or
 mismatched expectations prevent preparation and streaming while keeping the
 source information visible. The user can adjust the device/file and read again,
 or choose **Save observed values as new profile**, name it, and save the current

@@ -88,6 +88,35 @@ def complete_profiles(client, profiles=()):
     return profiles
 
 
+def test_runtime_plan_accepts_source_draft_without_creating_profile(client):
+    http, service, _ = client
+    profiles = complete_profiles(client)
+    accepted = accept(http, profiles).json()["data"]
+    saved = service.repository.list_profiles()
+    source = service.catalog.legacy("acquisition", "neuroscan_curry8_reader")
+    draft = {"slot": "acquisition.source", "selection": source.selection.to_dict(),
+             "parameters": {"DATA_PROVIDER_IP": "192.168.0.20", "DATA_PROVIDER_PORT": 4455}}
+    body = {"bindings": [draft, *[
+        {"slot": slot, "profile_id": profile["profile_id"]}
+        for slot, profile in profiles if slot != "acquisition.source"
+    ]], "expected_revision": accepted["revision"], "refresh_slots": ["acquisition.source"]}
+
+    response = http.post(f"{PREFIX}/apply-plan", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["errors"] == []
+    assert response.json()["data"]["changed_slots"] == ["acquisition.source"]
+    assert service.repository.list_profiles() == saved
+    assert service.repository.get_activation().revision == accepted["revision"]
+    assert http.put(f"{PREFIX}/activation", json=body).status_code == 422
+
+    for invalid in ({**draft, "slot": "processing.decoder"},
+                    {**draft, "profile_id": profiles[0][1]["profile_id"]},
+                    {**draft, "parameters": {"DATA_PROVIDER_PORT": "4455"}}):
+        response = http.post(f"{PREFIX}/apply-plan", json={**body, "bindings": [invalid, *body["bindings"][1:]]})
+        assert response.status_code == 422, response.text
+    assert service.repository.list_profiles() == saved
+
+
 def test_catalog_exposes_exact_identity_and_plugin_owned_schema(client):
     http, _, _ = client
     response = http.get(f"{PREFIX}/plugin-catalog/acquisition")

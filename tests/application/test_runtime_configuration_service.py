@@ -76,6 +76,45 @@ def test_source_change_requires_continuation(runtime):
     assert plan.session_effect == "continuation"
 
 
+def test_source_draft_is_pinned_without_saving_or_changing_profiles(runtime):
+    service, selections, before = runtime
+    profiles = service.profiles.repository.list_profiles()
+    source = before.bindings[0]
+    draft = {"slot": "acquisition.source", "selection": source.selection.to_dict(),
+             "parameters": {"data_file_path": "/tmp/experiment.fif"}}
+    requested = [draft, *selections[1:]]
+
+    plan = service.plan(requested, expected_revision=before.revision,
+                        refresh_slots=["acquisition.source"])
+    assert plan.strategy == "rebuild"
+    assert plan.changed_slots == ("acquisition.source",)
+    assert not plan.errors
+    draft["parameters"]["data_file_path"] = "/tmp/later-edit.fif"
+    pinned = service.resolve_plan(plan.plan_id).snapshot
+    source = pinned.bindings[0]
+    assert source.profile_id is None
+    assert source.profile_revision == 0
+    assert source.parameters["data_file_path"] == "/tmp/experiment.fif"
+    assert "sample_rate" not in source.parameters
+    assert "channel_number" not in source.parameters
+    assert service.profiles.repository.list_profiles() == profiles
+    assert service.profiles.repository.get_activation() == before
+
+    service.profiles.accept(pinned, expected_revision=before.revision)
+    service.engine.applied_revision = pinned.revision
+    service.engine.applied_snapshot = service.profiles.materialize(pinned)
+    assert service.engine.applied_snapshot["ACQUISITION.data_file_path"] == "/tmp/experiment.fif"
+    draft["parameters"] = source.parameters
+    edit(runtime, "processing.decoder", {"window_duration": 2.5})
+    following = service.plan(requested, expected_revision=pinned.revision,
+                             refresh_slots=["processing.decoder"])
+    assert following.changed_slots == ("processing.decoder",)
+    assert service.resolve_plan(following.plan_id).snapshot.bindings[0] == source
+    assert service.profiles.repository.list_profiles("acquisition") == [
+        profile for profile in profiles if profile.kind == "acquisition"
+    ]
+
+
 def test_retired_manual_source_montage_is_not_applied(runtime):
     service, selections, before = runtime
     profile = service.profiles.repository.get_profile(selections[0]["profile_id"])

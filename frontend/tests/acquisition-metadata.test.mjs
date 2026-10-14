@@ -190,3 +190,33 @@ test("missing source information offers no new-profile action", () => {
     assert.doesNotMatch(text(tree), /Save observed values as new profile/);
   }
 });
+
+test("new drafts show the source observation without comparing an absent saved baseline", () => {
+  const value = { ...source("Device information"), comparison: comparison("unconfirmed") };
+  const tree = render({ value, showComparison: false });
+  assert.equal(text(summary(tree, "Sample rate (Hz)")), "500");
+  assert.equal(text(summary(tree, "Output rows (including event)")), "3");
+  assert.equal(text(elements(tree).find((element) => element.type === "pre")), "Device information");
+  assert.doesNotMatch(text(tree), /Experiment parameter comparison|no complete confirmed baseline/);
+  assert.equal(elements(tree).some((element) => element.props.role === "alert"), false);
+});
+
+test("saved profiles warn in red for missing or different parameters but not matching rows", () => {
+  for (const status of ["mismatched", "unconfirmed"]) {
+    const value = { ...source("Device information"), comparison: comparison(status, {
+      sample_rate: status === "unconfirmed" ? null : 1000, channel_number: 3,
+    }) };
+    const tree = render({ value });
+    const warning = elements(tree).find((element) => element.props.role === "alert");
+    assert.ok(warning.props.className.includes("source-mismatch"));
+    const rows = elements(tree).filter((element) => element.type === "tr" && element.key === "sample_rate");
+    assert.equal(rows[0].props.className, "source-mismatch");
+    const matching = elements(tree).find((element) => element.type === "tr" && element.key === "channel_number");
+    assert.equal(matching.props.className, undefined);
+  }
+  for (const status of ["matched", "unverified"]) {
+    const tree = render({ value: { ...source("Device information"), comparison: comparison(status, { sample_rate: 500, channel_number: 3 }) } });
+    assert.equal(elements(tree).some((element) => element.props.role === "alert"), false);
+    assert.equal(elements(tree).some((element) => element.props.className?.includes("source-mismatch")), false);
+  }
+});

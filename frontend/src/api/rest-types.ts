@@ -1396,6 +1396,19 @@ export interface components {
             /** Default Names */
             default_names?: string[];
         };
+        /** DraftSourceBindingRequest */
+        DraftSourceBindingRequest: {
+            /**
+             * Slot
+             * @constant
+             */
+            slot: "acquisition.source";
+            selection: components["schemas"]["PluginSelectionResponse"];
+            /** Parameters */
+            parameters: {
+                [key: string]: unknown;
+            };
+        };
         /** EngineStatusResponse */
         EngineStatusResponse: {
             /** Running */
@@ -1877,7 +1890,7 @@ export interface components {
         /** RuntimePlanRequest */
         RuntimePlanRequest: {
             /** Bindings */
-            bindings: components["schemas"]["SelectProfileBindingRequest"][];
+            bindings: (components["schemas"]["SelectProfileBindingRequest"] | components["schemas"]["DraftSourceBindingRequest"])[];
             /** Expected Revision */
             expected_revision?: string | null;
             /** Refresh Slots */

@@ -2,6 +2,7 @@
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import numpy as np
 import pytest
@@ -13,6 +14,8 @@ from omnibci.application.commands.engine_commands import StartEngineCommand, Sto
 from omnibci.application.services.command_result_service import CommandRejectedError
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
+from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.services.signal_setup_service import SignalSetupService
 from omnibci.bootstrap import assemble, register_engine_listeners, _acquisition_binding
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, ResolvedSignalPlan
@@ -40,14 +43,18 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
     for slot, kind, alias, parameters in (
         ("acquisition.source", "acquisition", "file_reader", {
             "data_file_path": str(Path(__file__).parents[1] / "fixture" / "train.cnt"),
-            "file_reader_chunk_size": 100, "sample_rate": 1000, "channel_number": 10,
+            "file_reader_chunk_size": 100,
         }),
         ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA", {}),
         ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
         ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40", {}),
     ):
+        selection = profiles.catalog.legacy(kind, alias).selection
+        if kind == "acquisition":
+            selections.append({"slot": slot, "selection": selection.to_dict(), "parameters": parameters})
+            continue
         extra = {"processing_input": processing_input} if kind == "decoder" else {}
-        profile = profiles.create(kind, profiles.catalog.legacy(kind, alias).selection, alias, parameters, **extra)
+        profile = profiles.create(kind, selection, alias, parameters, **extra)
         selections.append({"slot": slot, "profile_id": profile.profile_id})
     decoder_a = profiles.repository.get_profile(selections[1]["profile_id"])
     decoder_b = profiles.create("decoder", decoder_a.selection, "Reordered channels", {},
@@ -65,6 +72,10 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
     container.acquisition_service.set_signal_preparer(signal.prepare)
     container.session_service.set_signal_preparer(signal.prepare_session, container.acquisition_service.lifecycle_lock)
     register_engine_listeners(container)
+    coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
+                                          container.session_service, container.stimulation_service,
+                                          container.command_results, signal_preparer=signal.prepare)
+    runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
     try:
         await engine.handle_start_engine(StartEngineCommand())
         assert engine.is_engine_ready
@@ -76,7 +87,7 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         with pytest.raises(CommandRejectedError) as unprepared:
             await asyncio.to_thread(container.command_results.request, EventType.StartStream)
         assert unprepared.value.result.error_code == "SIGNAL_NOT_PREPARED"
-        saved_source = profiles.repository.get_profile(selections[0]["profile_id"])
+        assert profiles.repository.list_profiles("acquisition") == []
         metadata = await asyncio.to_thread(container.acquisition_service.get_metadata)
         assert isinstance(metadata["metadata"], str)
         assert "O2" in metadata["metadata"]
@@ -85,6 +96,29 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         assert metadata["descriptor"]["signal_channel_count"] == 9
         assert metadata["descriptor"]["provenance"] == "file-reported"
         assert metadata["descriptor"]["channels"][8]["channel_id"] == "channel-8"
+        assert metadata["comparison"]["status"] == "unconfirmed"
+        assert profiles.repository.list_profiles("acquisition") == []
+        with pytest.raises(ValueError, match="unconfirmed"):
+            await asyncio.to_thread(container.recording_service.start)
+
+        # Save only after inspecting the observed dimensions, then apply the experiment baseline.
+        source = profiles.repository.get_activation().bindings[0]
+        assert source.profile_id is None
+        saved_source = profiles.create("acquisition", source.selection, "Observed CNT experiment", {
+            **source.parameters, "sample_rate": metadata["descriptor"]["sample_rate"],
+            "channel_number": metadata["descriptor"]["output_row_count"],
+        })
+        assert profiles.repository.get_activation().bindings[0].profile_id is None
+        selections[0] = {"slot": "acquisition.source", "profile_id": saved_source.profile_id}
+        reviewed = runtime.plan(selections, expected_revision=profiles.repository.get_activation().revision,
+                                refresh_slots=["acquisition.source"])
+        operation = runtime.submit(reviewed.plan_id, str(uuid4()))
+        await runtime.wait_for_idle()
+        result = runtime.operation(operation["operation_id"])
+        assert result["status"] == "succeeded", result
+        assert profiles.repository.get_activation().bindings[0].profile_id == saved_source.profile_id
+        metadata = await asyncio.to_thread(container.acquisition_service.get_metadata)
+        assert metadata["comparison"]["status"] == "matched"
         assert profiles.repository.get_profile(saved_source.profile_id) == saved_source
 
         session_id = await asyncio.to_thread(container.recording_service.start)

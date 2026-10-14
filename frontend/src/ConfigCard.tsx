@@ -10,6 +10,7 @@ import { useI18n, type Translate, type TranslationKey } from "./i18n";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
 import { pluginConfigApi } from "./api/plugin-config";
 import type { RuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
+import type { RuntimePlanRequest } from "./api/runtime-config";
 
 const fieldLabels: Record<string, TranslationKey> = {
   "ALGORITHM.baseline_duration": "settings.baselineDuration",
@@ -92,11 +93,15 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
     setBusy(true); setError(null);
     try {
       const activation = await pluginConfigApi.activation();
-      if (!activation || activation.bindings.some((binding) => !binding.profile_id)) {
+      if (!activation) throw new Error(t("settings.saveProfiles"));
+      const bindings: RuntimePlanRequest["bindings"] = activation.bindings.map((binding) => {
+        if (binding.profile_id) return { slot: binding.slot, profile_id: binding.profile_id };
+        if (binding.slot === "acquisition.source") return { slot: "acquisition.source" as const,
+          selection: binding.selection, parameters: binding.parameters };
         throw new Error(t("settings.saveProfiles"));
-      }
+      });
       await runtime.review({
-        bindings: activation.bindings.map((binding) => ({ slot: binding.slot, profile_id: binding.profile_id! })),
+        bindings,
         expected_revision: activation.revision, refresh_slots: [], include_host_settings: true,
       });
     } catch (cause) { setError(String(cause)); }

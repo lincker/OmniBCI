@@ -1,5 +1,7 @@
 .plugin-profiles { min-height: 0; }
 .plugin-profiles .profile-tools { padding: 0.5rem 1rem 1rem; flex-wrap: wrap; }
+.plugin-profiles .source-profile-choice .actions { padding: 0 1rem 1rem; flex-wrap: wrap; }
+.plugin-profiles .source-profile-choice button[aria-pressed="true"] { border-color: var(--accent); }
 .plugin-profiles .binding-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 0.75rem var(--page-gutter); font-size: 0.75rem; border-bottom: 1px solid var(--border-soft); }
 .plugin-profiles .binding-summary button { font-size: 12px; }
 .plugin-profiles .filter-chain .setting-label { display: block; margin: 8px 0 4px; }

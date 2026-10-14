@@ -5,7 +5,7 @@ import "./AcquisitionMetadata.css";
 
 const displayValue = (value: unknown) => typeof value === "string" ? value : JSON.stringify(value);
 
-export function AcquisitionMetadata({ value, busy, canRead, readHint, onRead, canUseObserved = false, onUseObserved, onSaveObservedProfile }: {
+export function AcquisitionMetadata({ value, busy, canRead, readHint, onRead, canUseObserved = false, onUseObserved, onSaveObservedProfile, showComparison = true }: {
   value: DataSourceMetadata | null;
   busy: boolean;
   canRead: boolean;
@@ -14,6 +14,7 @@ export function AcquisitionMetadata({ value, busy, canRead, readHint, onRead, ca
   canUseObserved?: boolean;
   onUseObserved?: () => void;
   onSaveObservedProfile?: () => void;
+  showComparison?: boolean;
 }) {
   const { t } = useI18n();
   const descriptor = value?.descriptor;
@@ -25,7 +26,7 @@ export function AcquisitionMetadata({ value, busy, canRead, readHint, onRead, ca
   ];
   const channels = descriptor?.channels ?? [];
   const comparison = value?.comparison;
-  const mismatched = comparison?.status === "mismatched";
+  const mismatched = comparison?.status === "mismatched" || comparison?.status === "unconfirmed";
 
   return <div className="setting-group acquisition-metadata"><h2>{t("metadata.heading")}</h2>
     <div className="actions"><button disabled={busy || !canRead} onClick={onRead}>{t("metadata.read")}</button></div>
@@ -33,7 +34,7 @@ export function AcquisitionMetadata({ value, busy, canRead, readHint, onRead, ca
     {value ? <>
       <pre className="source-metadata-raw" aria-label={t("metadata.raw")}>{value.metadata}</pre>
       {descriptor ? <>
-      {comparison && <div className="source-expectations">
+      {showComparison && comparison && <div className="source-expectations">
         <h3>{t("metadata.comparison")}</h3>
         <p role={mismatched ? "alert" : "status"} className={`setting-description${mismatched ? " source-mismatch" : ""}`}>{t(`metadata.comparison.${comparison.status}`)}</p>
         <table aria-label={t("metadata.comparison")}>
