@@ -90,12 +90,12 @@ async def _run_fake_server_scenario(*, compressed: bool = False):
                         _packet(b"DATA", DataCode.INFO, InfoType.VERSION, body)
                     )
                 elif header.request == ClientRequest.BASIC_INFO:
-                    body = _BASIC_INFO.pack(_BASIC_INFO.size, 3, 1000, 4, 1, 0)
+                    body = _BASIC_INFO.pack(_BASIC_INFO.size, 4, 1000, 4, 1, 0)
                     writer.write(
                         _packet(b"DATA", DataCode.INFO, InfoType.BASIC_INFO, body)
                     )
                 elif header.request == ClientRequest.CHANNEL_INFO:
-                    body = _channel_info(("Fz", "Cz", "Pz"))
+                    body = _channel_info(("Fz", "Cz", "Pz", "Trigger"))
                     writer.write(
                         _packet(b"DATA", DataCode.INFO, InfoType.CHANNEL_INFO, body)
                     )
@@ -108,20 +108,20 @@ async def _run_fake_server_scenario(*, compressed: bool = False):
                                 BlockType.FLOAT32_ZIP,
                                 b"compressed",
                                 start_sample=100,
-                                uncompressed_size=36,
+                                uncompressed_size=48,
                             )
                         )
                     else:
                         first_eeg = np.asarray(
                             [
-                                [1.0, 10.0, 100.0],
-                                [2.0, 20.0, 200.0],
-                                [3.0, 30.0, 300.0],
+                                [1.0, 10.0, 100.0, 0.0],
+                                [2.0, 20.0, 200.0, 7.0],
+                                [3.0, 30.0, 300.0, 0.0],
                             ],
                             dtype="<f4",
                         ).tobytes()
                         second_eeg = np.asarray(
-                            [[4.0, 40.0, 400.0]],
+                            [[4.0, 40.0, 400.0, 9.0]],
                             dtype="<f4",
                         ).tobytes()
                         writer.write(
@@ -138,7 +138,7 @@ async def _run_fake_server_scenario(*, compressed: bool = False):
                                 b"DATA",
                                 DataCode.EVENTS,
                                 BlockType.EVENT_LIST,
-                                _event(7, 101, "target"),
+                                _event(99, 103, "annotation"),
                             )
                         )
                         writer.write(
@@ -174,16 +174,19 @@ async def _run_fake_server_scenario(*, compressed: bool = False):
         assert isinstance(metadata, str)
         assert json.loads(metadata) == {
             "protocol_version": 803,
-            "channel_count": 3,
+            "channel_count": 4,
             "sample_rate": 1000,
             "data_size": 4,
             "allow_amplifier_control": True,
             "allow_recording_control": False,
-            "channel_labels": ["Fz", "Cz", "Pz"],
+            "channel_labels": ["Fz", "Cz", "Pz", "Trigger"],
         }
         descriptor = driver.describe_output(source_id=driver.plugin_type, connection_id="connection")
         assert descriptor.signal_channel_count == 3
         assert descriptor.output_row_count == 4
+        assert descriptor.trigger_row_index == 3
+        assert descriptor.native_event == "final-row"
+        assert [channel.name for channel in descriptor.channels] == ["Fz", "Cz", "Pz"]
         assert await driver.start_stream() is True
 
         if compressed:
@@ -191,7 +194,11 @@ async def _run_fake_server_scenario(*, compressed: bool = False):
                 await driver.read_chunk()
             chunk = None
         else:
-            chunk = await driver.read_chunk()
+            chunk = await asyncio.wait_for(driver.read_chunk(), timeout=1.0)
+            np.testing.assert_array_equal(
+                await asyncio.wait_for(driver.read_chunk(), timeout=1.0),
+                np.asarray([[4.0], [40.0], [400.0], [9.0]], dtype=np.float32),
+            )
 
         assert await driver.stop_stream() is True
         assert await driver.disconnect() is True
@@ -218,24 +225,34 @@ def test_header_uses_the_20_byte_network_order_layout():
     assert Curry8Header.from_bytes(header.to_bytes()) == header
 
 
-def test_protocol_802_native_int16_samples_are_supported():
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol_version,data_size,dtype", [(802, 2, "<i2"), (803, 4, "<f4")])
+async def test_single_data_packet_preserves_native_trigger_row_without_waiting_for_next_block(
+    protocol_version, data_size, dtype,
+):
     driver = Curry8DataReader(host="127.0.0.1", port=4455, parameters={})
+    driver._is_connected = driver._is_streaming = True
     driver._metadata = Curry8Metadata(
-        protocol_version=802,
-        channel_count=2,
+        protocol_version=protocol_version,
+        channel_count=3,
         sample_rate=500,
-        data_size=2,
+        data_size=data_size,
         allow_amplifier_control=False,
         allow_recording_control=False,
-        channel_labels=("C3", "C4"),
+        channel_labels=("C3", "C4", "Trigger"),
     )
+    driver.reader = asyncio.StreamReader()
+    packet = np.asarray([[1, 10, 0], [2, 20, 7], [3, 30, 0]], dtype=dtype).tobytes()
+    driver.reader.feed_data(_packet(b"DATA", DataCode.EEG, BlockType.FLOAT32, packet))
+    driver.reader.feed_eof()
 
-    packet = np.asarray([[1, 10], [2, 20]], dtype="<i2").tobytes()
+    chunk = await driver.read_chunk()
 
     np.testing.assert_array_equal(
-        driver._parse_eeg(packet),
-        np.asarray([[1, 2], [10, 20]], dtype=np.int16),
+        chunk,
+        np.asarray([[1, 2, 3], [10, 20, 30], [0, 7, 0]], dtype=dtype),
     )
+    assert chunk.dtype == np.dtype(dtype)
 
 
 @pytest.mark.asyncio
@@ -244,10 +261,10 @@ async def test_metadata_requeries_the_stopped_device_and_keeps_event_rows_separa
     driver._is_connected = True
     driver._protocol_version = 803
     driver._request_info = AsyncMock(side_effect=[
-        _BASIC_INFO.pack(_BASIC_INFO.size, 3, 1000, 4, 1, 0),
-        _channel_info(("Fz", "Cz", "Pz")),
-        _BASIC_INFO.pack(_BASIC_INFO.size, 2, 500, 4, 1, 0),
-        _channel_info(("C3", "C4")),
+        _BASIC_INFO.pack(_BASIC_INFO.size, 4, 1000, 4, 1, 0),
+        _channel_info(("Fz", "Cz", "Pz", "Trigger")),
+        _BASIC_INFO.pack(_BASIC_INFO.size, 3, 500, 4, 1, 0),
+        _channel_info(("C3", "C4", "Trigger")),
     ])
 
     first = await driver.get_metadata()
@@ -255,13 +272,15 @@ async def test_metadata_requeries_the_stopped_device_and_keeps_event_rows_separa
     refreshed = await driver.get_metadata()
     refreshed_descriptor = driver.describe_output(source_id=driver.plugin_type, connection_id="connection")
 
-    assert json.loads(first)["channel_count"] == first_descriptor.signal_channel_count == 3
-    assert first_descriptor.output_row_count == 4
+    assert json.loads(first)["channel_count"] == first_descriptor.output_row_count == 4
+    assert first_descriptor.signal_channel_count == 3
     assert json.loads(refreshed)["sample_rate"] == refreshed_descriptor.sample_rate == 500
-    assert json.loads(refreshed)["channel_count"] == refreshed_descriptor.signal_channel_count == 2
-    assert refreshed_descriptor.output_row_count == 3
-    assert json.loads(refreshed)["channel_labels"] == ["C3", "C4"]
+    assert json.loads(refreshed)["channel_count"] == refreshed_descriptor.output_row_count == 3
+    assert refreshed_descriptor.signal_channel_count == 2
+    assert json.loads(refreshed)["channel_labels"] == ["C3", "C4", "Trigger"]
     assert [channel.name for channel in refreshed_descriptor.channels] == ["C3", "C4"]
+    assert refreshed_descriptor.trigger_row_index == 2
+    assert refreshed_descriptor.native_event == "final-row"
     assert "output_channel_count" not in refreshed
     assert "native_event" not in refreshed
     assert "provenance" not in refreshed
@@ -282,8 +301,8 @@ async def test_output_description_requires_successful_metadata_and_never_queries
     driver._is_connected = True
     driver._protocol_version = 803
     driver._request_info = AsyncMock(side_effect=[
-        _BASIC_INFO.pack(_BASIC_INFO.size, 2, 500, 4, 1, 0),
-        _channel_info(("C3", "C4")),
+        _BASIC_INFO.pack(_BASIC_INFO.size, 3, 500, 4, 1, 0),
+        _channel_info(("C3", "C4", "Trigger")),
         Curry8ProtocolError("Invalid device reply"),
     ])
     with pytest.raises(RuntimeError, match="Get CURRY metadata"):
@@ -327,7 +346,7 @@ async def test_stopped_metadata_skips_queued_stream_packets():
         _packet(b"DATA", DataCode.IMPEDANCES, BlockType.FLOAT32, np.zeros(3, dtype="<f4").tobytes()),
         _packet(b"DATA", DataCode.INFO, InfoType.BASIC_INFO,
                 _BASIC_INFO.pack(_BASIC_INFO.size, 3, 1000, 4, 1, 0)),
-        _packet(b"DATA", DataCode.INFO, InfoType.CHANNEL_INFO, _channel_info(("Fz", "Cz", "Pz"))),
+        _packet(b"DATA", DataCode.INFO, InfoType.CHANNEL_INFO, _channel_info(("Fz", "Cz", "Trigger"))),
     ]))
 
     await driver.stop_stream()
@@ -335,7 +354,7 @@ async def test_stopped_metadata_skips_queued_stream_packets():
 
     assert json.loads(metadata)["channel_count"] == 3
     assert json.loads(metadata)["sample_rate"] == 1000
-    assert json.loads(metadata)["channel_labels"] == ["Fz", "Cz", "Pz"]
+    assert json.loads(metadata)["channel_labels"] == ["Fz", "Cz", "Trigger"]
 
 
 @pytest.mark.asyncio
@@ -351,7 +370,7 @@ async def test_stopped_metadata_rejects_unexpected_or_missing_reply(code, messag
         await driver.get_metadata()
 
 
-def test_stream_lifecycle_decodes_eeg_and_aligns_events():
+def test_stream_lifecycle_preserves_native_trigger_row_and_ignores_event_packets():
     chunk, requests = asyncio.run(_run_fake_server_scenario())
 
     np.testing.assert_array_equal(

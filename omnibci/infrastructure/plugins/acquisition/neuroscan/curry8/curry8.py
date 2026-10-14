@@ -66,7 +66,6 @@ class BlockType(IntEnum):
 
 _HEADER_STRUCT = struct.Struct(">4sHHIII")
 _BASIC_INFO_STRUCT = struct.Struct("<IiiiII")
-_EVENT_STRUCT = struct.Struct("<iiii520s")
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +146,8 @@ class Curry8BasicInfo:
 
 @dataclass(frozen=True, slots=True)
 class Curry8Metadata:
+    """Device fields whose channel count and labels include the final event row."""
+
     protocol_version: int
     channel_count: int
     sample_rate: int
@@ -156,28 +157,8 @@ class Curry8Metadata:
     channel_labels: tuple[str, ...]
 
 
-@dataclass(frozen=True, slots=True)
-class Curry8Event:
-    event_type: int
-    start_sample: int
-
-    SIZE = _EVENT_STRUCT.size
-
-    @classmethod
-    def from_bytes(cls, raw: bytes) -> Curry8Event:
-        if len(raw) != cls.SIZE:
-            raise Curry8ProtocolError(
-                f"CURRY event must be {cls.SIZE} bytes, got {len(raw)}"
-            )
-        event_type, _, start_sample, _, _ = _EVENT_STRUCT.unpack(raw)
-        return cls(
-            event_type=event_type,
-            start_sample=start_sample,
-        )
-
-
 class Curry8DataReader(SignalSource):
-    """Receive uncompressed EEG and event packets from CURRY 8."""
+    """Receive uncompressed CURRY 8 data with a native final event row."""
 
     plugin_type = "neuroscan_curry8_reader"
 
@@ -209,8 +190,6 @@ class Curry8DataReader(SignalSource):
         self._pending_header: tuple[asyncio.StreamReader, Curry8Header] | None = None
         self._protocol_version: int | None = None
         self._metadata: Curry8Metadata | None = None
-        self._pending_events: list[Curry8Event] = []
-        self._buffered_eeg: tuple[int, np.ndarray] | None = None
 
     @property
     def resume_without_checkpoint_safe(self) -> bool:
@@ -261,7 +240,6 @@ class Curry8DataReader(SignalSource):
             self._is_streaming = False
             self._protocol_version = None
             self._metadata = None
-            self._reset_stream_state()
         return True
 
     async def get_metadata(self) -> str:
@@ -281,11 +259,11 @@ class Curry8DataReader(SignalSource):
         if not self._is_connected or metadata is None:
             raise RuntimeError("Get CURRY metadata before describing its output")
         return acquisition_descriptor({
-            "channel_count": metadata.channel_count,
-            "output_channel_count": metadata.channel_count + 1,
+            "channel_count": metadata.channel_count - 1,
+            "output_channel_count": metadata.channel_count,
             "sample_rate": metadata.sample_rate,
-            "channel_labels": list(metadata.channel_labels),
-            "native_event": "separate-event-packets",
+            "channel_labels": list(metadata.channel_labels[:-1]),
+            "native_event": "final-row",
             "provenance": "device-reported",
         }, source_id=source_id, connection_id=connection_id)
 
@@ -296,7 +274,6 @@ class Curry8DataReader(SignalSource):
             return True
         if self._metadata is None:
             await self._load_metadata()
-        self._reset_stream_state()
         await self._send_request(ClientRequest.STREAMING_START)
         self._is_streaming = True
         return True
@@ -309,7 +286,6 @@ class Curry8DataReader(SignalSource):
                 await self._send_request(ClientRequest.STREAMING_STOP)
         finally:
             self._is_streaming = False
-            self._reset_stream_state()
         return True
 
     async def read_chunk(self) -> np.ndarray:
@@ -326,7 +302,7 @@ class Curry8DataReader(SignalSource):
                 self._handle_info(header)
                 continue
             if header.code == DataCode.EVENTS:
-                self._pending_events.extend(self._parse_events(header, body))
+                # The data block's final row already carries the trigger values.
                 continue
             if header.code == DataCode.IMPEDANCES:
                 logger.debug("Ignoring CURRY impedance data while streaming EEG")
@@ -343,14 +319,7 @@ class Curry8DataReader(SignalSource):
                     f"Unsupported CURRY EEG block type {header.request}"
                 )
 
-            next_block = (header.start_sample, self._parse_eeg(body))
-            if self._buffered_eeg is None:
-                self._buffered_eeg = next_block
-                continue
-
-            ready = self._buffered_eeg
-            self._buffered_eeg = next_block
-            return self._attach_events(*ready)
+            return self._parse_eeg(body)
 
     async def _load_metadata(self) -> None:
         basic_raw = await self._request_info(
@@ -487,56 +456,6 @@ class Curry8DataReader(SignalSource):
             )
         samples = np.frombuffer(body, dtype=dtype)
         return samples.reshape(-1, metadata.channel_count).T.copy()
-
-    @staticmethod
-    def _parse_events(
-        header: Curry8Header,
-        body: bytes,
-    ) -> list[Curry8Event]:
-        if header.request != BlockType.EVENT_LIST:
-            raise Curry8ProtocolError(
-                f"Unsupported CURRY event block type {header.request}"
-            )
-        if not body or len(body) % Curry8Event.SIZE:
-            raise Curry8ProtocolError(
-                f"Invalid CURRY event body size {len(body)}"
-            )
-        return [
-            Curry8Event.from_bytes(body[offset:offset + Curry8Event.SIZE])
-            for offset in range(0, len(body), Curry8Event.SIZE)
-        ]
-
-    def _attach_events(self, start_sample: int, eeg: np.ndarray) -> np.ndarray:
-        trigger = np.zeros(eeg.shape[1], dtype=np.float32)
-        end_sample = start_sample + eeg.shape[1]
-        remaining_events = []
-
-        for event in self._pending_events:
-            if event.start_sample >= end_sample:
-                remaining_events.append(event)
-                continue
-            if event.start_sample < start_sample:
-                logger.warning(
-                    "Dropping late CURRY event %d at sample %d; current block starts at %d",
-                    event.event_type,
-                    event.start_sample,
-                    start_sample,
-                )
-                continue
-            index = event.start_sample - start_sample
-            if trigger[index] != 0:
-                logger.warning(
-                    "Multiple CURRY events at sample %d; keeping the latest event",
-                    event.start_sample,
-                )
-            trigger[index] = event.event_type
-
-        self._pending_events = remaining_events
-        return np.vstack((eeg, trigger))
-
-    def _reset_stream_state(self) -> None:
-        self._pending_events.clear()
-        self._buffered_eeg = None
 
     async def _close_writer(self) -> None:
         writer = self.writer

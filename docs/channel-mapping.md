@@ -15,7 +15,7 @@ source metadata text on the same page. The response is:
 {
   "source_id": "neuroscan_curry8_reader",
   "connection_id": "connection-token",
-  "metadata": "Channel count: 2\nSample rate: 1000 Hz\n",
+  "metadata": "Channel count: 3\nSample rate: 1000 Hz\n",
   "descriptor": {
     "source_id": "neuroscan_curry8_reader",
     "connection_id": "connection-token",
@@ -33,6 +33,10 @@ This abbreviated example omits optional provenance and native-event details.
 `signal_channel_count` counts signal rows only. `output_row_count` includes the
 final normalized event row. Curry8 and File Reader derive actual dimensions
 from their source instead of treating configured defaults as observed facts.
+Curry8's source channel count and labels already include the final event row.
+Its adapter preserves that row without appending another one, and excludes it
+from the descriptor's signal channels. Separate event packets do not overwrite
+the native event row.
 Scan45 returns text explaining that device metadata querying is not implemented.
 Its separate output descriptor uses configuration and is marked `user-declared`.
 

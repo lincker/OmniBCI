@@ -114,6 +114,21 @@ async def test_metadata_command_preserves_source_text_and_uses_explicit_source_i
 
 
 @pytest.mark.asyncio
+async def test_repeated_connect_preserves_connection_metadata():
+    worker, source, bus = _worker()
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
+    metadata = _result(bus).data
+    await worker.execute((AcquisitionCommand.connect, CommandRequest("connect")))
+    assert _result(bus).ok
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("cached")))
+    assert _result(bus).data == metadata
+    assert worker.connection_id == metadata["connection_id"]
+    source.connect.assert_not_called()
+    source.get_metadata.assert_awaited_once()
+    source.describe_output.assert_called_once()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("error", [
     NotImplementedError("Output description is unavailable"),
     ValueError("Source channel labels do not match the output"),
@@ -156,14 +171,18 @@ async def test_metadata_cache_is_isolated_and_refresh_requires_stopped_source():
 
 
 @pytest.mark.asyncio
-async def test_failed_refresh_clears_cached_metadata_without_configuration_fallback():
+@pytest.mark.parametrize("descriptor_available", [True, False])
+async def test_failed_refresh_clears_cached_metadata_without_configuration_fallback(descriptor_available):
     worker, source, bus = _worker()
+    if not descriptor_available:
+        source.describe_output.side_effect = NotImplementedError("Output description is unavailable")
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
     source.get_metadata.side_effect = RuntimeError("Device has no metadata command")
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("refresh", {"refresh": True})))
     assert not _result(bus).ok
     assert "Device has no metadata command" in _result(bus).message
     assert worker._descriptor is None and worker._raw_metadata is None
+    assert worker._descriptor_error is None
 
 
 @pytest.mark.asyncio

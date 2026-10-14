@@ -50,11 +50,6 @@ class AcquisitionCommand(Enum):
     update_revision   = 'update revision'
 
 
-class AcquisitionState(Enum):
-    stop    = 'stop'
-    running = 'running'
-
-
 class AcquisitionCommandRejected(RuntimeError):
     """A control command was valid but could not be applied in current state."""
 
@@ -96,8 +91,6 @@ class AcquisitionRuntime:
     ) -> None:
         self.data_source = data_source
         self.command_queue = command_queue
-        # Local worker phase; EventType.AcquisitionState is the API projection event.
-        self.status = AcquisitionState.stop
         self.fetch_task: Optional[asyncio.Task] = None
         self.data_manager = data_manager
         self.event_bus = event_bus  # Optional for projection-free unit tests.
@@ -108,9 +101,7 @@ class AcquisitionRuntime:
         self.config_revision = config_revision
         self._last_sequence = -1
         self._fetch_failure: str | None = None
-        self._descriptor = None
-        self._raw_metadata: str | None = None
-        self._descriptor_error = None
+        self._clear_metadata()
         self.connection_id = uuid4().hex if getattr(data_source, "is_connected", False) else None
 
     def run(self) -> None:
@@ -272,7 +263,6 @@ class AcquisitionRuntime:
         if self.data_source.is_connected:
             if self.connection_id is None:
                 self.connection_id = uuid4().hex
-            self.status = AcquisitionState.running
             self._emit_state()
             return
         await self.data_source.connect()
@@ -282,17 +272,12 @@ class AcquisitionRuntime:
                 "Data source did not enter the connected state",
             )
         self.connection_id = uuid4().hex
-        self._descriptor = None
-        self._raw_metadata = None
-        self._descriptor_error = None
-        self.status = AcquisitionState.running
+        self._clear_metadata()
         self._emit_state()
 
     async def _on_disconnect(self) -> None:
         self.connection_id = None
-        self._descriptor = None
-        self._raw_metadata = None
-        self._descriptor_error = None
+        self._clear_metadata()
         # A successful disconnect means no reader coroutine remains alive.
         # Some SignalSource implementations (including FileReader) do not
         # implicitly stop their stream in disconnect(), so enforce the order
@@ -307,16 +292,13 @@ class AcquisitionRuntime:
                 "DISCONNECT_FAILED",
                 "Data source remained connected after disconnect",
             )
-        self.status = AcquisitionState.stop
         self._emit_state()
 
     async def _on_start_stream(self, receipt=None) -> None:
         self._require_healthy_stream()
-        # start_stream is only honoured once connected (status == running);
-        # otherwise it is dropped — but the truth (not streaming) is still
-        # pushed to the projection so the API cannot report a phantom stream.
+        # Publish the source state before rejecting an unconnected start.
         if not self.data_source.is_connected:
-            logger.warning('start_stream ignored: not running (status=%s)', self.status)
+            logger.warning('start_stream rejected: data source is not connected')
             self._emit_state()
             raise AcquisitionCommandRejected(
                 "DATA_SOURCE_NOT_CONNECTED",
@@ -386,8 +368,7 @@ class AcquisitionRuntime:
                 return self._metadata_response()
             raise AcquisitionCommandRejected("METADATA_REQUIRES_STOP", "Stop the stream before reading source metadata")
         if self._raw_metadata is None or refresh:
-            self._descriptor = self._raw_metadata = None
-            self._descriptor_error = None
+            self._clear_metadata()
             try:
                 info = await asyncio.wait_for(self.data_source.get_metadata(), timeout=3.0)
             except TimeoutError as exc:
@@ -407,6 +388,11 @@ class AcquisitionRuntime:
             except Exception as exc:
                 self._descriptor_error = str(exc) or "Source cannot describe acquisition output"
         return self._metadata_response()
+
+    def _clear_metadata(self) -> None:
+        self._descriptor = None
+        self._raw_metadata: str | None = None
+        self._descriptor_error = None
 
     def _metadata_response(self):
         return {

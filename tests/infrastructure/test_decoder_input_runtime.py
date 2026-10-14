@@ -85,7 +85,7 @@ def test_undeclared_legacy_plugin_keeps_its_existing_construction_path():
 async def test_curry_unknown_types_require_processing_declaration_before_builtin_cca():
     reader = Curry8DataReader(parameters={}, context=PluginContext())
     reader._is_connected = reader._is_streaming = True
-    reader._metadata = Curry8Metadata(803, 2, 500, 4, False, False, ("C3", "C4"))
+    reader._metadata = Curry8Metadata(803, 3, 500, 4, False, False, ("C3", "C4", "Trigger"))
     raw_metadata = await reader.get_metadata()
     source = reader.describe_output(source_id=reader.plugin_type, connection_id="curry-connection")
     assert "channel_types" not in raw_metadata
