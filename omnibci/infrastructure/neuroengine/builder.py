@@ -27,7 +27,6 @@ class NeuroEngineConfig:
     queue_size: int = 100                    # max items in each mp.Queue
     message_server_ip: str = "127.0.0.1"    # result-push server bind host
     message_server_port: int = 8000         # result-push server bind port
-    sample_rate: int = 1000                 # Hz, passed to the SignalProcessor
     baseline_duration: float = 0.2          # seconds of pre-trigger baseline (0 = none)
     actuation_enabled: bool = False          # open an actuation listen port + wiring
     actuation_server_ip: str = "127.0.0.1"  # actuation channel bind host
@@ -49,7 +48,6 @@ class NeuroEngineConfig:
             queue_size=int(_get("NEUROENGINE.queue_size", cls.queue_size)),
             message_server_ip=str(_get("NEUROENGINE.message_server_ip", cls.message_server_ip)),
             message_server_port=int(_get("NEUROENGINE.message_server_port", cls.message_server_port)),
-            sample_rate=int(_get("ACQUISITION.sample_rate", cls.sample_rate)),
             baseline_duration=float(_get("ALGORITHM.baseline_duration", cls.baseline_duration)),
             actuation_enabled=bool(_get("ACTUATION.enabled", cls.actuation_enabled)),
             actuation_server_ip=str(_get("ACTUATION.server_ip", cls.actuation_server_ip)),
@@ -135,7 +133,6 @@ class NeuroEngineBuilder:
             command_queue=processor_command_queue,
             data_manager=data_manager,
             event_bus=event_bus,
-            sample_rate=cfg.sample_rate,
             baseline_duration=cfg.baseline_duration,
             settings_snapshot=self._settings_snapshot,
             startup_reporter=processor_reporter,

@@ -111,12 +111,19 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     && runtime.status?.running === true && runtime.status.applied_revision === activation?.revision;
   const canReadSource = !!sourceStatus?.connected && !sourceStatus.streaming && sourceMatches
     && !sourceParametersChanged && !runtime.blocked;
+  const reportedSource = ["neuroscan_curry8_reader", "file_reader"].includes(definition?.plugin_type ?? "");
+  const metadataRevision = metadataGeneration.current;
+  const canUseObserved = canReadSource && reportedSource && !!sourceMetadata?.descriptor
+    && !!sourceMetadata.comparison && sourceMetadata.comparison.status !== "unverified"
+    && sourceMetadata.connection_id === sourceStatus?.connection_id
+    && sourceMetadata.descriptor.connection_id === sourceMetadata.connection_id
+    && sourceMetadata.descriptor.source_id === sourceMetadata.source_id;
 
   useEffect(() => { setSourceStatus(acquisitionStatus); }, [acquisitionStatus]);
   useEffect(() => {
     metadataGeneration.current += 1;
     setSourceMetadata(null);
-  }, [editor.plugin, editor.profile?.profile_id, editor.parameters, sourceStatus?.connected, sourceStatus?.connection_id, sourceMatches, runtime.status?.generation]);
+  }, [editor.plugin, editor.profile?.profile_id, editor.parameters, sourceStatus?.connected, sourceStatus?.connection_id, sourceStatus?.streaming, sourceMatches, runtime.status?.generation, runtime.blocked]);
 
   useEffect(() => {
     let active = true;
@@ -263,6 +270,33 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   const changeParameters = (parameters: Record<string, unknown>) => {
     setEditor({ ...editor, parameters }); setNotice(null);
   };
+  const useObservedValues = () => {
+    if (busy || !canUseObserved || metadataRevision !== metadataGeneration.current) return;
+    const output = sourceMetadata!.descriptor!;
+    setEditor((current) => ({ ...current, parameters: { ...current.parameters,
+      sample_rate: output.sample_rate, channel_number: output.output_row_count } }));
+    setNotice("profiles.observedValuesCopied");
+  };
+  const saveObservedProfile = () => {
+    if (busy || !canUseObserved || !definition || metadataRevision !== metadataGeneration.current) return;
+    const output = sourceMetadata!.descriptor!;
+    const parameters = { ...structuredClone(editor.parameters),
+      sample_rate: output.sample_rate, channel_number: output.output_row_count };
+    setDialog({ title: t("metadata.saveObservedProfile"), message: t("profiles.saveObservedProfileMessage"),
+      confirmLabel: t("profiles.save"),
+      initialValue: t("profiles.copyName", { name: editor.name || definition.label }).slice(0, 64),
+      onConfirm: (name) => {
+        setDialog(null);
+        if (metadataRevision !== metadataGeneration.current) {
+          setError(t("profiles.observedValuesExpired"));
+          return;
+        }
+        void run(async () => {
+          const saved = await api.create("acquisition", definition.selection, name, parameters);
+          return saved.profile_id;
+        }, "profiles.observedProfileSaved", true);
+      } });
+  };
   const dimensionFields = new Set(["sample_rate", "channel_number"]);
   const sourceSchema = slot.kind === "acquisition" && definition?.schema
     ? { ...definition.schema, properties: Object.fromEntries(Object.entries(definition.schema.properties ?? {})
@@ -360,9 +394,12 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
         {sourceSchema ? <SchemaForm schema={sourceSchema} value={editor.parameters} disabled={busy} onChange={changeParameters} />
           : <p className="setting-description">{t("profiles.schemaRequired")}</p>}
         {dimensionSchema && Object.keys(dimensionSchema.properties).length > 0 && <details className="setting-group">
-          <summary>{t("profiles.dimensionDefaults")}</summary>
-          <p className="setting-description">{t("profiles.dimensionDefaultsHint")}</p>
-          <SchemaForm schema={dimensionSchema} value={editor.parameters} disabled={busy} onChange={changeParameters} />
+          <summary>{t(reportedSource ? "profiles.expectedParameters" : "profiles.dimensionDefaults")}</summary>
+          <p className="setting-description">{t(reportedSource ? "profiles.expectedParametersHint" : "profiles.dimensionDefaultsHint")}</p>
+          {reportedSource ? <dl className="expected-source-parameters">
+            <div><dt>{t("metadata.sampleRate")}</dt><dd>{String(editor.parameters.sample_rate ?? t("metadata.notConfirmed"))}</dd></div>
+            <div><dt>{t("metadata.outputRows")}</dt><dd>{String(editor.parameters.channel_number ?? t("metadata.notConfirmed"))}</dd></div>
+          </dl> : <SchemaForm schema={dimensionSchema} value={editor.parameters} disabled={busy} onChange={changeParameters} />}
         </details>}
         {slot.kind === "acquisition" && definition && <><div className="setting-group">
           <h2>{t("profiles.connection")}</h2>
@@ -373,7 +410,9 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
           <p role="status">{t(sourceStatus?.connected && sourceMatches ? "profiles.sourceConnectedStatus" : "profiles.sourceDisconnectedStatus")}</p>
         </div><AcquisitionMetadata value={sourceMetadata} busy={busy} canRead={canReadSource}
           readHint={t(sourceStatus?.streaming ? "profiles.stopBeforeRead" : canReadSource ? "profiles.readReady" : "profiles.connectBeforeRead")}
-          onRead={() => void readSourceMetadata()} /></>}
+          onRead={() => void readSourceMetadata()} canUseObserved={canUseObserved}
+          onUseObserved={reportedSource ? useObservedValues : undefined}
+          onSaveObservedProfile={reportedSource ? saveObservedProfile : undefined} /></>}
         {slot.kind === "decoder" && definition && <ProcessingInput key={`${editor.profile?.profile_id ?? editor.plugin}:${editor.profile?.revision ?? "new"}`}
           value={editor.processingInput} busy={busy}
           decoderSelection={definition.selection} channelRequirements={definition.channel_requirements}

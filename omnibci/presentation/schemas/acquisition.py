@@ -27,11 +27,23 @@ class SignalInfoModel(BaseModel):
     output_row_count: int | None = None
 
 
+class SourceParameterComparisonModel(BaseModel):
+    expected: int | None
+    actual: int
+
+
+class SourceExpectationsModel(BaseModel):
+    status: Literal["unconfirmed", "matched", "mismatched", "unverified"]
+    sample_rate: SourceParameterComparisonModel
+    channel_number: SourceParameterComparisonModel
+
+
 class AcquisitionMetadataResponse(BaseModel):
     source_id: str
     connection_id: str
     metadata: str
     descriptor: SignalInfoModel | None
+    comparison: SourceExpectationsModel | None = None
 
 
 class AcquisitionStatusResponse(BaseModel):

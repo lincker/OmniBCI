@@ -5,12 +5,15 @@ import "./AcquisitionMetadata.css";
 
 const displayValue = (value: unknown) => typeof value === "string" ? value : JSON.stringify(value);
 
-export function AcquisitionMetadata({ value, busy, canRead, readHint, onRead }: {
+export function AcquisitionMetadata({ value, busy, canRead, readHint, onRead, canUseObserved = false, onUseObserved, onSaveObservedProfile }: {
   value: DataSourceMetadata | null;
   busy: boolean;
   canRead: boolean;
   readHint: string;
   onRead: () => void;
+  canUseObserved?: boolean;
+  onUseObserved?: () => void;
+  onSaveObservedProfile?: () => void;
 }) {
   const { t } = useI18n();
   const descriptor = value?.descriptor;
@@ -21,6 +24,8 @@ export function AcquisitionMetadata({ value, busy, canRead, readHint, onRead }: 
     [t("metadata.outputRows"), descriptor?.output_row_count],
   ];
   const channels = descriptor?.channels ?? [];
+  const comparison = value?.comparison;
+  const mismatched = comparison?.status === "mismatched";
 
   return <div className="setting-group acquisition-metadata"><h2>{t("metadata.heading")}</h2>
     <div className="actions"><button disabled={busy || !canRead} onClick={onRead}>{t("metadata.read")}</button></div>
@@ -28,6 +33,24 @@ export function AcquisitionMetadata({ value, busy, canRead, readHint, onRead }: 
     {value ? <>
       <pre className="source-metadata-raw" aria-label={t("metadata.raw")}>{value.metadata}</pre>
       {descriptor ? <>
+      {comparison && <div className="source-expectations">
+        <h3>{t("metadata.comparison")}</h3>
+        <p role={mismatched ? "alert" : "status"} className={`setting-description${mismatched ? " source-mismatch" : ""}`}>{t(`metadata.comparison.${comparison.status}`)}</p>
+        <table aria-label={t("metadata.comparison")}>
+          <thead><tr><th>{t("metadata.parameter")}</th><th>{t("metadata.expected")}</th>
+            <th>{t(comparison.status === "unverified" ? "metadata.declared" : "metadata.observed")}</th></tr></thead>
+          <tbody>{([["sample_rate", "metadata.sampleRate"], ["channel_number", "metadata.outputRows"]] as const).map(([key, label]) =>
+            <tr key={key} className={mismatched && comparison[key].expected !== comparison[key].actual ? "source-mismatch" : undefined}><th scope="row">{t(label)}</th>
+              <td>{comparison[key].expected ?? t("metadata.notConfirmed")}</td><td>{comparison[key].actual}</td></tr>)}</tbody>
+        </table>
+        {comparison.status !== "unverified" && (onUseObserved || onSaveObservedProfile) && <>
+          <p className="setting-description">{t("metadata.correctHint")}</p>
+          <div className="actions">
+            {onSaveObservedProfile && <button className="primary" disabled={busy || !canUseObserved} onClick={onSaveObservedProfile}>{t("metadata.saveObservedProfile")}</button>}
+            {onUseObserved && <button disabled={busy || !canUseObserved} onClick={onUseObserved}>{t("metadata.useObserved")}</button>}
+          </div>
+        </>}
+      </div>}
       <h3>{t("metadata.adapterOutput")}</h3>
       {descriptor.provenance === "user-declared" && <p className="setting-description">{t("metadata.configured")}</p>}
       <dl className="source-metadata-summary" aria-label={t("metadata.adapterOutput")}>

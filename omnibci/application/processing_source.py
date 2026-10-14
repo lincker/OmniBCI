@@ -2,17 +2,17 @@
 from copy import deepcopy
 
 from omnibci.domain.channel_mapping import ProcessingInput
+from omnibci.application.source_expectations import validate_source_expectations
 
 
-def materialize_processing_binding(binding, *, requires_channels):
+def materialize_processing_binding(binding):
     """Prepare historical all-source decoder input without changing its profile."""
     if binding.processing_input_requires_review:
         raise ValueError("Legacy processing input is unsupported; reconfigure the decoder channel mapping")
     value = binding.to_dict()
     value.pop("manual_montage", None)
     value.pop("acquisition_montage", None)
-    if (binding.slot == "processing.decoder" and requires_channels
-            and binding.processing_input is None):
+    if binding.slot == "processing.decoder" and binding.processing_input is None:
         value["processing_input"] = ProcessingInput().to_dict()
     return value
 
@@ -28,7 +28,7 @@ def processing_input(snapshot):
         return ProcessingInput.from_dict(decoder["processing_input"])
     if snapshot.get("SIGNAL.setup") is not None:
         raise ValueError("Legacy signal setup is unsupported; reconfigure the decoder channel mapping")
-    return None
+    return ProcessingInput() if decoder is not None else None
 
 
 def requires_signal_preparation(snapshot):
@@ -66,6 +66,7 @@ def validate_source_binding(snapshot, metadata):
 
 def validate_plan_binding(snapshot, plan):
     validate_source_binding(snapshot, plan.source)
+    validate_source_expectations(snapshot, plan.source)
     value = processing_input(snapshot)
     if value is None or plan.processing_input != value:
         raise ValueError("Signal plan does not match the selected processing input")

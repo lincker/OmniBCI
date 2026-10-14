@@ -102,10 +102,12 @@ def test_source_binding_rejects_descriptor_from_a_different_contract(snapshot, s
 
 
 @pytest.mark.parametrize("provenance", ["device-reported", "file-reported"])
-def test_reported_dimensions_override_configured_defaults(snapshot, source, provenance):
+def test_reported_dimensions_remain_visible_but_mismatch_blocks_preparation(snapshot, source, provenance):
     source = replace(source, sample_rate=1000, channels=source.channels[:2], trigger_row_index=2,
                      provenance=provenance)
-    validate_plan_binding(snapshot, compile_processing_plan(source, processing_input(snapshot)))
+    validate_source_binding(snapshot, source)
+    with pytest.raises(ValueError, match="differs from the experiment profile"):
+        validate_plan_binding(snapshot, compile_processing_plan(source, processing_input(snapshot)))
     with pytest.raises(ValueError, match="different acquisition source"):
         validate_source_binding(snapshot, replace(source, source_id="another-device"))
 
@@ -126,11 +128,26 @@ def test_unconfigured_snapshots_do_not_prepare():
     assert not requires_signal_preparation({})
 
 
-@pytest.mark.parametrize("requires_channels", [False, True])
-def test_missing_input_is_identity_only_for_decoders_that_require_channels(requires_channels):
+def test_missing_input_is_identity_for_every_selected_decoder():
     from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
     binding = ProfileBinding("processing.decoder", "decoder", None,
                              PluginSelection("test.decoder", "default", "1"), {})
-    result = materialize_processing_binding(binding, requires_channels=requires_channels)
-    assert result.get("processing_input") == (ProcessingInput().to_dict() if requires_channels else None)
+    result = materialize_processing_binding(binding)
+    assert result.get("processing_input") == ProcessingInput().to_dict()
     assert binding.processing_input is None
+
+
+def test_selected_decoder_without_input_still_requires_source_preparation(snapshot):
+    binding_for(snapshot, "processing.decoder").pop("processing_input")
+    assert processing_input(snapshot) == ProcessingInput()
+    assert requires_signal_preparation(snapshot)
+
+
+@pytest.mark.parametrize("provenance", ["device-reported", "file-reported"])
+def test_plan_requires_confirmed_source_expectations(snapshot, source, provenance):
+    source = replace(source, provenance=provenance)
+    plan = compile_processing_plan(source, processing_input(snapshot))
+    validate_plan_binding(snapshot, plan)
+    binding_for(snapshot, "acquisition.source")["parameters"].pop("sample_rate")
+    with pytest.raises(ValueError, match="unconfirmed"):
+        validate_plan_binding(snapshot, plan)

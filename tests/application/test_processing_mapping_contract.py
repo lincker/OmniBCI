@@ -29,4 +29,4 @@ def test_legacy_global_setup_requires_reconfiguration_before_processing():
 def test_legacy_profile_input_cannot_be_replaced_with_an_identity_mapping():
     binding = SimpleNamespace(processing_input_requires_review=True)
     with pytest.raises(ValueError, match="reconfigure"):
-        materialize_processing_binding(binding, requires_channels=True)
+        materialize_processing_binding(binding)

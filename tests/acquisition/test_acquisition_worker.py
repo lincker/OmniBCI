@@ -47,7 +47,7 @@ def test_run_constructs_runtime_with_explicit_context(processing_input):
         data_manager=data_manager,
         event_bus=event_bus,
         source_id="selected-source",
-        preparation_required=processing_input is not None,
+        preparation_required=True,
         generation="generation",
         config_revision="revision",
     )
@@ -105,7 +105,7 @@ def test_historical_decoder_projection_requires_preparation():
                              PluginSelection("test.decoder", "default", "1"), {})
     worker = AcquisitionWorker(command_queue=MagicMock(), settings_snapshot={
         "ACQUISITION.signal_source": "test-source",
-        "PLUGINS.bindings": [materialize_processing_binding(binding, requires_channels=True)],
+        "PLUGINS.bindings": [materialize_processing_binding(binding)],
     })
     worker.data_source = MagicMock(spec=SignalSource)
     with patch("omnibci.infrastructure.acquisition.worker.AcquisitionRuntime") as runtime_class:

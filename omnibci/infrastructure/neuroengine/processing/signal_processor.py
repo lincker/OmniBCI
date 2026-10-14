@@ -66,7 +66,7 @@ class SignalProcessor:
         data_manager,
         event_bus,
         session: Optional[BCISession] = None,
-        sample_rate: int = 1000,
+        sample_rate: int | None = None,
         baseline_duration: float = 0.0,
         filters=None,
         auto_start_session: bool = True,
@@ -91,7 +91,7 @@ class SignalProcessor:
         # Ordered preprocessing filters (e.g. BaselineCorrection). Stateless pure
         # transforms, shared across all epochs.
         self._filters = list(filters or [])
-        self._sample_rate = sample_rate
+        self._sample_rate = (None if requires_signal_preparation(settings_snapshot or {}) else sample_rate)
         self._baseline_duration = baseline_duration
         self._settings_snapshot = deepcopy(settings_snapshot)
         self._signal_plan = None
@@ -101,10 +101,9 @@ class SignalProcessor:
         # cannot become a new update if a delayed duplicate arrives later.
         self._configuration_results = {}
         self._configuration_fingerprints = {}
-        # Baseline length is fixed for this processor's lifetime (a new paradigm
-        # rebuilds the whole worker). Convert the paradigm's configured baseline
-        # duration (seconds) into a sample count once, here.
-        self.baseline_samples = round(baseline_duration * sample_rate)
+        # Signal preparation allocates the baseline using the observed rate.
+        self.baseline_samples = (round(baseline_duration * self._sample_rate)
+                                 if self._sample_rate is not None else 0)
         # Rolling pre-trigger store, fed by AwaitingEpochState; supplies the
         # baseline segment when a start marker fires. Capacity 0 = no baseline.
         self.pretrigger = PreTriggerBuffer(capacity=self.baseline_samples)

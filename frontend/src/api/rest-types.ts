@@ -826,6 +826,7 @@ export interface components {
             /** Metadata */
             metadata: string;
             descriptor: components["schemas"]["SignalInfoModel"] | null;
+            comparison?: components["schemas"]["SourceExpectationsModel"] | null;
         };
         /** AcquisitionStatusResponse */
         AcquisitionStatusResponse: {
@@ -2087,6 +2088,23 @@ export interface components {
             /** Revision */
             revision: string;
             readiness: components["schemas"]["SignalReadinessModel"];
+        };
+        /** SourceExpectationsModel */
+        SourceExpectationsModel: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "unconfirmed" | "matched" | "mismatched" | "unverified";
+            sample_rate: components["schemas"]["SourceParameterComparisonModel"];
+            channel_number: components["schemas"]["SourceParameterComparisonModel"];
+        };
+        /** SourceParameterComparisonModel */
+        SourceParameterComparisonModel: {
+            /** Expected */
+            expected: number | null;
+            /** Actual */
+            actual: number;
         };
         /** StartRecordingRequest */
         StartRecordingRequest: {

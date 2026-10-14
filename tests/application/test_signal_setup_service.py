@@ -383,3 +383,28 @@ def test_legacy_selected_input_remains_readable_and_can_preview_a_replacement(si
     preview = service.preview_input({"outputs": [{"source_channel_id": "channel-0", "name": "Oz"}]})
     assert preview["plan"]["source_indices"] == [0]
     assert not calls
+
+
+@pytest.mark.parametrize("parameters,error", [
+    ({}, "unconfirmed"),
+    ({"sample_rate": 1000, "channel_number": 3}, "differs from the experiment profile"),
+])
+def test_reported_source_expectations_gate_prepare_without_hiding_actual_info(signal_service, parameters, error):
+    service, metadata, _, calls = signal_service
+    source = replace(metadata, provenance="device-reported")
+    service.acquisition.cached_descriptor = source.to_dict()
+    service.engine.applied_snapshot["PLUGINS.bindings"].append({
+        "slot": "acquisition.source", "parameters": parameters,
+    })
+    assert service.read()["acquisition_descriptor"] == source.to_dict()
+    with pytest.raises(ConfigProfileValidationError, match=error):
+        service.prepare()
+    assert not calls
+
+
+def test_no_explicit_mapping_still_prepares_using_observed_signal(signal_service):
+    service, metadata, _, calls = signal_service
+    service.engine.applied_snapshot["PLUGINS.bindings"][0].pop("processing_input")
+    service.prepare()
+    assert calls[0][1]["plan"]["source_indices"] == [0, 1]
+    assert calls[0][1]["plan"]["source"]["sample_rate"] == metadata.sample_rate

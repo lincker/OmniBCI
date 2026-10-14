@@ -119,7 +119,7 @@ def test_worker_with_explicit_setup_starts_control_loop_before_plugin_constructi
     worker._run_processor = MagicMock()
     worker.run()
     worker._load_algorithm.assert_not_called()
-    worker._run_processor.assert_called_once_with(None, None, [], 1000)
+    worker._run_processor.assert_called_once_with()
 
 
 def test_historical_decoder_projection_waits_for_observed_input_before_loading(monkeypatch):
@@ -130,13 +130,13 @@ def test_historical_decoder_projection_waits_for_observed_input_before_loading(m
     historical = ProfileBinding("processing.decoder", "decoder", None,
                                 PluginSelection("test.decoder", "default", "1"), {})
     snapshot = {"PLUGINS.bindings": [materialize_processing_binding(
-        historical, requires_channels=True)]}
+        historical)]}
     worker = SignalProcessingWorker(command_queue=MagicMock(), settings_snapshot=snapshot)
     worker._load_algorithm = MagicMock(side_effect=AssertionError("premature plugin construction"))
     worker._run_processor = MagicMock()
     worker.run()
     worker._load_algorithm.assert_not_called()
-    worker._run_processor.assert_called_once_with(None, None, [], 1000)
+    worker._run_processor.assert_called_once_with()
     assert historical.processing_input is None
 
 
@@ -490,3 +490,10 @@ def test_bundled_pipeline_constructs_with_prepared_sample_rate():
     assert decoder.SAMPLE_COUNT == 250
     assert detector.plugin_type == "DEFAULT_EPOCH_DETECTOR"
     assert filters == []
+
+
+def test_configured_processor_does_not_allocate_baseline_from_expected_rate():
+    processor = _processor(_plan())
+    assert processor._sample_rate is None
+    assert processor.baseline_samples == 0
+    assert processor.pretrigger.capacity == 0

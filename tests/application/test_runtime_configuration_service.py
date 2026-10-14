@@ -16,10 +16,11 @@ from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 
 
-def prepared_signal_plan(snapshot):
-    count = snapshot["ACQUISITION.channel_number"] - 1
-    channels = tuple(ChannelDescriptor(index, f"EEG{index + 1}", signal_type="eeg") for index in range(count))
-    source = SignalInfo(snapshot["ACQUISITION.signal_source"], snapshot["ACQUISITION.sample_rate"], channels, count)
+def prepared_signal_plan(snapshot, *, sample_rate, signal_channel_count):
+    channels = tuple(ChannelDescriptor(index, f"EEG{index + 1}", signal_type="eeg")
+                     for index in range(signal_channel_count))
+    source = SignalInfo(snapshot["ACQUISITION.signal_source"], sample_rate, channels, signal_channel_count,
+                        provenance="file-reported")
     return compile_processing_plan(source, processing_input(snapshot) or ProcessingInput())
 
 
@@ -36,7 +37,8 @@ def runtime(tmp_path, monkeypatch):
         ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40"),
     ):
         definition = profiles.catalog.legacy(kind, alias)
-        profile = profiles.create(kind, definition.selection, alias, {})
+        parameters = {"sample_rate": 1000, "channel_number": 10} if kind == "acquisition" else {}
+        profile = profiles.create(kind, definition.selection, alias, parameters)
         selections.append({"slot": slot, "profile_id": profile.profile_id})
     snapshot = profiles.propose(selections)
     profiles.accept(snapshot, expected_revision=None)
@@ -77,9 +79,8 @@ def test_source_change_requires_continuation(runtime):
 def test_retired_manual_source_montage_is_not_applied(runtime):
     service, selections, before = runtime
     profile = service.profiles.repository.get_profile(selections[0]["profile_id"])
-    manual = SignalInfo("file_reader", profile.parameters["sample_rate"], tuple(
-        ChannelDescriptor(index, f"C{index + 1}", unit="uV")
-        for index in range(profile.parameters["channel_number"] - 1)), profile.parameters["channel_number"] - 1)
+    manual = SignalInfo("file_reader", 500, tuple(
+        ChannelDescriptor(index, f"C{index + 1}", unit="uV") for index in range(2)), 2)
     service.profiles.repository.save_profile(replace(profile, legacy={"manual_montage": manual.to_dict()}),
                                              expected_revision=profile.revision)
     plan = service.plan(selections, expected_revision=before.revision)
@@ -450,9 +451,12 @@ def test_source_context_and_decoder_use_pinned_values_until_explicit_refresh(run
     from omnibci.sdk import Decoder
     from omnibci.infrastructure.neuroengine.processing.signal_configuration import signal_context
 
-    def load_prepared(snapshot):
+    def load_prepared(snapshot, sample_rate, signal_channel_count):
+        from omnibci.application.processing_source import validate_plan_binding
+        plan = prepared_signal_plan(snapshot, sample_rate=sample_rate, signal_channel_count=signal_channel_count)
+        validate_plan_binding(snapshot, plan)
         return load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
-                                      context=signal_context(snapshot, prepared_signal_plan(snapshot)))
+                                      context=signal_context(snapshot, plan))
 
     service, selections, before = runtime
     edit(runtime, "acquisition.source", {"sample_rate": 500, "channel_number": 3})
@@ -474,15 +478,17 @@ def test_source_context_and_decoder_use_pinned_values_until_explicit_refresh(run
     service.profiles.accept(accepted, expected_revision=before.revision)
     materialized = service.profiles.resolve_settings()
     context = plugin_context(materialized)
-    decoder = load_prepared(materialized)
+    decoder = load_prepared(materialized, 500, 2)
     source = next(binding for binding in accepted.bindings if binding.slot == "acquisition.source")
 
     assert not set(LEGACY_PLUGIN_VALUES) & accepted.settings.keys()
     assert materialized["ACQUISITION.sample_rate"] == source.parameters["sample_rate"] == 500
     assert materialized["ACQUISITION.channel_number"] == source.parameters["channel_number"] == 3
-    assert NeuroEngineConfig.from_settings(materialized).sample_rate == context.sample_rate == 500
+    assert not hasattr(NeuroEngineConfig.from_settings(materialized), "sample_rate")
+    assert context.sample_rate == 500
     assert context.channel_names == ()
-    assert signal_context(materialized, prepared_signal_plan(materialized)).channel_names == ("EEG1", "EEG2")
+    assert signal_context(materialized, prepared_signal_plan(
+        materialized, sample_rate=500, signal_channel_count=2)).channel_names == ("EEG1", "EEG2")
     assert context.config_revision == accepted.revision
     assert (decoder.SAMPLE_RATE, decoder.SAMPLE_COUNT, decoder.OFFSET_LENGTH) == (500, 750, 50)
     assert "ALGORITHM.window_duration" not in materialized
@@ -494,13 +500,13 @@ def test_source_context_and_decoder_use_pinned_values_until_explicit_refresh(run
 
     assert service.profiles.propose(selections, refresh_slots=[]) == accepted
     assert service.profiles.resolve_settings() == materialized
-    unchanged = load_prepared(service.profiles.resolve_settings())
+    unchanged = load_prepared(service.profiles.resolve_settings(), 500, 2)
     assert (unchanged.SAMPLE_RATE, unchanged.SAMPLE_COUNT) == (500, 750)
     refreshed = service.profiles.propose(
         selections, refresh_slots=["acquisition.source", "processing.decoder"],
     )
     refreshed_settings = service.profiles.materialize(refreshed)
-    refreshed_decoder = load_prepared(refreshed_settings)
+    refreshed_decoder = load_prepared(refreshed_settings, 250, 3)
     assert refreshed_settings["ACQUISITION.channel_number"] == 4
     assert (refreshed_decoder.SAMPLE_RATE, refreshed_decoder.SAMPLE_COUNT) == (250, 625)
     assert service.profiles.repository.get_activation() == accepted
@@ -521,7 +527,8 @@ def test_stripped_legacy_fields_preserve_decoder_trial_application(runtime):
     candidate = service.profiles.materialize(service.resolve_plan(plan.plan_id).snapshot)
     bundle = build_pipeline_update(service.engine.applied_snapshot, candidate,
                                    sample_rate=1000, baseline_duration=0.2,
-                                   signal_plan=prepared_signal_plan(service.engine.applied_snapshot))
+                                   signal_plan=prepared_signal_plan(service.engine.applied_snapshot,
+                                                                    sample_rate=1000, signal_channel_count=9))
     assert bundle.decoder.SAMPLE_COUNT == 2500
     assert "ALGORITHM.window_duration" not in bundle.settings_snapshot
     assert "ssvep.duration" not in bundle.settings_snapshot
@@ -668,8 +675,8 @@ def test_nonfilter_binding_reorder_never_claims_no_change_for_a_different_revisi
 
 
 @pytest.mark.parametrize("target_requires_channels", [False, True])
-def test_historical_decoder_effective_input_changes_require_rebuild(runtime, monkeypatch,
-                                                                  target_requires_channels):
+def test_historical_decoder_requirements_preserve_uniform_identity_input(runtime, monkeypatch,
+                                                                        target_requires_channels):
     service, selections, before = runtime
     profiles = service.profiles
     get = profiles.catalog.get
@@ -693,4 +700,7 @@ def test_historical_decoder_effective_input_changes_require_rebuild(runtime, mon
     selections[1] = {"slot": "processing.decoder", "profile_id": target.profile_id}
     plan = service.plan(selections, expected_revision=current.revision)
     assert not plan.errors
-    assert plan.strategy == "rebuild"
+    assert plan.strategy == "trial_boundary"
+    assert processing_input(service.engine.applied_snapshot) == ProcessingInput()
+    candidate = profiles.materialize(service.resolve_plan(plan.plan_id).snapshot)
+    assert processing_input(candidate) == ProcessingInput()

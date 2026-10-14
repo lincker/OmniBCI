@@ -259,6 +259,24 @@ def test_source_metadata_can_be_derived_without_flat_aliases(runtime):
     assert "ACQUISITION.channel_names" not in dto.settings
 
 
+@pytest.mark.parametrize(("role", "kinds"), [
+    ("engine", {"acquisition", "decoder", "epoch_detector"}),
+    ("stimulation", {"paradigm", "trigger"}),
+    ("actuation", {"effector"}),
+])
+def test_nodes_can_start_before_source_expectations_are_confirmed(runtime, role, kinds):
+    for name in ("sample_rate", "channel_number"):
+        runtime.pop(f"ACQUISITION.{name}")
+        runtime["PLUGINS.bindings"][0]["parameters"].pop(name)
+    dto = NodeConfiguration.from_dict(project_node_configuration(runtime, role).to_dict())
+    result = materialize_node_configuration(dto, LocalCatalog(kinds))
+    assert "ACQUISITION.sample_rate" not in dto.settings
+    assert "ACQUISITION.channel_number" not in dto.settings
+    assert "ACQUISITION.sample_rate" not in result
+    assert "ACQUISITION.channel_number" not in result
+    assert result["CONFIG.revision"] == runtime["CONFIG.revision"]
+
+
 def test_nonowned_plugin_parameters_never_receive_local_schema_validation(runtime):
     runtime["PLUGINS.bindings"][1]["parameters"] = {"foreign_only_parameter": [1, 2, 3]}
     result = materialize_node_configuration(

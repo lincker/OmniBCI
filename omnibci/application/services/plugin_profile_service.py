@@ -22,15 +22,17 @@ from omnibci.domain.channel_mapping import ProcessingInput
 _UNSET = object()
 
 
-def _validate_source_metadata(binding: ProfileBinding) -> None:
-    """The current engine consumes integer sampling and channel declarations."""
+def _validate_source_parameters(binding: ProfileBinding) -> None:
+    """Validate experiment expectations when the source profile declares them."""
     if binding.slot != "acquisition.source":
         return
     for key in ("sample_rate", "channel_number"):
+        if key not in binding.parameters:
+            continue
         value = binding.parameters.get(key)
         if type(value) is not int or value <= 0:
             raise PluginSchemaError(
-                f"acquisition.source.parameters.{key} must be a positive integer for the current engine"
+                f"acquisition.source.parameters.{key} must be a positive integer"
             )
 
 
@@ -195,7 +197,7 @@ class PluginProfileService:
             if snapshot.settings.get("ACTUATION.auto_spawn", True):
                 kinds.add("effector")
         for binding in snapshot.bindings:
-            _validate_source_metadata(binding)
+            _validate_source_parameters(binding)
             definition, parameters = self._parameters(
                 binding.kind, binding.selection, binding.parameters, binding.configuration_version,
             )
@@ -232,11 +234,9 @@ class PluginProfileService:
         filters = []
         bindings = []
         for binding in snapshot.bindings:
-            _validate_source_metadata(binding)
+            _validate_source_parameters(binding)
             definition = self.catalog.get(binding.kind, binding.selection)
-            bindings.append(materialize_processing_binding(
-                binding, requires_channels=definition.channel_requirements is not None,
-            ))
+            bindings.append(materialize_processing_binding(binding))
             if binding.slot in aliases:
                 result[aliases[binding.slot]] = definition.plugin_type
             if binding.kind == "acquisition":

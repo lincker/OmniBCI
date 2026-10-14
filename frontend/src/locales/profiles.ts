@@ -1,5 +1,11 @@
 export const en = {
   "profiles.sourceChanged": "The selected source changed while connecting. Reload and connect again.",
+  "profiles.expectedParameters": "Expected experiment parameters",
+  "profiles.expectedParametersHint": "These values record the experiment baseline. Get Metadata, then save the observed values as a new profile to preserve this one, or use them in the current draft. Apply the saved profile before starting. Missing values are not yet confirmed.",
+  "profiles.observedValuesCopied": "Observed values copied to the profile draft. Save and apply the profile, or select Connect to save and apply it. Get Metadata again to verify the saved expectations.",
+  "profiles.saveObservedProfileMessage": "Save the current connection parameters and observed sample rate and output rows in a new profile. The original profile and active configuration stay unchanged.",
+  "profiles.observedProfileSaved": "New profile saved with the observed values. The original profile is unchanged. Select Connect to apply the new profile, then Get Metadata to verify it.",
+  "profiles.observedValuesExpired": "The source or its metadata changed. Get Metadata again before saving a new profile.",
   "profiles.dimensionDefaults": "Advanced acquisition defaults",
   "profiles.dimensionDefaultsHint": "Curry8 and recordings report their own sample rate and signal channels. These defaults are used by sources without metadata, such as Scan45. Output rows include the event row.",
   "profiles.connectHint": "Choose a plugin, enter its connection parameters, connect, then get metadata.",
@@ -163,6 +169,12 @@ export const en = {
 
 export const zh: Record<keyof typeof en, string> = {
   "profiles.sourceChanged": "The selected source changed while connecting. Reload and connect again.",
+  "profiles.expectedParameters": "Expected experiment parameters",
+  "profiles.expectedParametersHint": "These values record the experiment baseline. Get Metadata, then save the observed values as a new profile to preserve this one, or use them in the current draft. Apply the saved profile before starting. Missing values are not yet confirmed.",
+  "profiles.observedValuesCopied": "Observed values copied to the profile draft. Save and apply the profile, or select Connect to save and apply it. Get Metadata again to verify the saved expectations.",
+  "profiles.saveObservedProfileMessage": "Save the current connection parameters and observed sample rate and output rows in a new profile. The original profile and active configuration stay unchanged.",
+  "profiles.observedProfileSaved": "New profile saved with the observed values. The original profile is unchanged. Select Connect to apply the new profile, then Get Metadata to verify it.",
+  "profiles.observedValuesExpired": "The source or its metadata changed. Get Metadata again before saving a new profile.",
   "profiles.dimensionDefaults": "Advanced acquisition defaults",
   "profiles.dimensionDefaultsHint": "Curry8 and recordings report their own sample rate and signal channels. These defaults are used by sources without metadata, such as Scan45. Output rows include the event row.",
   "profiles.connectHint": "Choose a plugin, enter its connection parameters, connect, then get metadata.",

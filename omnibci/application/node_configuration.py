@@ -62,6 +62,8 @@ def _validate_settings(role: str, settings: dict) -> None:
     if not isinstance(settings, dict) or set(settings) - _ROLE_SETTING_KEYS[role]:
         raise PluginSchemaError("Node settings contain unsupported fields for this role")
     for key in ("ACQUISITION.sample_rate", "ACQUISITION.channel_number"):
+        if key not in settings:
+            continue
         value = settings.get(key)
         if type(value) is not int or value <= 0:
             raise PluginSchemaError(f"{key} must be a positive integer")
@@ -173,7 +175,8 @@ def project_node_configuration(runtime_snapshot: dict, role: str) -> NodeConfigu
         value = source.parameters.get(name)
         if key in settings and _canonical(settings[key]) != _canonical(value):
             raise PluginSchemaError(f"{key} disagrees with the pinned source")
-        settings[key] = value
+        if name in source.parameters:
+            settings[key] = value
     return NodeConfiguration(
         role=role, revision=runtime_snapshot.get("CONFIG.revision"),
         generation=runtime_snapshot.get("CONFIG.generation"), settings=settings,
@@ -200,14 +203,12 @@ def materialize_node_configuration(configuration: NodeConfiguration,
         parameters = validate_parameters(definition.schema, binding.parameters)
         if _canonical(parameters) != _canonical(binding.parameters):
             raise PluginSchemaError(f"{binding.slot}: snapshot must include resolved defaults")
-        bindings.append(materialize_processing_binding(
-            binding, requires_channels=definition.channel_requirements is not None,
-        ))
+        bindings.append(materialize_processing_binding(binding))
         if binding.slot in _ALIASES:
             result[_ALIASES[binding.slot]] = definition.plugin_type
         if binding.kind == "acquisition":
             for key in ("sample_rate", "channel_number"):
-                if _canonical(parameters.get(key)) != _canonical(result[f"ACQUISITION.{key}"]):
+                if _canonical(parameters.get(key)) != _canonical(result.get(f"ACQUISITION.{key}")):
                     raise PluginSchemaError(f"ACQUISITION.{key} disagrees with the pinned source")
             result.update({f"ACQUISITION.{key}": value for key, value in parameters.items()})
         elif binding.kind == "filter":

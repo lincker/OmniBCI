@@ -58,8 +58,9 @@ def test_bundle_uses_new_parameters_and_ordered_distinct_filter_instances():
 
 
 @pytest.mark.parametrize("provenance", ["device-reported", "file-reported"])
-def test_trial_update_uses_prepared_source_rate_instead_of_configured_default(provenance):
+def test_trial_update_uses_prepared_source_rate_instead_of_legacy_flat_mirror(provenance):
     before = selected_snapshot()
+    before["PLUGINS.bindings"][0]["parameters"].update(sample_rate=500, channel_number=3)
     after = deepcopy(before)
     after["CONFIG.revision"] = "new"
     after["PLUGINS.bindings"][1]["parameters"]["window_duration"] = 1.5
@@ -77,13 +78,18 @@ def test_trial_update_uses_prepared_source_rate_instead_of_configured_default(pr
     assert bundle.settings_snapshot["ACQUISITION.sample_rate"] == 250
 
 
-def test_without_a_prepared_plan_running_rate_must_match_configured_rate():
+def test_unprepared_update_validates_settings_and_defers_plugin_construction(monkeypatch):
     before = selected_snapshot()
     after = deepcopy(before)
     after["CONFIG.revision"] = "new"
-
-    with pytest.raises(ValueError, match="running sample rate"):
-        configuration.build_pipeline_update(before, after, sample_rate=500, baseline_duration=0.2)
+    after["PLUGINS.bindings"][1]["parameters"]["window_duration"] = 1.5
+    monkeypatch.setattr(configuration, "load_configured_plugin", lambda *a, **kw: pytest.fail("premature construction"))
+    bundle = configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2)
+    assert bundle.decoder is None and bundle.filters == ()
+    assert bundle.settings_snapshot["CONFIG.revision"] == "new"
+    after["PLUGINS.bindings"][1]["parameters"]["window_duration"] = -1
+    with pytest.raises(ValueError):
+        configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2)
 
 
 @pytest.mark.parametrize("key,value", [
@@ -174,3 +180,25 @@ def test_output_context_cannot_change_decoder_input():
     after["PLUGINS.bindings"][1]["processing_input"] = {"schema_version": 2, "outputs": [{"source_channel_id": "channel-1", "name": "O2"}]}
     with pytest.raises(ValueError, match="Processing or source changes"):
         configuration.validate_output_context(before, after)
+
+
+@pytest.mark.parametrize("change,message", [
+    ({"available": False}, "unavailable"),
+    ({"configuration_version": 99}, "schema migration"),
+])
+def test_unprepared_replacement_checks_plugin_contract_before_acknowledgement(monkeypatch, change, message):
+    before = selected_snapshot()
+    after = deepcopy(before)
+    after["CONFIG.revision"] = "new"
+    replacement = PluginCatalog().resolve_legacy("decoder", "THUBCI_SSVEP_classic40FBCCA")
+    after["PLUGINS.bindings"][1]["selection"] = replacement.selection.to_dict()
+    original_get = configuration.CatalogConfigurationAdapter.get
+
+    def get(catalog, kind, selection):
+        definition = original_get(catalog, kind, selection)
+        return replace(definition, **change) if kind == "decoder" else definition
+
+    monkeypatch.setattr(configuration.CatalogConfigurationAdapter, "get", get)
+    monkeypatch.setattr(configuration, "load_configured_plugin", lambda *a, **kw: pytest.fail("premature construction"))
+    with pytest.raises(ValueError, match=message):
+        configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2)

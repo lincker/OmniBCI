@@ -11,6 +11,7 @@ from omnibci.application.processing_source import (
 )
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 from omnibci.application.runtime_admission import admitted
+from omnibci.application.source_expectations import validate_source_expectations
 from omnibci.domain.signal_info import SignalInfo
 from omnibci.domain.channel_mapping import ProcessingInput, compile_processing_plan
 from omnibci.shared.events import EventType
@@ -94,12 +95,14 @@ class SignalSetupService:
             "source_id": source_id, "binding": acquisition_binding_key(source_binding),
             "metadata": metadata, "generation": active.get("CONFIG.generation") if active and metadata else None,
         }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        return {"processing_input": _input_value(selected), "revision": revision,
+        return {"processing_input": decoder.get("processing_input") if source_error else _input_value(selected),
+                "revision": revision,
                 "selected_source_id": source_id, "selected_decoder_profile_id": decoder.get("profile_id"),
                 "selected_decoder_selection": decoder.get("selection"),
                 "source_binding": source_context, "source_revision": source_revision,
                 "acquisition_descriptor": metadata, "source_error": source_error,
-                "accepted_input": _input_value(accepted_settings), "active_input": _input_value(active or {}),
+                "accepted_input": (decoder.get("processing_input") if source_error else _input_value(accepted_settings)),
+                "active_input": _input_value(active or {}),
                 "readiness": {"ready": ready, "receipt": receipt if ready else None}}
 
     def _profile(self, binding):
@@ -161,6 +164,7 @@ class SignalSetupService:
                     "Source metadata changed since preparation; inspect and explicitly update the acquisition or decoder input")
             try:
                 validate_source_binding(snapshot, metadata)
+                validate_source_expectations(snapshot, metadata)
                 plan = compile_processing_plan(metadata, value, snapshot["CONFIG.revision"])
                 decoder = binding_for(snapshot, "processing.decoder")
                 self._validate_decoder_channels(decoder["selection"] if decoder else None, plan)

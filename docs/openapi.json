@@ -5357,6 +5357,16 @@
                 "type": "null"
               }
             ]
+          },
+          "comparison": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceExpectationsModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -8567,6 +8577,58 @@
           "readiness"
         ],
         "title": "SignalSetupResponse"
+      },
+      "SourceExpectationsModel": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "unconfirmed",
+              "matched",
+              "mismatched",
+              "unverified"
+            ],
+            "title": "Status"
+          },
+          "sample_rate": {
+            "$ref": "#/components/schemas/SourceParameterComparisonModel"
+          },
+          "channel_number": {
+            "$ref": "#/components/schemas/SourceParameterComparisonModel"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "sample_rate",
+          "channel_number"
+        ],
+        "title": "SourceExpectationsModel"
+      },
+      "SourceParameterComparisonModel": {
+        "properties": {
+          "expected": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected"
+          },
+          "actual": {
+            "type": "integer",
+            "title": "Actual"
+          }
+        },
+        "type": "object",
+        "required": [
+          "expected",
+          "actual"
+        ],
+        "title": "SourceParameterComparisonModel"
       },
       "StartRecordingRequest": {
         "properties": {

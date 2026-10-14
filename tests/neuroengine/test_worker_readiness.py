@@ -38,14 +38,14 @@ def test_worker_reports_ready_after_construction_before_loop(worker_type, servic
         if run_name == "_run":
             worker._run()
         else:
-            worker._run_processor(None, None, [], 250)
+            worker._run_processor()
         assert service.call_args.kwargs["generation"] == "g"
         assert service.call_args.kwargs["config_revision"] == "r"
 
 
 @pytest.mark.parametrize("worker_type,loader,stage", [
     (AcquisitionWorker, "_load_data_source", "signal_source"),
-    (SignalProcessingWorker, "_load_algorithm", "plugins"),
+    (SignalProcessingWorker, "_run_processor", "processor"),
 ])
 @pytest.mark.parametrize("error", [ValueError("invalid plugin"), SystemExit(7)])
 def test_worker_reports_all_startup_failures_and_closes(worker_type, loader, stage, error):
@@ -61,13 +61,13 @@ def test_worker_reports_all_startup_failures_and_closes(worker_type, loader, sta
 
 @pytest.mark.parametrize("worker_type,loader,service_path,stage", [
     (AcquisitionWorker, "_load_data_source", "omnibci.infrastructure.acquisition.worker.AcquisitionRuntime", "acquisition"),
-    (SignalProcessingWorker, "_load_algorithm", "omnibci.infrastructure.neuroengine.processing.worker.SignalProcessor", "processor"),
+    (SignalProcessingWorker, "_snapshot", "omnibci.infrastructure.neuroengine.processing.worker.SignalProcessor", "processor"),
 ])
 def test_service_constructor_failure_never_reports_ready(worker_type, loader, service_path, stage):
     reporter = MagicMock(spec=StartupReporter)
     worker = worker_type(MagicMock(), startup_reporter=reporter)
     worker.data_source = MagicMock()
-    setattr(worker, loader, MagicMock(return_value=(None, None, [])))
+    setattr(worker, loader, MagicMock(return_value={}))
     error = ValueError("invalid service configuration")
     with patch("omnibci.conf.settings.use_snapshot"), patch(service_path, side_effect=error), pytest.raises(ValueError):
         worker.run()
@@ -170,7 +170,7 @@ async def test_worker_must_still_be_alive_when_other_worker_becomes_ready():
 
 @pytest.fixture
 def legacy_decoder(tmp_path, monkeypatch):
-    """A real decoder whose constructor runs before source metadata is available."""
+    """A real decoder whose constructor requires prepared source information."""
     plugin_dir = tmp_path / "plugins"
     package = plugin_dir / "algorithms" / "decoders" / "readiness"
     package.mkdir(parents=True)
@@ -202,8 +202,8 @@ def legacy_decoder(tmp_path, monkeypatch):
             def __init__(self, *, parameters, context):
                 if context.sample_rate is None or context.sample_rate <= 0:
                     raise ValueError("ReadinessDecoder requires context.sample_rate")
-                if context.input_signal is not None:
-                    raise ValueError("This test must exercise construction before signal preparation")
+                if context.input_signal is None:
+                    raise ValueError("ReadinessDecoder requires prepared input")
                 self.sample_rate = context.sample_rate
                 Path(context.resource_root, "constructed").write_text("ready", encoding="utf-8")
 
@@ -221,7 +221,8 @@ def _pinned_worker_snapshot(decoder_alias, broken_kind=None):
     from dataclasses import replace
     from omnibci.application.plugin_profiles import ProfileBinding
     from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-    snapshot = {"CONFIG.revision": "r", "CONFIG.generation": "g", "ACQUISITION.sample_rate": 250}
+    snapshot = {"CONFIG.revision": "r", "CONFIG.generation": "g", "ACQUISITION.sample_rate": 250,
+                "ACQUISITION.signal_source": "file_reader"}
     bindings = []
     for slot, kind, alias, parameters in (
         ("acquisition.source", "acquisition", "file_reader", {"sample_rate": 250, "channel_number": 10,
@@ -259,7 +260,7 @@ def test_spawned_configured_worker_reports_real_plugin_initialization(kind, brok
     try:
         process.start()
         reporter.close()
-        if broken:
+        if broken and kind == "acquisition":
             with pytest.raises(ChildProcessStartupError, match="missing-plugin") as raised:
                 wait_for_startup_report(receiver, process, component=component, timeout_s=15,
                                         expected_revision="r", expected_generation="g")
@@ -269,7 +270,27 @@ def test_spawned_configured_worker_reports_real_plugin_initialization(kind, brok
                                               expected_revision="r", expected_generation="g")
             assert report.generation == "g"
             if kind == "processing":
-                assert constructed.read_text(encoding="utf-8") == "ready"
+                assert not constructed.exists()
+                from omnibci.application.events import CommandRequest
+                from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
+                from omnibci.domain.channel_mapping import ProcessingInput, compile_processing_plan
+                from omnibci.shared.events import EventType
+                source = SignalInfo("file_reader", 250, (ChannelDescriptor(0, "O1"),), 1,
+                                    connection_id="connection")
+                plan = compile_processing_plan(source, ProcessingInput(), config_revision="r")
+                receipt = {"generation": "g", "config_revision": "r", "connection_id": "connection",
+                           "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint}
+                commands.put((SignalProcessorCommand.prepare_signal, CommandRequest("prepare", {
+                    "plan": plan.to_dict(), "receipt": receipt,
+                })))
+                result = events.get(timeout=15)
+                assert result.type is EventType.CommandResult
+                assert result.data.ok is not broken
+                if broken:
+                    assert "missing-plugin" in result.data.message
+                    assert not constructed.exists()
+                else:
+                    assert constructed.read_text(encoding="utf-8") == "ready"
             # Windows poll() may raise BrokenPipeError after the sender closes.
             assert wait([receiver], timeout=1) == [receiver]
             with pytest.raises(EOFError):
@@ -277,7 +298,7 @@ def test_spawned_configured_worker_reports_real_plugin_initialization(kind, brok
             commands.put(AcquisitionCommand.stop_acquisition if kind == "acquisition"
                          else SignalProcessorCommand.should_stop)
         process.join(timeout=10)
-        assert process.exitcode == (1 if broken else 0)
+        assert process.exitcode == (1 if broken and kind == "acquisition" else 0)
     finally:
         if process.is_alive():
             process.terminate()
@@ -301,16 +322,11 @@ async def test_builder_manages_real_worker_startup_and_cleanup(broken, legacy_de
     )).build()
     engine.peer_gateway = MagicMock(start=AsyncMock(), stop=AsyncMock())
     try:
-        if broken:
-            with pytest.raises(ChildProcessStartupError, match="missing-plugin"):
-                await engine._start()
-            assert not engine._started
-        else:
-            await engine._start()
-            assert engine._started
-            assert constructed.read_text(encoding="utf-8") == "ready"
-            assert engine.acquisition_worker.is_alive()
-            assert engine.signal_processing_worker.is_alive()
+        await engine._start()
+        assert engine._started
+        assert not constructed.exists()
+        assert engine.acquisition_worker.is_alive()
+        assert engine.signal_processing_worker.is_alive()
         assert all(channel.receiver.closed for channel in engine._startup_channels)
     finally:
         await engine._stop()

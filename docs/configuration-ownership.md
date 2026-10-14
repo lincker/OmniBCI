@@ -20,7 +20,7 @@ tables are existing names, not a proposal to rename every setting.
 | Configuration | Authoritative source | Single editing location | Application |
 | --- | --- | --- | --- |
 | Plugin parameters | A named Plugin Profile for an exact contribution and version | Setup, under that plugin | Save preserves the running values; Review and Apply selects a pinned copy |
-| Acquisition metadata | Connected source plugin's raw metadata | Setup / Acquisition / Get Metadata, read-only | Choose a plugin and connection parameters, Connect, then Get Metadata; no profile persistence or manual merge |
+| Acquisition metadata | Connected source plugin's raw metadata and `SignalInfo` | Setup / Acquisition / Get Metadata, read-only | Connect and read; compare observed dimensions with Profile expectations; explicit adoption updates the draft before Save and Apply |
 | Plugin selection and filter order | Activation bindings | Setup, plugin/profile selectors and filter chain | Review and Apply |
 | Shared runtime settings | Host settings, copied into the candidate activation | Settings / General, grouped by subsystem | Review and Apply at a supported runtime boundary |
 | Channel mapping and type declarations | Decoder Plugin Profile `processing_input`, pinned in its activation binding | Setup / Processing / Decoder / Processing input | Profile Review and Apply; input changes rebuild and prepare processing before streaming |
@@ -29,7 +29,7 @@ tables are existing names, not a proposal to rename every setting.
 
 Acquisition adapts connected source data into a `SignalInfo` and
 shows the raw plugin metadata alongside it. The public response is
-`{source_id, connection_id, metadata, descriptor}`. The descriptor contains sample
+`{source_id, connection_id, metadata, descriptor, comparison}`. The descriptor contains sample
 rate, source and connection identity, ordered `ChannelDescriptor` records,
 normalized event-row information and provenance. Raw metadata remains
 inspectable when descriptor conversion fails. See [channel mapping](channel-mapping.md).
@@ -127,8 +127,8 @@ preserve the session. External processes have additional application limits.
 
 | Existing flat key | Owner and Profile parameter | Scope | Runtime boundary |
 | --- | --- | --- | --- |
-| `ACQUISITION.sample_rate` | Selected source: `sample_rate` | Portable | Engine rebuild |
-| `ACQUISITION.channel_number` | Selected source: `channel_number` | Portable | Engine rebuild |
+| `ACQUISITION.sample_rate` | Selected source: expected `sample_rate` | Portable | Engine rebuild and comparison with observed source |
+| `ACQUISITION.channel_number` | Selected source: expected `channel_number`, including event row | Portable | Engine rebuild and comparison with observed source |
 | `ACQUISITION.DATA_PROVIDER_IP` | Scan45 or Curry8 source: `DATA_PROVIDER_IP` | Machine | Engine rebuild |
 | `ACQUISITION.DATA_PROVIDER_PORT` | Scan45 or Curry8 source: `DATA_PROVIDER_PORT` | Machine | Engine rebuild |
 | `ACQUISITION.data_file_path` | File Reader: `data_file_path` | Machine | Engine rebuild |
@@ -136,7 +136,7 @@ preserve the session. External processes have additional application limits.
 | `ACQUISITION.parallel_port_address` | Scan45 Trigger: `parallel_port_address` | Machine | Output-module application when active |
 | `ALGORITHM.window_duration`, `ssvep.duration` | Selected CCA/FBCCA decoder: `window_duration` | Portable | Trial boundary |
 | `ALGORITHM.offset_time`, `ssvep.offset_time` | Selected CCA/FBCCA decoder: `offset_time` | Portable | Trial boundary |
-| `ssvep.sample_rate` | No separate parameter; decoder receives the selected source's sample rate through `PluginContext` | Derived | Follows source application |
+| `ssvep.sample_rate` | No separate parameter; decoder receives actual `SignalInfo.sample_rate` through `PluginContext` | Derived | Follows source preparation |
 
 Important boundaries:
 
@@ -145,9 +145,12 @@ Important boundaries:
 - Scan45 channel count includes the final event channel. This review does not
   change that convention or add channel-layout/montage configuration.
 - Curry8 and File Reader obtain actual data dimensions from the device/file.
-  Their reported rate and signal count take precedence over legacy profile
-  defaults when preparing processing; saved values are not rewritten. The
-  adapter output includes one final trigger row, separate from the signal count.
+  Their Profile dimensions are optional expectations with no defaults. Missing
+  or mismatched expectations block Processing preparation until the source is
+  corrected or observed values are explicitly saved and applied. Actual
+  `SignalInfo` supplies Processing context; metadata reads do not rewrite saved
+  values. The adapter output includes one final trigger row, separate from the
+  signal count; the expected `channel_number` includes that row.
 - Scan45 returns text explaining that device metadata querying is not implemented.
   Its output descriptor is separate and marked `user-declared`; configured
   dimensions are not reported as observed device information.
@@ -284,25 +287,31 @@ host input cannot introduce or update these copies. Runtime materialization
 always removes them before projecting values from the pinned bindings.
 
 Runtime projections retain the existing plugin aliases, ordered filter aliases,
-and source parameters under `ACQUISITION.*`. The source's sampling declaration
-therefore reaches both the engine and `PluginContext`. Decoder and trigger
+and declared source parameters under `ACQUISITION.*`. Processing gets its
+sample rate and mapped channels from prepared `SignalInfo`, not these expected
+values. Decoder and trigger
 parameters are supplied directly from bindings; no second flat parameter copy
 is generated for them. This preserves existing trial-boundary decoder updates
 and output-module changes. Revision and serialized bindings remain generated
 runtime fields.
 
-The selected source must provide positive integer `sample_rate` and
-`channel_number` values in its resolved Profile. Missing or invalid declarations
-fail explicitly before runtime projection instead of falling back to old host
-copies or the engine's default sample rate. An existing third-party source that
-only stored these values in host settings requires a reviewed Profile/schema
-correction; its accepted file is not automatically rewritten. Device/file
-metadata consistency after connection remains a separate issue.
+Source Profiles retain `sample_rate` and `channel_number`; provided values must
+be positive integers. Curry8 and File Reader can connect without expectations
+so the user can read and confirm actual values. The comparison uses the pinned
+source binding, never old host copies or saved edits that have not been applied.
+An unconfirmed or mismatched comparison blocks preparation and streaming, but
+does not hide source metadata. Observed values can be saved as a separately named
+Profile with the current connection parameters, preserving the original Profile
+and applied configuration until explicit application. Adoption into the current
+draft remains available; Save and Apply publishes a new revision. Scan45 retains its required configuration and
+is marked unverified because it cannot query independent device dimensions.
 
 The raw `settings.toml` plugin entries remain explicit first-initialization
 inputs for this step; they are not live controls. Their existing values are
 copied into initial Plugin Profiles before filtering the activation host
-settings. This does not replace values with schema defaults, select another
+settings. Bundled source sample-rate and row-count placeholders are omitted so
+a fresh File Reader Profile starts without an invented experimental baseline.
+Explicit legacy values are preserved. This does not select another
 plugin, or rewrite actual configuration files. Retiring this initialization
 source requires a separate explicit first-initialization policy. Step 6 removes
 standalone runtime fallback; this explicit initializer remains. The

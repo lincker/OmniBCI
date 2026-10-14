@@ -76,6 +76,22 @@ async def test_composition_initializes_once_and_saved_edits_do_not_change_startu
     assert len(before["PLUGINS.bindings"]) >= 4
 
 
+@pytest.mark.asyncio
+async def test_fresh_installation_does_not_invent_source_expectations(monkeypatch):
+    import omnibci.conf as conf
+
+    monkeypatch.setattr(conf, "settings", OmniBCISettings())
+    container = await build_container()
+
+    accepted = container.plugin_profile_service.repository.get_activation()
+    source = next(binding for binding in accepted.bindings if binding.slot == "acquisition.source")
+    assert "sample_rate" not in source.parameters
+    assert "channel_number" not in source.parameters
+    runtime = container.engine_service._snapshot_provider()
+    assert "ACQUISITION.sample_rate" not in runtime
+    assert "ACQUISITION.channel_number" not in runtime
+
+
 def test_status_reads_applied_values_while_engine_running():
     engine = Mock(is_engine_ready=True, applied_snapshot={"ACQUISITION.sample_rate": 250})
     profiles = Mock()

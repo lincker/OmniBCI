@@ -10,6 +10,7 @@ from threading import RLock
 from copy import deepcopy
 from omnibci.application.runtime_admission import admitted
 from omnibci.application.processing_source import acquisition_binding_key
+from omnibci.application.source_expectations import compare_source_expectations
 
 from omnibci.shared.events import EventType, Event
 from omnibci.application.commands.acquisition_commands import (
@@ -206,6 +207,9 @@ class AcquisitionAppService:
                 raise RuntimeError("Acquisition descriptor belongs to a different source connection")
         self._descriptor = metadata
         self._raw_metadata = deepcopy({key: value[key] for key in ("source_id", "connection_id", "metadata", "descriptor")})
+        self._raw_metadata["comparison"] = (
+            compare_source_expectations(binding, metadata) if metadata is not None else None
+        )
         self._descriptor_owner = acquisition_binding_key(binding)
         self._connection_id = value["connection_id"]
         return result

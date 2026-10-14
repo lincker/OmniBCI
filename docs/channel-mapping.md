@@ -34,7 +34,8 @@ data-matrix validation is reserved for future consideration.
 
 Choose a source plugin, fill its address and port or file path, then Connect.
 Get Metadata reads the connected source and displays the descriptor alongside
-source metadata text on the same page. The response is:
+source metadata text on the same page. It also compares the applied Profile's
+experiment expectations with the observed signal information. The response is:
 
 ```json
 {
@@ -50,6 +51,11 @@ source metadata text on the same page. The response is:
       {"channel_id": "channel-1", "index": 1, "name": "O2", "signal_type": "unknown"}
     ],
     "trigger_row_index": 2
+  },
+  "comparison": {
+    "status": "matched",
+    "sample_rate": {"expected": 1000, "actual": 1000},
+    "channel_number": {"expected": 3, "actual": 3}
   }
 }
 ```
@@ -99,6 +105,34 @@ belong to the exact source binding and connection; reconnect, source changes and
 metadata refresh invalidate readiness. Saved observations never substitute for
 current source metadata.
 
+### Experiment expectations
+
+The source Profile retains `sample_rate` and `channel_number` as expected
+experiment parameters. `channel_number` includes the event row and is compared
+with `SignalInfo.output_row_count`, not `signal_channel_count`. For Curry8 and
+File Reader, new Profiles have neither value until explicitly confirmed; their
+schemas retain both fields without defaults. Existing saved values are preserved.
+
+Get Metadata returns `comparison` with expected and actual values and one status:
+
+- `unconfirmed`: at least one expected value is missing.
+- `matched`: both expected values match independently observed values.
+- `mismatched`: all expectations are present and at least one differs.
+- `unverified`: the source cannot independently report these values, as with
+  Scan45's unchanged `user-declared` output information.
+
+A missing or invalid `SignalInfo` produces no comparison. Metadata reads never
+save or overwrite Profiles. For independently observed sources, unconfirmed or
+mismatched expectations prevent preparation and streaming while keeping the
+source information visible. The user can adjust the device/file and read again,
+or choose **Save observed values as new profile**, name it, and save the current
+connection parameters with the observed dimensions. This creates a separate
+Profile and preserves the original Profile and applied configuration. Connect
+then applies the new Profile. **Use observed values** remains available to
+update the current draft before saving and applying it. The applied revision
+is compared again after connection. Scan45's
+configured declarations remain editable and are never labeled device-verified.
+
 ## Acquisition runtime boundary
 
 `AcquisitionWorker` owns configuration and plugin construction. It pins one
@@ -109,7 +143,9 @@ settings snapshot, loads the source, and passes only the required context to
 `source_id` identifies the configured source. `generation` identifies the current
 engine instance, while `config_revision` identifies its applied configuration.
 `preparation_required` determines whether starting a stream requires a valid
-Processing preparation receipt. The Worker derives it from the Processing input;
+Processing preparation receipt. Every selected decoder requires preparation,
+including when its input defaults to all source channels. The Worker derives
+the requirement from the Processing input;
 the runtime does not read configuration or interpret decoder bindings. Changes
 to Processing input rebuild the runtime with a new preparation requirement.
 
@@ -162,6 +198,14 @@ Saving a profile does not change a running experiment. Review and Apply pins
 its mapping, rebuilds when necessary, and prepares Processing against the
 connected descriptor. Generation, configuration revision, connection identity,
 source fingerprint and plan fingerprint must match before streaming.
+
+Processing starts in standby without constructing Epoch, Filter or Decoder
+plugins. Preparation supplies the actual sample rate and mapped channels from
+`SignalInfo`, including the sample rate used for baseline buffering. Later
+trial-boundary updates reuse that prepared context. Updates received before
+preparation retain validated configuration and defer plugin construction until
+source information is available. Profile expectations are never a fallback
+Processing sample rate.
 
 ## API and compatibility
 

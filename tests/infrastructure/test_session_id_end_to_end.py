@@ -51,7 +51,6 @@ def test_file_reader_session_id_matches_websocket_and_rest(
         queue_size=200,
         message_server_ip="127.0.0.1",
         message_server_port=0,
-        sample_rate=1000,
         baseline_duration=0.0,
         actuation_enabled=False,
     )
@@ -61,7 +60,8 @@ def test_file_reader_session_id_matches_websocket_and_rest(
     from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
     from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
     seed = {**OmniBCISettings().saved_snapshot(), "ACQUISITION.signal_source": "file_reader",
-            "ACQUISITION.data_file_path": str(_CNT_FIXTURE), "ACQUISITION.sample_rate": 1000}
+            "ACQUISITION.data_file_path": str(_CNT_FIXTURE), "ACQUISITION.sample_rate": 1000,
+            "ACQUISITION.channel_number": 10}
     profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
                                     CatalogConfigurationAdapter(), settings_source=lambda: seed)
     accepted = SettingsPluginConfigInitializer(profiles).initialize(seed).snapshot

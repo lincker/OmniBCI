@@ -116,3 +116,77 @@ test("configured descriptors are identified without interpreting source response
   assert.equal(text(summary(tree, "Signal channels")), "2");
   assert.equal(text(elements(tree).find((element) => element.type === "pre")), value.metadata);
 });
+
+const comparison = (status, expected = null) => ({ status,
+  sample_rate: { expected: expected?.sample_rate ?? null, actual: 500 },
+  channel_number: { expected: expected?.channel_number ?? null, actual: 3 },
+});
+
+test("source comparison presents unknown expectations and requires an explicit adoption action", () => {
+  let adoptions = 0;
+  const value = { ...source("Device information"), comparison: comparison("unconfirmed") };
+  const tree = render({ value, canUseObserved: true, onUseObserved: () => { adoptions += 1; } });
+  assert.equal(adoptions, 0);
+  const table = elements(tree).find((element) => element.type === "table" && element.props["aria-label"] === "Experiment parameter comparison");
+  assert.match(text(table), /Expected \(applied profile\)Observed \(data source\)/);
+  assert.match(text(table), /Not confirmed500/);
+  assert.match(text(table), /Not confirmed3/);
+  assert.match(text(tree), /no complete confirmed baseline/);
+  const adopt = elements(tree).find((element) => element.type === "button" && text(element) === "Use observed values");
+  assert.equal(adopt.props.disabled, false);
+  adopt.props.onClick();
+  assert.equal(adoptions, 1);
+});
+
+test("mismatched and matched observations display the comparison without changing source values", () => {
+  for (const status of ["mismatched", "matched"]) {
+    const value = { ...source("Device information"), comparison: comparison(status, { sample_rate: status === "matched" ? 500 : 1000, channel_number: 3 }) };
+    const before = structuredClone(value);
+    const tree = render({ value });
+    assert.match(text(tree), status === "matched" ? /observed source values match/ : /observed source values differ/);
+    assert.deepEqual(value, before);
+  }
+});
+
+test("the adoption action is disabled when the current source is unavailable or busy", () => {
+  for (const overrides of [{ canUseObserved: false }, { busy: true }]) {
+    const value = { ...source("Device information"), comparison: comparison("unconfirmed") };
+    const tree = render({ value, canUseObserved: true, onUseObserved: () => {}, ...overrides });
+    const adopt = elements(tree).find((element) => element.type === "button" && text(element) === "Use observed values");
+    assert.equal(adopt.props.disabled, true);
+  }
+});
+
+test("Scan45 declarations are shown as unverified and have no adoption action", () => {
+  const value = { ...source("Metadata is not implemented.", { ...descriptor, provenance: "user-declared" }),
+    comparison: comparison("unverified", { sample_rate: 500, channel_number: 3 }) };
+  const tree = render({ value, canUseObserved: true, onUseObserved: () => {}, onSaveObservedProfile: () => {} });
+  assert.match(text(tree), /cannot independently verify/);
+  assert.match(text(tree), /Declared \(configuration\)/);
+  assert.doesNotMatch(text(tree), /Use observed values/);
+  assert.doesNotMatch(text(tree), /Save observed values as new profile/);
+});
+
+test("saving observations as a new profile requires its own explicit action and a current source", () => {
+  let saves = 0;
+  const value = { ...source("Device information"), comparison: comparison("mismatched", { sample_rate: 1000, channel_number: 10 }) };
+  const props = { value, canUseObserved: true, onSaveObservedProfile: () => { saves += 1; } };
+  const tree = render(props);
+  const save = elements(tree).find((element) => element.type === "button" && text(element) === "Save observed values as new profile");
+  assert.equal(saves, 0);
+  assert.equal(save.props.disabled, false);
+  save.props.onClick();
+  assert.equal(saves, 1);
+  for (const overrides of [{ busy: true }, { canUseObserved: false }]) {
+    const disabled = elements(render({ ...props, ...overrides }))
+      .find((element) => element.type === "button" && text(element) === "Save observed values as new profile");
+    assert.equal(disabled.props.disabled, true);
+  }
+});
+
+test("missing source information offers no new-profile action", () => {
+  for (const value of [null, source("Device information", null), source("Device information")]) {
+    const tree = render({ value, canUseObserved: true, onSaveObservedProfile: () => {} });
+    assert.doesNotMatch(text(tree), /Save observed values as new profile/);
+  }
+});

@@ -31,16 +31,37 @@ def package(tmp_path, **configuration):
     return PluginCatalog({"effector": lambda: [PluginRoot(tmp_path, "user", 0)]})
 
 
-def test_all_builtins_own_complete_valid_defaults():
+def test_all_builtins_own_valid_defaults_for_their_required_parameters():
     catalog = PluginCatalog({"effector": lambda: [PluginRoot(vendor_plugins_dir(), "builtin", 100)]})
     count = 0
     for kind in ("acquisition", "decoder", "filter", "epoch_detector", "effector", "paradigm", "trigger"):
         for plugin in catalog.list_contributions(kind):
             assert plugin.configuration_version == 1
             values = validate_parameters(plugin.configuration_schema, {})
-            assert set(values) == set(plugin.configuration_schema["properties"])
+            assert set(plugin.configuration_schema.get("required", [])) <= set(values)
+            assert set(values) <= set(plugin.configuration_schema["properties"])
             count += 1
     assert count == 10
+
+
+@pytest.mark.parametrize("alias", ["file_reader", "neuroscan_curry8_reader"])
+def test_observed_sources_preserve_optional_expectations_without_an_invented_baseline(alias):
+    catalog = PluginCatalog({"effector": lambda: [PluginRoot(vendor_plugins_dir(), "builtin", 100)]})
+    schema = catalog.resolve("acquisition", alias).configuration_schema
+    defaults = validate_parameters(schema, {})
+    assert not {"sample_rate", "channel_number"} & defaults.keys()
+    saved = validate_parameters(schema, {"sample_rate": 500, "channel_number": 33})
+    assert saved["sample_rate"] == 500
+    assert saved["channel_number"] == 33
+
+
+def test_scan45_retains_required_stream_dimensions_and_defaults():
+    catalog = PluginCatalog({"effector": lambda: [PluginRoot(vendor_plugins_dir(), "builtin", 100)]})
+    schema = catalog.resolve("acquisition", "neuroscan_scan45_reader").configuration_schema
+    assert {"sample_rate", "channel_number"} <= set(schema["required"])
+    defaults = validate_parameters(schema, {})
+    assert defaults["sample_rate"] == 1000
+    assert defaults["channel_number"] == 10
 
 
 @pytest.mark.parametrize("configuration", [

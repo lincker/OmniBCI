@@ -133,8 +133,11 @@ class TestAcquisitionStatus:
         executor = MagicMock()
         executor.request.return_value.data = _metadata_response(metadata)
         service = AcquisitionAppService(executor)
-        assert service.get_metadata(refresh=True) == {key: _metadata_response(metadata)[key]
-                                                    for key in ("source_id", "connection_id", "metadata", "descriptor")}
+        result = service.get_metadata(refresh=True)
+        assert {key: result[key] for key in ("source_id", "connection_id", "metadata", "descriptor")} == {
+            key: _metadata_response(metadata)[key]
+            for key in ("source_id", "connection_id", "metadata", "descriptor")}
+        assert result["comparison"]["status"] == "unconfirmed"
         executor.request.assert_called_once_with(EventType.GetSourceMetadata, {"refresh": True}, timeout_s=5.0)
         assert service.cached_descriptor == metadata.to_dict()
         status = service.handle_get_status(GetAcquisitionStatusQuery())
@@ -187,7 +190,11 @@ def test_metadata_preserves_opaque_plugin_text_and_exposes_acquisition_descripto
     service, executor, provider, _, metadata, response = _metadata_service()
     response["metadata"] = raw
     value = service.get_metadata(refresh=True)
-    assert value == {key: response[key] for key in ("source_id", "connection_id", "metadata", "descriptor")}
+    assert value == {
+        **{key: response[key] for key in ("source_id", "connection_id", "metadata", "descriptor")},
+        "comparison": {"status": "matched", "sample_rate": {"expected": 250, "actual": 250},
+                       "channel_number": {"expected": 2, "actual": 2}},
+    }
     assert value["metadata"] == raw
     value["metadata"] = "changed by caller"
     value["descriptor"]["channels"][0]["name"] = "changed by caller"
@@ -237,7 +244,9 @@ def test_raw_metadata_remains_available_when_processing_cannot_normalize_it():
     service, _, _, _, _, response = _metadata_service()
     response["descriptor"] = None
     response["descriptor_error"] = "Source does not report a sample rate"
-    assert service.get_metadata()["metadata"] == response["metadata"]
+    result = service.get_metadata()
+    assert result["metadata"] == response["metadata"]
+    assert result["comparison"] is None
     assert service.handle_get_status(GetAcquisitionStatusQuery()).metadata_available is True
     with pytest.raises(CommandRejectedError, match="sample rate") as rejected:
         service.get_descriptor()
@@ -326,3 +335,26 @@ def test_connect_waits_for_an_explicit_metadata_request():
     provider.assert_not_called()
     assert service.cached_descriptor is None
     assert service._raw_metadata is None
+
+
+def test_metadata_comparison_uses_the_pinned_profile_without_replacing_its_expectations():
+    from dataclasses import replace
+    service, _, provider, binding, _, response = _metadata_service()
+    changed = replace(binding, parameters={"sample_rate": 1000, "channel_number": 65}).to_dict()
+    provider.return_value = changed
+    response["metadata"] = '{"sample_rate": 1000, "channel_number": 65}'
+    result = service.get_metadata()
+    assert result["comparison"] == {
+        "status": "mismatched",
+        "sample_rate": {"expected": 1000, "actual": 250},
+        "channel_number": {"expected": 65, "actual": 2},
+    }
+    result["comparison"]["sample_rate"]["expected"] = 250
+    assert changed["parameters"] == {"sample_rate": 1000, "channel_number": 65}
+    assert service._raw_metadata["comparison"]["sample_rate"]["expected"] == 1000
+
+
+def test_scan45_declared_dimensions_are_not_presented_as_a_verified_match():
+    service, _, _, _, _, response = _metadata_service()
+    response["descriptor"]["provenance"] = "user-declared"
+    assert service.get_metadata()["comparison"]["status"] == "unverified"
