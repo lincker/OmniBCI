@@ -192,7 +192,7 @@ class AcquisitionAppService:
                 "source_id", "connection_id", "metadata", "descriptor", "descriptor_error"}
                 or not isinstance(value["source_id"], str) or not value["source_id"]
                 or not isinstance(value["connection_id"], str) or not value["connection_id"]
-                or not isinstance(value["metadata"], dict)
+                or not isinstance(value["metadata"], str)
                 or value["descriptor_error"] is not None and not isinstance(value["descriptor_error"], str)):
             raise RuntimeError("Source returned invalid acquisition metadata")
         metadata = None
@@ -212,7 +212,7 @@ class AcquisitionAppService:
 
     def handle_get_status(self, query: GetAcquisitionStatusQuery) -> AcquisitionStatusResult:
         source, sample_rate, channel_count = self._device_metadata()
-        provenance = self._raw_metadata["metadata"].get("provenance") if self._raw_metadata else None
+        provenance = self._descriptor.provenance if self._descriptor is not None else None
         return AcquisitionStatusResult(
             connected=self._connected,
             streaming=self._streaming,
@@ -220,7 +220,7 @@ class AcquisitionAppService:
             sample_rate=sample_rate,
             channel_count=channel_count,
             metadata_available=self._raw_metadata is not None,
-            metadata_provenance=provenance if isinstance(provenance, str) else None,
+            metadata_provenance=provenance,
             connection_id=self._connection_id,
         )
 
@@ -230,16 +230,9 @@ class AcquisitionAppService:
             source = self._settings.get("ACQUISITION.signal_source") if self._settings is not None else None
             return str(source) if source is not None else None, None, None
         source = self._raw_metadata["source_id"]
-        info = self._raw_metadata["metadata"]
-        if info.get("metadata_supported") is False or info.get("metadata_origin") == "configuration":
+        if self._descriptor is None or self._descriptor.provenance == "user-declared":
             return source, None, None
-        if self._descriptor is not None:
-            return source, self._descriptor.sample_rate, self._descriptor.signal_channel_count
-        rate, count = info.get("sample_rate"), info.get("channel_count")
-        if type(rate) is float and rate.is_integer():
-            rate = int(rate)
-        return (source, rate if type(rate) is int and rate > 0 else None,
-                count if type(count) is int and count > 0 else None)
+        return source, self._descriptor.sample_rate, self._descriptor.signal_channel_count
 
     # ------------------------------------------------------------------
     # Internal

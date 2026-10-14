@@ -7,14 +7,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import struct
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import IntEnum
 
 import numpy as np
 
 from omnibci.domain.ports.acquisition import SignalSource
+from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor
+from omnibci.infrastructure.acquisition.metadata import acquisition_descriptor
 from omnibci.sdk import PluginContext, PluginParameters
 
 logger = logging.getLogger(__name__)
@@ -261,7 +264,7 @@ class Curry8DataReader(SignalSource):
             self._reset_stream_state()
         return True
 
-    async def get_metadata(self) -> dict:
+    async def get_metadata(self) -> str:
         if not self._is_connected:
             raise RuntimeError("Connect to CURRY before requesting metadata")
         if not self._is_streaming:
@@ -270,19 +273,21 @@ class Curry8DataReader(SignalSource):
         metadata = self._metadata
         if metadata is None:
             raise RuntimeError("Stop the CURRY stream before requesting new metadata")
-        return {
-            "device": "Neuroscan CURRY 8",
-            "protocol_version": metadata.protocol_version,
+        return json.dumps(asdict(metadata), ensure_ascii=False, indent=2)
+
+    def describe_output(self, *, source_id: str, connection_id: str) -> AcquisitionDescriptor:
+        """Describe the output using the last successful device query."""
+        metadata = self._metadata
+        if not self._is_connected or metadata is None:
+            raise RuntimeError("Get CURRY metadata before describing its output")
+        return acquisition_descriptor({
             "channel_count": metadata.channel_count,
             "output_channel_count": metadata.channel_count + 1,
             "sample_rate": metadata.sample_rate,
-            "data_size": metadata.data_size,
-            "allow_amplifier_control": metadata.allow_amplifier_control,
-            "allow_recording_control": metadata.allow_recording_control,
             "channel_labels": list(metadata.channel_labels),
             "native_event": "separate-event-packets",
             "provenance": "device-reported",
-        }
+        }, source_id=source_id, connection_id=connection_id)
 
     async def start_stream(self) -> bool:
         if not self._is_connected:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import struct
 from unittest.mock import AsyncMock, MagicMock, call
 
@@ -170,19 +171,19 @@ async def _run_fake_server_scenario(*, compressed: bool = False):
     try:
         assert await driver.connect() is True
         metadata = await driver.get_metadata()
-        assert metadata == {
-            "device": "Neuroscan CURRY 8",
+        assert isinstance(metadata, str)
+        assert json.loads(metadata) == {
             "protocol_version": 803,
             "channel_count": 3,
-            "output_channel_count": 4,
             "sample_rate": 1000,
             "data_size": 4,
             "allow_amplifier_control": True,
             "allow_recording_control": False,
             "channel_labels": ["Fz", "Cz", "Pz"],
-            "native_event": "separate-event-packets",
-            "provenance": "device-reported",
         }
+        descriptor = driver.describe_output(source_id=driver.plugin_type, connection_id="connection")
+        assert descriptor.signal_channel_count == 3
+        assert descriptor.output_row_count == 4
         assert await driver.start_stream() is True
 
         if compressed:
@@ -250,14 +251,20 @@ async def test_metadata_requeries_the_stopped_device_and_keeps_event_rows_separa
     ])
 
     first = await driver.get_metadata()
+    first_descriptor = driver.describe_output(source_id=driver.plugin_type, connection_id="connection")
     refreshed = await driver.get_metadata()
+    refreshed_descriptor = driver.describe_output(source_id=driver.plugin_type, connection_id="connection")
 
-    assert first["channel_count"] == 3
-    assert first["output_channel_count"] == 4
-    assert refreshed["sample_rate"] == 500
-    assert refreshed["channel_count"] == 2
-    assert refreshed["output_channel_count"] == 3
-    assert refreshed["channel_labels"] == ["C3", "C4"]
+    assert json.loads(first)["channel_count"] == first_descriptor.signal_channel_count == 3
+    assert first_descriptor.output_row_count == 4
+    assert json.loads(refreshed)["sample_rate"] == refreshed_descriptor.sample_rate == 500
+    assert json.loads(refreshed)["channel_count"] == refreshed_descriptor.signal_channel_count == 2
+    assert refreshed_descriptor.output_row_count == 3
+    assert json.loads(refreshed)["channel_labels"] == ["C3", "C4"]
+    assert [channel.name for channel in refreshed_descriptor.channels] == ["C3", "C4"]
+    assert "output_channel_count" not in refreshed
+    assert "native_event" not in refreshed
+    assert "provenance" not in refreshed
     assert driver._request_info.await_args_list == [
         call(ClientRequest.BASIC_INFO, InfoType.BASIC_INFO),
         call(ClientRequest.CHANNEL_INFO, InfoType.CHANNEL_INFO),
@@ -265,7 +272,34 @@ async def test_metadata_requeries_the_stopped_device_and_keeps_event_rows_separa
 
     driver._is_streaming = True
     assert await driver.get_metadata() == refreshed
+    assert driver.describe_output(source_id=driver.plugin_type, connection_id="connection") == refreshed_descriptor
     assert driver._request_info.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_output_description_requires_successful_metadata_and_never_queries_socket():
+    driver = Curry8DataReader(parameters={})
+    driver._is_connected = True
+    driver._protocol_version = 803
+    driver._request_info = AsyncMock(side_effect=[
+        _BASIC_INFO.pack(_BASIC_INFO.size, 2, 500, 4, 1, 0),
+        _channel_info(("C3", "C4")),
+        Curry8ProtocolError("Invalid device reply"),
+    ])
+    with pytest.raises(RuntimeError, match="Get CURRY metadata"):
+        driver.describe_output(source_id=driver.plugin_type, connection_id="connection")
+    driver._request_info.assert_not_awaited()
+
+    await driver.get_metadata()
+    descriptor = driver.describe_output(source_id=driver.plugin_type, connection_id="connection")
+    assert descriptor.signal_channel_count == 2
+    assert driver._request_info.await_count == 2
+
+    with pytest.raises(Curry8ProtocolError, match="Invalid device reply"):
+        await driver.get_metadata()
+    with pytest.raises(RuntimeError, match="Get CURRY metadata"):
+        driver.describe_output(source_id=driver.plugin_type, connection_id="connection")
+    assert driver._request_info.await_count == 3
 
 
 @pytest.mark.asyncio
@@ -299,9 +333,9 @@ async def test_stopped_metadata_skips_queued_stream_packets():
     await driver.stop_stream()
     metadata = await driver.get_metadata()
 
-    assert metadata["channel_count"] == 3
-    assert metadata["sample_rate"] == 1000
-    assert metadata["channel_labels"] == ["Fz", "Cz", "Pz"]
+    assert json.loads(metadata)["channel_count"] == 3
+    assert json.loads(metadata)["sample_rate"] == 1000
+    assert json.loads(metadata)["channel_labels"] == ["Fz", "Cz", "Pz"]
 
 
 @pytest.mark.asyncio

@@ -170,10 +170,8 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
   const originalRuntimeApi = { ...runtimeConfigApi };
   const data = fixture();
   data.source = { connected: engineRunning, streaming, connection_id: engineRunning ? "connection-a" : null };
-  data.metadata = { source_id: "scan45", connection_id: "connection-a", metadata: {
-    device: "Source device", sample_rate: 500, channel_count: 2, output_channel_count: 3,
-    channel_labels: ["C3", "C4"], protocol: { version: "1.2", extensions: ["events"] },
-  } };
+  data.metadata = { source_id: "scan45", connection_id: "connection-a",
+    metadata: "Source device\nProtocol: 1.2\nExtensions: events", descriptor: null };
   data.events = [];
   const runtimeStatus = { running: engineRunning, accepted_revision: data.activation.revision,
     applied_revision: engineRunning ? data.activation.revision : null, generation: engineRunning ? "generation-a" : null };

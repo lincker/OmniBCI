@@ -4,6 +4,4 @@
 .acquisition-metadata .source-metadata-table { overflow-x: auto; margin: 1rem 0; }
 .acquisition-metadata table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
 .acquisition-metadata th, .acquisition-metadata td { padding: 0.5rem; text-align: left; border-bottom: 1px solid var(--border-soft); }
-.acquisition-metadata .source-metadata-raw { margin-top: 1rem; font-size: 0.75rem; }
-.acquisition-metadata summary { cursor: pointer; }
-.acquisition-metadata pre { overflow-x: auto; padding: 1rem; background: var(--bg); }
+.acquisition-metadata .source-metadata-raw { margin-top: 1rem; padding: 1rem; max-height: 24rem; overflow: auto; background: var(--bg); font-size: 0.75rem; white-space: pre-wrap; overflow-wrap: anywhere; }

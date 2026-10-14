@@ -1,21 +1,21 @@
 # Acquisition descriptors and Processing channel mapping
 
 Acquisition adapts external data sources into a common signal stream and an
-`AcquisitionDescriptor`. Its `descriptor` describes the adapter output; raw
-plugin `metadata` remains available for inspection. Neither is an editable
+`AcquisitionDescriptor`. Its `descriptor` describes the adapter output; source
+`metadata` is opaque display text. Neither is an editable
 Plugin Profile parameter.
 
 ## Acquisition workflow
 
 Choose a source plugin, fill its address and port or file path, then Connect.
 Get Metadata reads the connected source and displays the descriptor alongside
-raw metadata on the same page. The response is:
+source metadata text on the same page. The response is:
 
 ```json
 {
   "source_id": "neuroscan_curry8_reader",
   "connection_id": "connection-token",
-  "metadata": {"channel_count": 2},
+  "metadata": "Channel count: 2\nSample rate: 1000 Hz\n",
   "descriptor": {
     "source_id": "neuroscan_curry8_reader",
     "connection_id": "connection-token",
@@ -33,8 +33,20 @@ This abbreviated example omits optional provenance and native-event details.
 `signal_channel_count` counts signal rows only. `output_row_count` includes the
 final normalized event row. Curry8 and File Reader derive actual dimensions
 from their source instead of treating configured defaults as observed facts.
-Scan45 currently marks its metadata as configuration-derived and unsupported
-for actual device metadata discovery.
+Scan45 returns text explaining that device metadata querying is not implemented.
+Its separate output descriptor uses configuration and is marked `user-declared`.
+
+`SignalSource.get_metadata() -> str` queries source information for inspection.
+Native text is passed through unchanged. Curry8 renders its decoded protocol
+fields as readable JSON text; File Reader displays file information captured
+before output channel selection. Acquisition-derived fields such as the extra
+event row are not inserted into that source text.
+
+`SignalSource.describe_output(...) -> AcquisitionDescriptor` describes the
+adapter's normalized output from the same observation, without querying again.
+The runtime, application and Processing never parse the display text. Plugins
+without a valid descriptor can still show metadata, but cannot prepare channel
+mapping.
 
 Each `ChannelDescriptor` has a unique `channel_id`, source row `index`, display
 `name`, `signal_type`, and optional `unit` and `name_provenance`. Names may repeat.
@@ -44,7 +56,7 @@ identity protect mapping preparation from changed or stale sources.
 
 Missing source information is not guessed. Curry8 currently supplies labels
 without channel types, so its descriptor reports `unknown`. A failed descriptor
-conversion does not prevent inspection of the raw metadata. Cached descriptors
+construction does not prevent inspection of the source text. Cached descriptors
 belong to the exact source binding and connection; reconnect, source changes and
 metadata refresh invalidate readiness. Saved observations never substitute for
 current source metadata.
@@ -86,6 +98,12 @@ connected descriptor. Generation, configuration revision, connection identity,
 source fingerprint and plan fingerprint must match before streaming.
 
 ## API and compatibility
+
+Source plugins must return a string from `get_metadata()` and implement
+`describe_output()` to support Processing mapping. The REST metadata response
+keeps its connection envelope, with `metadata` now a string and `descriptor`
+separate. Third-party sources returning the previous metadata dictionary must
+update this contract; the host does not guess a descriptor by parsing text.
 
 `GET /api/v1/config/signal` exposes `acquisition_descriptor`, source identity,
 `processing_input`, `accepted_input`, `active_input`, and preparation readiness.

@@ -150,7 +150,7 @@ def test_fingerprints_bind_semantics_without_connection_or_runtime_revision():
         ResolvedSignalPlan.from_dict(changed)
 
 
-def test_invalid_source_dimensions_and_changed_chunk_rows_are_rejected():
+def test_invalid_source_dimensions_are_rejected():
     observed = source()
     for key, value in (("sample_rate", True), ("sample_rate", 0), ("trigger_row_index", 2),
                        ("output_row_count", 3), ("signal_channel_count", 4)):
@@ -158,8 +158,6 @@ def test_invalid_source_dimensions_and_changed_chunk_rows_are_rejected():
         data[key] = value
         with pytest.raises(ValueError):
             AcquisitionDescriptor.from_dict(data)
-    with pytest.raises(ValueError, match="Signal rows changed"):
-        compile_processing_plan(observed, ProcessingInput()).apply(SignalChunk(1, 2, np.zeros((3, 4))))
 
 
 def test_generated_names_stay_marked_until_renamed():

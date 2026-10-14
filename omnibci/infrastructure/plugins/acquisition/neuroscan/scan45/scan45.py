@@ -11,6 +11,8 @@ from enum import IntEnum
 import numpy as np
 
 from omnibci.domain.ports.acquisition import SignalSource, TriggerEmitter
+from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor
+from omnibci.infrastructure.acquisition.metadata import acquisition_descriptor
 from omnibci.sdk import PluginContext, PluginParameters
 
 
@@ -191,19 +193,20 @@ class Scan45DataReader(SignalSource):
         self.writer.close()
         await self.writer.wait_closed()
 
-    async def get_metadata(self):
-        """Return profile declarations without reading an unimplemented header."""
-        return {
-            "metadata_supported": False,
-            "metadata_origin": "configuration",
-            "message": "Device metadata retrieval is not implemented; values describe the configured stream.",
+    async def get_metadata(self) -> str:
+        """Report unsupported querying without presenting settings as device data."""
+        return "Device metadata retrieval is not implemented for Scan45."
+
+    def describe_output(self, *, source_id: str, connection_id: str) -> AcquisitionDescriptor:
+        """Describe the configured stream until device querying is implemented."""
+        return acquisition_descriptor({
             "channel_count": self.channel_number - 1,
             "output_channel_count": self.channel_number,
             "sample_rate": self._sample_rate,
             "channel_labels": [],
             "native_event": "final-row",
             "provenance": "user-declared",
-        }
+        }, source_id=source_id, connection_id=connection_id)
 
     async def request_basic_info(self):
         self.writer.write(scan45_message_manager.getEDFHeaderInfoCommand)

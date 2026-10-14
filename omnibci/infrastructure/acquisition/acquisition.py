@@ -1,9 +1,7 @@
-"""Acquisition domain service and worker command contracts."""
+"""Acquisition runtime and worker command contracts."""
 import asyncio
-import json
 import logging
 import time
-from copy import deepcopy
 from uuid import uuid4
 from enum import Enum
 from typing import Optional, Protocol, runtime_checkable
@@ -16,9 +14,9 @@ from omnibci.application.events import (
     StreamBarrier,
 )
 from omnibci.application.processing_source import requires_signal_preparation
+from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.domain.signal import SignalChunk
-from omnibci.infrastructure.acquisition.metadata import acquisition_descriptor
 from omnibci.shared.events import Event, EventType
 
 logger = logging.getLogger(__name__)
@@ -83,7 +81,7 @@ _COMMAND_RESULT_NAMES = {
 
 class Acquisition:
     """
-    Domain service: drives a SignalSource to read EEG data and pushes
+    Runtime: drives a SignalSource to read EEG data and pushes
     SignalChunk objects into the shared DataManager buffer.
     """
 
@@ -111,7 +109,7 @@ class Acquisition:
         self._fetch_failure: str | None = None
         self._metadata_settings = metadata_settings or {}
         self._descriptor = None
-        self._raw_metadata = None
+        self._raw_metadata: str | None = None
         self._descriptor_error = None
         self.connection_id = uuid4().hex if getattr(data_source, "is_connected", False) else None
 
@@ -397,21 +395,27 @@ class Acquisition:
                 info = await asyncio.wait_for(self.data_source.get_metadata(), timeout=3.0)
             except TimeoutError as exc:
                 raise AcquisitionCommandRejected("SOURCE_METADATA_TIMEOUT", "Source metadata request timed out") from exc
-            if not isinstance(info, dict):
-                raise ValueError("Source metadata must be a JSON object")
-            json.dumps(info, allow_nan=False)
-            self._raw_metadata = deepcopy(info)
+            if not isinstance(info, str):
+                raise ValueError("Source metadata must be a string")
+            self._raw_metadata = info
             try:
-                self._descriptor = acquisition_descriptor(info, source_id=source_id, connection_id=self.connection_id)
+                descriptor = self.data_source.describe_output(
+                    source_id=source_id, connection_id=self.connection_id,
+                )
+                if not isinstance(descriptor, AcquisitionDescriptor):
+                    raise ValueError("Source output description must be an AcquisitionDescriptor")
+                if descriptor.source_id != source_id or descriptor.connection_id != self.connection_id:
+                    raise ValueError("Acquisition descriptor belongs to a different source connection")
+                self._descriptor = descriptor
             except Exception as exc:
-                self._descriptor_error = str(exc) or "Source metadata cannot describe acquisition output"
+                self._descriptor_error = str(exc) or "Source cannot describe acquisition output"
         return self._metadata_response(source_id)
 
     def _metadata_response(self, source_id):
         return {
             "source_id": source_id,
             "connection_id": self.connection_id,
-            "metadata": deepcopy(self._raw_metadata),
+            "metadata": self._raw_metadata,
             "descriptor": self._descriptor.to_dict() if self._descriptor is not None else None,
             "descriptor_error": self._descriptor_error,
         }
@@ -444,6 +448,7 @@ class Acquisition:
                     raw_data=raw_data,
                     sequence_id=self._last_sequence + 1,
                 )
+                # TODO: Consider validating data matrices against the acquisition descriptor in the future.
                 chunk = self.preprocess(chunk)
                 self.data_manager.put_data(chunk)
                 self._last_sequence = chunk.sequence_id

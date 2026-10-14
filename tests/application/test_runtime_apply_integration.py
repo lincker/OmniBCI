@@ -28,6 +28,7 @@ import json
 from pathlib import Path
 import numpy as np
 from omnibci.sdk import SignalSource
+from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor, ChannelDescriptor
 class Replay(SignalSource):
     def __init__(self, *, parameters, context):
         super().__init__()
@@ -50,10 +51,12 @@ class Replay(SignalSource):
         await asyncio.sleep(.01)
         self.cursor += self.size
         return np.zeros((2,self.size))
-    async def get_metadata(self):
-        return {'sample_rate': self.sample_rate, 'output_channel_count': 2,
-                'channel_labels': ['CH1'], 'channel_types': ['eeg'], 'channel_units': ['V'],
-                'provenance': 'protocol-defined'}
+    async def get_metadata(self) -> str:
+        return 'Test recording'
+    def describe_output(self, *, source_id, connection_id):
+        return AcquisitionDescriptor(source_id, self.sample_rate,
+            (ChannelDescriptor(0, 'CH1', 'eeg', 'V'),), 1,
+            connection_id=connection_id, provenance='protocol-defined')
     @property
     def supports_checkpoint(self): return True
     def checkpoint(self):

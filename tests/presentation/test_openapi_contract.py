@@ -191,7 +191,7 @@ class TestResponseDtos:
     def test_acquisition_metadata_exposes_raw_fields_and_normalized_descriptor(self, spec):
         props = _schema(spec, "AcquisitionMetadataResponse")["properties"]
         assert set(props) == {"source_id", "connection_id", "metadata", "descriptor"}
-        assert props["metadata"]["type"] == "object"
+        assert props["metadata"]["type"] == "string"
         refresh = spec["paths"]["/api/v1/acquisition/metadata/refresh"]["post"]
         assert all(parameter["name"] != "profile_id" for parameter in refresh.get("parameters", []))
 

@@ -1,5 +1,5 @@
 from typing import Literal, Optional
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChannelDescriptorModel(BaseModel):
@@ -30,7 +30,7 @@ class AcquisitionDescriptorModel(BaseModel):
 class AcquisitionMetadataResponse(BaseModel):
     source_id: str
     connection_id: str
-    metadata: dict[str, JsonValue]
+    metadata: str
     descriptor: AcquisitionDescriptorModel | None
 
 

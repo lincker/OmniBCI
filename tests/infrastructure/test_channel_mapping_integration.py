@@ -78,9 +78,12 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         assert unprepared.value.result.error_code == "SIGNAL_NOT_PREPARED"
         saved_source = profiles.repository.get_profile(selections[0]["profile_id"])
         metadata = await asyncio.to_thread(container.acquisition_service.get_metadata)
-        assert metadata["metadata"]["output_channel_count"] == 10
-        assert metadata["metadata"]["channel_labels"][8] == "O2"
-        assert metadata["metadata"]["provenance"] == "file-reported"
+        assert isinstance(metadata["metadata"], str)
+        assert "O2" in metadata["metadata"]
+        assert "output_channel_count" not in metadata["metadata"]
+        assert metadata["descriptor"]["output_row_count"] == 10
+        assert metadata["descriptor"]["signal_channel_count"] == 9
+        assert metadata["descriptor"]["provenance"] == "file-reported"
         assert metadata["descriptor"]["channels"][8]["channel_id"] == "channel-8"
         assert profiles.repository.get_profile(saved_source.profile_id) == saved_source
 

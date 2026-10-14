@@ -148,9 +148,10 @@ Important boundaries:
   Their reported rate and signal count take precedence over legacy profile
   defaults when preparing processing; saved values are not rewritten. The
   adapter output includes one final trigger row, separate from the signal count.
-- Scan45 currently returns configured stream information marked
-  `metadata_supported: false` and `metadata_origin: configuration`; it does not
-  report actual device metadata. Curry8 does not report channel types, so the
+- Scan45 returns text explaining that device metadata querying is not implemented.
+  Its output descriptor is separate and marked `user-declared`; configured
+  dimensions are not reported as observed device information.
+  Curry8 does not report channel types, so the
   adapter leaves them unknown. Processing can explicitly declare EEG on mapped
   channels to satisfy the CCA/FBCCA input requirement without changing source facts.
 - CCA initialization currently reads `ssvep.duration` and `ssvep.offset_time`;

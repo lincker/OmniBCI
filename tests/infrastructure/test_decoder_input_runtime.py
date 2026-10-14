@@ -11,7 +11,6 @@ from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor, Channel
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 from omnibci.domain.ports.algorithm import Decoder
 from omnibci.domain.signal import SignalChunk
-from omnibci.infrastructure.acquisition.metadata import acquisition_descriptor
 from omnibci.infrastructure.neuroengine.processing.signal_configuration import signal_context
 from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8.curry8 import Curry8DataReader, Curry8Metadata
 from omnibci.infrastructure.plugins.loader import PluginLoadError
@@ -88,7 +87,7 @@ async def test_curry_unknown_types_require_processing_declaration_before_builtin
     reader._is_connected = reader._is_streaming = True
     reader._metadata = Curry8Metadata(803, 2, 500, 4, False, False, ("C3", "C4"))
     raw_metadata = await reader.get_metadata()
-    source = acquisition_descriptor(raw_metadata, source_id=reader.plugin_type, connection_id="curry-connection")
+    source = reader.describe_output(source_id=reader.plugin_type, connection_id="curry-connection")
     assert "channel_types" not in raw_metadata
     assert all(channel.signal_type == "unknown" for channel in source.channels)
     catalog = PluginCatalog()

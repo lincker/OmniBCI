@@ -5416,10 +5416,7 @@
             "title": "Connection Id"
           },
           "metadata": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue"
-            },
-            "type": "object",
+            "type": "string",
             "title": "Metadata"
           },
           "descriptor": {
@@ -6752,7 +6749,6 @@
         ],
         "title": "InstallMarketPackageRequest"
       },
-      "JsonValue": {},
       "MarketContributionResponse": {
         "properties": {
           "kind": {

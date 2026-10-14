@@ -1,4 +1,4 @@
-"""Source metadata stays raw; processing receives an optional typed description."""
+"""Source metadata stays opaque text; processing receives a typed description."""
 from copy import deepcopy
 from unittest.mock import AsyncMock, MagicMock
 
@@ -16,6 +16,7 @@ RAW = {"sample_rate": 250, "channel_count": 2, "output_channel_count": 3,
        "channel_labels": ["C3", "C4"], "provenance": "device-reported",
        "native_event": "separate-event-packets", "device": "Test amplifier",
        "protocol_version": 803, "capabilities": {"recording_control": False}}
+TEXT = "  Test amplifier\r\nChannels: C3, C4\n<vendor>原始信息</vendor>\n"
 
 
 def test_processing_description_uses_only_source_fields():
@@ -83,7 +84,8 @@ def _worker():
     from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
     from omnibci.domain.channel_mapping import ProcessingInput
     source = MagicMock(is_connected=True, is_streaming=False)
-    source.get_metadata = AsyncMock(return_value=deepcopy(RAW))
+    source.get_metadata = AsyncMock(return_value=TEXT)
+    source.describe_output = MagicMock(side_effect=lambda **identity: acquisition_descriptor(RAW, **identity))
     source.start_stream = AsyncMock()
     bus = MagicMock()
     settings = {**SETTINGS, "PLUGINS.bindings": [ProfileBinding(
@@ -101,7 +103,7 @@ def _result(bus):
 
 
 @pytest.mark.asyncio
-async def test_metadata_command_preserves_every_source_field_without_manual_overlays():
+async def test_metadata_command_preserves_source_text_without_manual_overlays():
     worker, source, bus = _worker()
     worker._metadata_settings = {**SETTINGS, "ACQUISITION.manual_montage": {"invalid": True},
                                  "ACQUISITION.channel_names": ["Wrong", "Names"],
@@ -112,30 +114,31 @@ async def test_metadata_command_preserves_every_source_field_without_manual_over
     assert set(result.data) == {"source_id", "connection_id", "metadata", "descriptor", "descriptor_error"}
     assert result.data["source_id"] == "test_source"
     assert result.data["connection_id"] == worker.connection_id
-    assert result.data["metadata"] == RAW
+    assert result.data["metadata"] == TEXT
     assert result.data["descriptor_error"] is None
     assert result.data["descriptor"]["sample_rate"] == 250
     assert result.data["descriptor"]["signal_channel_count"] == 2
     assert [channel["name"] for channel in result.data["descriptor"]["channels"]] == ["C3", "C4"]
     assert "original_reference" not in result.data["descriptor"]
+    source.describe_output.assert_called_once_with(source_id="test_source", connection_id=worker.connection_id)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("raw", [
-    {"device": "Metadata-only device"}, {**RAW, "channel_labels": ["C3"]},
-    {**RAW, "channel_types": {"C3": "eeg", "C4": "eeg"}},
+@pytest.mark.parametrize("error", [
+    NotImplementedError("Output description is unavailable"),
+    ValueError("Source channel labels do not match the output"),
 ])
-async def test_unusable_processing_description_does_not_hide_or_reread_raw_metadata(raw):
+async def test_unusable_processing_description_does_not_hide_or_reread_metadata_text(error):
     worker, source, bus = _worker()
-    source.get_metadata.return_value = raw
+    source.describe_output.side_effect = error
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
     result = _result(bus)
-    assert result.ok and result.data["metadata"] == raw
+    assert result.ok and result.data["metadata"] == TEXT
     assert result.data["descriptor"] is None
     assert result.data["descriptor_error"]
     source.is_streaming = True
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("cached")))
-    assert _result(bus).ok and _result(bus).data["metadata"] == raw
+    assert _result(bus).ok and _result(bus).data["metadata"] == TEXT
     source.get_metadata.assert_awaited_once()
     await worker.execute((AcquisitionCommand.start_stream, CommandRequest("start", {})))
     assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
@@ -145,18 +148,20 @@ async def test_unusable_processing_description_does_not_hide_or_reread_raw_metad
 async def test_metadata_cache_is_isolated_and_refresh_requires_stopped_source():
     worker, source, bus = _worker()
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
-    _result(bus).data["metadata"]["capabilities"]["recording_control"] = True
-    source.get_metadata.return_value["channel_labels"][0] = "Changed"
+    _result(bus).data["metadata"] = "Caller changed the response"
+    _result(bus).data["descriptor"]["channels"][0]["name"] = "Changed"
+    source.get_metadata.return_value = "New source information\n"
     source.is_streaming = True
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("cached")))
-    assert _result(bus).data["metadata"] == RAW
+    assert _result(bus).data["metadata"] == TEXT
+    assert _result(bus).data["descriptor"]["channels"][0]["name"] == "C3"
     source.get_metadata.assert_awaited_once()
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("refresh", {"refresh": True})))
     assert _result(bus).error_code == "METADATA_REQUIRES_STOP"
     source.get_metadata.assert_awaited_once()
     source.is_streaming = False
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("refresh", {"refresh": True})))
-    assert _result(bus).data["metadata"]["channel_labels"][0] == "Changed"
+    assert _result(bus).data["metadata"] == "New source information\n"
     assert source.get_metadata.await_count == 2
 
 
@@ -173,13 +178,46 @@ async def test_failed_refresh_clears_cached_metadata_without_configuration_fallb
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("raw", [None, "device", {"not_json": object()}, {"invalid": float("nan")}])
-async def test_metadata_requires_a_json_object(raw):
+@pytest.mark.parametrize("raw", [None, b"device", {"device": "Amplifier"}, [], 42])
+async def test_metadata_requires_a_string(raw):
     worker, source, bus = _worker()
     source.get_metadata.return_value = raw
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
     assert not _result(bus).ok
     assert worker._descriptor is None and worker._raw_metadata is None
+    source.describe_output.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["", "not JSON: sample_rate=9999\r\nchannel_count=1000\n", TEXT])
+async def test_display_text_does_not_determine_the_output_descriptor(text):
+    worker, source, bus = _worker()
+    source.get_metadata.return_value = text
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
+    assert _result(bus).data["metadata"] == text
+    assert worker._descriptor.sample_rate == 250
+    assert worker._descriptor.signal_channel_count == 2
+    source.is_streaming = True
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("cached")))
+    assert _result(bus).data["metadata"] == text
+    source.get_metadata.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("descriptor", [
+    RAW,
+    acquisition_descriptor(RAW, source_id="other-source", connection_id="stale"),
+])
+async def test_invalid_or_stale_output_descriptor_is_not_used(descriptor):
+    worker, source, bus = _worker()
+    source.describe_output.side_effect = None
+    source.describe_output.return_value = descriptor
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
+    result = _result(bus)
+    assert result.ok and result.data["metadata"] == TEXT
+    assert result.data["descriptor"] is None
+    assert result.data["descriptor_error"]
+    assert worker._descriptor is None
 
 
 @pytest.mark.asyncio
@@ -231,14 +269,16 @@ async def test_disconnect_clears_metadata_and_reconnect_invalidates_old_receipt(
 
 
 @pytest.mark.asyncio
-async def test_scan45_metadata_explicitly_reports_configured_stream_details_without_device_support():
+async def test_scan45_metadata_reports_unsupported_query_separately_from_configured_output():
     from omnibci.infrastructure.plugins.acquisition.neuroscan.scan45.scan45 import Scan45DataReader
     source = Scan45DataReader(parameters={"sample_rate": 250, "channel_number": 3})
     source.request_basic_info = AsyncMock(side_effect=AssertionError("must not read unimplemented header"))
     metadata = await source.get_metadata()
-    assert metadata["metadata_supported"] is False
-    assert metadata["metadata_origin"] == "configuration"
-    assert metadata["output_channel_count"] == 3
-    assert metadata["sample_rate"] == 250
-    assert metadata["provenance"] == "user-declared"
+    assert isinstance(metadata, str)
+    assert "not implemented" in metadata.lower()
+    descriptor = source.describe_output(source_id="scan45", connection_id="connected")
+    assert descriptor.output_row_count == 3
+    assert descriptor.signal_channel_count == 2
+    assert descriptor.sample_rate == 250
+    assert descriptor.provenance == "user-declared"
     source.request_basic_info.assert_not_awaited()

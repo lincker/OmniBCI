@@ -854,9 +854,7 @@ export interface components {
             /** Connection Id */
             connection_id: string;
             /** Metadata */
-            metadata: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
+            metadata: string;
             descriptor: components["schemas"]["AcquisitionDescriptorModel"] | null;
         };
         /** AcquisitionStatusResponse */
@@ -1470,7 +1468,6 @@ export interface components {
             /** Version */
             version: string;
         };
-        JsonValue: unknown;
         /** MarketContributionResponse */
         MarketContributionResponse: {
             /**

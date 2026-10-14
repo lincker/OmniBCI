@@ -112,8 +112,6 @@ class ResolvedSignalPlan:
                 and self.output_channels == self.source.channels)
 
     def apply(self, chunk: SignalChunk) -> SignalChunk:
-        if chunk.raw_data.shape[0] != self.source.output_row_count:
-            raise ValueError(f"Signal rows changed: expected {self.source.output_row_count}, got {chunk.raw_data.shape[0]}")
         rows = [*self.source_indices, self.source.trigger_row_index]
         return SignalChunk(timestamp=chunk.timestamp, sequence_id=chunk.sequence_id,
                            raw_data=chunk.raw_data[rows, :])

@@ -84,7 +84,7 @@ class _FakeDataSource:
 
     async def get_metadata(self):
         self.calls.append("get_metadata")
-        return {"device": "Fake source"}
+        return "Fake source"
 
 
 class _FakeQueue:

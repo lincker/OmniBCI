@@ -151,11 +151,11 @@ class TestAcquisitionStatus:
 
 
 class TestAcquisitionMetadata:
-    def test_normalized_descriptor_is_exposed_separately_from_raw_fields(self, api_client, acquisition_service):
+    def test_normalized_descriptor_is_exposed_separately_from_source_text(self, api_client, acquisition_service):
         from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor, ChannelDescriptor
         descriptor = AcquisitionDescriptor("test", 500, (ChannelDescriptor(0, "CH1"),), 1,
                                            connection_id="current")
-        raw = {"custom_vendor_fields": {"unknown": None}, "original_reference": "vendor reference"}
+        raw = '  Vendor reference: <unknown /> & value\r\n{"vendor_field": null}\n'
         acquisition_service.get_metadata = MagicMock(return_value={
             "source_id": "test", "connection_id": "current", "metadata": raw,
             "descriptor": descriptor.to_dict(),
@@ -169,10 +169,8 @@ class TestAcquisitionMetadata:
         assert "original_reference" not in result["descriptor"]
 
     def test_read_and_explicit_refresh_use_service_metadata(self, api_client, acquisition_service):
-        metadata = {"source_id": "test", "connection_id": "current", "descriptor": None, "metadata": {
-            "device": "Amplifier", "sample_rate": 500, "channel_count": 64,
-            "protocol_version": "1.2", "controls": {"recording": True}, "unknown": None,
-        }}
+        metadata = {"source_id": "test", "connection_id": "current", "descriptor": None,
+                    "metadata": "Amplifier\nProtocol version: 1.2\nRecording enabled\n"}
         acquisition_service.get_metadata = MagicMock(return_value=metadata)
         response = api_client.get("/api/v1/acquisition/metadata")
         assert response.status_code == 200 and response.json()["data"] == metadata

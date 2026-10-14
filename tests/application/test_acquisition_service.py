@@ -157,10 +157,7 @@ class TestAcquisitionStatus:
 
 def _metadata_response(metadata):
     return {"source_id": metadata.source_id, "connection_id": metadata.connection_id,
-            "metadata": {"device": "Test amplifier", "sample_rate": metadata.sample_rate,
-                         "channel_count": metadata.signal_channel_count,
-                         "provenance": metadata.provenance, "controls": {"recording": True},
-                         "optional": None},
+            "metadata": "Test amplifier\nVendor status: recording enabled\n<unknown />\n",
             "descriptor": metadata.to_dict(), "descriptor_error": None}
 
 
@@ -182,15 +179,24 @@ def _metadata_service():
     return service, executor, provider, binding, metadata, response
 
 
-def test_raw_metadata_preserves_plugin_fields_and_exposes_acquisition_descriptor():
+@pytest.mark.parametrize("raw", [
+    "", "Test amplifier\r\n  Vendor field: <unknown /> & value\n",
+    '{"sample_rate": 999, "channel_count": 99, "provenance": "vendor-text"}',
+])
+def test_metadata_preserves_opaque_plugin_text_and_exposes_acquisition_descriptor(raw):
     service, executor, provider, _, metadata, response = _metadata_service()
+    response["metadata"] = raw
     value = service.get_metadata(refresh=True)
     assert value == {key: response[key] for key in ("source_id", "connection_id", "metadata", "descriptor")}
-    assert value["metadata"]["controls"] == {"recording": True}
-    assert value["metadata"]["optional"] is None
-    value["metadata"]["controls"]["recording"] = False
-    assert service._raw_metadata["metadata"]["controls"]["recording"] is True
+    assert value["metadata"] == raw
+    value["metadata"] = "changed by caller"
+    value["descriptor"]["channels"][0]["name"] = "changed by caller"
+    assert service._raw_metadata["metadata"] == raw
+    assert service._raw_metadata["descriptor"]["channels"][0]["name"] == "C3"
     assert service.cached_descriptor == metadata.to_dict()
+    status = service.handle_get_status(GetAcquisitionStatusQuery())
+    assert status.sample_rate == 250 and status.channel_count == 1
+    assert status.metadata_provenance == "device-reported"
     provider.assert_called_once_with()
     executor.request.assert_called_once_with(EventType.GetSourceMetadata, {"refresh": True}, timeout_s=5.0)
 
@@ -240,30 +246,33 @@ def test_raw_metadata_remains_available_when_processing_cannot_normalize_it():
     assert service.cached_descriptor is None
 
 
-@pytest.mark.parametrize("rate, count, expected_rate, expected_count", [
-    (1000.0, 64, 1000, 64), (250, 1, 250, 1),
-    (None, None, None, None), (True, False, None, None),
-    (-1, 0, None, None), (249.5, "64", None, None),
+@pytest.mark.parametrize("raw", [
+    "sample_rate: 1000\nchannel_count: 64\nprovenance: device-reported",
+    '{"sample_rate": 1000, "channel_count": 64, "provenance": "device-reported"}',
 ])
-def test_status_uses_valid_reported_dimensions_without_a_processing_description(rate, count, expected_rate, expected_count):
+def test_status_does_not_extract_dimensions_or_provenance_from_metadata_text(raw):
     service, _, _, _, _, response = _metadata_service()
     response["descriptor"] = None
     response["descriptor_error"] = "Source does not describe signal rows"
-    response["metadata"].update(sample_rate=rate, channel_count=count, output_channel_count=65)
+    response["metadata"] = raw
     service.get_metadata()
     status = service.handle_get_status(GetAcquisitionStatusQuery())
-    assert status.sample_rate == expected_rate
-    assert status.channel_count == expected_count
+    assert status.sample_rate is None
+    assert status.channel_count is None
+    assert status.metadata_provenance is None
+    assert status.metadata_available is True
 
 
 def test_status_does_not_present_configuration_metadata_as_device_dimensions():
     service, _, _, _, _, response = _metadata_service()
-    response["metadata"].update(metadata_supported=False, metadata_origin="configuration")
+    response["descriptor"]["provenance"] = "user-declared"
+    response["metadata"] = "This source does not support querying metadata."
     service.get_metadata()
     status = service.handle_get_status(GetAcquisitionStatusQuery())
     assert status.sample_rate is None
     assert status.channel_count is None
     assert status.metadata_available is True
+    assert status.metadata_provenance == "user-declared"
 
 
 def test_processing_receives_only_normalized_signal_metadata():
@@ -289,7 +298,8 @@ def test_reconnect_changes_status_identity_and_invalidates_previous_connection_m
 
 
 @pytest.mark.parametrize("change", [
-    {"metadata": []}, {"connection_id": ""}, {"source_id": None}, {"descriptor_error": []},
+    {"metadata": []}, {"metadata": {"sample_rate": 250}}, {"metadata": None},
+    {"connection_id": ""}, {"source_id": None}, {"descriptor_error": []},
     {"descriptor": {"invalid": True}},
 ])
 def test_invalid_worker_metadata_is_rejected(change):
