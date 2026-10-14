@@ -10,78 +10,106 @@ from omnibci.infrastructure.acquisition.metadata import acquisition_descriptor
 from omnibci.shared.events import EventType
 
 
-RAW = {"sample_rate": 250, "signal_channel_count": 2,
-       "channel_labels": ["C3", "C4"], "provenance": "device-reported",
-       "native_event": "separate-event-packets", "device": "Test amplifier",
-       "protocol_version": 803, "capabilities": {"recording_control": False}}
+FIELDS = {"sample_rate": 250, "signal_channel_count": 2,
+          "channel_labels": ["C3", "C4"], "provenance": "device-reported",
+          "native_event": "separate-event-packets"}
 TEXT = "  Test amplifier\r\nChannels: C3, C4\n<vendor>原始信息</vendor>\n"
 
 
-def test_processing_description_uses_only_source_fields():
-    raw = {**RAW, "channel_types": ["eeg", "eog"], "channel_units": ["V", "uV"],
-           "original_reference": "Cz"}
-    metadata = acquisition_descriptor(raw, source_id="test_source", connection_id="connected")
+@pytest.mark.parametrize("sample_rate", [250, 250.0])
+@pytest.mark.parametrize("sequence", [list, tuple])
+def test_processing_description_preserves_explicit_channel_details(sample_rate, sequence):
+    fields = {**FIELDS, "sample_rate": sample_rate,
+              "channel_labels": sequence(["C3", "C4"]), "channel_types": sequence(["eeg", "eog"]),
+              "channel_units": sequence(["V", "uV"]), "channel_ids": sequence(["left", "right"])}
+    original = deepcopy(fields)
+    metadata = acquisition_descriptor(**fields, source_id="test_source", connection_id="connected")
     assert metadata.sample_rate == 250
     assert metadata.signal_channel_count == 2
     assert metadata.output_row_count == 3
     assert metadata.trigger_row_index == 2
-    assert [channel.channel_id for channel in metadata.channels] == ["channel-0", "channel-1"]
+    assert [channel.channel_id for channel in metadata.channels] == ["left", "right"]
     assert [channel.name for channel in metadata.channels] == ["C3", "C4"]
     assert [channel.signal_type for channel in metadata.channels] == ["eeg", "eog"]
     assert [channel.unit for channel in metadata.channels] == ["V", "uV"]
-    assert "original_reference" not in metadata.to_dict()
-    assert raw["original_reference"] == "Cz"
+    assert fields == original
+    assert metadata.native_event == "separate-event-packets"
     assert metadata.provenance == "device-reported"
 
 
-def test_missing_optional_channel_details_are_internal_placeholders_only():
-    raw = {"sample_rate": 250, "signal_channel_count": 2, "provenance": "user-declared"}
-    original = deepcopy(raw)
-    metadata = acquisition_descriptor(raw, source_id="test_source", connection_id="connected")
+@pytest.mark.parametrize("optional", [{}, {"channel_labels": None, "channel_types": None, "channel_units": None,
+                                        "channel_ids": None},
+                                     {"channel_labels": [], "channel_types": [], "channel_units": []},
+                                     {"channel_labels": (), "channel_types": (), "channel_units": ()}])
+def test_missing_optional_channel_details_are_internal_placeholders_only(optional):
+    fields = {"sample_rate": 250, "signal_channel_count": 2, **optional}
+    original = deepcopy(fields)
+    metadata = acquisition_descriptor(**fields, source_id="test_source", connection_id="connected")
     assert [channel.name for channel in metadata.channels] == ["CH1", "CH2"]
+    assert [channel.channel_id for channel in metadata.channels] == ["channel-0", "channel-1"]
     assert all(channel.name_provenance == "generated" for channel in metadata.channels)
     assert all(channel.unit is None and channel.signal_type == "unknown" for channel in metadata.channels)
-    assert raw == original
+    assert metadata.native_event == "final-row"
+    assert metadata.provenance == "protocol-defined"
+    assert fields == original
+
+
+def test_blank_channel_labels_use_generated_names_without_editing_input():
+    labels = [None, "  ", ""]
+    descriptor = acquisition_descriptor(
+        source_id="test_source", connection_id="connected", sample_rate=250,
+        signal_channel_count=3, channel_labels=labels,
+    )
+    assert [channel.name for channel in descriptor.channels] == ["CH1", "CH2", "CH3"]
+    assert all(channel.name_provenance == "generated" for channel in descriptor.channels)
+    assert labels == [None, "  ", ""]
 
 
 def test_acquisition_preserves_source_channel_ids_independently_of_duplicate_labels():
-    raw = {**RAW, "channel_labels": ["EEG", "EEG"], "channel_ids": ["left", "right"],
-           "channel_positions": [{"unsupported": "raw-only"}]}
-    descriptor = acquisition_descriptor(raw, source_id="test_source", connection_id="connected")
+    fields = {**FIELDS, "channel_labels": ["EEG", "EEG"], "channel_ids": ["left", "right"]}
+    original = deepcopy(fields)
+    descriptor = acquisition_descriptor(**fields, source_id="test_source", connection_id="connected")
     assert [channel.channel_id for channel in descriptor.channels] == ["left", "right"]
     assert [channel.name for channel in descriptor.channels] == ["EEG", "EEG"]
-    assert "channel_positions" not in descriptor.to_dict()
+    assert fields == original
 
 
 def test_descriptor_normalizes_type_spelling_without_editing_source_metadata():
-    raw = {**RAW, "channel_types": [" EEG ", "UNKNOWN"]}
-    descriptor = acquisition_descriptor(raw, source_id="test_source", connection_id="connected")
+    fields = {**FIELDS, "channel_types": [" EEG ", "UNKNOWN"]}
+    descriptor = acquisition_descriptor(**fields, source_id="test_source", connection_id="connected")
     assert [channel.signal_type for channel in descriptor.channels] == ["eeg", "unknown"]
-    assert raw["channel_types"] == [" EEG ", "UNKNOWN"]
+    assert fields["channel_types"] == [" EEG ", "UNKNOWN"]
 
 
-@pytest.mark.parametrize("raw, message", [
-    ({}, "positive integer sample rate"),
-    ({**RAW, "sample_rate": 249.5}, "positive integer"),
-    ({**RAW, "sample_rate": float("inf")}, "positive integer"),
-    ({"sample_rate": 250}, "signal channel count"),
-    ({**RAW, "signal_channel_count": 0}, "signal channel count"),
-    ({**RAW, "channel_labels": ["C3"]}, "exactly 2"),
-    ({**RAW, "channel_labels": "C3"}, "must be a sequence"),
-    ({**RAW, "channel_units": ["V"]}, "signal row count"),
-    ({**RAW, "channel_ids": ["one"]}, "signal row count"),
-    ({**RAW, "channel_ids": ["one", "one"]}, "IDs must be unique"),
-    ({**RAW, "channel_ids": ["", "two"]}, "nonempty strings"),
+@pytest.mark.parametrize("missing", ["source_id", "connection_id", "sample_rate", "signal_channel_count"])
+def test_processing_description_requires_explicit_required_fields(missing):
+    fields = {**FIELDS, "source_id": "test_source", "connection_id": "connected"}
+    fields.pop(missing)
+    with pytest.raises(TypeError, match=missing):
+        acquisition_descriptor(**fields)
+
+
+@pytest.mark.parametrize("fields, message", [
+    ({**FIELDS, "sample_rate": 249.5}, "positive integer"),
+    ({**FIELDS, "sample_rate": float("inf")}, "positive integer"),
+    ({**FIELDS, "signal_channel_count": 0}, "signal channel count"),
+    ({**FIELDS, "channel_labels": ["C3"]}, "exactly 2"),
+    ({**FIELDS, "channel_labels": "C3"}, "must be a sequence"),
+    ({**FIELDS, "channel_units": ["V"]}, "signal row count"),
+    ({**FIELDS, "channel_ids": []}, "signal row count"),
+    ({**FIELDS, "channel_ids": ["one"]}, "signal row count"),
+    ({**FIELDS, "channel_ids": ["one", "one"]}, "IDs must be unique"),
+    ({**FIELDS, "channel_ids": ["", "two"]}, "nonempty strings"),
 ])
-def test_invalid_processing_description_is_rejected(raw, message):
+def test_invalid_processing_description_is_rejected(fields, message):
     with pytest.raises(ValueError, match=message):
-        acquisition_descriptor(raw, source_id="test_source", connection_id="connected")
+        acquisition_descriptor(**fields, source_id="test_source", connection_id="connected")
 
 
 def _worker(*, preparation_required=True):
     source = MagicMock(is_connected=True, is_streaming=False, plugin_type="plugin-implementation")
     source.get_metadata = AsyncMock(return_value=TEXT)
-    source.describe_output = MagicMock(side_effect=lambda **identity: acquisition_descriptor(RAW, **identity))
+    source.describe_output = MagicMock(side_effect=lambda **identity: acquisition_descriptor(**FIELDS, **identity))
     source.start_stream = AsyncMock()
     bus = MagicMock()
     worker = AcquisitionRuntime(source, MagicMock(), MagicMock(), event_bus=bus,
@@ -213,8 +241,8 @@ async def test_display_text_does_not_determine_the_output_descriptor(text):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("descriptor", [
-    RAW,
-    acquisition_descriptor(RAW, source_id="other-source", connection_id="stale"),
+    FIELDS,
+    acquisition_descriptor(**FIELDS, source_id="other-source", connection_id="stale"),
 ])
 async def test_invalid_or_stale_output_descriptor_is_not_used(descriptor):
     worker, source, bus = _worker()

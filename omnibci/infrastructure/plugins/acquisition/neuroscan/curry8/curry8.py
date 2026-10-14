@@ -258,13 +258,13 @@ class Curry8DataReader(SignalSource):
         metadata = self._metadata
         if not self._is_connected or metadata is None:
             raise RuntimeError("Get CURRY metadata before describing its output")
-        return acquisition_descriptor({
-            "signal_channel_count": metadata.channel_count - 1,
-            "sample_rate": metadata.sample_rate,
-            "channel_labels": list(metadata.channel_labels[:-1]),
-            "native_event": "final-row",
-            "provenance": "device-reported",
-        }, source_id=source_id, connection_id=connection_id)
+        return acquisition_descriptor(
+            source_id=source_id, connection_id=connection_id,
+            signal_channel_count=metadata.channel_count - 1,
+            sample_rate=metadata.sample_rate,
+            channel_labels=metadata.channel_labels[:-1],
+            native_event="final-row", provenance="device-reported",
+        )
 
     async def start_stream(self) -> bool:
         if not self._is_connected:

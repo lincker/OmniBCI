@@ -199,13 +199,12 @@ class Scan45DataReader(SignalSource):
 
     def describe_output(self, *, source_id: str, connection_id: str) -> AcquisitionDescriptor:
         """Describe the configured stream until device querying is implemented."""
-        return acquisition_descriptor({
-            "signal_channel_count": self.channel_number - 1,
-            "sample_rate": self._sample_rate,
-            "channel_labels": [],
-            "native_event": "final-row",
-            "provenance": "user-declared",
-        }, source_id=source_id, connection_id=connection_id)
+        return acquisition_descriptor(
+            source_id=source_id, connection_id=connection_id,
+            signal_channel_count=self.channel_number - 1,
+            sample_rate=self._sample_rate,
+            native_event="final-row", provenance="user-declared",
+        )
 
     async def request_basic_info(self):
         self.writer.write(scan45_message_manager.getEDFHeaderInfoCommand)

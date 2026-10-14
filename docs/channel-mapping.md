@@ -54,6 +54,13 @@ The runtime, application and Processing never parse the display text. Plugins
 without a valid descriptor can still show metadata, but cannot prepare channel
 mapping.
 
+The shared `acquisition_descriptor()` builder accepts explicit keyword arguments:
+`source_id`, `connection_id`, `sample_rate`, and `signal_channel_count` are
+required. Channel labels, types, units, and IDs are optional; `native_event`
+defaults to `final-row` and `provenance` to `protocol-defined`. Each plugin passes
+only the fields describing its output. Native metadata stays separate display
+text, and Scan45 explicitly retains `user-declared` provenance.
+
 Each `ChannelDescriptor` has a unique `channel_id`, source row `index`, display
 `name`, `signal_type`, and optional `unit` and `name_provenance`. Names may repeat.
 Adapters use source-provided string IDs when available, or deterministic

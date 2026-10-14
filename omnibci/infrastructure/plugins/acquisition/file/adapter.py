@@ -55,16 +55,16 @@ class CNTReaderAdapter(ReaderAdapter):
         return self._metadata
 
     def describe_output(self, *, source_id: str, connection_id: str) -> AcquisitionDescriptor:
-        return acquisition_descriptor({
-            "signal_channel_count": len(self.file.ch_names),
-            "sample_rate": self.file.info["sfreq"],
-            "channel_labels": list(self.file.ch_names),
-            "channel_types": self.file.get_channel_types(),
-            "channel_units": ["V" if channel["unit"] == 107 else None
-                              for channel in self.file.info["chs"]],
-            "native_event": "annotations",
-            "provenance": "file-reported",
-        }, source_id=source_id, connection_id=connection_id)
+        return acquisition_descriptor(
+            source_id=source_id, connection_id=connection_id,
+            signal_channel_count=len(self.file.ch_names),
+            sample_rate=self.file.info["sfreq"],
+            channel_labels=self.file.ch_names,
+            channel_types=self.file.get_channel_types(),
+            channel_units=["V" if channel["unit"] == 107 else None
+                           for channel in self.file.info["chs"]],
+            native_event="annotations", provenance="file-reported",
+        )
 
     async def read_chunk(self, start: int, end: int):
         # FileReader recognizes None as EOF; NumPy would return an empty slice.
