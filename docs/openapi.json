@@ -878,7 +878,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_SourceMetadataModel_"
+                  "$ref": "#/components/schemas/ApiResponse_AcquisitionMetadataResponse_"
                 }
               }
             }
@@ -973,31 +973,13 @@
         ],
         "summary": "Refresh metadata while the source is stopped",
         "operationId": "refresh_metadata_api_v1_acquisition_metadata_refresh_post",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Profile Id"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_SourceMetadataModel_"
+                  "$ref": "#/components/schemas/ApiResponse_AcquisitionMetadataResponse_"
                 }
               }
             }
@@ -5352,6 +5334,50 @@
         ],
         "title": "AcceptActivationRequest"
       },
+      "AcquisitionMetadataResponse": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "connection_id": {
+            "type": "string",
+            "title": "Connection Id"
+          },
+          "metadata": {
+            "type": "string",
+            "title": "Metadata"
+          },
+          "descriptor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignalInfoModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "comparison": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceExpectationsModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_id",
+          "connection_id",
+          "metadata",
+          "descriptor"
+        ],
+        "title": "AcquisitionMetadataResponse"
+      },
       "AcquisitionStatusResponse": {
         "properties": {
           "connected": {
@@ -5410,6 +5436,17 @@
               }
             ],
             "title": "Metadata Provenance"
+          },
+          "connection_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection Id"
           }
         },
         "type": "object",
@@ -5476,6 +5513,32 @@
         },
         "type": "object",
         "title": "ApiResponse"
+      },
+      "ApiResponse_AcquisitionMetadataResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AcquisitionMetadataResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[AcquisitionMetadataResponse]"
       },
       "ApiResponse_AcquisitionStatusResponse_": {
         "properties": {
@@ -6001,32 +6064,6 @@
         "type": "object",
         "title": "ApiResponse[SignalSetupResponse]"
       },
-      "ApiResponse_SourceMetadataModel_": {
-        "properties": {
-          "success": {
-            "type": "boolean",
-            "title": "Success",
-            "default": true
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "ok"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SourceMetadataModel"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[SourceMetadataModel]"
-      },
       "ApiResponse_StimulationStatusResponse_": {
         "properties": {
           "success": {
@@ -6225,44 +6262,62 @@
         "type": "object",
         "title": "ApiResponse[list[PluginProfileResponse]]"
       },
-      "BipolarOutputModel": {
+      "ChannelBindingModel": {
         "properties": {
           "name": {
             "type": "string",
             "title": "Name"
           },
-          "positive": {
+          "source_channel_id": {
             "type": "string",
-            "title": "Positive"
+            "title": "Source Channel Id"
           },
-          "negative": {
-            "type": "string",
-            "title": "Negative"
+          "signal_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "eeg",
+                  "eog",
+                  "ecg",
+                  "emg",
+                  "misc"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal Type"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
           "name",
-          "positive",
-          "negative"
+          "source_channel_id"
         ],
-        "title": "BipolarOutputModel"
+        "title": "ChannelBindingModel"
       },
-      "ChannelAssignmentModel": {
+      "ChannelDescriptorModel": {
         "properties": {
-          "source_index": {
+          "channel_id": {
+            "type": "string",
+            "title": "Channel Id"
+          },
+          "index": {
             "type": "integer",
             "minimum": 0.0,
-            "title": "Source Index"
+            "title": "Index"
           },
-          "electrode": {
+          "name": {
             "type": "string",
-            "title": "Electrode"
+            "title": "Name"
           },
-          "expected_name": {
+          "signal_type": {
             "type": "string",
-            "title": "Expected Name"
+            "title": "Signal Type",
+            "default": "unknown"
           },
           "unit": {
             "anyOf": [
@@ -6275,45 +6330,27 @@
             ],
             "title": "Unit"
           },
-          "signal_type": {
+          "name_provenance": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "const": "generated"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Signal Type"
+            "title": "Name Provenance"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "source_index",
-          "electrode",
-          "expected_name"
+          "channel_id",
+          "index",
+          "name"
         ],
-        "title": "ChannelAssignmentModel"
-      },
-      "ChannelBindingModel": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "source": {
-            "type": "string",
-            "title": "Source"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "name",
-          "source"
-        ],
-        "title": "ChannelBindingModel"
+        "title": "ChannelDescriptorModel"
       },
       "ConfigEntry": {
         "properties": {
@@ -6401,16 +6438,6 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Parameters"
-          },
-          "manual_montage": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SourceMetadataModel"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "processing_input": {
             "anyOf": [
@@ -6549,6 +6576,31 @@
         },
         "type": "object",
         "title": "DecoderChannelRequirementsResponse"
+      },
+      "DraftSourceBindingRequest": {
+        "properties": {
+          "slot": {
+            "type": "string",
+            "const": "acquisition.source",
+            "title": "Slot"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/PluginSelectionResponse"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Parameters"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "slot",
+          "selection",
+          "parameters"
+        ],
+        "title": "DraftSourceBindingRequest"
       },
       "EngineStatusResponse": {
         "properties": {
@@ -7263,6 +7315,11 @@
       },
       "PluginProfileResponse": {
         "properties": {
+          "processing_input_requires_review": {
+            "type": "boolean",
+            "title": "Processing Input Requires Review",
+            "default": false
+          },
           "format_version": {
             "type": "integer",
             "const": 2,
@@ -7305,27 +7362,6 @@
           "revision": {
             "type": "integer",
             "title": "Revision"
-          },
-          "acquisition_montage": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SourceMetadataModel"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "readOnly": true
-          },
-          "manual_montage": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SourceMetadataModel"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "processing_input": {
             "anyOf": [
@@ -7418,36 +7454,16 @@
         "properties": {
           "schema_version": {
             "type": "integer",
-            "const": 1,
+            "const": 2,
             "title": "Schema Version",
-            "default": 1
+            "default": 2
           },
           "outputs": {
             "items": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "$ref": "#/components/schemas/ChannelBindingModel"
-                },
-                {
-                  "$ref": "#/components/schemas/BipolarOutputModel"
-                }
-              ]
+              "$ref": "#/components/schemas/ChannelBindingModel"
             },
             "type": "array",
             "title": "Outputs"
-          },
-          "reference": {
-            "$ref": "#/components/schemas/ReferenceModel"
-          },
-          "excluded_channels": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Excluded Channels"
           }
         },
         "additionalProperties": false,
@@ -7505,7 +7521,6 @@
             "type": "string",
             "enum": [
               "connected",
-              "profile",
               "unavailable"
             ],
             "title": "Metadata Origin"
@@ -7521,6 +7536,11 @@
       },
       "ProfileBindingResponse": {
         "properties": {
+          "processing_input_requires_review": {
+            "type": "boolean",
+            "title": "Processing Input Requires Review",
+            "default": false
+          },
           "slot": {
             "type": "string",
             "title": "Slot"
@@ -7564,16 +7584,6 @@
           "profile_revision": {
             "type": "integer",
             "title": "Profile Revision"
-          },
-          "manual_montage": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SourceMetadataModel"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "processing_input": {
             "anyOf": [
@@ -7639,16 +7649,6 @@
           "target_enabled": {
             "type": "boolean",
             "title": "Target Enabled"
-          },
-          "manual_montage": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SourceMetadataModel"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "processing_input": {
             "anyOf": [
@@ -7733,31 +7733,6 @@
           "session_id"
         ],
         "title": "RecordingResponse"
-      },
-      "ReferenceModel": {
-        "properties": {
-          "mode": {
-            "type": "string",
-            "enum": [
-              "original",
-              "single",
-              "average",
-              "bipolar"
-            ],
-            "title": "Mode",
-            "default": "original"
-          },
-          "channels": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Channels"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "title": "ReferenceModel"
       },
       "RuntimeApplyRequest": {
         "properties": {
@@ -7917,7 +7892,14 @@
         "properties": {
           "bindings": {
             "items": {
-              "$ref": "#/components/schemas/SelectProfileBindingRequest"
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SelectProfileBindingRequest"
+                },
+                {
+                  "$ref": "#/components/schemas/DraftSourceBindingRequest"
+                }
+              ]
             },
             "type": "array",
             "title": "Bindings"
@@ -8390,118 +8372,76 @@
         ],
         "title": "SetPackageEnabledRequest"
       },
-      "SignalChannelModel": {
+      "SignalInfoModel": {
         "properties": {
-          "index": {
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "sample_rate": {
             "type": "integer",
-            "minimum": 0.0,
-            "title": "Index"
+            "exclusiveMinimum": 0.0,
+            "title": "Sample Rate"
           },
-          "name": {
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/ChannelDescriptorModel"
+            },
+            "type": "array",
+            "title": "Channels"
+          },
+          "trigger_row_index": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Trigger Row Index"
+          },
+          "connection_id": {
             "type": "string",
-            "title": "Name"
+            "title": "Connection Id",
+            "default": ""
           },
-          "signal_type": {
+          "native_event": {
             "type": "string",
-            "title": "Signal Type",
-            "default": "unknown"
+            "title": "Native Event",
+            "default": "final-row"
           },
-          "unit": {
+          "provenance": {
+            "type": "string",
+            "title": "Provenance",
+            "default": "protocol-defined"
+          },
+          "signal_channel_count": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Unit"
+            "title": "Signal Channel Count"
           },
-          "reference": {
+          "output_row_count": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Reference"
-          },
-          "position": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "number"
-                },
-                "type": "array",
-                "maxItems": 3,
-                "minItems": 3
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Position"
-          },
-          "coordinate_frame": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Coordinate Frame"
-          },
-          "position_provenance": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Position Provenance"
-          },
-          "derivation": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array",
-                "maxItems": 2,
-                "minItems": 2
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Derivation"
-          },
-          "name_provenance": {
-            "anyOf": [
-              {
-                "type": "string",
-                "const": "generated"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name Provenance"
+            "title": "Output Row Count"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "index",
-          "name"
+          "source_id",
+          "sample_rate",
+          "channels",
+          "trigger_row_index"
         ],
-        "title": "SignalChannelModel"
+        "title": "SignalInfoModel"
       },
       "SignalPreviewResponse": {
         "properties": {
@@ -8555,92 +8495,6 @@
         ],
         "title": "SignalReadinessModel"
       },
-      "SignalSetupModel": {
-        "properties": {
-          "schema_version": {
-            "type": "integer",
-            "const": 1,
-            "title": "Schema Version",
-            "default": 1
-          },
-          "outputs": {
-            "items": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "$ref": "#/components/schemas/ChannelBindingModel"
-                },
-                {
-                  "$ref": "#/components/schemas/BipolarOutputModel"
-                }
-              ]
-            },
-            "type": "array",
-            "title": "Outputs"
-          },
-          "reference": {
-            "$ref": "#/components/schemas/ReferenceModel"
-          },
-          "excluded_channels": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Excluded Channels"
-          },
-          "source_id": {
-            "type": "string",
-            "title": "Source Id"
-          },
-          "assignments": {
-            "items": {
-              "$ref": "#/components/schemas/ChannelAssignmentModel"
-            },
-            "type": "array",
-            "title": "Assignments"
-          },
-          "original_reference": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Original Reference"
-          },
-          "template": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Template"
-          },
-          "manual_metadata": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SourceMetadataModel"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "source_id"
-        ],
-        "title": "SignalSetupModel"
-      },
       "SignalSetupResponse": {
         "properties": {
           "selected_source_id": {
@@ -8675,10 +8529,10 @@
               }
             ]
           },
-          "source_metadata": {
+          "acquisition_descriptor": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/SourceMetadataModel"
+                "$ref": "#/components/schemas/SignalInfoModel"
               },
               {
                 "type": "null"
@@ -8740,49 +8594,9 @@
               }
             ]
           },
-          "legacy_setup": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SignalSetupModel"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "setup": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SignalSetupModel"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "revision": {
             "type": "string",
             "title": "Revision"
-          },
-          "accepted_setup": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SignalSetupModel"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "active_setup": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SignalSetupModel"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "readiness": {
             "$ref": "#/components/schemas/SignalReadinessModel"
@@ -8791,95 +8605,62 @@
         "type": "object",
         "required": [
           "source_revision",
-          "setup",
           "revision",
-          "accepted_setup",
-          "active_setup",
           "readiness"
         ],
         "title": "SignalSetupResponse"
       },
-      "SourceMetadataModel": {
+      "SourceExpectationsModel": {
         "properties": {
-          "source_id": {
+          "status": {
             "type": "string",
-            "title": "Source Id"
+            "enum": [
+              "unconfirmed",
+              "matched",
+              "mismatched",
+              "unverified"
+            ],
+            "title": "Status"
           },
           "sample_rate": {
-            "type": "integer",
-            "exclusiveMinimum": 0.0,
-            "title": "Sample Rate"
+            "$ref": "#/components/schemas/SourceParameterComparisonModel"
           },
-          "channels": {
-            "items": {
-              "$ref": "#/components/schemas/SignalChannelModel"
-            },
-            "type": "array",
-            "title": "Channels"
-          },
-          "trigger_row_index": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Trigger Row Index"
-          },
-          "connection_id": {
-            "type": "string",
-            "title": "Connection Id",
-            "default": ""
-          },
-          "original_reference": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Original Reference"
-          },
-          "native_event": {
-            "type": "string",
-            "title": "Native Event",
-            "default": "final-row"
-          },
-          "provenance": {
-            "type": "string",
-            "title": "Provenance",
-            "default": "user-declared"
-          },
-          "signal_channel_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Signal Channel Count"
-          },
-          "output_row_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Output Row Count"
+          "channel_number": {
+            "$ref": "#/components/schemas/SourceParameterComparisonModel"
           }
         },
-        "additionalProperties": false,
         "type": "object",
         "required": [
-          "source_id",
+          "status",
           "sample_rate",
-          "channels",
-          "trigger_row_index"
+          "channel_number"
         ],
-        "title": "SourceMetadataModel"
+        "title": "SourceExpectationsModel"
+      },
+      "SourceParameterComparisonModel": {
+        "properties": {
+          "expected": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected"
+          },
+          "actual": {
+            "type": "integer",
+            "title": "Actual"
+          }
+        },
+        "type": "object",
+        "required": [
+          "expected",
+          "actual"
+        ],
+        "title": "SourceParameterComparisonModel"
       },
       "StartRecordingRequest": {
         "properties": {
@@ -9079,16 +8860,6 @@
             "type": "integer",
             "minimum": 1.0,
             "title": "Expected Revision"
-          },
-          "manual_montage": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SourceMetadataModel"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "processing_input": {
             "anyOf": [

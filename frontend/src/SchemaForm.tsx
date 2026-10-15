@@ -1,6 +1,7 @@
 /** Render the documented plugin schema subset; the server remains authoritative. */
 import { useId, useState } from "react";
 import { currentConnection, desktopBridge } from "./desktop";
+import { useI18n, translate, type Translate, type TranslationKey } from "./i18n";
 
 export interface ConfigurationSchema {
   type: "object" | "array" | "string" | "integer" | "number" | "boolean";
@@ -21,6 +22,23 @@ export interface ConfigurationSchema {
   "x-apply"?: "restart" | "module" | "trial";
   "x-widget"?: "file-path";
 }
+
+const schemaTextKeys: Record<string, TranslationKey> = {
+  "Recording path": "schema.recordingPath",
+  "Chunk size (samples)": "schema.chunkSize",
+  "Sample rate (Hz)": "schema.sampleRate",
+  "Output rows including event row": "schema.outputRows",
+  "Decode window (seconds)": "schema.decodeWindow",
+  "Trigger offset (seconds)": "schema.triggerOffset",
+  "Parallel port address": "schema.parallelAddress",
+  "Device host": "schema.deviceHost",
+  "TCP port": "schema.tcpPort",
+  "Total channels sent by the device, including the final event channel. Must match the Scan45 stream.": "schema.scanChannelsDescription",
+};
+const schemaText = (value: string, t: Translate): string => {
+  const key = Object.prototype.hasOwnProperty.call(schemaTextKeys, value) ? schemaTextKeys[value] : undefined;
+  return key ? t(key) : value;
+};
 
 const object = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -50,35 +68,37 @@ export function initialSchemaValue(schema: ConfigurationSchema): unknown {
   return "";
 }
 
-export function schemaErrors(schema: ConfigurationSchema, value: unknown, path = "Parameters"): string[] {
+export function schemaErrors(schema: ConfigurationSchema, value: unknown, path?: string,
+  t: Translate = (key, params) => translate("en", key, params)): string[] {
+  const label = path ?? t("schema.parameters");
   const errors: string[] = [];
-  const fail = (message: string) => errors.push(`${path}: ${message}`);
+  const fail = (message: string) => errors.push(`${label}: ${message}`);
   if (schema.type === "object") {
-    if (!object(value)) return [`${path}: enter an object`];
-    for (const key of schema.required ?? []) if (!(key in value)) fail(`${key} is required`);
+    if (!object(value)) return [`${label}: ${t("schema.enterObject")}`];
+    for (const key of schema.required ?? []) if (!(key in value)) fail(t("schema.required", { field: key }));
     for (const [key, item] of Object.entries(value)) {
       const child = schema.properties?.[key];
-      if (child) errors.push(...schemaErrors(child, item, `${path} · ${child.title ?? key}`));
-      else fail(`${key} is not a supported parameter`);
+      if (child) errors.push(...schemaErrors(child, item, `${label} · ${schemaText(child.title ?? key, t)}`, t));
+      else fail(t("schema.unsupported", { field: key }));
     }
   } else if (schema.type === "array") {
-    if (!Array.isArray(value)) return [`${path}: enter a list`];
-    if (schema.minItems !== undefined && value.length < schema.minItems) fail(`at least ${schema.minItems} items required`);
-    if (schema.maxItems !== undefined && value.length > schema.maxItems) fail(`at most ${schema.maxItems} items allowed`);
-    if (schema.items) value.forEach((item, index) => errors.push(...schemaErrors(schema.items!, item, `${path} [${index + 1}]`)));
+    if (!Array.isArray(value)) return [`${label}: ${t("schema.enterList")}`];
+    if (schema.minItems !== undefined && value.length < schema.minItems) fail(t("schema.minItems", { count: schema.minItems }));
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) fail(t("schema.maxItems", { count: schema.maxItems }));
+    if (schema.items) value.forEach((item, index) => errors.push(...schemaErrors(schema.items!, item, `${label} [${index + 1}]`, t)));
   } else if (schema.type === "boolean") {
-    if (typeof value !== "boolean") fail("choose true or false");
+    if (typeof value !== "boolean") fail(t("schema.chooseBoolean"));
   } else if (schema.type === "string") {
-    if (typeof value !== "string") return [`${path}: enter text`];
-    if (schema.minLength !== undefined && value.length < schema.minLength) fail(`at least ${schema.minLength} characters required`);
-    if (schema.maxLength !== undefined && value.length > schema.maxLength) fail(`at most ${schema.maxLength} characters allowed`);
+    if (typeof value !== "string") return [`${label}: ${t("schema.enterText")}`];
+    if (schema.minLength !== undefined && value.length < schema.minLength) fail(t("schema.minLength", { count: schema.minLength }));
+    if (schema.maxLength !== undefined && value.length > schema.maxLength) fail(t("schema.maxLength", { count: schema.maxLength }));
   } else {
-    if (typeof value !== "number" || !Number.isFinite(value)) return [`${path}: enter a finite number`];
-    if (schema.type === "integer" && !Number.isInteger(value)) fail("enter a whole number");
-    if (schema.minimum !== undefined && value < schema.minimum) fail(`minimum is ${schema.minimum}`);
-    if (schema.maximum !== undefined && value > schema.maximum) fail(`maximum is ${schema.maximum}`);
+    if (typeof value !== "number" || !Number.isFinite(value)) return [`${label}: ${t("schema.finiteNumber")}`];
+    if (schema.type === "integer" && !Number.isInteger(value)) fail(t("schema.wholeNumber"));
+    if (schema.minimum !== undefined && value < schema.minimum) fail(t("schema.minimum", { value: schema.minimum }));
+    if (schema.maximum !== undefined && value > schema.maximum) fail(t("schema.maximum", { value: schema.maximum }));
   }
-  if (schema.enum && !schema.enum.some((option) => sameParameters(option, value))) fail("choose a listed value");
+  if (schema.enum && !schema.enum.some((option) => sameParameters(option, value))) fail(t("schema.chooseListed"));
   return errors;
 }
 
@@ -91,53 +111,54 @@ interface FieldProps {
 }
 
 function SchemaField({ schema, value, onChange, disabled, label }: FieldProps) {
+  const { t } = useI18n();
   const id = useId();
   const [fileError, setFileError] = useState("");
-  const title = schema.title ?? label;
+  const title = schemaText(schema.title ?? label, t);
   if (schema.type === "object" && !schema.enum) {
     const values = object(value) ? value : {};
     return <fieldset className="schema-group" disabled={disabled}>
       <legend>{title}</legend>
-      {schema.description && <p className="setting-description">{schema.description}</p>}
+      {schema.description && <p className="setting-description">{schemaText(schema.description, t)}</p>}
       {Object.entries(schema.properties ?? {}).map(([key, child]) => {
         const optional = !schema.required?.includes(key);
         const update = (next: unknown) => onChange({ ...values, [key]: next });
         return <div key={key} className="schema-property">
           {values[key] === undefined && optional
-            ? <button type="button" onClick={() => update(initialSchemaValue(child))}>Add {child.title ?? key}</button>
+            ? <button type="button" onClick={() => update(initialSchemaValue(child))}>{t("schema.addField", { field: schemaText(child.title ?? key, t) })}</button>
             : <SchemaField schema={child} label={key} value={values[key]} onChange={update} disabled={disabled} />}
           {optional && values[key] !== undefined && <button type="button" className="text-button"
-            onClick={() => { const next = { ...values }; delete next[key]; onChange(next); }}>Remove {child.title ?? key}</button>}
+            onClick={() => { const next = { ...values }; delete next[key]; onChange(next); }}>{t("schema.removeField", { field: schemaText(child.title ?? key, t) })}</button>}
         </div>;
       })}
-      {!Object.keys(schema.properties ?? {}).length && <p className="setting-description">This plugin has no editable parameters.</p>}
+      {!Object.keys(schema.properties ?? {}).length && <p className="setting-description">{t("schema.noParameters")}</p>}
     </fieldset>;
   }
   if (schema.type === "array" && !schema.enum) {
     const values = Array.isArray(value) ? value : [];
     return <fieldset className="schema-group" disabled={disabled}>
       <legend>{title}</legend>
-      {schema.description && <p className="setting-description">{schema.description}</p>}
+      {schema.description && <p className="setting-description">{schemaText(schema.description, t)}</p>}
       {values.map((item, index) => <div className="schema-array-item" key={index}>
-        {schema.items && <SchemaField schema={schema.items} label={`Item ${index + 1}`} value={item} disabled={disabled}
+        {schema.items && <SchemaField schema={schema.items} label={t("schema.item", { index: index + 1 })} value={item} disabled={disabled}
           onChange={(next) => onChange(values.map((previous, position) => position === index ? next : previous))} />}
         <div className="actions">
           <button type="button" disabled={disabled || index === 0} onClick={() => {
             const next = [...values]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; onChange(next);
-          }} aria-label={`Move ${title} item ${index + 1} up`}>Move up</button>
-          <button type="button" onClick={() => onChange(values.filter((_, position) => position !== index))}>Remove item</button>
+          }} aria-label={t("schema.moveItemUp", { title, index: index + 1 })}>{t("schema.moveUp")}</button>
+          <button type="button" onClick={() => onChange(values.filter((_, position) => position !== index))}>{t("schema.removeItem")}</button>
         </div>
       </div>)}
       <button type="button" disabled={disabled || !schema.items || (schema.maxItems !== undefined && values.length >= schema.maxItems)}
-        onClick={() => schema.items && onChange([...values, initialSchemaValue(schema.items)])}>Add item</button>
+        onClick={() => schema.items && onChange([...values, initialSchemaValue(schema.items)])}>{t("schema.addItem")}</button>
     </fieldset>;
   }
   return <div className="setting-row">
     <label htmlFor={id} className="setting-label">{title}</label>
-    {schema.description && <span className="setting-description">{schema.description}</span>}
+    {schema.description && <span className="setting-description">{schemaText(schema.description, t)}</span>}
     {schema.enum ? <select id={id} disabled={disabled} value={schema.enum.findIndex((option) => sameParameters(option, value))}
       onChange={(event) => onChange(clone(schema.enum![Number(event.target.value)]))}>
-      <option value={-1} disabled>Select a value</option>
+      <option value={-1} disabled>{t("schema.selectValue")}</option>
       {schema.enum.map((option, index) => <option value={index} key={index}>{typeof option === "string" ? option : JSON.stringify(option)}</option>)}
     </select> : schema.type === "boolean" ? <input id={id} type="checkbox" checked={value === true} disabled={disabled}
       onChange={(event) => onChange(event.target.checked)} />
@@ -151,12 +172,12 @@ function SchemaField({ schema, value, onChange, disabled, label }: FieldProps) {
             void desktopBridge()!.chooseRecordingFile().then((path) => {
               if (path !== null && currentConnection()?.id === owner) onChange(path);
             }).catch((cause) => setFileError(String(cause)));
-          }}>Browse…</button>}</div>
+          }}>{t("schema.browse")}</button>}</div>
         : <input id={id} type="number" value={typeof value === "number" || typeof value === "string" ? value : ""}
           min={schema.minimum} max={schema.maximum} step={schema.type === "integer" ? 1 : "any"} disabled={disabled}
           onChange={(event) => onChange(event.target.value === "" ? "" : Number(event.target.value))} />}
-    {schema["x-widget"] === "file-path" && <span className="setting-detail">Path on the backend computer. Remote files are not uploaded.</span>}
-    {schema["x-scope"] === "machine" && <span className="setting-detail">Specific to the backend computer</span>}
+    {schema["x-widget"] === "file-path" && <span className="setting-detail">{t("schema.backendPath")}</span>}
+    {schema["x-scope"] === "machine" && <span className="setting-detail">{t("schema.machineSpecific")}</span>}
     {fileError && <span className="error" role="alert">{fileError}</span>}
   </div>;
 }
@@ -167,6 +188,7 @@ export function SchemaForm({ schema, value, onChange, disabled }: {
   onChange: (value: Record<string, unknown>) => void;
   disabled?: boolean;
 }) {
-  return <SchemaField schema={schema} label="Parameters" value={value} disabled={disabled}
+  const { t } = useI18n();
+  return <SchemaField schema={schema} label={t("schema.parameters")} value={value} disabled={disabled}
     onChange={(next) => { if (object(next)) onChange(next); }} />;
 }

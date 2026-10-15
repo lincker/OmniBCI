@@ -66,13 +66,11 @@ def test_user_overrides_win_and_only_overrides_are_written(host_files):
     assert restarted.read_saved()[1] == saved_revision
 
 
-def test_structured_signal_setup_round_trips_without_flattening_nested_fields(host_files):
-    from omnibci.domain.montage import SignalSetup
-
+def test_retired_signal_setup_remains_readable_without_accepting_new_writes(host_files):
     defaults, user_file = host_files
     settings = OmniBCISettings(defaults_file=defaults)
     _, revision = settings.read_saved()
-    setup = SignalSetup.from_dict({
+    setup = {
         "schema_version": 1, "source_id": "test-source", "template": "standard_1020",
         "assignments": [
             {"source_index": 0, "electrode": "O1", "expected_name": "CH1"},
@@ -84,21 +82,24 @@ def test_structured_signal_setup_round_trips_without_flattening_nested_fields(ho
             "source_id": "test-source", "sample_rate": 250, "trigger_row_index": 2,
             "channels": [{"index": 0, "name": "CH1", "unit": "uV"}, {"index": 1, "name": "CH2", "unit": "uV"}],
         },
-    }).to_dict()
-    revision = settings.update({"SIGNAL.setup": setup}, expected_revision=revision)
+    }
+    user_file.parent.mkdir(exist_ok=True)
+    user_file.write_text(tomlkit.dumps({"SIGNAL": {"setup": setup}}), encoding="utf-8")
+    with pytest.raises(ConfigProfileValidationError, match="SIGNAL.setup"):
+        settings.update({"SIGNAL.setup": setup}, expected_revision=revision)
     restarted = OmniBCISettings(defaults_file=defaults)
 
     assert restarted.read_saved()[0]["SIGNAL.setup"] == setup
     assert restarted.get("SIGNAL.setup") == setup
-    assert SignalSetup.from_dict(restarted.get("SIGNAL.setup")).to_dict() == setup
     assert not any(key.startswith("SIGNAL.setup.") for key in restarted.snapshot())
     assert tomlkit.parse(user_file.read_text(encoding="utf-8")).unwrap()["SIGNAL"]["setup"] == setup
 
+    revision = restarted.read_saved()[1]
     revision = restarted.update({"NEUROENGINE.queue_size": 250}, expected_revision=revision)
     assert restarted.get("SIGNAL.setup") == setup
-    replacement = SignalSetup.from_dict({"source_id": "test-source", "outputs": ["O1"]}).to_dict()
-    restarted.update({"SIGNAL.setup": replacement}, expected_revision=revision)
-    assert OmniBCISettings(defaults_file=defaults).get("SIGNAL.setup") == replacement
+    with pytest.raises(ConfigProfileValidationError, match="SIGNAL.setup"):
+        restarted.update({"SIGNAL.setup": {"outputs": []}}, expected_revision=revision)
+    assert OmniBCISettings(defaults_file=defaults).get("SIGNAL.setup") == setup
 
 
 @pytest.mark.parametrize("line_ending", ["\n", "\r\n"], ids=["lf", "crlf"])

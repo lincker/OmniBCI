@@ -1,10 +1,10 @@
 """HTTP contracts for exact plugin profiles and accepted activation snapshots."""
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from omnibci.presentation.schemas.plugin_selection import PluginSelectionResponse
-from omnibci.presentation.schemas.signal_setup import ProcessingInputModel, SourceMetadataModel
+from omnibci.presentation.schemas.signal_setup import ProcessingInputModel
 
 
 PluginKind = Literal["acquisition", "decoder", "epoch_detector", "filter", "paradigm", "trigger", "effector"]
@@ -31,7 +31,20 @@ class PluginConfigurationResponse(BaseModel):
     channel_requirements: DecoderChannelRequirementsResponse | None = None
 
 
+def _visible_processing_input(value):
+    if isinstance(value, dict):
+        data = dict(value)
+        saved = data.get("processing_input")
+        if isinstance(saved, dict) and saved.get("schema_version", 1) != 2:
+            data["processing_input"] = None
+            data["processing_input_requires_review"] = True
+        return data
+    return value
+
+
 class PluginProfileResponse(BaseModel):
+    _visible_input = model_validator(mode="before")(_visible_processing_input)
+    processing_input_requires_review: bool = False
     format_version: Literal[2] = 2
     profile_id: str
     name: str
@@ -40,8 +53,6 @@ class PluginProfileResponse(BaseModel):
     parameters: dict[str, Any]
     configuration_version: int
     revision: int
-    acquisition_montage: SourceMetadataModel | None = Field(default=None, json_schema_extra={"readOnly": True})
-    manual_montage: SourceMetadataModel | None = None
     processing_input: ProcessingInputModel | None = None
 
 
@@ -51,7 +62,6 @@ class CreatePluginProfileRequest(BaseModel):
     selection: PluginSelectionResponse
     name: str = Field(min_length=1, max_length=64)
     parameters: dict[str, Any] = Field(default_factory=dict)
-    manual_montage: SourceMetadataModel | None = None
     processing_input: ProcessingInputModel | None = None
 
 
@@ -60,11 +70,12 @@ class UpdatePluginProfileRequest(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     parameters: dict[str, Any]
     expected_revision: int = Field(ge=1)
-    manual_montage: SourceMetadataModel | None = None
     processing_input: ProcessingInputModel | None = None
 
 
 class ProfileBindingResponse(BaseModel):
+    _visible_input = model_validator(mode="before")(_visible_processing_input)
+    processing_input_requires_review: bool = False
     slot: str
     kind: PluginKind
     profile_id: str | None = None
@@ -72,14 +83,11 @@ class ProfileBindingResponse(BaseModel):
     parameters: dict[str, Any]
     configuration_version: int
     profile_revision: int
-    manual_montage: SourceMetadataModel | None = None
     processing_input: ProcessingInputModel | None = None
 
     @model_serializer(mode="wrap")
     def serialize_binding(self, handler):
         data = handler(self)
-        if self.manual_montage is None:
-            data.pop("manual_montage", None)
         if self.processing_input is None:
             data.pop("processing_input", None)
         return data

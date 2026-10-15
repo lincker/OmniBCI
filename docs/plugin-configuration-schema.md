@@ -91,16 +91,26 @@ backend.
 
 ## Acquisition source context
 
-To activate an `acquisition.source` Profile, the current engine requires resolved
-`sample_rate` and `channel_number` parameters, both positive integers. Source
-schemas must declare these parameters; the host validates them before activation
-and runtime projection. Plugin-specific bounds still apply, such as the bundled
-sources' event-channel convention.
+Source schemas retain `sample_rate` and `channel_number` so Profiles can record
+expected experiment parameters. `channel_number` counts all adapter output rows,
+including the final event row. Declared values must be positive integers and
+satisfy plugin-specific bounds.
 
-The host derives acquisition runtime settings and processing sample rate from
-this pinned source Profile. It does not recover missing values from old host
-settings or silently use the engine's default sample rate. This validation does
-not verify that a connected device or file agrees with the declarations.
+Curry8 and File Reader omit these values on a new Profile until the user reads
+metadata and explicitly adopts the observed values. Their schema fields are
+optional and have no defaults, allowing connection before confirmation. Get
+Metadata compares the pinned Profile expectations with actual `SignalInfo`.
+Missing expectations or differences block Processing preparation and streaming;
+the user must correct the source or save and apply the observed values. The
+Acquisition panel can save these values as a new named Profile, preserving the
+original Profile and its experiment expectations.
+Metadata reads never overwrite a Profile.
+
+Processing initialization and trial updates receive the actual sample rate and
+mapped channels from the prepared `SignalInfo`. They do not fall back to expected
+Profile values or an engine default. Scan45 remains unchanged: it requires its
+configured dimensions to parse data and reports `user-declared` information, so
+the comparison is explicitly unverified rather than claiming a device match.
 
 ## Example
 

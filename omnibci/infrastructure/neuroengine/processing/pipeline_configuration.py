@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 
 from omnibci.application.plugin_schema import validate_parameters
+from omnibci.application.processing_source import processing_input, requires_signal_preparation, validate_plan_binding
 from omnibci.domain.ports.algorithm import Decoder, Filter
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.runtime_configuration import (
@@ -14,7 +15,7 @@ from omnibci.sdk import PluginContext
 
 @dataclass(frozen=True)
 class ConfiguredPipeline:
-    decoder: Decoder
+    decoder: Decoder | None
     filters: tuple[Filter, ...]
     settings_snapshot: dict
 
@@ -28,7 +29,7 @@ def load_filters(snapshot: dict, context: PluginContext) -> list[Filter]:
 
 def _binding_content(binding):
     return (binding.slot, binding.kind, binding.selection,
-            binding.configuration_version, binding.parameters, binding.manual_montage,
+            binding.configuration_version, binding.parameters,
             binding.processing_input)
 
 
@@ -60,7 +61,7 @@ def _require_trial_changes(schema, before, after, inherited=None):
         raise ValueError("Changed plugin parameters require a module restart")
 
 
-def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int,
+def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int | None,
                           baseline_duration: float, signal_plan=None) -> ConfiguredPipeline:
     """Validate fixed context, then construct decoder and filters as one bundle.
 
@@ -76,10 +77,7 @@ def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int,
         raise ValueError("Pipeline update requires a configuration revision")
     previous = configured_bindings(current)
     selected = configured_bindings(snapshot)
-    previous_decoder = next((binding for binding in previous if binding.kind == "decoder"), None)
-    selected_decoder = next((binding for binding in selected if binding.kind == "decoder"), None)
-    if (getattr(previous_decoder, "processing_input", None)
-            != getattr(selected_decoder, "processing_input", None)):
+    if processing_input(current) != processing_input(snapshot):
         raise ValueError("Processing input changes require a module restart")
 
     flexible = {"decoder", "filter"}
@@ -91,15 +89,26 @@ def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int,
     if ({key: value for key, value in current.items() if key not in mirrors}
             != {key: value for key, value in snapshot.items() if key not in mirrors}):
         raise ValueError("Host configuration changes require a module restart")
-    if (snapshot.get("ACQUISITION.sample_rate", sample_rate) != sample_rate
-            or snapshot.get("ALGORITHM.baseline_duration", baseline_duration) != baseline_duration):
-        raise ValueError("Pipeline context differs from the running sample rate or baseline")
+    if signal_plan is not None:
+        validate_plan_binding(snapshot, signal_plan)
+        if signal_plan.source.sample_rate != sample_rate:
+            raise ValueError("Pipeline context differs from the running sample rate")
+    if snapshot.get("ALGORITHM.baseline_duration", baseline_duration) != baseline_duration:
+        raise ValueError("Pipeline context differs from the running baseline")
 
     old_slots = {binding.slot: binding for binding in previous}
     catalog = CatalogConfigurationAdapter()
     for binding in selected:
         if binding.kind not in flexible:
             continue
+        definition = catalog.get(binding.kind, binding.selection)
+        if not definition.available:
+            raise ValueError(f"{binding.slot}: plugin is unavailable on this platform")
+        if (definition.configuration_version is not None
+                and definition.configuration_version != binding.configuration_version):
+            raise ValueError("Plugin configuration schema migration required")
+        after = (validate_parameters(definition.schema, binding.parameters)
+                 if definition.schema is not None else deepcopy(binding.parameters))
         old = old_slots.get(binding.slot)
         if old is None or old.selection != binding.selection:
             continue
@@ -107,10 +116,13 @@ def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int,
             raise ValueError("Plugin schema version changes require a module restart")
         if old.parameters == binding.parameters:
             continue
-        definition = catalog.get(binding.kind, binding.selection)
+        if definition.schema is None:
+            raise ValueError("Changed plugin parameters require a module restart")
         before = validate_parameters(definition.schema, old.parameters)
-        after = validate_parameters(definition.schema, binding.parameters)
         _require_trial_changes(definition.schema, before, after)
+
+    if signal_plan is None and requires_signal_preparation(snapshot):
+        return ConfiguredPipeline(None, (), snapshot)
 
     context = PluginContext(sample_rate=sample_rate,
                             channel_names=tuple(snapshot.get("ACQUISITION.channel_names", ())),

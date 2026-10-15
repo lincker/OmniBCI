@@ -44,9 +44,8 @@ def propose_profile(body: ProfileVersionRequest, svc: PluginPackageService = Dep
     with package_errors(), _configuration_errors():
         proposal = svc.propose_profile(**body.model_dump())
         data = asdict(proposal)
-        for name in ("manual_montage", "processing_input"):
-            if getattr(proposal, name) is not None:
-                data[name] = getattr(proposal, name).to_dict()
+        if proposal.processing_input is not None:
+            data["processing_input"] = proposal.processing_input.to_dict()
         return ApiResponse(data=data)
 
 

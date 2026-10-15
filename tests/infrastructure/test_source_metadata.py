@@ -1,130 +1,120 @@
-"""Metadata normalization and stream preparation at the acquisition boundary."""
+"""Source metadata stays opaque text; processing receives a typed description."""
+from copy import deepcopy
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from omnibci.application.events import CommandRequest
-from omnibci.infrastructure.acquisition.acquisition import Acquisition, AcquisitionCommand
-from omnibci.infrastructure.acquisition.metadata import source_metadata
+from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime, AcquisitionCommand
+from omnibci.infrastructure.acquisition.metadata import signal_info
 from omnibci.shared.events import EventType
 
 
-SETTINGS = {"ACQUISITION.signal_source": "test_source", "ACQUISITION.sample_rate": 250,
-            "ACQUISITION.channel_number": 3, "SIGNAL.setup": {}}
-RAW = {"sample_rate": 250, "output_channel_count": 3, "channel_labels": ["C3", "C4"],
-       "provenance": "device-reported", "native_event": "separate-event-packets"}
+FIELDS = {"sample_rate": 250, "signal_channel_count": 2,
+          "channel_labels": ["C3", "C4"], "provenance": "device-reported",
+          "native_event": "separate-event-packets"}
+TEXT = "  Test amplifier\r\nChannels: C3, C4\n<vendor>原始信息</vendor>\n"
 
 
-def test_manual_fallback_keeps_unknown_units_and_signal_types():
-    metadata = source_metadata(None, SETTINGS, source_id="test_source", connection_id="connected")
-    assert [channel.name for channel in metadata.channels] == ["CH1", "CH2"]
-    assert all(channel.unit is None and channel.signal_type == "unknown" for channel in metadata.channels)
-    assert metadata.trigger_row_index == 2
+@pytest.mark.parametrize("sample_rate", [250, 250.0])
+@pytest.mark.parametrize("sequence", [list, tuple])
+def test_processing_description_preserves_explicit_channel_details(sample_rate, sequence):
+    fields = {**FIELDS, "sample_rate": sample_rate,
+              "channel_labels": sequence(["C3", "C4"]), "channel_types": sequence(["eeg", "eog"]),
+              "channel_units": sequence(["V", "uV"]), "channel_ids": sequence(["left", "right"])}
+    original = deepcopy(fields)
+    metadata = signal_info(**fields, source_id="test_source", connection_id="connected")
+    assert metadata.sample_rate == 250
+    assert metadata.signal_channel_count == 2
     assert metadata.output_row_count == 3
-    assert metadata.provenance == "user-declared"
-    assert all(channel.name_provenance == "generated" for channel in metadata.channels)
-
-
-def test_observation_excludes_manual_montage_legacy_names_and_reference():
-    from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
-    manual = SourceMetadata("test_source", 250, (
-        ChannelDescriptor(0, "C3", unit="uV"), ChannelDescriptor(1, "C4", unit="uV"),
-    ), 2, original_reference="Cz")
-    settings = {**SETTINGS, "ACQUISITION.channel_names": ["C3", "C4"],
-                "ACQUISITION.manual_montage": manual.to_dict(),
-                "SIGNAL.setup": {"manual_metadata": manual.to_dict()}}
-    observed = source_metadata({}, settings, source_id="test_source", connection_id="connection",
-                               include_manual=False, validate_configuration=False)
-    assert [channel.name for channel in observed.channels] == ["CH1", "CH2"]
-    assert all(channel.name_provenance == "generated" and channel.unit is None for channel in observed.channels)
-    assert observed.original_reference is None
-    effective = source_metadata({}, settings, source_id="test_source", connection_id="connection")
-    assert [channel.name for channel in effective.channels] == ["C3", "C4"]
-    assert all(channel.name_provenance is None and channel.unit == "uV" for channel in effective.channels)
-    assert effective.original_reference == "Cz"
-
-
-def test_profile_manual_montage_precedes_legacy_manual_and_rejects_known_unit_conflicts():
-    from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
-    manual = SourceMetadata("test_source", 250, (
-        ChannelDescriptor(0, "C3", unit="uV"), ChannelDescriptor(1, "C4", unit="uV"),
-    ), 2)
-    settings = {**SETTINGS, "ACQUISITION.manual_montage": manual.to_dict(),
-                "SIGNAL.setup": {"manual_metadata": {"invalid": "legacy declaration must not be consulted"}}}
-    effective = source_metadata(RAW, settings, source_id="test_source", connection_id="connection")
-    assert effective.channels[0].unit == "uV"
-    with pytest.raises(ValueError, match="Manual unit conflicts"):
-        source_metadata({**RAW, "channel_units": ["V", "V"]}, settings,
-                        source_id="test_source", connection_id="connection")
-
-
-def test_manual_metadata_fills_only_missing_observations():
-    from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
-    manual = SourceMetadata("test_source", 250, (
-        ChannelDescriptor(0, "C3", "eeg", "uV"),
-        ChannelDescriptor(1, "C4", "eeg", "uV", position=(0.01, 0.02, 0.03),
-                          coordinate_frame="head", position_provenance="user-declared"),
-    ), 2, original_reference="Cz")
-    settings = {**SETTINGS, "SIGNAL.setup": {"manual_metadata": manual.to_dict()}}
-    metadata = source_metadata({**RAW, "channel_units": ["V", None]}, settings,
-                               source_id="test_source", connection_id="connection")
+    assert metadata.trigger_row_index == 2
+    assert [channel.channel_id for channel in metadata.channels] == ["left", "right"]
     assert [channel.name for channel in metadata.channels] == ["C3", "C4"]
+    assert [channel.signal_type for channel in metadata.channels] == ["eeg", "eog"]
     assert [channel.unit for channel in metadata.channels] == ["V", "uV"]
-    assert all(channel.signal_type == "eeg" for channel in metadata.channels)
-    assert metadata.channels[1].position == (0.01, 0.02, 0.03)
-    assert metadata.original_reference == "Cz"
-    settings["ACQUISITION.sample_rate"] = 500
-    with pytest.raises(ValueError, match="Manual metadata sample rate"):
-        source_metadata(None, settings, source_id="test_source", connection_id="connection")
+    assert fields == original
+    assert metadata.native_event == "separate-event-packets"
+    assert metadata.provenance == "device-reported"
 
 
-@pytest.mark.parametrize("label_source", ["observed", "legacy"])
-def test_manual_row_metadata_cannot_follow_reordered_source_labels(label_source):
-    from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
-    manual = SourceMetadata("test_source", 250, (
-        ChannelDescriptor(0, "C3", "eeg", "uV", reference="Cz"),
-        ChannelDescriptor(1, "C4", "eeg", "V", reference="M1", position=(0.01, 0.02, 0.03),
-                          coordinate_frame="head", position_provenance="user-declared"),
-    ), 2)
-    settings = {**SETTINGS, "SIGNAL.setup": {"manual_metadata": manual.to_dict()}}
-    raw = {**RAW, "channel_labels": ["C4", "C3"]}
-    if label_source == "legacy":
-        settings["ACQUISITION.channel_names"] = raw.pop("channel_labels")
-    with pytest.raises(ValueError, match="Source row 0 changed: manual metadata expects 'C3', got 'C4'"):
-        source_metadata(raw, settings, source_id="test_source", connection_id="connection")
+@pytest.mark.parametrize("optional", [{}, {"channel_labels": None, "channel_types": None, "channel_units": None,
+                                        "channel_ids": None},
+                                     {"channel_labels": [], "channel_types": [], "channel_units": []},
+                                     {"channel_labels": (), "channel_types": (), "channel_units": ()}])
+def test_missing_optional_channel_details_are_internal_placeholders_only(optional):
+    fields = {"sample_rate": 250, "signal_channel_count": 2, **optional}
+    original = deepcopy(fields)
+    metadata = signal_info(**fields, source_id="test_source", connection_id="connected")
+    assert [channel.name for channel in metadata.channels] == ["CH1", "CH2"]
+    assert [channel.channel_id for channel in metadata.channels] == ["channel-0", "channel-1"]
+    assert all(channel.name_provenance == "generated" for channel in metadata.channels)
+    assert all(channel.unit is None and channel.signal_type == "unknown" for channel in metadata.channels)
+    assert metadata.native_event == "final-row"
+    assert metadata.provenance == "protocol-defined"
+    assert fields == original
 
 
-def test_manual_original_reference_cannot_override_conflicting_device_reference():
-    from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
-    manual = SourceMetadata("test_source", 250, (
-        ChannelDescriptor(0, "C3", "eeg", "uV"), ChannelDescriptor(1, "C4", "eeg", "uV"),
-    ), 2, original_reference="Cz")
-    settings = {**SETTINGS, "SIGNAL.setup": {"manual_metadata": manual.to_dict()}}
-    with pytest.raises(ValueError, match="Manual original reference differs from the source"):
-        source_metadata({**RAW, "original_reference": "M1"}, settings,
-                        source_id="test_source", connection_id="connection")
+def test_blank_channel_labels_use_generated_names_without_editing_input():
+    labels = [None, "  ", ""]
+    descriptor = signal_info(
+        source_id="test_source", connection_id="connected", sample_rate=250,
+        signal_channel_count=3, channel_labels=labels,
+    )
+    assert [channel.name for channel in descriptor.channels] == ["CH1", "CH2", "CH3"]
+    assert all(channel.name_provenance == "generated" for channel in descriptor.channels)
+    assert labels == [None, "  ", ""]
 
 
-@pytest.mark.parametrize("raw, message", [
-    ({**RAW, "sample_rate": 500}, "sample rate 500 differs"),
-    ({**RAW, "output_channel_count": 4}, "row count 4 differs"),
-    ({**RAW, "sample_rate": 249.5}, "positive integer"),
-    ({**RAW, "sample_rate": float("inf")}, "positive integer"),
-    ({**RAW, "channel_labels": ["C3"]}, "exactly 2"),
-    ({**RAW, "channel_labels": "C3"}, "must be a sequence"),
+def test_acquisition_preserves_source_channel_ids_independently_of_duplicate_labels():
+    fields = {**FIELDS, "channel_labels": ["EEG", "EEG"], "channel_ids": ["left", "right"]}
+    original = deepcopy(fields)
+    descriptor = signal_info(**fields, source_id="test_source", connection_id="connected")
+    assert [channel.channel_id for channel in descriptor.channels] == ["left", "right"]
+    assert [channel.name for channel in descriptor.channels] == ["EEG", "EEG"]
+    assert fields == original
+
+
+def test_descriptor_normalizes_type_spelling_without_editing_source_metadata():
+    fields = {**FIELDS, "channel_types": [" EEG ", "UNKNOWN"]}
+    descriptor = signal_info(**fields, source_id="test_source", connection_id="connected")
+    assert [channel.signal_type for channel in descriptor.channels] == ["eeg", "unknown"]
+    assert fields["channel_types"] == [" EEG ", "UNKNOWN"]
+
+
+@pytest.mark.parametrize("missing", ["source_id", "connection_id", "sample_rate", "signal_channel_count"])
+def test_processing_description_requires_explicit_required_fields(missing):
+    fields = {**FIELDS, "source_id": "test_source", "connection_id": "connected"}
+    fields.pop(missing)
+    with pytest.raises(TypeError, match=missing):
+        signal_info(**fields)
+
+
+@pytest.mark.parametrize("fields, message", [
+    ({**FIELDS, "sample_rate": 249.5}, "positive integer"),
+    ({**FIELDS, "sample_rate": float("inf")}, "positive integer"),
+    ({**FIELDS, "signal_channel_count": 0}, "signal channel count"),
+    ({**FIELDS, "channel_labels": ["C3"]}, "exactly 2"),
+    ({**FIELDS, "channel_labels": "C3"}, "must be a sequence"),
+    ({**FIELDS, "channel_units": ["V"]}, "signal row count"),
+    ({**FIELDS, "channel_ids": []}, "signal row count"),
+    ({**FIELDS, "channel_ids": ["one"]}, "signal row count"),
+    ({**FIELDS, "channel_ids": ["one", "one"]}, "IDs must be unique"),
+    ({**FIELDS, "channel_ids": ["", "two"]}, "nonempty strings"),
 ])
-def test_inconsistent_or_unsupported_metadata_is_rejected(raw, message):
+def test_invalid_processing_description_is_rejected(fields, message):
     with pytest.raises(ValueError, match=message):
-        source_metadata(raw, SETTINGS, source_id="test_source", connection_id="connected")
+        signal_info(**fields, source_id="test_source", connection_id="connected")
 
 
-def _worker():
-    source = MagicMock(is_connected=True, is_streaming=False)
-    source.get_metadata = AsyncMock(return_value=RAW)
+def _worker(*, preparation_required=True):
+    source = MagicMock(is_connected=True, is_streaming=False, plugin_type="plugin-implementation")
+    source.get_metadata = AsyncMock(return_value=TEXT)
+    source.describe_output = MagicMock(side_effect=lambda **identity: signal_info(**FIELDS, **identity))
     source.start_stream = AsyncMock()
     bus = MagicMock()
-    worker = Acquisition(source, MagicMock(), MagicMock(), event_bus=bus,
-                         generation="generation", config_revision="revision", metadata_settings=SETTINGS)
+    worker = AcquisitionRuntime(source, MagicMock(), MagicMock(), event_bus=bus,
+                                source_id="test_source", preparation_required=preparation_required,
+                                generation="generation", config_revision="revision")
     return worker, source, bus
 
 
@@ -134,72 +124,147 @@ def _result(bus):
 
 
 @pytest.mark.asyncio
-async def test_metadata_command_returns_serializable_descriptor_and_never_reads_while_streaming():
+async def test_metadata_command_preserves_source_text_and_uses_explicit_source_identity():
     worker, source, bus = _worker()
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
     result = _result(bus)
     assert result.ok and result.command == "GetSourceMetadata"
+    assert set(result.data) == {"source_id", "connection_id", "metadata", "descriptor", "descriptor_error"}
+    assert result.data["source_id"] == "test_source"
     assert result.data["connection_id"] == worker.connection_id
-    assert result.data["trigger_row_index"] == 2
+    assert result.data["metadata"] == TEXT
+    assert result.data["descriptor_error"] is None
+    assert result.data["descriptor"]["sample_rate"] == 250
+    assert result.data["descriptor"]["signal_channel_count"] == 2
+    assert [channel["name"] for channel in result.data["descriptor"]["channels"]] == ["C3", "C4"]
+    assert "original_reference" not in result.data["descriptor"]
+    source.describe_output.assert_called_once_with(source_id="test_source", connection_id=worker.connection_id)
+
+
+@pytest.mark.asyncio
+async def test_repeated_connect_preserves_connection_metadata():
+    worker, source, bus = _worker()
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
+    metadata = _result(bus).data
+    await worker.execute((AcquisitionCommand.connect, CommandRequest("connect")))
+    assert _result(bus).ok
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("cached")))
+    assert _result(bus).data == metadata
+    assert worker.connection_id == metadata["connection_id"]
+    source.connect.assert_not_called()
+    source.get_metadata.assert_awaited_once()
+    source.describe_output.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [
+    NotImplementedError("Output description is unavailable"),
+    ValueError("Source channel labels do not match the output"),
+])
+async def test_unusable_processing_description_does_not_hide_or_reread_metadata_text(error):
+    worker, source, bus = _worker()
+    source.describe_output.side_effect = error
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
+    result = _result(bus)
+    assert result.ok and result.data["metadata"] == TEXT
+    assert result.data["descriptor"] is None
+    assert result.data["descriptor_error"]
     source.is_streaming = True
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("cached")))
-    assert _result(bus).ok
+    assert _result(bus).ok and _result(bus).data["metadata"] == TEXT
+    source.get_metadata.assert_awaited_once()
+    await worker.execute((AcquisitionCommand.start_stream, CommandRequest("start", {})))
+    assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
+
+
+@pytest.mark.asyncio
+async def test_metadata_cache_is_isolated_and_refresh_requires_stopped_source():
+    worker, source, bus = _worker()
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
+    _result(bus).data["metadata"] = "Caller changed the response"
+    _result(bus).data["descriptor"]["channels"][0]["name"] = "Changed"
+    source.get_metadata.return_value = "New source information\n"
+    source.is_streaming = True
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("cached")))
+    assert _result(bus).data["metadata"] == TEXT
+    assert _result(bus).data["descriptor"]["channels"][0]["name"] == "C3"
     source.get_metadata.assert_awaited_once()
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("refresh", {"refresh": True})))
     assert _result(bus).error_code == "METADATA_REQUIRES_STOP"
     source.get_metadata.assert_awaited_once()
+    source.is_streaming = False
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("refresh", {"refresh": True})))
+    assert _result(bus).data["metadata"] == "New source information\n"
+    assert source.get_metadata.await_count == 2
 
 
 @pytest.mark.asyncio
-async def test_observed_device_values_survive_configured_rate_and_count_mismatch():
+@pytest.mark.parametrize("descriptor_available", [True, False])
+async def test_failed_refresh_clears_cached_metadata_without_configuration_fallback(descriptor_available):
     worker, source, bus = _worker()
-    source.get_metadata.return_value = {**RAW, "sample_rate": 500, "output_channel_count": 4,
-                                       "channel_labels": ["C3", "C4", "Cz"]}
-    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("observe", {"include_observation": True})))
-    result = _result(bus)
-    assert result.ok
-    assert result.data["observation"]["sample_rate"] == 500
-    assert result.data["observation"]["output_row_count"] == 4
-    assert result.data["metadata"] is None
-    assert "sample rate 500 differs" in result.data["metadata_error"]
-
-
-@pytest.mark.asyncio
-async def test_failed_device_read_allows_manual_effective_metadata_without_inventing_observation():
-    from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
-    worker, source, bus = _worker()
-    manual = SourceMetadata("test_source", 250, (
-        ChannelDescriptor(0, "C3", unit="uV"), ChannelDescriptor(1, "C4", unit="uV"),
-    ), 2, original_reference="Cz")
-    worker._metadata_settings = {**SETTINGS, "ACQUISITION.manual_montage": manual.to_dict()}
+    if not descriptor_available:
+        source.describe_output.side_effect = NotImplementedError("Output description is unavailable")
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
     source.get_metadata.side_effect = RuntimeError("Device has no metadata command")
-    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("observe", {"include_observation": True})))
-    result = _result(bus)
-    assert result.ok and result.data["observation"] is None
-    assert result.data["observation_error"] == "Device has no metadata command"
-    assert result.data["metadata_error"] is None
-    assert result.data["metadata"]["channels"][0]["name"] == "C3"
-    assert result.data["metadata"]["channels"][0]["unit"] == "uV"
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("refresh", {"refresh": True})))
+    assert not _result(bus).ok
+    assert "Device has no metadata command" in _result(bus).message
+    assert worker._descriptor is None and worker._raw_metadata is None
+    assert worker._descriptor_error is None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("modern", [False, True])
-async def test_prepared_start_rejects_missing_or_stale_receipt_before_starting_source(modern):
+@pytest.mark.parametrize("raw", [None, b"device", {"device": "Amplifier"}, [], 42])
+async def test_metadata_requires_a_string(raw):
     worker, source, bus = _worker()
-    if modern:
-        from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
-        from omnibci.domain.montage import ProcessingInput
-        worker._metadata_settings = {key: value for key, value in SETTINGS.items() if key != "SIGNAL.setup"}
-        worker._metadata_settings["PLUGINS.bindings"] = [ProfileBinding(
-            "processing.decoder", "decoder", None, PluginSelection("test.decoder", "default", "1"),
-            {}, processing_input=ProcessingInput(),
-        ).to_dict()]
+    source.get_metadata.return_value = raw
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
+    assert not _result(bus).ok
+    assert worker._descriptor is None and worker._raw_metadata is None
+    source.describe_output.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["", "not JSON: sample_rate=9999\r\nchannel_count=1000\n", TEXT])
+async def test_display_text_does_not_determine_the_output_descriptor(text):
+    worker, source, bus = _worker()
+    source.get_metadata.return_value = text
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
+    assert _result(bus).data["metadata"] == text
+    assert worker._descriptor.sample_rate == 250
+    assert worker._descriptor.signal_channel_count == 2
+    source.is_streaming = True
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("cached")))
+    assert _result(bus).data["metadata"] == text
+    source.get_metadata.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("descriptor", [
+    FIELDS,
+    signal_info(**FIELDS, source_id="other-source", connection_id="stale"),
+])
+async def test_invalid_or_stale_output_descriptor_is_not_used(descriptor):
+    worker, source, bus = _worker()
+    source.describe_output.side_effect = None
+    source.describe_output.return_value = descriptor
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
+    result = _result(bus)
+    assert result.ok and result.data["metadata"] == TEXT
+    assert result.data["descriptor"] is None
+    assert result.data["descriptor_error"]
+    assert worker._descriptor is None
+
+
+@pytest.mark.asyncio
+async def test_prepared_start_rejects_missing_or_stale_receipt_before_starting_source():
+    worker, source, bus = _worker()
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
     receipt = {"generation": worker.generation, "config_revision": worker.config_revision,
-               "connection_id": worker.connection_id, "source_fingerprint": worker._metadata.fingerprint,
+               "connection_id": worker.connection_id, "source_fingerprint": worker._descriptor.fingerprint,
                "plan_fingerprint": "a" * 64}
     for payload in (None, {**receipt, "connection_id": "old"}, {**receipt, "config_revision": "old"},
-                    {**receipt, "source_fingerprint": "old"}):
+                    {**receipt, "source_fingerprint": "old"}, {**receipt, "generation": "old"}):
         await worker.execute((AcquisitionCommand.start_stream, CommandRequest("start", payload)))
         assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
     source.start_stream.assert_not_awaited()
@@ -207,19 +272,64 @@ async def test_prepared_start_rejects_missing_or_stale_receipt_before_starting_s
 
 
 @pytest.mark.asyncio
-async def test_historical_decoder_projection_blocks_stream_before_preparation():
-    from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
-    from omnibci.application.processing_source import materialize_processing_binding
+@pytest.mark.parametrize("preparation_required", [False, True])
+async def test_explicit_preparation_requirement_controls_start(preparation_required):
+    worker, source, bus = _worker(preparation_required=preparation_required)
+    async def start():
+        source.is_streaming = True
+    source.start_stream.side_effect = start
+    source.read_chunk = AsyncMock(return_value=None)
+    source.stop_stream = AsyncMock()
+    await worker.execute((AcquisitionCommand.start_stream, CommandRequest("start")))
+    if preparation_required:
+        assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
+        source.start_stream.assert_not_awaited()
+    else:
+        assert _result(bus).ok
+        source.start_stream.assert_awaited_once()
+        await worker.fetch_task
+
+
+@pytest.mark.asyncio
+async def test_prepared_start_accepts_receipt_after_revision_change_and_reconnection():
     worker, source, bus = _worker()
-    binding = ProfileBinding("processing.decoder", "decoder", None,
-                             PluginSelection("test.decoder", "default", "1"), {})
-    worker._metadata_settings = {key: value for key, value in SETTINGS.items() if key != "SIGNAL.setup"}
-    worker._metadata_settings["PLUGINS.bindings"] = [materialize_processing_binding(
-        binding, requires_channels=True, legacy_setup=None)]
-    await worker.execute((AcquisitionCommand.start_stream, CommandRequest("unprepared-start")))
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
+    old_receipt = {"generation": worker.generation, "config_revision": worker.config_revision,
+                   "connection_id": worker.connection_id, "source_fingerprint": worker._descriptor.fingerprint,
+                   "plan_fingerprint": "a" * 64}
+    await worker.execute((AcquisitionCommand.update_revision, CommandRequest("revision", {
+        "generation": worker.generation, "expected_revision": worker.config_revision, "target_revision": "b" * 64,
+    })))
+    assert _result(bus).ok
+    await worker.execute((AcquisitionCommand.start_stream, CommandRequest("stale-revision", old_receipt)))
     assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
     source.start_stream.assert_not_awaited()
-    assert binding.processing_input is None
+
+    async def disconnect():
+        source.is_connected = False
+    async def connect():
+        source.is_connected = True
+    source.disconnect = disconnect
+    source.connect = connect
+    await worker._on_disconnect()
+    await worker._on_connect()
+    await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("reconnected-metadata")))
+    stale_connection = {**old_receipt, "config_revision": worker.config_revision}
+    await worker.execute((AcquisitionCommand.start_stream, CommandRequest("stale-connection", stale_connection)))
+    assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
+    source.start_stream.assert_not_awaited()
+
+    async def start():
+        source.is_streaming = True
+    source.start_stream.side_effect = start
+    source.read_chunk = AsyncMock(return_value=None)
+    source.stop_stream = AsyncMock()
+    receipt = {**stale_connection, "connection_id": worker.connection_id,
+               "source_fingerprint": worker._descriptor.fingerprint}
+    await worker.execute((AcquisitionCommand.start_stream, CommandRequest("prepared-start", receipt)))
+    assert _result(bus).ok
+    source.start_stream.assert_awaited_once()
+    await worker.fetch_task
 
 
 @pytest.mark.asyncio
@@ -234,17 +344,22 @@ async def test_disconnect_clears_metadata_and_reconnect_invalidates_old_receipt(
     source.disconnect = disconnect
     source.connect = connect
     await worker._on_disconnect()
-    assert worker.connection_id is None and worker._metadata is None
+    assert worker.connection_id is None and worker._descriptor is None and worker._raw_metadata is None
     await worker._on_connect()
     assert worker.connection_id != connection_id
 
 
 @pytest.mark.asyncio
-async def test_scan45_metadata_uses_declarations_without_socket_reads():
+async def test_scan45_metadata_reports_unsupported_query_separately_from_configured_output():
     from omnibci.infrastructure.plugins.acquisition.neuroscan.scan45.scan45 import Scan45DataReader
     source = Scan45DataReader(parameters={"sample_rate": 250, "channel_number": 3})
-    source.request_basic_info = AsyncMock(side_effect=AssertionError("must not read header"))
+    source.request_basic_info = AsyncMock(side_effect=AssertionError("must not read unimplemented header"))
     metadata = await source.get_metadata()
-    assert metadata["output_channel_count"] == 3
-    assert metadata["sample_rate"] == 250
-    assert metadata["provenance"] == "user-declared"
+    assert isinstance(metadata, str)
+    assert "not implemented" in metadata.lower()
+    descriptor = source.describe_output(source_id="scan45", connection_id="connected")
+    assert descriptor.output_row_count == 3
+    assert descriptor.signal_channel_count == 2
+    assert descriptor.sample_rate == 250
+    assert descriptor.provenance == "user-declared"
+    source.request_basic_info.assert_not_awaited()

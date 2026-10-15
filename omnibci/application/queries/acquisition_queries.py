@@ -19,3 +19,4 @@ class AcquisitionStatusResult:
     channel_count: Optional[int] = None
     metadata_available: bool = False
     metadata_provenance: Optional[str] = None
+    connection_id: Optional[str] = None

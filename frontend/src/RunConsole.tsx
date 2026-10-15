@@ -3,7 +3,7 @@ import { api, type AcquisitionStatus, type EngineStatus } from "./api/client";
 import { useAction } from "./hooks/useAction";
 import { usePoll } from "./hooks/usePoll";
 import type { ResultsFeed } from "./hooks/useResultsFeed";
-import { translateControlLabel, translatePluginName, useI18n } from "./i18n";
+import { translateControlLabel, translatePluginName, useI18n, type TranslationKey, type TranslationParams } from "./i18n";
 import { SessionSummary, TrialResults } from "./TrialResults";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
 import { pluginConfigApi, selectionKey, type Activation, type PluginProfile, type PluginDefinition } from "./api/plugin-config";
@@ -36,9 +36,9 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
   const [profiles, setProfiles] = useState<PluginProfile[]>([]);
   const [selectedParadigm, setSelectedParadigm] = useState<PluginDefinition | null>(null);
   const [controls, setControls] = useState<Record<string, TrialControl>>({});
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | { key: TranslationKey; params?: TranslationParams } | null>(null);
   const [controlValues, setControlValues] = useState<Record<string, string>>({});
-  const [trialError, setTrialError] = useState<string | null>(null);
+  const [trialError, setTrialError] = useState<"count" | { name: string; label: string } | null>(null);
   const refresh = async () => { await Promise.all([engine.refresh(), acquisition.refresh(), stimulation.refresh(), signal.refresh()]); };
   const start = useAction(api.engineStart, refresh);
   const stop = useAction(api.engineStop, refresh);
@@ -63,14 +63,14 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
   const stimulationAvailable = stimulation.data !== null && !stimulation.error;
   const selectedName = (slot: string) => {
     const binding = selection?.bindings.find((item) => item.slot === slot);
-    if (!binding) return selection ? "None" : "Loading…";
+    if (!binding) return selection ? t("run.none") : t("run.loading");
     return profiles.find((item) => item.profile_id === binding.profile_id)?.name
       ?? `${binding.selection.package_id}/${binding.selection.contribution_id} · ${binding.selection.version}`;
   };
   const missingRecording = recordingPathMissing(selection);
   const currentParadigm = stimulation.data?.paradigm || selectedParadigm?.plugin_type || "";
   const paradigmName = translatePluginName(currentParadigm,
-    selectedParadigm?.plugin_type === currentParadigm ? selectedParadigm.label : currentParadigm || "None", t);
+    selectedParadigm?.plugin_type === currentParadigm ? selectedParadigm.label : currentParadigm || t("run.none"), t);
   const trialControlsReady = selectedParadigm?.available && !loadError
     && selection?.revision === runtime.status?.accepted_revision
     && (!running || runtime.status?.applied_revision === selection?.revision)
@@ -86,6 +86,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
   ];
   const currentStep = steps.findIndex((step) => !step.done);
 
+
   useEffect(() => { onBusyChange(busy); }, [busy, onBusyChange]);
   useEffect(() => {
     let alive = true;
@@ -93,11 +94,12 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
       pluginConfigApi.activation(), pluginConfigApi.profiles(), pluginConfigApi.catalog("paradigm"),
     ]).then(([selected, savedProfiles, paradigms]) => {
       if (!alive) return;
-      if (!selected) throw new Error("Configuration is unavailable.");
+      if (!selected) { setLoadError({ key: "run.configurationUnavailable" }); return; }
       const binding = selected.bindings.find((item) => item.slot === "stimulation.paradigm");
       const paradigm = binding ? paradigms.find((item) => selectionKey(item.selection) === selectionKey(binding.selection)) : undefined;
       setSelection(selected); setProfiles(savedProfiles); setSelectedParadigm(paradigm ?? null);
-      setControls(readTrialControls(paradigm?.controls)); setLoadError(null);
+      try { setControls(readTrialControls(paradigm?.controls)); setLoadError(null); }
+      catch (error) { setLoadError({ key: "run.invalidTrialControls", params: { detail: String(error) } }); }
     }).catch((error) => { if (alive) setLoadError(String(error)); });
     return () => { alive = false; };
   }, [runtime.status?.accepted_revision, runtime.status?.applied_revision]);
@@ -120,28 +122,28 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
           || (control.field === "trial_params" && !Number.isSafeInteger(value))
           || (control.min != null && value < Number(control.min))
           || (control.max != null && value > Number(control.max))) {
-        setTrialError(`Enter a valid value for ${String(control.label ?? name)}.`); return;
+        setTrialError({ name, label: String(control.label ?? name) }); return;
       }
       if (control.field === "n_trials") nTrials = value;
       if (control.field === "trial_params") perTrial = value;
     }
     if (!Number.isSafeInteger(nTrials) || nTrials < 1 || nTrials > 10000) {
-      setTrialError("Trial count must be an integer between 1 and 10000."); return;
+      setTrialError("count"); return;
     }
     setTrialError(null);
     void trigger.run(nTrials, perTrial === undefined ? undefined : Array(nTrials).fill(perTrial));
   };
 
   return <div className="runtime-content">
-    <div className="breadcrumbs">Run <Icon name="chevron" /> Console</div>
-    <header className="editor-heading"><div><p className="eyebrow">Control center</p><h1>Run console</h1>
-      <p>Connect a source, start reading, and control stimulation.</p></div>
+    <div className="breadcrumbs">{t("run.breadcrumb")} <Icon name="chevron" /> {t("run.console")}</div>
+    <header className="editor-heading"><div><p className="eyebrow">{t("run.controlCenter")}</p><h1>{t("run.title")}</h1>
+      <p>{t("run.description")}</p></div>
       <span className={`status-tag ${running ? "success" : ""}`}><span className="status-dot" />
-        {!engineAvailable ? "Engine unavailable" : running ? "Engine running" : "Engine stopped"}</span></header>
-    <ol className="pipeline" aria-label="System progress" aria-live="polite">
+        {!engineAvailable ? t("run.engineUnavailable") : running ? t("run.engineRunning") : t("run.engineStopped")}</span></header>
+    <ol className="pipeline" aria-label={t("run.systemProgress")} aria-live="polite">
       {steps.map((step, index) => <li className="step-wrap" key={step.label}
         aria-current={index === currentStep ? "step" : undefined}
-        aria-label={`${step.label}: ${step.done ? "Complete" : index === currentStep ? "Current step" : "Pending"}`}>
+        aria-label={`${step.label}: ${step.done ? t("run.complete") : index === currentStep ? t("run.currentStep") : t("run.pending")}`}>
         {index > 0 && <span className="step-line" aria-hidden="true">
           <span className={`step-line-half ${steps[index - 1].done ? "done" : ""}`} />
           <span className={`step-line-half ${step.done ? "done" : ""}`} />
@@ -152,67 +154,65 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
         </div>
       </li>)}
     </ol>
-    <section className="setup-summary" aria-label="Selected setup">
+    <section className="setup-summary" aria-label={t("run.selectedSetup")}>
       <div className="summary-items">
-        <div><span>Selected acquisition</span><strong>{selectedName("acquisition.source")}</strong></div>
-        <div><span>Decoder</span><strong>{selectedName("processing.decoder")}</strong></div>
-        <div><span>Paradigm</span><strong>{selectedName("stimulation.paradigm")}</strong></div>
-        <div><span>Actuation</span><strong>{selectedName("actuation.effector")}</strong></div>
+        <div><span>{t("run.selectedAcquisition")}</span><strong>{selectedName("acquisition.source")}</strong></div>
+        <div><span>{t("run.decoder")}</span><strong>{selectedName("processing.decoder")}</strong></div>
+        <div><span>{t("run.paradigm")}</span><strong>{selectedName("stimulation.paradigm")}</strong></div>
+        <div><span>{t("run.actuation")}</span><strong>{selectedName("actuation.effector")}</strong></div>
       </div>
-      <button className="text-button" disabled={busy} onClick={onEditSetup}>Edit setup <Icon name="chevron" /></button>
-      <p className="meta">Selected configuration is shown here. Review and apply changes from Setup.</p>
+      <button className="text-button" disabled={busy} onClick={onEditSetup}>{t("run.editSetup")} <Icon name="chevron" /></button>
+      <p className="meta">{t("run.selectedConfigurationHelp")}</p>
     </section>
-    <section className="setup-summary" aria-label="Active decoder input">
-      <div className="summary-items"><div><span>Signal preparation</span>
-        <strong>{signal.error ? "Unavailable" : !running ? "Engine stopped" : signal.data?.readiness.ready ? "Ready" : "Validated before reading starts"}</strong></div>
-        <div><span>Active decoder channels</span><strong>{!running ? "None" : signal.error ? "Unavailable" : !signal.data ? "Loading…" : signal.data.active_setup
-          ? signal.data.active_setup.outputs.length ? signal.data.active_setup.outputs.map((output) => typeof output === "string" ? output : output.name).join(", ") : signal.data.active_setup.excluded_channels.length
-            ? `All source channels except ${signal.data.active_setup.excluded_channels.join(", ")}` : "All source channels"
-          : "Original source channels"}</strong></div>
-        <div><span>Active reference mode</span><strong>{!running ? "None" : signal.error ? "Unavailable" : !signal.data ? "Loading…" : signal.data.active_setup?.reference.mode ?? "original"}</strong></div></div>
+    <section className="setup-summary" aria-label={t("run.activeDecoderInput")}>
+      <div className="summary-items"><div><span>{t("run.signalPreparation")}</span>
+        <strong>{signal.error ? t("run.unavailable") : !running ? t("run.engineStopped") : signal.data?.readiness.ready ? t("run.ready") : t("run.validatedBeforeReading")}</strong></div>
+        <div><span>{t("run.activeDecoderChannels")}</span><strong>{!running ? t("run.none") : signal.error ? t("run.unavailable") : !signal.data ? t("run.loading") : signal.data.active_input
+          ? signal.data.active_input.outputs.length ? signal.data.active_input.outputs.map((output) => output.name).join(", ") : t("run.allSourceChannels")
+          : t("run.noActiveMapping")}</strong></div></div>
       {signal.error && <p className="error" role="alert">{signal.error.message}</p>}
-      {!signal.data?.readiness.ready && running && <p className="meta">Starting reading prepares the selected decoder input against the Acquisition montage before creating a recording.</p>}
+      {!signal.data?.readiness.ready && running && <p className="meta">{t("run.prepareSignalHelp")}</p>}
     </section>
-    {missingRecording && <p className="inline-message" role="status">Select a recording on the backend computer in Acquisition setup, then save and apply the profile before starting.</p>}
-    {loadError && <p className="inline-message error" role="alert">{loadError}</p>}
-    <section className="card engine-card" aria-label="Engine controls">
-      <div><h2>Engine</h2><div className="engine-status">
-        <Dot on={running} label="Running" /><Dot on={engine.data?.acquisition_alive} label="Acquisition process" />
-        <Dot on={engine.data?.processor_alive} label="Processing process" />
+    {missingRecording && <p className="inline-message" role="status">{t("run.missingRecording")}</p>}
+    {loadError && <p className="inline-message error" role="alert">{typeof loadError === "string" ? loadError : t(loadError.key, loadError.params)}</p>}
+    <section className="card engine-card" aria-label={t("run.engineControls")}>
+      <div><h2>{t("run.engine")}</h2><div className="engine-status">
+        <Dot on={running} label={t("run.running")} /><Dot on={engine.data?.acquisition_alive} label={t("run.acquisitionProcess")} />
+        <Dot on={engine.data?.processor_alive} label={t("run.processingProcess")} />
       </div>{engine.error && <p className="error" role="alert">{engine.error.message}</p>}</div>
       <div className="actions"><button className="primary" disabled={controlsBlocked || !engineAvailable || running || !selection || !!loadError || missingRecording}
-        onClick={() => void start.run()}><Icon name="play" />{start.pending ? "Starting…" : "Start engine"}</button>
-        <button className="danger" disabled={stopBlocked || !engineAvailable || !running} onClick={() => void stop.run()}>Stop engine</button></div>
+        onClick={() => void start.run()}><Icon name="play" />{start.pending ? t("run.starting") : t("run.startEngine")}</button>
+        <button className="danger" disabled={stopBlocked || !engineAvailable || !running} onClick={() => void stop.run()}>{t("run.stopEngine")}</button></div>
     </section>
     <div className="runtime-grid">
-      <section className="card"><h2><Icon name="signal" />Acquisition</h2>
-        <p><Dot on={connected} label="Source connected" /><Dot on={reading} label="Reading" /></p>
+      <section className="card"><h2><Icon name="signal" />{t("run.acquisition")}</h2>
+        <p><Dot on={connected} label={t("run.sourceConnected")} /><Dot on={reading} label={t("run.reading")} /></p>
         {acquisition.error && <p className="error" role="alert">{acquisition.error.message}</p>}
-        <p className="meta">{acquisition.data?.source ?? "No source"}<br />
-          {acquisition.data?.sample_rate ?? "—"} Hz · {acquisition.data?.channel_count ?? "—"} channels</p>
+        <p className="meta">{translatePluginName(acquisition.data?.source ?? "", acquisition.data?.source ?? t("run.noSource"), t)}<br />
+          {t("run.acquisitionDetails", { sampleRate: acquisition.data?.sample_rate ?? "—", channelCount: acquisition.data?.channel_count ?? "—" })}</p>
         <div className="actions actions-grouped">
-          <div className="btn-group"><span className="btn-group-title">Source connection</span>
-            <button disabled={controlsBlocked || !acquisitionAvailable || !running || connected || missingRecording} onClick={() => void connect.run()}>Connect</button>
-            <button disabled={controlsBlocked || !acquisitionAvailable || !connected || reading || recording} onClick={() => void disconnect.run()}>Disconnect</button></div>
-          <div className="btn-group"><span className="btn-group-title">Data reading</span>
+          <div className="btn-group"><span className="btn-group-title">{t("run.sourceConnection")}</span>
+            <button disabled={controlsBlocked || !acquisitionAvailable || !running || connected || missingRecording} onClick={() => void connect.run()}>{t("run.connect")}</button>
+            <button disabled={controlsBlocked || !acquisitionAvailable || !connected || reading || recording} onClick={() => void disconnect.run()}>{t("run.disconnect")}</button></div>
+          <div className="btn-group"><span className="btn-group-title">{t("run.dataReading")}</span>
             <button className="primary" disabled={controlsBlocked || !acquisitionAvailable || !running || !connected || reading || recording || missingRecording}
-              onClick={() => void read.run()}>Start reading</button>
-            <button disabled={stopBlocked || !acquisitionAvailable || (!reading && !recording)} onClick={() => void stopRead.run()}>Stop reading</button></div>
+              onClick={() => void read.run()}>{t("run.startReading")}</button>
+            <button disabled={stopBlocked || !acquisitionAvailable || (!reading && !recording)} onClick={() => void stopRead.run()}>{t("run.stopReading")}</button></div>
         </div>
       </section>
-      <section className="card"><h2><Icon name="system" />Stimulation</h2>
-        <p><Dot on={stimulation.data?.process_alive} label="Process running" />
-          <Dot on={stimulation.data?.engine_connected} label="Engine connected" /></p>
+      <section className="card"><h2><Icon name="system" />{t("run.stimulation")}</h2>
+        <p><Dot on={stimulation.data?.process_alive} label={t("run.processRunning")} />
+          <Dot on={stimulation.data?.engine_connected} label={t("run.engineConnected")} /></p>
         {stimulation.error && <p className="error" role="alert">{stimulation.error.message}</p>}
         <p className="meta">{paradigmName}</p>
         <div className="actions"><button disabled={controlsBlocked || !engineAvailable || !running || !stimulationAvailable || !trialControlsReady
             || (stimulation.data?.active && (stimulation.data.process_alive || stimulation.data.engine_connected))}
-          onClick={() => void launch.run()}>{launch.pending ? "Launching…" : "Launch stimulation"}</button>
+          onClick={() => void launch.run()}>{launch.pending ? t("run.launching") : t("run.launchStimulation")}</button>
           <button disabled={stopBlocked || !stimulationAvailable || !(stimulation.data?.process_alive || stimulation.data?.active || stimulation.data?.engine_connected)}
-            onClick={() => void stopStim.run()}>Stop stimulation</button></div>
+            onClick={() => void stopStim.run()}>{t("run.stopStimulation")}</button></div>
         <form className="actions trial-controls" onSubmit={(event) => { event.preventDefault(); triggerTrial(); }}>
-          {!hasTrialCount && <label className="control"><span className="meta">Number of trials</span>
-            <input aria-label="Number of trials" type="number" required min={1} max={10000} step={1} disabled={controlsBlocked}
+          {!hasTrialCount && <label className="control"><span className="meta">{t("run.numberOfTrials")}</span>
+            <input aria-label={t("run.numberOfTrials")} type="number" required min={1} max={10000} step={1} disabled={controlsBlocked}
               value={controlValues.n_trials ?? "1"} onChange={(event) => setControlValues({ ...controlValues, n_trials: event.target.value })} /></label>}
           {Object.entries(controls).map(([name, control]) => <label key={name} className="control">
             <span className="meta">{translateControlLabel(name, String(control.label ?? name), t)}</span>
@@ -221,18 +221,19 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
               max={control.max == null ? (control.field === "n_trials" ? 10000 : undefined) : Number(control.max)}
               step={control.field === "n_trials" || control.field === "trial_params" || control.type === "int" ? 1 : "any"}
               onChange={(event) => setControlValues({ ...controlValues, [name]: event.target.value })} /></label>)}
-          <button type="submit" className="primary" disabled={controlsBlocked || !trialControlsReady || !stimulationAvailable || !stimulation.data?.active || !stimulation.data.engine_connected}>Trigger trial</button>
+          <button type="submit" className="primary" disabled={controlsBlocked || !trialControlsReady || !stimulationAvailable || !stimulation.data?.active || !stimulation.data.engine_connected}>{t("run.triggerTrial")}</button>
         </form>
       </section>
     </div>
-    {(actionError || trialError) && <p className="inline-message error" role="alert">{trialError || actionError}</p>}
+    {(actionError || trialError) && <p className="inline-message error" role="alert">{trialError === "count" ? t("run.invalidTrialCount") : trialError
+      ? t("run.invalidControl", { label: translateControlLabel(trialError.name, trialError.label, t) }) : actionError}</p>}
     <SessionSummary session={feed.session} trialCount={feed.trials.length} />
-    <section className="card"><h2>Recent results <button className="text-button" disabled={busy} onClick={onResults}>View all results <Icon name="chevron" /></button></h2>
+    <section className="card"><h2>{t("run.recentResults")} <button className="text-button" disabled={busy} onClick={onResults}>{t("run.viewAllResults")} <Icon name="chevron" /></button></h2>
       <TrialResults trials={feed.trials.slice(-3)} /></section>
-    <details className="ack-panel"><summary>Acknowledgements <span className="count">{feed.acks.length}</span></summary>
-      {!feed.acks.length ? <p className="meta">Stimulation responses will appear here.</p> : <ul className="acks">
+    <details className="ack-panel"><summary>{t("run.acknowledgements")} <span className="count">{feed.acks.length}</span></summary>
+      {!feed.acks.length ? <p className="meta">{t("run.acknowledgementsHelp")}</p> : <ul className="acks">
         {feed.acks.map((ack, index) => <li key={index}><code>{ack.command}</code>
-          {ack.target_index != null && <> → Target {ack.target_index}</>} · {ack.status}
+          {ack.target_index != null && <> → {t("run.target", { index: ack.target_index })}</>} · {ack.status === "ok" || ack.status === "error" ? t(`run.ack.${ack.status}`) : ack.status}
           {ack.message && <span className="meta"> {ack.message}</span>}</li>)}</ul>}
     </details>
   </div>;

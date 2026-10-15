@@ -5,7 +5,7 @@ tunables, and the deep modules no longer read settings themselves.
 Pins:
   - NeuroEngineConfig.from_settings() reads the right keys with fallbacks;
   - NeuroEngine.run() honours the injected debug flag (was hardcoded True);
-  - SignalProcessingWorker stores the injected sample_rate;
+  - Processing waits for observed signal information;
   - ServerMessageManagement uses the injected host/port (no settings.get).
 """
 from __future__ import annotations
@@ -40,7 +40,7 @@ class TestConfigFromSettings:
         assert cfg.queue_size == 50
         assert cfg.message_server_ip == "10.0.0.1"
         assert cfg.message_server_port == 9000
-        assert cfg.sample_rate == 250
+        assert not hasattr(cfg, "sample_rate")
         assert cfg.debug is True
 
     def test_falls_back_on_missing_keys(self, monkeypatch):
@@ -54,12 +54,11 @@ class TestConfigFromSettings:
         assert cfg.queue_size == 100
         assert cfg.message_server_ip == "127.0.0.1"
         assert cfg.message_server_port == 8000
-        assert cfg.sample_rate == 1000
         assert cfg.debug is False
 
     def test_dataclass_defaults(self):
         cfg = NeuroEngineConfig()
-        assert (cfg.queue_size, cfg.sample_rate, cfg.debug) == (100, 1000, False)
+        assert (cfg.queue_size, cfg.debug) == (100, False)
 
     def test_reads_baseline_duration(self, monkeypatch):
         import omnibci.conf as conf
@@ -121,14 +120,11 @@ class TestEngineDebugFlag:
 
 
 # ---------------------------------------------------------------------------
-# SignalProcessingWorker sample_rate injection
+# Processing does not carry an assumed sample rate
 # ---------------------------------------------------------------------------
 
 class TestProcessorSampleRate:
-    def test_stores_injected_sample_rate(self):
-        w = SignalProcessingWorker(command_queue=MagicMock(), sample_rate=250)
-        assert w.sample_rate == 250
-
-    def test_defaults_to_1000(self):
-        w = SignalProcessingWorker(command_queue=MagicMock())
-        assert w.sample_rate == 1000
+    def test_worker_has_no_configured_sample_rate(self):
+        worker = SignalProcessingWorker(command_queue=MagicMock(),
+                                        settings_snapshot={"ACQUISITION.sample_rate": 250})
+        assert not hasattr(worker, "sample_rate")

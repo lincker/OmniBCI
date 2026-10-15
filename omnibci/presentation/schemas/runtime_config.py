@@ -3,11 +3,21 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from omnibci.presentation.schemas.plugin_config import AcceptActivationRequest, ProfileBindingResponse
+from omnibci.presentation.schemas.plugin_config import (
+    AcceptActivationRequest, ProfileBindingResponse, SelectProfileBindingRequest,
+)
+from omnibci.presentation.schemas.plugin_selection import PluginSelectionResponse
+
+
+class DraftSourceBindingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    slot: Literal["acquisition.source"]
+    selection: PluginSelectionResponse
+    parameters: dict[str, Any]
 
 
 class RuntimePlanRequest(AcceptActivationRequest):
-    pass
+    bindings: list[SelectProfileBindingRequest | DraftSourceBindingRequest]
 
 
 class RuntimePlanResponse(BaseModel):

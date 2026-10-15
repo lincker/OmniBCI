@@ -24,7 +24,7 @@ const { recordingPathMissing } = await server.ssrLoadModule("/src/RunConsole.tsx
 const ready = (id = "backend-A", kind = "local") => ({ id, kind, status: "ready", url: "http://127.0.0.1:49152" });
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 beforeEach(() => {
-  globalThis.window = { omnibciDesktop: {} };
+  globalThis.window = { omnibciDesktop: {}, localStorage: { getItem: () => "en" }, navigator: { language: "en" } };
   globalThis.fetch = originalFetch;
   desktop.setDesktopConnection(ready());
 });
@@ -139,7 +139,7 @@ test("file fields allow blank setup and offer native selection only on the local
     path: { type: "string", default: "", "x-widget": "file-path", "x-scope": "machine" },
   } };
   assert.deepEqual(schemaErrors(schema, { path: "" }), []);
-  const render = () => renderToStaticMarkup(React.createElement(SchemaForm, { schema, value: { path: "" }, onChange: () => {} }));
+  const render = () => renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(SchemaForm, { schema, value: { path: "" }, onChange: () => {} })));
   assert.match(render(), /Browse…/);
   desktop.setDesktopConnection(ready("remote", "remote"));
   assert.doesNotMatch(render(), /Browse…/);

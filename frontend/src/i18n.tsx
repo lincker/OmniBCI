@@ -7,10 +7,21 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { desktopBridge } from "./desktop";
+import { en as shellEn, zh as shellZh } from "./locales/shell";
+import { en as profilesEn, zh as profilesZh } from "./locales/profiles";
+import { en as runtimeEn, zh as runtimeZh } from "./locales/runtime";
+import { en as setupEn, zh as setupZh } from "./locales/setup";
+import { en as guideEn, zh as guideZh } from "./locales/guide";
 
 export type Language = "zh" | "en";
 
 const zh = {
+  ...shellZh,
+  ...profilesZh,
+  ...runtimeZh,
+  ...setupZh,
+  ...guideZh,
   "app.title": "OmniBCI 控制台",
   "pipeline.selectPlugins": "选择数据源与解码器",
   "pipeline.engineStarted": "引擎启动",
@@ -22,7 +33,7 @@ const zh = {
   "plugin.classic40Fbcca": "Classic 40 FBCCA",
   "plugin.classic40Ssvep": "Classic 40-target SSVEP",
   "plugin.logEffector": "日志执行器",
-  "control.nTrials": "刺激次数",
+  "control.nTrials": "试次数",
   "control.targetCue": "目标提示",
 } as const;
 
@@ -31,6 +42,11 @@ export type TranslationParams = Record<string, string | number>;
 export type Translate = (key: TranslationKey, params?: TranslationParams) => string;
 
 const en: Record<TranslationKey, string> = {
+  ...shellEn,
+  ...profilesEn,
+  ...runtimeEn,
+  ...setupEn,
+  ...guideEn,
   "app.title": "OmniBCI Console",
   "pipeline.selectPlugins": "Select plugins",
   "pipeline.engineStarted": "Start engine",
@@ -64,6 +80,7 @@ const CONTROL_LABEL_KEYS: Record<string, TranslationKey> = {
 };
 
 function detectLanguage(): Language {
+  if (typeof window === "undefined") return "en";
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY);
     if (stored === "zh" || stored === "en") return stored;
@@ -78,6 +95,10 @@ function format(template: string, params?: TranslationParams): string {
   return template.replace(/\{(\w+)\}/g, (match, key: string) =>
     params[key] == null ? match : String(params[key]),
   );
+}
+
+export function translate(language: Language, key: TranslationKey, params?: TranslationParams): string {
+  return format(resources[language][key], params);
 }
 
 interface I18nContextValue {
@@ -101,13 +122,14 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const t = useCallback<Translate>(
-    (key, params) => format(resources[language][key], params),
+    (key, params) => translate(language, key, params),
     [language],
   );
 
   useEffect(() => {
     document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
     document.title = t("app.title");
+    desktopBridge()?.setLanguage(language);
   }, [language, t]);
 
   const value = useMemo(
@@ -129,7 +151,7 @@ export function translatePluginName(
   fallback: string,
   t: Translate,
 ): string {
-  const key = PLUGIN_NAME_KEYS[pluginType];
+  const key = Object.prototype.hasOwnProperty.call(PLUGIN_NAME_KEYS, pluginType) ? PLUGIN_NAME_KEYS[pluginType] : undefined;
   return key ? t(key) : fallback;
 }
 
@@ -138,6 +160,6 @@ export function translateControlLabel(
   fallback: string,
   t: Translate,
 ): string {
-  const key = CONTROL_LABEL_KEYS[controlName];
+  const key = Object.prototype.hasOwnProperty.call(CONTROL_LABEL_KEYS, controlName) ? CONTROL_LABEL_KEYS[controlName] : undefined;
   return key ? t(key) : fallback;
 }

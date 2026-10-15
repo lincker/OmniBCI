@@ -817,6 +817,17 @@ export interface components {
              */
             include_host_settings: boolean;
         };
+        /** AcquisitionMetadataResponse */
+        AcquisitionMetadataResponse: {
+            /** Source Id */
+            source_id: string;
+            /** Connection Id */
+            connection_id: string;
+            /** Metadata */
+            metadata: string;
+            descriptor: components["schemas"]["SignalInfoModel"] | null;
+            comparison?: components["schemas"]["SourceExpectationsModel"] | null;
+        };
         /** AcquisitionStatusResponse */
         AcquisitionStatusResponse: {
             /** Connected */
@@ -836,6 +847,8 @@ export interface components {
             metadata_available: boolean;
             /** Metadata Provenance */
             metadata_provenance?: string | null;
+            /** Connection Id */
+            connection_id?: string | null;
         };
         /** ActivationResponse */
         ActivationResponse: {
@@ -868,6 +881,20 @@ export interface components {
             message: string;
             /** Data */
             data?: unknown | null;
+        };
+        /** ApiResponse[AcquisitionMetadataResponse] */
+        ApiResponse_AcquisitionMetadataResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["AcquisitionMetadataResponse"] | null;
         };
         /** ApiResponse[AcquisitionStatusResponse] */
         ApiResponse_AcquisitionStatusResponse_: {
@@ -1150,20 +1177,6 @@ export interface components {
             message: string;
             data?: components["schemas"]["SignalSetupResponse"] | null;
         };
-        /** ApiResponse[SourceMetadataModel] */
-        ApiResponse_SourceMetadataModel_: {
-            /**
-             * Success
-             * @default true
-             */
-            success: boolean;
-            /**
-             * Message
-             * @default ok
-             */
-            message: string;
-            data?: components["schemas"]["SourceMetadataModel"] | null;
-        };
         /** ApiResponse[StimulationStatusResponse] */
         ApiResponse_StimulationStatusResponse_: {
             /**
@@ -1266,34 +1279,32 @@ export interface components {
             /** Data */
             data?: components["schemas"]["PluginProfileResponse"][] | null;
         };
-        /** BipolarOutputModel */
-        BipolarOutputModel: {
-            /** Name */
-            name: string;
-            /** Positive */
-            positive: string;
-            /** Negative */
-            negative: string;
-        };
-        /** ChannelAssignmentModel */
-        ChannelAssignmentModel: {
-            /** Source Index */
-            source_index: number;
-            /** Electrode */
-            electrode: string;
-            /** Expected Name */
-            expected_name: string;
-            /** Unit */
-            unit?: string | null;
-            /** Signal Type */
-            signal_type?: string | null;
-        };
         /** ChannelBindingModel */
         ChannelBindingModel: {
             /** Name */
             name: string;
-            /** Source */
-            source: string;
+            /** Source Channel Id */
+            source_channel_id: string;
+            /** Signal Type */
+            signal_type?: ("eeg" | "eog" | "ecg" | "emg" | "misc") | null;
+        };
+        /** ChannelDescriptorModel */
+        ChannelDescriptorModel: {
+            /** Channel Id */
+            channel_id: string;
+            /** Index */
+            index: number;
+            /** Name */
+            name: string;
+            /**
+             * Signal Type
+             * @default unknown
+             */
+            signal_type: string;
+            /** Unit */
+            unit?: string | null;
+            /** Name Provenance */
+            name_provenance?: "generated" | null;
         };
         /** ConfigEntry */
         ConfigEntry: {
@@ -1344,7 +1355,6 @@ export interface components {
             parameters?: {
                 [key: string]: unknown;
             };
-            manual_montage?: components["schemas"]["SourceMetadataModel"] | null;
             processing_input?: components["schemas"]["ProcessingInputModel"] | null;
         };
         /** CreateSessionRequest */
@@ -1385,6 +1395,19 @@ export interface components {
             required_names?: string[];
             /** Default Names */
             default_names?: string[];
+        };
+        /** DraftSourceBindingRequest */
+        DraftSourceBindingRequest: {
+            /**
+             * Slot
+             * @constant
+             */
+            slot: "acquisition.source";
+            selection: components["schemas"]["PluginSelectionResponse"];
+            /** Parameters */
+            parameters: {
+                [key: string]: unknown;
+            };
         };
         /** EngineStatusResponse */
         EngineStatusResponse: {
@@ -1669,6 +1692,11 @@ export interface components {
         /** PluginProfileResponse */
         PluginProfileResponse: {
             /**
+             * Processing Input Requires Review
+             * @default false
+             */
+            processing_input_requires_review: boolean;
+            /**
              * Format Version
              * @default 2
              * @constant
@@ -1692,8 +1720,6 @@ export interface components {
             configuration_version: number;
             /** Revision */
             revision: number;
-            readonly acquisition_montage?: components["schemas"]["SourceMetadataModel"] | null;
-            manual_montage?: components["schemas"]["SourceMetadataModel"] | null;
             processing_input?: components["schemas"]["ProcessingInputModel"] | null;
         };
         /** PluginSelectionResponse */
@@ -1716,15 +1742,12 @@ export interface components {
         ProcessingInputModel: {
             /**
              * Schema Version
-             * @default 1
+             * @default 2
              * @constant
              */
-            schema_version: 1;
+            schema_version: 2;
             /** Outputs */
-            outputs?: (string | components["schemas"]["ChannelBindingModel"] | components["schemas"]["BipolarOutputModel"])[];
-            reference?: components["schemas"]["ReferenceModel"];
-            /** Excluded Channels */
-            excluded_channels?: string[];
+            outputs?: components["schemas"]["ChannelBindingModel"][];
         };
         /** ProcessingSourceBindingModel */
         ProcessingSourceBindingModel: {
@@ -1745,10 +1768,15 @@ export interface components {
              * Metadata Origin
              * @enum {string}
              */
-            metadata_origin: "connected" | "profile" | "unavailable";
+            metadata_origin: "connected" | "unavailable";
         };
         /** ProfileBindingResponse */
         ProfileBindingResponse: {
+            /**
+             * Processing Input Requires Review
+             * @default false
+             */
+            processing_input_requires_review: boolean;
             /** Slot */
             slot: string;
             /**
@@ -1767,7 +1795,6 @@ export interface components {
             configuration_version: number;
             /** Profile Revision */
             profile_revision: number;
-            manual_montage?: components["schemas"]["SourceMetadataModel"] | null;
             processing_input?: components["schemas"]["ProcessingInputModel"] | null;
         };
         /** ProfileVersionProposalResponse */
@@ -1792,7 +1819,6 @@ export interface components {
             configuration_version: number;
             /** Target Enabled */
             target_enabled: boolean;
-            manual_montage?: components["schemas"]["SourceMetadataModel"] | null;
             processing_input?: components["schemas"]["ProcessingInputModel"] | null;
         };
         /** ProfileVersionRequest */
@@ -1815,17 +1841,6 @@ export interface components {
              * @description The session created/ended for this recording
              */
             session_id: string;
-        };
-        /** ReferenceModel */
-        ReferenceModel: {
-            /**
-             * Mode
-             * @default original
-             * @enum {string}
-             */
-            mode: "original" | "single" | "average" | "bipolar";
-            /** Channels */
-            channels?: string[];
         };
         /** RuntimeApplyRequest */
         RuntimeApplyRequest: {
@@ -1875,7 +1890,7 @@ export interface components {
         /** RuntimePlanRequest */
         RuntimePlanRequest: {
             /** Bindings */
-            bindings: components["schemas"]["SelectProfileBindingRequest"][];
+            bindings: (components["schemas"]["SelectProfileBindingRequest"] | components["schemas"]["DraftSourceBindingRequest"])[];
             /** Expected Revision */
             expected_revision?: string | null;
             /** Refresh Slots */
@@ -2017,31 +2032,35 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
-        /** SignalChannelModel */
-        SignalChannelModel: {
-            /** Index */
-            index: number;
-            /** Name */
-            name: string;
+        /** SignalInfoModel */
+        SignalInfoModel: {
+            /** Source Id */
+            source_id: string;
+            /** Sample Rate */
+            sample_rate: number;
+            /** Channels */
+            channels: components["schemas"]["ChannelDescriptorModel"][];
+            /** Trigger Row Index */
+            trigger_row_index: number;
             /**
-             * Signal Type
-             * @default unknown
+             * Connection Id
+             * @default
              */
-            signal_type: string;
-            /** Unit */
-            unit?: string | null;
-            /** Reference */
-            reference?: string | null;
-            /** Position */
-            position?: number[] | null;
-            /** Coordinate Frame */
-            coordinate_frame?: string | null;
-            /** Position Provenance */
-            position_provenance?: string | null;
-            /** Derivation */
-            derivation?: string[] | null;
-            /** Name Provenance */
-            name_provenance?: "generated" | null;
+            connection_id: string;
+            /**
+             * Native Event
+             * @default final-row
+             */
+            native_event: string;
+            /**
+             * Provenance
+             * @default protocol-defined
+             */
+            provenance: string;
+            /** Signal Channel Count */
+            signal_channel_count?: number | null;
+            /** Output Row Count */
+            output_row_count?: number | null;
         };
         /** SignalPreviewResponse */
         SignalPreviewResponse: {
@@ -2063,29 +2082,6 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
-        /** SignalSetupModel */
-        SignalSetupModel: {
-            /**
-             * Schema Version
-             * @default 1
-             * @constant
-             */
-            schema_version: 1;
-            /** Outputs */
-            outputs?: (string | components["schemas"]["ChannelBindingModel"] | components["schemas"]["BipolarOutputModel"])[];
-            reference?: components["schemas"]["ReferenceModel"];
-            /** Excluded Channels */
-            excluded_channels?: string[];
-            /** Source Id */
-            source_id: string;
-            /** Assignments */
-            assignments?: components["schemas"]["ChannelAssignmentModel"][];
-            /** Original Reference */
-            original_reference?: string | null;
-            /** Template */
-            template?: string | null;
-            manual_metadata?: components["schemas"]["SourceMetadataModel"] | null;
-        };
         /** SignalSetupResponse */
         SignalSetupResponse: {
             /** Selected Source Id */
@@ -2093,7 +2089,7 @@ export interface components {
             /** Selected Decoder Profile Id */
             selected_decoder_profile_id?: string | null;
             selected_decoder_selection?: components["schemas"]["PluginSelectionResponse"] | null;
-            source_metadata?: components["schemas"]["SourceMetadataModel"] | null;
+            acquisition_descriptor?: components["schemas"]["SignalInfoModel"] | null;
             /** Source Error */
             source_error?: string | null;
             source_binding?: components["schemas"]["ProcessingSourceBindingModel"] | null;
@@ -2102,45 +2098,26 @@ export interface components {
             processing_input?: components["schemas"]["ProcessingInputModel"] | null;
             accepted_input?: components["schemas"]["ProcessingInputModel"] | null;
             active_input?: components["schemas"]["ProcessingInputModel"] | null;
-            legacy_setup?: components["schemas"]["SignalSetupModel"] | null;
-            setup: components["schemas"]["SignalSetupModel"] | null;
             /** Revision */
             revision: string;
-            accepted_setup: components["schemas"]["SignalSetupModel"] | null;
-            active_setup: components["schemas"]["SignalSetupModel"] | null;
             readiness: components["schemas"]["SignalReadinessModel"];
         };
-        /** SourceMetadataModel */
-        SourceMetadataModel: {
-            /** Source Id */
-            source_id: string;
-            /** Sample Rate */
-            sample_rate: number;
-            /** Channels */
-            channels: components["schemas"]["SignalChannelModel"][];
-            /** Trigger Row Index */
-            trigger_row_index: number;
+        /** SourceExpectationsModel */
+        SourceExpectationsModel: {
             /**
-             * Connection Id
-             * @default
+             * Status
+             * @enum {string}
              */
-            connection_id: string;
-            /** Original Reference */
-            original_reference?: string | null;
-            /**
-             * Native Event
-             * @default final-row
-             */
-            native_event: string;
-            /**
-             * Provenance
-             * @default user-declared
-             */
-            provenance: string;
-            /** Signal Channel Count */
-            signal_channel_count?: number | null;
-            /** Output Row Count */
-            output_row_count?: number | null;
+            status: "unconfirmed" | "matched" | "mismatched" | "unverified";
+            sample_rate: components["schemas"]["SourceParameterComparisonModel"];
+            channel_number: components["schemas"]["SourceParameterComparisonModel"];
+        };
+        /** SourceParameterComparisonModel */
+        SourceParameterComparisonModel: {
+            /** Expected */
+            expected: number | null;
+            /** Actual */
+            actual: number;
         };
         /** StartRecordingRequest */
         StartRecordingRequest: {
@@ -2235,7 +2212,6 @@ export interface components {
             };
             /** Expected Revision */
             expected_revision: number;
-            manual_montage?: components["schemas"]["SourceMetadataModel"] | null;
             processing_input?: components["schemas"]["ProcessingInputModel"] | null;
         };
     };
@@ -3045,7 +3021,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse_SourceMetadataModel_"];
+                    "application/json": components["schemas"]["ApiResponse_AcquisitionMetadataResponse_"];
                 };
             };
             /** @description Bad request */
@@ -3124,9 +3100,7 @@ export interface operations {
     };
     refresh_metadata_api_v1_acquisition_metadata_refresh_post: {
         parameters: {
-            query?: {
-                profile_id?: string | null;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -3139,7 +3113,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse_SourceMetadataModel_"];
+                    "application/json": components["schemas"]["ApiResponse_AcquisitionMetadataResponse_"];
                 };
             };
             /** @description Bad request */

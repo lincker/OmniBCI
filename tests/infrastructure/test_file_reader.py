@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 
+import mne
 import numpy as np
 import pytest
 
@@ -119,3 +120,24 @@ class TestFileReaderLifecycle:
     def test_get_metadata_returns_adapter_metadata(self):
         r = self._reader()
         assert _run(r.get_metadata()) == "fake-device"
+
+
+def test_cnt_metadata_preserves_native_info_before_output_channel_selection(monkeypatch):
+    from omnibci.infrastructure.plugins.acquisition.file.adapter import CNTReaderAdapter
+
+    raw = mne.io.RawArray(np.zeros((2, 10)), mne.create_info(["C3", "BadChannel"], 500, "eeg"))
+    raw.info["bads"] = ["BadChannel"]
+    native_information = f"{raw.info}\n\nChannel labels: C3, BadChannel\n\n{raw.annotations}"
+    monkeypatch.setattr(mne.io, "read_raw_cnt", lambda **kwargs: raw)
+    adapter = CNTReaderAdapter("sample.cnt")
+
+    assert adapter.get_metadata() == native_information
+    assert "BadChannel" in adapter.get_metadata()
+    assert "signal_channel_count" not in adapter.get_metadata()
+    descriptor = adapter.describe_output(source_id="file_reader", connection_id="connection")
+    assert [channel.name for channel in descriptor.channels] == ["C3"]
+    assert descriptor.output_row_count == adapter.data.shape[0] == 2
+    assert descriptor.sample_rate == 500
+
+    adapter._metadata = "Native information is display text, not structured input."
+    assert adapter.describe_output(source_id="file_reader", connection_id="connection") == descriptor

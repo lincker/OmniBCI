@@ -21,12 +21,17 @@ def test_real_cnt_lifecycle_and_first_chunk():
             assert reader.is_connected is True
             assert type(reader.reader_adapter).__name__ == "CNTReaderAdapter"
             metadata = await reader.get_metadata()
-            assert metadata["output_channel_count"] == 10
-            assert metadata["sample_rate"] == 1000
-            assert len(metadata["channel_labels"]) == 9
-            assert metadata["channel_units"] == ["V"] * 9
-            assert metadata["native_event"] == "annotations"
-            assert metadata["provenance"] == "file-reported"
+            assert isinstance(metadata, str)
+            assert "sfreq: 1000.0 Hz" in metadata
+            assert "Annotations" in metadata
+            descriptor = reader.describe_output(source_id=reader.plugin_type, connection_id="file-connection")
+            assert descriptor.signal_channel_count == 9
+            assert descriptor.output_row_count == 10
+            assert descriptor.sample_rate == 1000
+            assert [channel.unit for channel in descriptor.channels] == ["V"] * 9
+            assert descriptor.native_event == "annotations"
+            assert descriptor.provenance == "file-reported"
+            assert reader.file_pointer == 0
 
             assert await reader.start_stream() is True
             assert reader.is_streaming is True
@@ -35,6 +40,8 @@ def test_real_cnt_lifecycle_and_first_chunk():
             assert chunk.shape == (10, 100)
             assert np.isfinite(chunk).all()
             assert reader.file_pointer == 100
+            assert await reader.get_metadata() == metadata
+            assert reader.describe_output(source_id=reader.plugin_type, connection_id="file-connection") == descriptor
 
             assert await reader.stop_stream() is True
             assert reader.is_streaming is False

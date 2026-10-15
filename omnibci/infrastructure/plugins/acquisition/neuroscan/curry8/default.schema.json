@@ -21,16 +21,14 @@
     },
     "sample_rate": {
       "type": "integer",
-      "title": "Sample rate (Hz)",
-      "default": 1000,
+      "title": "Expected sample rate (Hz)",
       "x-scope": "portable",
       "x-apply": "module",
       "minimum": 1
     },
     "channel_number": {
       "type": "integer",
-      "title": "Output channels including event row",
-      "default": 10,
+      "title": "Expected output rows including event row",
       "x-scope": "portable",
       "x-apply": "module",
       "minimum": 2
@@ -38,8 +36,6 @@
   },
   "required": [
     "DATA_PROVIDER_IP",
-    "DATA_PROVIDER_PORT",
-    "sample_rate",
-    "channel_number"
+    "DATA_PROVIDER_PORT"
   ]
 }

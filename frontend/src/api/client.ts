@@ -11,6 +11,7 @@ import { requestJson } from "./transport";
 type S = components["schemas"];
 export type EngineStatus = S["EngineStatusResponse"];
 export type AcquisitionStatus = S["AcquisitionStatusResponse"];
+export type DataSourceMetadata = S["AcquisitionMetadataResponse"];
 export type SessionInfo = S["SessionResponse"];
 export type Trial = S["TrialResponse"];
 export type ConfigEntry = S["ConfigEntry"];
@@ -91,6 +92,7 @@ export const api = {
 
   acqConnect: () => post("/api/v1/acquisition/connect"),
   acqDisconnect: () => post("/api/v1/acquisition/disconnect"),
+  acqMetadata: () => post<DataSourceMetadata>("/api/v1/acquisition/metadata/refresh"),
 
   stimStart: (paradigm?: string) =>
     post("/api/v1/stimulation/start", paradigm ? { paradigm } : {}),

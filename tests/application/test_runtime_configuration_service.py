@@ -12,13 +12,15 @@ from omnibci.application.services.plugin_profile_service import PluginProfileSer
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
-from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, SourceMetadata, compile_processing_plan
+from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
+from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 
 
-def prepared_signal_plan(snapshot):
-    count = snapshot["ACQUISITION.channel_number"] - 1
-    channels = tuple(ChannelDescriptor(index, f"EEG{index + 1}") for index in range(count))
-    source = SourceMetadata(snapshot["ACQUISITION.signal_source"], snapshot["ACQUISITION.sample_rate"], channels, count)
+def prepared_signal_plan(snapshot, *, sample_rate, signal_channel_count):
+    channels = tuple(ChannelDescriptor(index, f"EEG{index + 1}", signal_type="eeg")
+                     for index in range(signal_channel_count))
+    source = SignalInfo(snapshot["ACQUISITION.signal_source"], sample_rate, channels, signal_channel_count,
+                        provenance="file-reported")
     return compile_processing_plan(source, processing_input(snapshot) or ProcessingInput())
 
 
@@ -35,7 +37,8 @@ def runtime(tmp_path, monkeypatch):
         ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40"),
     ):
         definition = profiles.catalog.legacy(kind, alias)
-        profile = profiles.create(kind, definition.selection, alias, {})
+        parameters = {"sample_rate": 1000, "channel_number": 10} if kind == "acquisition" else {}
+        profile = profiles.create(kind, definition.selection, alias, parameters)
         selections.append({"slot": slot, "profile_id": profile.profile_id})
     snapshot = profiles.propose(selections)
     profiles.accept(snapshot, expected_revision=None)
@@ -73,27 +76,65 @@ def test_source_change_requires_continuation(runtime):
     assert plan.session_effect == "continuation"
 
 
-def test_manual_source_montage_change_requires_rebuild_and_is_pinned(runtime):
+def test_source_draft_is_pinned_without_saving_or_changing_profiles(runtime):
     service, selections, before = runtime
-    profile = service.profiles.repository.get_profile(selections[0]["profile_id"])
-    manual = SourceMetadata("file_reader", profile.parameters["sample_rate"], tuple(
-        ChannelDescriptor(index, f"C{index + 1}", unit="uV")
-        for index in range(profile.parameters["channel_number"] - 1)), profile.parameters["channel_number"] - 1)
-    service.profiles.update(profile.profile_id, name=profile.name, parameters=profile.parameters,
-                            manual_montage=manual, expected_revision=profile.revision)
-    plan = service.plan(selections, expected_revision=before.revision)
+    profiles = service.profiles.repository.list_profiles()
+    source = before.bindings[0]
+    draft = {"slot": "acquisition.source", "selection": source.selection.to_dict(),
+             "parameters": {"data_file_path": "/tmp/experiment.fif"}}
+    requested = [draft, *selections[1:]]
+
+    plan = service.plan(requested, expected_revision=before.revision,
+                        refresh_slots=["acquisition.source"])
     assert plan.strategy == "rebuild"
     assert plan.changed_slots == ("acquisition.source",)
-    assert service.resolve_plan(plan.plan_id).snapshot.bindings[0].manual_montage == manual
-    assert before.bindings[0].manual_montage is None
+    assert not plan.errors
+    draft["parameters"]["data_file_path"] = "/tmp/later-edit.fif"
+    pinned = service.resolve_plan(plan.plan_id).snapshot
+    source = pinned.bindings[0]
+    assert source.profile_id is None
+    assert source.profile_revision == 0
+    assert source.parameters["data_file_path"] == "/tmp/experiment.fif"
+    assert "sample_rate" not in source.parameters
+    assert "channel_number" not in source.parameters
+    assert service.profiles.repository.list_profiles() == profiles
+    assert service.profiles.repository.get_activation() == before
+
+    service.profiles.accept(pinned, expected_revision=before.revision)
+    service.engine.applied_revision = pinned.revision
+    service.engine.applied_snapshot = service.profiles.materialize(pinned)
+    assert service.engine.applied_snapshot["ACQUISITION.data_file_path"] == "/tmp/experiment.fif"
+    draft["parameters"] = source.parameters
+    edit(runtime, "processing.decoder", {"window_duration": 2.5})
+    following = service.plan(requested, expected_revision=pinned.revision,
+                             refresh_slots=["processing.decoder"])
+    assert following.changed_slots == ("processing.decoder",)
+    assert service.resolve_plan(following.plan_id).snapshot.bindings[0] == source
+    assert service.profiles.repository.list_profiles("acquisition") == [
+        profile for profile in profiles if profile.kind == "acquisition"
+    ]
+
+
+def test_retired_manual_source_montage_is_not_applied(runtime):
+    service, selections, before = runtime
+    profile = service.profiles.repository.get_profile(selections[0]["profile_id"])
+    manual = SignalInfo("file_reader", 500, tuple(
+        ChannelDescriptor(index, f"C{index + 1}", unit="uV") for index in range(2)), 2)
+    service.profiles.repository.save_profile(replace(profile, legacy={"manual_montage": manual.to_dict()}),
+                                             expected_revision=profile.revision)
+    plan = service.plan(selections, expected_revision=before.revision)
+    assert plan.strategy == "no_change"
+    assert plan.changed_slots == ()
+    assert service.resolve_plan(plan.plan_id).snapshot.bindings[0].legacy == {}
+    assert before.bindings[0].legacy == {}
 
 
 def test_decoder_input_edit_requires_rebuild_and_review_uses_profile_input(runtime):
     service, selections, before = runtime
     profile = service.profiles.repository.get_profile(selections[1]["profile_id"])
     input_a = ProcessingInput.from_dict({
-        "outputs": ["O2", "O1"], "reference": {"mode": "single", "channels": ["M1"]},
-        "excluded_channels": ["EOG"],
+        "outputs": [{"source_channel_id": "channel-1", "name": "O2", "signal_type": "eeg"},
+                    {"source_channel_id": "channel-0", "name": "O1"}],
     })
     service.profiles.update(profile.profile_id, name=profile.name, parameters=profile.parameters,
                             processing_input=input_a, expected_revision=profile.revision)
@@ -104,7 +145,7 @@ def test_decoder_input_edit_requires_rebuild_and_review_uses_profile_input(runti
     assert plan.session_effect == "continuation"
     assert plan.changed_slots == ("processing.decoder",)
     assert plan.changed_settings == ()
-    assert plan.signal_summary == "Outputs: O2, O1; Reference: single (M1); Excluded: EOG"
+    assert plan.signal_summary == "Channels: channel-1 → O2 (eeg), channel-0 → O1"
     candidate = service.resolve_plan(plan.plan_id).snapshot
     assert candidate.bindings[1].processing_input == input_a
     assert "SIGNAL.setup" not in candidate.settings
@@ -118,8 +159,8 @@ def test_decoder_profiles_restore_independent_inputs_and_parameters_keep_trial_b
     service, selections, before = runtime
     profiles = service.profiles
     selection = profiles.catalog.legacy("decoder", "THUBCI_SSVEP_classic40CCA").selection
-    profile_a = profiles.create("decoder", selection, "Input A", {}, processing_input=ProcessingInput(outputs=("O1",)))
-    profile_b = profiles.create("decoder", selection, "Input B", {}, processing_input=ProcessingInput(outputs=("O2", "O1")))
+    profile_a = profiles.create("decoder", selection, "Input A", {}, processing_input=ProcessingInput(outputs=(ChannelBinding("O1", "channel-0"),)))
+    profile_b = profiles.create("decoder", selection, "Input B", {}, processing_input=ProcessingInput(outputs=(ChannelBinding("O2", "channel-1"), ChannelBinding("O1", "channel-0"))))
     expected = before.revision
     for profile in (profile_a, profile_b, profile_a):
         selections[1] = {"slot": "processing.decoder", "profile_id": profile.profile_id}
@@ -137,7 +178,7 @@ def test_decoder_profiles_restore_independent_inputs_and_parameters_keep_trial_b
     edit((service, selections, before), "processing.decoder", {"window_duration": 2.5})
     plan = service.plan(selections, expected_revision=expected)
     assert plan.strategy == "trial_boundary"
-    assert plan.signal_summary == "Outputs: O1; Reference: original"
+    assert plan.signal_summary == "Channels: channel-0 → O1"
 
 
 def test_effector_selection_uses_module_boundary(runtime):
@@ -449,9 +490,12 @@ def test_source_context_and_decoder_use_pinned_values_until_explicit_refresh(run
     from omnibci.sdk import Decoder
     from omnibci.infrastructure.neuroengine.processing.signal_configuration import signal_context
 
-    def load_prepared(snapshot):
+    def load_prepared(snapshot, sample_rate, signal_channel_count):
+        from omnibci.application.processing_source import validate_plan_binding
+        plan = prepared_signal_plan(snapshot, sample_rate=sample_rate, signal_channel_count=signal_channel_count)
+        validate_plan_binding(snapshot, plan)
         return load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
-                                      context=signal_context(snapshot, prepared_signal_plan(snapshot)))
+                                      context=signal_context(snapshot, plan))
 
     service, selections, before = runtime
     edit(runtime, "acquisition.source", {"sample_rate": 500, "channel_number": 3})
@@ -473,14 +517,17 @@ def test_source_context_and_decoder_use_pinned_values_until_explicit_refresh(run
     service.profiles.accept(accepted, expected_revision=before.revision)
     materialized = service.profiles.resolve_settings()
     context = plugin_context(materialized)
-    decoder = load_prepared(materialized)
+    decoder = load_prepared(materialized, 500, 2)
     source = next(binding for binding in accepted.bindings if binding.slot == "acquisition.source")
 
     assert not set(LEGACY_PLUGIN_VALUES) & accepted.settings.keys()
     assert materialized["ACQUISITION.sample_rate"] == source.parameters["sample_rate"] == 500
     assert materialized["ACQUISITION.channel_number"] == source.parameters["channel_number"] == 3
-    assert NeuroEngineConfig.from_settings(materialized).sample_rate == context.sample_rate == 500
-    assert context.channel_names == ("O1", "O2")
+    assert not hasattr(NeuroEngineConfig.from_settings(materialized), "sample_rate")
+    assert context.sample_rate == 500
+    assert context.channel_names == ()
+    assert signal_context(materialized, prepared_signal_plan(
+        materialized, sample_rate=500, signal_channel_count=2)).channel_names == ("EEG1", "EEG2")
     assert context.config_revision == accepted.revision
     assert (decoder.SAMPLE_RATE, decoder.SAMPLE_COUNT, decoder.OFFSET_LENGTH) == (500, 750, 50)
     assert "ALGORITHM.window_duration" not in materialized
@@ -492,13 +539,13 @@ def test_source_context_and_decoder_use_pinned_values_until_explicit_refresh(run
 
     assert service.profiles.propose(selections, refresh_slots=[]) == accepted
     assert service.profiles.resolve_settings() == materialized
-    unchanged = load_prepared(service.profiles.resolve_settings())
+    unchanged = load_prepared(service.profiles.resolve_settings(), 500, 2)
     assert (unchanged.SAMPLE_RATE, unchanged.SAMPLE_COUNT) == (500, 750)
     refreshed = service.profiles.propose(
         selections, refresh_slots=["acquisition.source", "processing.decoder"],
     )
     refreshed_settings = service.profiles.materialize(refreshed)
-    refreshed_decoder = load_prepared(refreshed_settings)
+    refreshed_decoder = load_prepared(refreshed_settings, 250, 3)
     assert refreshed_settings["ACQUISITION.channel_number"] == 4
     assert (refreshed_decoder.SAMPLE_RATE, refreshed_decoder.SAMPLE_COUNT) == (250, 625)
     assert service.profiles.repository.get_activation() == accepted
@@ -519,7 +566,8 @@ def test_stripped_legacy_fields_preserve_decoder_trial_application(runtime):
     candidate = service.profiles.materialize(service.resolve_plan(plan.plan_id).snapshot)
     bundle = build_pipeline_update(service.engine.applied_snapshot, candidate,
                                    sample_rate=1000, baseline_duration=0.2,
-                                   signal_plan=prepared_signal_plan(service.engine.applied_snapshot))
+                                   signal_plan=prepared_signal_plan(service.engine.applied_snapshot,
+                                                                    sample_rate=1000, signal_channel_count=9))
     assert bundle.decoder.SAMPLE_COUNT == 2500
     assert "ALGORITHM.window_duration" not in bundle.settings_snapshot
     assert "ssvep.duration" not in bundle.settings_snapshot
@@ -665,17 +713,16 @@ def test_nonfilter_binding_reorder_never_claims_no_change_for_a_different_revisi
     assert plan.strategy == "rebuild"
 
 
-@pytest.mark.parametrize("legacy_setup", [False, True])
 @pytest.mark.parametrize("target_requires_channels", [False, True])
-def test_historical_decoder_effective_input_changes_require_rebuild(runtime, monkeypatch, legacy_setup,
-                                                                  target_requires_channels):
+def test_historical_decoder_requirements_preserve_uniform_identity_input(runtime, monkeypatch,
+                                                                        target_requires_channels):
     service, selections, before = runtime
     profiles = service.profiles
     get = profiles.catalog.get
     target_definition = profiles.catalog.legacy("decoder", "THUBCI_SSVEP_classic40FBCCA")
     target = profiles.create("decoder", target_definition.selection, "Historical target", {}, processing_input=None)
     previous_binding = replace(before.bindings[1], processing_input=None)
-    host = {"SIGNAL.setup": {"source_id": "file_reader"}} if legacy_setup else {}
+    host = {}
     current = ActivationSnapshot(host, (before.bindings[0], previous_binding, *before.bindings[2:]))
 
     def requirements_for_selection(kind, selection):
@@ -692,4 +739,7 @@ def test_historical_decoder_effective_input_changes_require_rebuild(runtime, mon
     selections[1] = {"slot": "processing.decoder", "profile_id": target.profile_id}
     plan = service.plan(selections, expected_revision=current.revision)
     assert not plan.errors
-    assert plan.strategy == ("trial_boundary" if legacy_setup else "rebuild")
+    assert plan.strategy == "trial_boundary"
+    assert processing_input(service.engine.applied_snapshot) == ProcessingInput()
+    candidate = profiles.materialize(service.resolve_plan(plan.plan_id).snapshot)
+    assert processing_input(candidate) == ProcessingInput()

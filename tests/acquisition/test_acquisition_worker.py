@@ -2,44 +2,117 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from omnibci.domain.channel_mapping import ProcessingInput
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
 
 
-def test_run_loads_source_before_running_service():
-    worker = AcquisitionWorker(command_queue=MagicMock())
+def test_run_loads_source_before_running_runtime():
+    worker = AcquisitionWorker(command_queue=MagicMock(), settings_snapshot={})
     calls = []
     worker._load_data_source = lambda: calls.append("load")
     worker._run = lambda: calls.append("run")
 
-    worker.run()
+    with patch("omnibci.conf.settings.use_snapshot"):
+        worker.run()
 
     assert calls == ["load", "run"]
 
 
-def test_run_constructs_service_with_shared_dependencies():
+@pytest.mark.parametrize("processing_input", [None, ProcessingInput().to_dict()])
+def test_run_constructs_runtime_with_explicit_context(processing_input):
     command_queue = MagicMock()
     data_manager = MagicMock()
     event_bus = MagicMock()
     data_source = MagicMock(spec=SignalSource)
-    worker = AcquisitionWorker(command_queue, data_manager, event_bus)
+    snapshot = {
+        "ACQUISITION.signal_source": "selected-source",
+        "CONFIG.generation": "generation", "CONFIG.revision": "revision",
+        "PLUGINS.bindings": [{"slot": "processing.decoder", "processing_input": processing_input}],
+    }
+    worker = AcquisitionWorker(command_queue, data_manager, event_bus, settings_snapshot=snapshot)
     worker.data_source = data_source
+    snapshot["ACQUISITION.signal_source"] = "changed-source"
 
     with patch(
-        "omnibci.infrastructure.acquisition.worker.Acquisition"
-    ) as acquisition_class:
+        "omnibci.infrastructure.acquisition.worker.AcquisitionRuntime"
+    ) as runtime_class:
         worker._run()
 
-    acquisition_class.assert_called_once_with(
+    runtime_class.assert_called_once_with(
         data_source=data_source,
         command_queue=command_queue,
         data_manager=data_manager,
         event_bus=event_bus,
-        generation=None,
-        config_revision=None,
+        source_id="selected-source",
+        preparation_required=True,
+        generation="generation",
+        config_revision="revision",
     )
-    acquisition_class.return_value.run.assert_called_once_with()
-    assert worker.acquisitor is acquisition_class.return_value
+    runtime_class.return_value.run.assert_called_once_with()
+    assert worker.runtime is runtime_class.return_value
+
+
+@pytest.mark.parametrize("plugin_type", [None, "plugin-source"])
+def test_runtime_source_identity_falls_back_to_plugin_type_or_class_name(plugin_type):
+    class Source:
+        pass
+
+    worker = AcquisitionWorker(command_queue=MagicMock(), settings_snapshot={})
+    worker.data_source = Source()
+    if plugin_type is not None:
+        worker.data_source.plugin_type = plugin_type
+    with patch("omnibci.infrastructure.acquisition.worker.AcquisitionRuntime") as runtime_class:
+        worker._run()
+
+    assert runtime_class.call_args.kwargs["source_id"] == (plugin_type or "Source")
+    assert runtime_class.call_args.kwargs["preparation_required"] is False
+
+
+def test_global_settings_are_pinned_once_for_source_and_runtime():
+    snapshot = {
+        "ACQUISITION.signal_source": "global-source",
+        "CONFIG.generation": "global-generation", "CONFIG.revision": "global-revision",
+        "PLUGINS.bindings": [{"slot": "processing.decoder", "processing_input": ProcessingInput().to_dict()}],
+    }
+    worker = AcquisitionWorker(command_queue=MagicMock())
+    with patch("omnibci.conf.settings.snapshot", side_effect=[snapshot, {}]) as read_snapshot, patch(
+        "omnibci.conf.settings.use_snapshot"
+    ) as install_snapshot, patch(
+        "omnibci.infrastructure.plugins.runtime_configuration.load_configured_plugin"
+    ) as load_source, patch(
+        "omnibci.infrastructure.acquisition.worker.AcquisitionRuntime"
+    ) as runtime_class:
+        worker.run()
+
+    read_snapshot.assert_called_once_with()
+    install_snapshot.assert_called_once_with(snapshot)
+    load_source.assert_called_once_with(snapshot, "acquisition.source", "acquisition", SignalSource)
+    runtime_class.assert_called_once_with(
+        data_source=load_source.return_value, command_queue=worker.command_queue,
+        data_manager=None, event_bus=None, source_id="global-source", preparation_required=True,
+        generation="global-generation", config_revision="global-revision",
+    )
+
+
+def test_historical_decoder_projection_requires_preparation():
+    from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
+    from omnibci.application.processing_source import materialize_processing_binding
+
+    binding = ProfileBinding("processing.decoder", "decoder", None,
+                             PluginSelection("test.decoder", "default", "1"), {})
+    worker = AcquisitionWorker(command_queue=MagicMock(), settings_snapshot={
+        "ACQUISITION.signal_source": "test-source",
+        "PLUGINS.bindings": [materialize_processing_binding(binding)],
+    })
+    worker.data_source = MagicMock(spec=SignalSource)
+    with patch("omnibci.infrastructure.acquisition.worker.AcquisitionRuntime") as runtime_class:
+        worker._run()
+
+    assert runtime_class.call_args.kwargs["preparation_required"] is True
+    assert binding.processing_input is None
 
 
 def test_load_data_source_uses_pinned_parameters_without_registry_or_global_settings(monkeypatch):

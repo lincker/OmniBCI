@@ -9,7 +9,7 @@ from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.legacy_plugin_config import PluginConfigMigrationError, legacy_parameters
 from omnibci.application.services.plugin_config_initialization import SettingsPluginConfigInitializer
 from omnibci.application.services.plugin_profile_service import PluginProfileService
-from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, SourceMetadata
+from omnibci.domain.channel_mapping import ProcessingInput
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 
@@ -80,6 +80,11 @@ def test_initialization_creates_explicit_decoder_input_only_without_legacy_setup
              "assignments": [{"source_index": 0, "expected_name": "O1", "electrode": "Occipital"}]}
     if legacy:
         settings["SIGNAL.setup"] = setup
+        with pytest.raises(PluginConfigMigrationError, match="Legacy montage"):
+            initialize(settings)
+        assert service.repository.get_activation() is None
+        assert not service.repository.list_profiles()
+        return
     result = initialize(settings)
     decoder = _bindings(result)["processing.decoder"]
     expected = None if legacy else ProcessingInput()
@@ -101,16 +106,16 @@ def test_initialization_creates_explicit_decoder_input_only_without_legacy_setup
     assert {path: path.read_bytes() for path in files} == files
 
 
-def test_initializer_binding_pins_manual_montage_without_device_observation(service):
+def test_initializer_binding_ignores_retired_montage(service):
     definition = service.catalog.legacy("acquisition", "file_reader")
-    montage = SourceMetadata("file_reader", 500, (ChannelDescriptor(0, "O1", unit="V"),), 1)
+    montage = {"source_id": "file_reader", "sample_rate": 500, "channels": [{"index": 0, "name": "O1"}]}
     profile = service.create("acquisition", definition.selection, "Source", {
-        "sample_rate": 500, "channel_number": 2}, manual_montage=montage)
-    observed = replace(profile, acquisition_montage=montage)
+        "sample_rate": 500, "channel_number": 2})
+    observed = replace(profile, legacy={"acquisition_montage": montage, "manual_montage": montage})
 
     binding = SettingsPluginConfigInitializer._binding("acquisition.source", observed)
 
-    assert binding.manual_montage == profile.manual_montage
+    assert binding.legacy == {}
     assert "acquisition_montage" not in binding.to_dict()
 
 

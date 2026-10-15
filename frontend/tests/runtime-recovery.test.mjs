@@ -7,6 +7,8 @@ import { createServer } from "vite";
 
 const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
 after(() => server.close());
+const { I18nProvider, translate } = await server.ssrLoadModule("/src/i18n.tsx");
+const english = { language: "en", t: (key, params) => translate("en", key, params) };
 const { useRuntimeConfiguration } = await server.ssrLoadModule("/src/hooks/useRuntimeConfiguration.ts");
 const { runtimeConfigApi } = await server.ssrLoadModule("/src/api/runtime-config.ts");
 const { ApiError } = await server.ssrLoadModule("/src/api/client.ts");
@@ -22,6 +24,7 @@ function hookRenderer(status) {
     let stateIndex = 0, refIndex = 0;
     const previous = dispatcher.current;
     dispatcher.current = {
+      useContext: () => english,
       useState: () => {
         const index = stateIndex++;
         return [values[index], (value) => { values[index] = value; }];
@@ -48,6 +51,38 @@ test("a confirmed cleared quarantine permits Apply despite failed-operation hist
   runtimeConfigApi.status = async () => status;
   try { await hook.apply(); assert.equal(submitted, 1); }
   finally { Object.assign(runtimeConfigApi, original); }
+});
+
+test("connecting a source waits for configuration to finish before returning success", async () => {
+  const status = { running: false, recovery_required: false, operation: null };
+  const render = hookRenderer(status);
+  const original = { ...runtimeConfigApi };
+  const calls = [];
+  runtimeConfigApi.plan = async (body) => { calls.push(body); return plan; };
+  runtimeConfigApi.apply = async () => ({ operation_id: "connect-operation", status: "queued" });
+  runtimeConfigApi.operation = async () => { calls.push("poll"); return { status: "succeeded" }; };
+  runtimeConfigApi.status = async () => status;
+  const request = { bindings: [], refresh_slots: ["acquisition.source"], expected_revision: null };
+  try {
+    assert.equal(await render().applySelection(request), true);
+    assert.deepEqual(calls[0], request);
+    assert.ok(calls.includes("poll"));
+  } finally { Object.assign(runtimeConfigApi, original); }
+});
+
+test("a rejected connection configuration cannot report success", async () => {
+  const status = { running: false, recovery_required: false, operation: null };
+  const render = hookRenderer(status);
+  const original = { ...runtimeConfigApi };
+  let submitted = false;
+  runtimeConfigApi.plan = async () => ({ ...plan, errors: ["Source unavailable"] });
+  runtimeConfigApi.apply = async () => { submitted = true; };
+  runtimeConfigApi.status = async () => status;
+  try {
+    assert.equal(await render().applySelection({ bindings: [] }), false);
+    assert.equal(submitted, false);
+    assert.equal(render().requestError, "Source unavailable");
+  } finally { Object.assign(runtimeConfigApi, original); }
 });
 
 for (const [label, status] of [
@@ -86,9 +121,9 @@ test("a rejected host-settings review clears the previous plan and displays the 
     assert.equal(hook.plan, null);
     assert.equal(hook.requestError, message);
     assert.equal(hook.reviewing, false);
-    assert.match(renderToStaticMarkup(React.createElement(RuntimeConfigurationStatus, { runtime: hook })),
+    assert.match(renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(RuntimeConfigurationStatus, { runtime: hook }))),
       /Backend restart required for LOGGING.level/);
-    assert.equal(renderToStaticMarkup(React.createElement(RuntimeConfigurationReview, { runtime: hook })), "");
+    assert.equal(renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(RuntimeConfigurationReview, { runtime: hook }))), "");
     await hook.apply();
     assert.equal(submitted, 0);
   } finally { Object.assign(runtimeConfigApi, original); }

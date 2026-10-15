@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from omnibci.application.events import CommandRequest, CommandResult
-from omnibci.infrastructure.acquisition.acquisition import Acquisition, AcquisitionCommand
+from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime, AcquisitionCommand
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.shared.events import EventType
 
@@ -16,12 +16,13 @@ class Source:
     is_streaming = True
     is_connected = True
 
-    def __init__(self):
+    def __init__(self, *, malformed_chunk=False):
         self.cursor = 0
+        self.malformed_chunk = malformed_chunk
 
     async def read_chunk(self):
         self.cursor += 4
-        return np.ones((2, 4))
+        return np.ones(4) if self.malformed_chunk else np.ones((2, 4))
 
     async def stop_stream(self):
         self.is_streaming = False
@@ -48,20 +49,19 @@ class Bus:
         self.events.append(event)
 
 
-@pytest.mark.parametrize("failure", ["queue_full", "preprocess", "read"])
+@pytest.mark.parametrize("failure", ["queue_full", "malformed_chunk", "read"])
 def test_terminal_fetch_failure_blocks_drain_checkpoint_and_manual_restart(failure):
     async def scenario():
-        source, bus = Source(), Bus()
+        source, bus = Source(malformed_chunk=failure == "malformed_chunk"), Bus()
         data = DataManager(queue.Queue(maxsize=1))
         if failure == "queue_full":
             data.put_data("existing-chunk")
-        acquisition = Acquisition(source, queue.Queue(), data, bus,
-                                  generation="generation", config_revision="revision")
-        if failure == "preprocess":
-            def fail_preprocess(chunk):
-                raise ValueError("invalid samples")
-            acquisition.preprocess = fail_preprocess
-        elif failure == "read":
+        acquisition = AcquisitionRuntime(
+            source, queue.Queue(), data, bus,
+            source_id="test-source", preparation_required=False,
+            generation="generation", config_revision="revision",
+        )
+        if failure == "read":
             async def fail_read():
                 raise OSError("device read failed")
             source.read_chunk = fail_read
@@ -95,7 +95,10 @@ def test_terminal_fetch_failure_blocks_drain_checkpoint_and_manual_restart(failu
 
 def test_fresh_graph_has_no_stale_failure_latch():
     async def scenario():
-        acquisition = Acquisition(Source(), queue.Queue(), DataManager(queue.Queue()), Bus())
+        acquisition = AcquisitionRuntime(
+            Source(), queue.Queue(), DataManager(queue.Queue()), Bus(),
+            source_id="test-source", preparation_required=False,
+        )
         await acquisition._on_stop_stream()
         acquisition._require_healthy_stream()
         assert acquisition._fetch_failure is None

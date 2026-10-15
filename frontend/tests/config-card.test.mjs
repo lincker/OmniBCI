@@ -6,6 +6,8 @@ import { createServer } from "vite";
 
 const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
 after(() => server.close());
+const { translate } = await server.ssrLoadModule("/src/i18n.tsx");
+const english = { language: "en", t: (key, params) => translate("en", key, params) };
 const { ConfigCard } = await server.ssrLoadModule("/src/ConfigCard.tsx");
 const sameDependencies = (a, b) => !!a && !!b && a.length === b.length && a.every((value, i) => Object.is(value, b[i]));
 
@@ -14,6 +16,7 @@ function harness(props) {
   let cursor = 0, pending = true, tree;
   let effects = [];
   const dispatcher = {
+    useContext: () => english,
     useState(initial) {
       const i = cursor++;
       if (!hooks[i]) hooks[i] = { value: typeof initial === "function" ? initial() : initial };
@@ -170,6 +173,34 @@ test("Save sends host updates only and Review retains every selected plugin bind
     ], expected_revision: "accepted", refresh_slots: [], include_host_settings: true }]);
     assert.deepEqual(applied, [], "Only the runtime review dialog may apply the saved settings");
     assert.deepEqual([...new Set(calls.map((call) => call.path))], ["/api/v1/config", "/api/v1/config/activation"]);
+  });
+});
+
+test("host settings review retains an inline acquisition source without creating a profile", async () => {
+  await withSettings(async ({ component, calls, reviews, applied, activation }) => {
+    const source = { slot: "acquisition.source", kind: "acquisition", profile_id: null, profile_revision: null,
+      selection: { package_id: "omnibci.curry8", contribution_id: "reader", version: "1.0.0" },
+      parameters: { host: "127.0.0.1", port: 4455 } };
+    activation.bindings[0] = structuredClone(source);
+    const accepted = structuredClone(activation);
+    await click(component, "Review and apply host settings");
+    assert.deepEqual(reviews, [{ bindings: [
+      { slot: source.slot, selection: source.selection, parameters: source.parameters },
+      { slot: "processing.filter.first", profile_id: "filter" },
+      { slot: "processing.filter.second", profile_id: "filter" },
+    ], expected_revision: "accepted", refresh_slots: [], include_host_settings: true }]);
+    assert.deepEqual(activation, accepted);
+    assert.deepEqual(applied, []);
+    assert.equal(calls.every((call) => call.method === "GET"), true);
+  });
+});
+
+test("host settings review still requires saved profiles for other modules", async () => {
+  await withSettings(async ({ component, reviews, activation }) => {
+    activation.bindings[1].profile_id = null;
+    await click(component, "Review and apply host settings");
+    assert.deepEqual(reviews, []);
+    assert.equal(elements(component.tree).some((item) => item.props.role === "alert"), true);
   });
 });
 

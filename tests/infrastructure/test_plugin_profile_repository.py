@@ -55,25 +55,49 @@ def test_round_trip_and_optimistic_rename_preserve_identity(repository, profile)
     ]
 
 
-def test_profile_montages_persist_without_entering_accepted_activation(repository, profile):
-    from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
-
-    observed = SourceMetadata("test-source", 250, (
-        ChannelDescriptor(0, "O1", unit="V"), ChannelDescriptor(1, "O2", unit="V"),
-    ), 2, connection_id="transient-connection", provenance="file-reported")
-    saved = repository.save_profile(profile)
+def test_historical_acquisition_fields_persist_as_raw_data_without_changing_activation(repository, profile):
+    observed = {"source_id": "test-source", "sample_rate": 250,
+                "channels": [{"index": 0, "name": "O1", "signal_type": "eeg", "unit": "V"}],
+                "trigger_row_index": 1, "provenance": "file-reported"}
+    saved = repository.save_profile(replace(profile, legacy={"acquisition_montage": observed,
+                                                            "manual_montage": observed}))
     accepted = repository.save_activation(_snapshot(saved))
     activation_bytes = (repository.root / "activation.toml").read_bytes()
-    cached = repository.save_profile(replace(saved, acquisition_montage=observed,
-                                             manual_montage=observed), expected_revision=saved.revision)
+    updated = repository.save_profile(replace(saved, name="Updated"), expected_revision=saved.revision)
     fresh = TomlPluginProfileRepository(repository.root)
-    assert fresh.get_profile(saved.profile_id) == cached
-    assert fresh.get_profile(saved.profile_id).acquisition_montage.channels == observed.channels
-    document = (repository.root / "plugin-profiles" / f"{saved.profile_id}.toml").read_text()
-    assert "transient-connection" not in document
-    assert "connection_id" not in document
+    assert fresh.get_profile(saved.profile_id) == updated
+    assert fresh.get_profile(saved.profile_id).legacy["acquisition_montage"] == observed
     assert fresh.get_activation() == accepted
     assert (repository.root / "activation.toml").read_bytes() == activation_bytes
+
+
+def test_v1_processing_storage_stays_inert_until_v2_mapping_is_saved(repository):
+    from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
+
+    selection = PluginSelection("acme.decoder", "main", "1.0.0")
+    legacy_input = {"schema_version": 1, "outputs": ["O1"],
+                    "reference": {"mode": "average", "channels": ["O1", "O2"]}, "excluded_channels": []}
+    profile = PluginProfile(str(uuid4()), "Historical decoder", "decoder", selection, {},
+                            legacy={"processing_input": legacy_input})
+    saved = repository.save_profile(profile)
+    binding = ProfileBinding("processing.decoder", "decoder", saved.profile_id, selection, {},
+                             profile_revision=saved.revision, legacy=saved.legacy)
+    accepted = repository.save_activation(ActivationSnapshot({}, (binding,)))
+    stored_bytes = (repository.root / "activation.toml").read_bytes()
+    fresh = TomlPluginProfileRepository(repository.root)
+    restored = fresh.get_profile(saved.profile_id)
+    assert restored.processing_input is None and restored.processing_input_requires_review
+    assert restored.to_dict()["processing_input"] == legacy_input
+    assert fresh.get_activation().revision == accepted.revision
+    assert fresh.get_activation().bindings[0].processing_input_requires_review
+    mapping = ProcessingInput(outputs=(ChannelBinding("Left", "channel-0", "eeg"),))
+    replacement = repository.save_profile(replace(restored, legacy={}, processing_input=mapping),
+                                           expected_revision=restored.revision)
+    assert fresh.get_profile(saved.profile_id) == replacement
+    assert not replacement.processing_input_requires_review
+    assert replacement.processing_input == mapping
+    assert fresh.get_activation() == accepted
+    assert (repository.root / "activation.toml").read_bytes() == stored_bytes
 
 
 def test_returned_profile_parameters_do_not_mutate_storage(repository, profile):

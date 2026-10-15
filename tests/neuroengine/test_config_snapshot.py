@@ -31,7 +31,7 @@ def test_builder_passes_one_resolved_configuration_to_both_workers():
     acquisition = engine.acquisition_worker
     processing = engine.signal_processing_worker
     assert acquisition.settings_snapshot == processing.settings_snapshot
-    assert processing.sample_rate == 250
+    assert not hasattr(processing, "sample_rate")
     assert acquisition.settings_snapshot["ACQUISITION.sample_rate"] == 250
 
 
@@ -45,8 +45,7 @@ def _capture_worker_settings(worker_type, snapshot, output):
     else:
         from omnibci.infrastructure.neuroengine.processing.worker import SignalProcessingWorker
         worker = SignalProcessingWorker(command_queue=None, settings_snapshot=snapshot)
-        worker._load_algorithm = lambda: (output.put(settings.snapshot()), None, None)
-        worker._run_processor = lambda *args: None
+        worker._run_processor = lambda: output.put(settings.snapshot())
     worker.run()
 
 

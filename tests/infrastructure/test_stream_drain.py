@@ -26,7 +26,7 @@ from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Prediction
 from omnibci.domain.repositories import SessionRecord, SessionRecordState
 from omnibci.domain.session import BCISession
 from omnibci.domain.signal import SignalChunk
-from omnibci.infrastructure.acquisition.acquisition import Acquisition, AcquisitionCommand
+from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime, AcquisitionCommand
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessor, SignalProcessorCommand
@@ -109,8 +109,11 @@ def _barrier(sequence=-1, **overrides):
 async def test_acquisition_joins_producer_before_in_band_marker_and_defers_success():
     data = DataManager(queue.Queue())
     bus = _Bus()
-    acquisition = Acquisition(_Source(), queue.Queue(), data, bus,
-                              generation="generation-1", config_revision="revision-1")
+    acquisition = AcquisitionRuntime(
+        _Source(), queue.Queue(), data, bus,
+        source_id="test-source", preparation_required=False,
+        generation="generation-1", config_revision="revision-1",
+    )
     started = asyncio.Event()
 
     async def producer():
@@ -146,7 +149,10 @@ async def test_stop_failure_joins_fetch_and_emits_failure_without_barrier():
 
     data = DataManager(queue.Queue())
     bus = _Bus()
-    acquisition = Acquisition(Source(), queue.Queue(), data, bus)
+    acquisition = AcquisitionRuntime(
+        Source(), queue.Queue(), data, bus,
+        source_id="test-source", preparation_required=False,
+    )
     acquisition.fetch_task = asyncio.create_task(asyncio.Event().wait())
     task = acquisition.fetch_task
 
@@ -171,7 +177,10 @@ async def test_acquisition_shutdown_cancellation_emits_failure_not_success():
 
     data = DataManager(queue.Queue())
     bus = _Bus()
-    acquisition = Acquisition(Source(), queue.Queue(), data, bus)
+    acquisition = AcquisitionRuntime(
+        Source(), queue.Queue(), data, bus,
+        source_id="test-source", preparation_required=False,
+    )
     task = asyncio.create_task(acquisition.execute((AcquisitionCommand.stop_and_drain, CommandRequest("cancelled"))))
     await entered.wait()
     task.cancel()
@@ -285,7 +294,10 @@ async def test_acquisition_sequence_remains_monotonic_across_stream_restarts():
 
     source = Source()
     data = DataManager(queue.Queue())
-    acquisition = Acquisition(source, queue.Queue(), data)
+    acquisition = AcquisitionRuntime(
+        source, queue.Queue(), data,
+        source_id="test-source", preparation_required=False,
+    )
     for _ in range(2):
         source.pending = np.zeros((2, 2))
         await acquisition.fetch()
@@ -325,8 +337,11 @@ async def test_recording_waits_for_slow_backlog_and_checks_actual_projection(pro
     event_bus = EventBus(queue.Queue())
     data = DataManager(queue.Queue())
     processor = _processor(decoder=_Decoder(delay=0.4), bus=event_bus, data=data)
-    acquisition = Acquisition(_Source(), queue.Queue(), data, event_bus,
-                              generation="generation-1", config_revision="revision-1")
+    acquisition = AcquisitionRuntime(
+        _Source(), queue.Queue(), data, event_bus,
+        source_id="test-source", preparation_required=False,
+        generation="generation-1", config_revision="revision-1",
+    )
     acquisition._last_sequence = 1
     data.put_data(_chunk(0, start=True))
     data.put_data(_chunk(1))

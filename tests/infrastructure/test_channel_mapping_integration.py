@@ -2,6 +2,7 @@
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import numpy as np
 import pytest
@@ -13,15 +14,16 @@ from omnibci.application.commands.engine_commands import StartEngineCommand, Sto
 from omnibci.application.services.command_result_service import CommandRejectedError
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
+from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.services.signal_setup_service import SignalSetupService
-from omnibci.bootstrap import assemble, register_engine_listeners, _acquisition_montage_binding
-from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, ResolvedSignalPlan, SourceMetadata
+from omnibci.bootstrap import assemble, register_engine_listeners, _acquisition_binding
+from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, ResolvedSignalPlan
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
-from omnibci.infrastructure.signal_layouts import SignalLayoutProvider
 from omnibci.shared.events import EventType
 
 
@@ -29,12 +31,9 @@ from omnibci.shared.events import EventType
 @pytest.mark.asyncio
 async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connection(tmp_path):
     processing_input = ProcessingInput.from_dict({
-        "outputs": ["O2", "Pz"],
-        "reference": {"mode": "single", "channels": ["Oz"]},
+        "schema_version": 2, "outputs": [{"source_channel_id": "channel-8", "name": "O2"},
+                                           {"source_channel_id": "channel-0", "name": "Pz"}],
     })
-    manual = SourceMetadata("file_reader", 1000, tuple(
-        ChannelDescriptor(index, f"CH{index + 1}", signal_type="unknown", name_provenance="generated")
-        for index in range(9)), 9, original_reference="Cz")
     host = {"NEUROENGINE.message_server_port": 0, "NEUROENGINE.startup_timeout_s": 15.0,
             "NEUROENGINE.command_timeout_s": 30.0, "STIMULATION.auto_spawn": True,
             "ACTUATION.enabled": False, "ALGORITHM.baseline_duration": 0.2}
@@ -44,35 +43,39 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
     for slot, kind, alias, parameters in (
         ("acquisition.source", "acquisition", "file_reader", {
             "data_file_path": str(Path(__file__).parents[1] / "fixture" / "train.cnt"),
-            "file_reader_chunk_size": 100, "sample_rate": 1000, "channel_number": 10,
+            "file_reader_chunk_size": 100,
         }),
         ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA", {}),
         ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
         ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40", {}),
     ):
-        extra = {"manual_montage": manual} if kind == "acquisition" else (
-            {"processing_input": processing_input} if kind == "decoder" else {})
-        profile = profiles.create(kind, profiles.catalog.legacy(kind, alias).selection, alias, parameters, **extra)
+        selection = profiles.catalog.legacy(kind, alias).selection
+        if kind == "acquisition":
+            selections.append({"slot": slot, "selection": selection.to_dict(), "parameters": parameters})
+            continue
+        extra = {"processing_input": processing_input} if kind == "decoder" else {}
+        profile = profiles.create(kind, selection, alias, parameters, **extra)
         selections.append({"slot": slot, "profile_id": profile.profile_id})
     decoder_a = profiles.repository.get_profile(selections[1]["profile_id"])
-    decoder_b = profiles.create("decoder", decoder_a.selection, "Original reference", {},
-                                processing_input=ProcessingInput(outputs=("Pz", "O2")))
-    missing_decoder = profiles.create("decoder", decoder_a.selection, "Missing electrode", {},
-                                      processing_input=ProcessingInput(outputs=("NotPresent",)))
+    decoder_b = profiles.create("decoder", decoder_a.selection, "Reordered channels", {},
+                                processing_input=ProcessingInput(outputs=(ChannelBinding("Pz", "channel-0"), ChannelBinding("O2", "channel-8"))))
+    missing_decoder = profiles.create("decoder", decoder_a.selection, "Missing channel", {},
+                                      processing_input=ProcessingInput(outputs=(ChannelBinding("NotPresent", "not-present"),)))
     profiles.accept(profiles.propose(selections), expected_revision=None)
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
                                 snapshot_provider=profiles.resolve_settings)
     await engine.startup()
     container = assemble(engine, InMemorySessionRepository(), settings=host, admission=engine.admission)
-    container.acquisition_service.set_metadata_recorder(
-        lambda profile_id: _acquisition_montage_binding(engine, profiles, profile_id),
-        profiles.record_acquisition_montage,
-    )
+    container.acquisition_service.set_metadata_binding(lambda: _acquisition_binding(engine))
     signal = SignalSetupService(SimpleNamespace(read_saved=lambda: (host, "saved")), profiles, engine,
-                                container.acquisition_service, container.command_results, SignalLayoutProvider())
+                                container.acquisition_service, container.command_results)
     container.acquisition_service.set_signal_preparer(signal.prepare)
     container.session_service.set_signal_preparer(signal.prepare_session, container.acquisition_service.lifecycle_lock)
     register_engine_listeners(container)
+    coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
+                                          container.session_service, container.stimulation_service,
+                                          container.command_results, signal_preparer=signal.prepare)
+    runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
     try:
         await engine.handle_start_engine(StartEngineCommand())
         assert engine.is_engine_ready
@@ -84,15 +87,39 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         with pytest.raises(CommandRejectedError) as unprepared:
             await asyncio.to_thread(container.command_results.request, EventType.StartStream)
         assert unprepared.value.result.error_code == "SIGNAL_NOT_PREPARED"
+        assert profiles.repository.list_profiles("acquisition") == []
         metadata = await asyncio.to_thread(container.acquisition_service.get_metadata)
-        assert metadata["output_row_count"] == 10
-        assert metadata["trigger_row_index"] == 9
-        assert metadata["channels"][8]["name"] == "O2"
-        saved_source = TomlPluginProfileRepository(tmp_path / "profiles").get_profile(selections[0]["profile_id"])
-        assert saved_source.acquisition_montage.connection_id == ""
-        assert saved_source.acquisition_montage.channels[8].name == "O2"
-        assert saved_source.acquisition_montage.original_reference is None
-        assert saved_source.acquisition_montage.provenance == "file-reported"
+        assert isinstance(metadata["metadata"], str)
+        assert "O2" in metadata["metadata"]
+        assert "signal_channel_count" not in metadata["metadata"]
+        assert metadata["descriptor"]["output_row_count"] == 10
+        assert metadata["descriptor"]["signal_channel_count"] == 9
+        assert metadata["descriptor"]["provenance"] == "file-reported"
+        assert metadata["descriptor"]["channels"][8]["channel_id"] == "channel-8"
+        assert metadata["comparison"]["status"] == "unconfirmed"
+        assert profiles.repository.list_profiles("acquisition") == []
+        with pytest.raises(ValueError, match="unconfirmed"):
+            await asyncio.to_thread(container.recording_service.start)
+
+        # Save only after inspecting the observed dimensions, then apply the experiment baseline.
+        source = profiles.repository.get_activation().bindings[0]
+        assert source.profile_id is None
+        saved_source = profiles.create("acquisition", source.selection, "Observed CNT experiment", {
+            **source.parameters, "sample_rate": metadata["descriptor"]["sample_rate"],
+            "channel_number": metadata["descriptor"]["output_row_count"],
+        })
+        assert profiles.repository.get_activation().bindings[0].profile_id is None
+        selections[0] = {"slot": "acquisition.source", "profile_id": saved_source.profile_id}
+        reviewed = runtime.plan(selections, expected_revision=profiles.repository.get_activation().revision,
+                                refresh_slots=["acquisition.source"])
+        operation = runtime.submit(reviewed.plan_id, str(uuid4()))
+        await runtime.wait_for_idle()
+        result = runtime.operation(operation["operation_id"])
+        assert result["status"] == "succeeded", result
+        assert profiles.repository.get_activation().bindings[0].profile_id == saved_source.profile_id
+        metadata = await asyncio.to_thread(container.acquisition_service.get_metadata)
+        assert metadata["comparison"]["status"] == "matched"
+        assert profiles.repository.get_profile(saved_source.profile_id) == saved_source
 
         session_id = await asyncio.to_thread(container.recording_service.start)
         readiness = signal.read()["readiness"]
@@ -103,14 +130,14 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         assert plan["processing_input"] == processing_input.to_dict()
         assert "setup" not in plan
         assert [channel["name"] for channel in plan["output_channels"]] == ["O2", "Pz"]
-        assert [channel["reference"] for channel in plan["output_channels"]] == ["Oz", "Oz"]
+        assert all(channel.get("reference") is None for channel in plan["output_channels"])
         assert plan["source"]["connection_id"] == metadata["connection_id"]
-        assert plan["coefficients"][0] == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 1.0]
+        assert plan["source_indices"] == [8, 0]
         raw = np.arange(30, dtype=float).reshape(10, 3)
         raw[-1] = [0, 1, 255]
         chunk = SignalChunk(timestamp=1.0, sequence_id=7, raw_data=raw)
         mapped = ResolvedSignalPlan.from_dict(plan).apply(chunk)
-        np.testing.assert_array_equal(mapped.data[0], raw[8] - raw[7])
+        np.testing.assert_array_equal(mapped.data[0], raw[8])
         np.testing.assert_array_equal(mapped.triggers, chunk.triggers)
         assert mapped.timestamp == chunk.timestamp and mapped.sequence_id == chunk.sequence_id
         await asyncio.sleep(0.05)
@@ -119,7 +146,7 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         # Disconnect clears API readiness, and the worker rejects a receipt from that connection.
         await asyncio.to_thread(container.acquisition_service.handle_disconnect, DisconnectDataProviderCommand())
         assert signal.read()["readiness"]["ready"] is False
-        assert profiles.repository.get_profile(saved_source.profile_id).acquisition_montage == saved_source.acquisition_montage
+        assert profiles.repository.get_profile(saved_source.profile_id) == saved_source
         await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
         reconnected = await asyncio.to_thread(container.acquisition_service.get_metadata)
         assert reconnected["connection_id"] != metadata["connection_id"]
@@ -133,8 +160,8 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         assert session.signal_plan == plan
 
         # Restart reads each decoder's persisted input instead of a shared global setup.
-        for decoder, outputs, reference in (
-            (decoder_b, ["Pz", "O2"], "Cz"), (decoder_a, ["O2", "Pz"], "Oz"),
+        for decoder, outputs in (
+            (decoder_b, ["Pz", "O2"]), (decoder_a, ["O2", "Pz"]),
         ):
             await engine.handle_stop_engine(StopEngineCommand())
             profiles.repository = TomlPluginProfileRepository(tmp_path / "profiles")
@@ -147,7 +174,7 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
             current_session = await asyncio.to_thread(container.recording_service.start)
             current_plan = container.session_repository.find_by_id(current_session).signal_plan
             assert [channel["name"] for channel in current_plan["output_channels"]] == outputs
-            assert [channel["reference"] for channel in current_plan["output_channels"]] == [reference, reference]
+            assert all(channel.get("reference") is None for channel in current_plan["output_channels"])
             transformed = ResolvedSignalPlan.from_dict(current_plan).apply(chunk)
             np.testing.assert_array_equal(transformed.triggers, chunk.triggers)
             assert await asyncio.to_thread(container.recording_service.stop) == current_session
@@ -158,7 +185,7 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         profiles.accept(profiles.propose(selections), expected_revision=previous.revision)
         await engine.handle_start_engine(StartEngineCommand())
         await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
-        with pytest.raises(ValueError, match="Missing signal dependency: NotPresent"):
+        with pytest.raises(ValueError, match="Missing acquisition channel: not-present"):
             await asyncio.to_thread(container.recording_service.start)
         assert container.session_service.active_session_id is None
         assert signal.read()["readiness"]["ready"] is False

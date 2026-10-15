@@ -10,6 +10,8 @@ from typing import Any, Optional
 
 from numpy import typing as npt
 
+from omnibci.domain.signal_info import SignalInfo
+
 class SignalSource(ABC):
     """
     Abstract class for signal source.
@@ -59,8 +61,21 @@ class SignalSource(ABC):
         raise NotImplementedError("This signal source does not support checkpoints")
 
     @abstractmethod
-    async def get_metadata(self):
-        """get metadata"""
+    async def get_metadata(self) -> str:
+        """Query source information for display, preserving native text as supplied.
+
+        Binary/file sources render their native fields as readable text. This
+        text is opaque to the host and is never parsed to configure Processing.
+        """
+
+    def describe_output(self, *, source_id: str, connection_id: str) -> SignalInfo:
+        """Describe normalized output from the latest source observation.
+
+        Called after get_metadata(), without another query. Implementations
+        provide signal channels followed by one event row, and identify the
+        provenance of their dimensions. Metadata-only sources may omit this.
+        """
+        raise NotImplementedError("Source does not provide an acquisition descriptor")
 
     @abstractmethod
     async def connect(self) -> bool:
@@ -76,6 +91,9 @@ class SignalSource(ABC):
 
         Returns None to signal a clean end of stream (e.g. file playback
         reached EOF); live device sources simply never return None.
+        Rows must match describe_output(): signal channels in descriptor order,
+        followed by the final event row. The producer must not mutate an array
+        after returning it.
         """
 
     @abstractmethod

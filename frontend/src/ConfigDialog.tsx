@@ -1,5 +1,6 @@
 /** HTML dialogs also work in desktop webviews without native prompt support. */
 import { useEffect, useId, useRef, useState } from "react";
+import { useI18n } from "./i18n";
 
 export type ConfigDialogProps = {
   title: string;
@@ -11,6 +12,7 @@ export type ConfigDialogProps = {
 };
 
 export function ConfigDialog({ title, message, confirmLabel, initialValue, onConfirm, onCancel }: ConfigDialogProps) {
+  const { t } = useI18n();
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const [value, setValue] = useState(initialValue ?? "");
@@ -22,11 +24,11 @@ export function ConfigDialog({ title, message, confirmLabel, initialValue, onCon
         <h3 id={titleId}>{title}</h3>
         <p>{message}</p>
         {initialValue !== undefined && <label>
-          Name for new profile
+          {t("dialog.newProfileName")}
           <input autoFocus required maxLength={64} value={value} onChange={(event) => setValue(event.target.value)} />
         </label>}
         <div className="actions">
-          <button type="button" onClick={onCancel}>Cancel</button>
+          <button type="button" onClick={onCancel}>{t("dialog.cancel")}</button>
           <button type="submit" className="primary">{confirmLabel}</button>
         </div>
       </form>

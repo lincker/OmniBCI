@@ -52,7 +52,7 @@ def test_resume_completes_interrupted_body_before_reading_next_header(protocol, 
             source.writer = stream_writer()
             source._is_connected = source._is_streaming = True
             if isinstance(source, Curry8DataReader):
-                source._metadata = Curry8Metadata(803, 1, 1000, 4, False, False, ("Cz",))
+                source._metadata = Curry8Metadata(803, 2, 1000, 4, False, False, ("Cz", "Trigger"))
             await source.stop_stream()
             await source.start_stream()
         source.reader.feed_data(first_body[partial_body_size:] + next_header.to_bytes() + next_body)

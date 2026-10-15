@@ -32,6 +32,7 @@ class AcquisitionSnapshot:
     """Authoritative device state emitted by the acquisition worker."""
     connected: bool
     streaming: bool
+    connection_id: str | None = None
 
 
 @dataclass(frozen=True)

@@ -12,6 +12,15 @@ The profile selector and sidebar show only profiles for that exact contribution
 and version. Installed managed packages must be enabled in Extensions before
 they appear; bundled plugins are available directly.
 
+Acquisition first offers **Use saved profile** or **New profile**. A saved profile
+retains its experiment baseline; Get Metadata shows missing or different source
+parameters in red. A new profile starts as an unsaved draft: choose its plugin,
+enter the address/port or recording path, and Connect. For Curry8 and File Reader,
+Get Metadata automatically fills the observed sample rate and total output rows
+into that draft. **Save profile** persists it; Connect then applies the saved
+baseline for comparison. Changing the draft's connection parameters clears its
+previously observed dimensions.
+
 **New profile** starts with the selected plugin's defaults. **Duplicate profile**
 saves an independent named copy of the displayed parameters. Browsing another
 plugin or profile does not select it for execution, and **Save profile** only
@@ -49,6 +58,14 @@ Editing a selected profile does not mutate the accepted copy. A new selection
 must be explicitly accepted, with the previous activation revision. While the
 engine runs, the runtime application coordinator commits acceptance after workers
 acknowledge the change.
+
+The runtime planning API also accepts an inline acquisition binding with
+`slot: "acquisition.source"`, `selection`, and `parameters`. This pins connection
+configuration in the activation without creating or updating a named Profile.
+The binding has no `profile_id` and uses `profile_revision: 0`. Other module
+updates preserve it. The direct activation endpoint still accepts saved Profile
+references only. New Curry8/File drafts omit expected dimensions from this
+binding until the user saves and applies the completed Profile.
 
 Fixed slots are `acquisition.source`, `processing.decoder`,
 `processing.epoch_detector`, `stimulation.paradigm`, `stimulation.trigger`, and

@@ -151,10 +151,30 @@ class TestAcquisitionStatus:
 
 
 class TestAcquisitionMetadata:
+    def test_normalized_descriptor_is_exposed_separately_from_source_text(self, api_client, acquisition_service):
+        from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
+        descriptor = SignalInfo("test", 500, (ChannelDescriptor(0, "CH1"),), 1,
+                                           connection_id="current")
+        raw = '  Vendor reference: <unknown /> & value\r\n{"vendor_field": null}\n'
+        acquisition_service.get_metadata = MagicMock(return_value={
+            "source_id": "test", "connection_id": "current", "metadata": raw,
+            "descriptor": descriptor.to_dict(),
+            "comparison": {"status": "mismatched", "sample_rate": {"expected": 250, "actual": 500},
+                           "channel_number": {"expected": 3, "actual": 2}},
+        })
+        response = api_client.get("/api/v1/acquisition/metadata")
+        assert response.status_code == 200
+        result = response.json()["data"]
+        assert result["metadata"] == raw
+        assert result["comparison"]["status"] == "mismatched"
+        assert result["comparison"]["channel_number"] == {"expected": 3, "actual": 2}
+        assert result["descriptor"]["signal_channel_count"] == 1
+        assert result["descriptor"]["channels"][0]["channel_id"] == "channel-0"
+        assert "original_reference" not in result["descriptor"]
+
     def test_read_and_explicit_refresh_use_service_metadata(self, api_client, acquisition_service):
-        from omnibci.domain.montage import ChannelDescriptor, SourceMetadata
-        metadata = SourceMetadata("test", 500, (ChannelDescriptor(0, "O1"),), 1,
-                                  connection_id="current").to_dict()
+        metadata = {"source_id": "test", "connection_id": "current", "descriptor": None,
+                    "metadata": "Amplifier\nProtocol version: 1.2\nRecording enabled\n", "comparison": None}
         acquisition_service.get_metadata = MagicMock(return_value=metadata)
         response = api_client.get("/api/v1/acquisition/metadata")
         assert response.status_code == 200 and response.json()["data"] == metadata
@@ -162,9 +182,6 @@ class TestAcquisitionMetadata:
         response = api_client.post("/api/v1/acquisition/metadata/refresh")
         assert response.status_code == 200
         acquisition_service.get_metadata.assert_called_with(refresh=True)
-        response = api_client.post("/api/v1/acquisition/metadata/refresh?profile_id=source-profile")
-        assert response.status_code == 200
-        acquisition_service.get_metadata.assert_called_with(refresh=True, profile_id="source-profile")
 
     def test_disconnected_metadata_returns_confirmed_rejection(self, api_client, acquisition_service):
         acquisition_service.get_metadata = MagicMock(side_effect=_rejected("GetSourceMetadata"))

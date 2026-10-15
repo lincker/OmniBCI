@@ -9,7 +9,7 @@ from omnibci.application.events import AcquisitionSnapshot, CommandRequest
 from omnibci.application.ports.engine_port import EnginePort
 from omnibci.application.services.command_result_service import CommandResultBroker
 from omnibci.infrastructure.acquisition.acquisition import (
-    Acquisition,
+    AcquisitionRuntime,
     AcquisitionCommand,
 )
 from omnibci.infrastructure.ipc.event_bus import EventBus
@@ -80,11 +80,13 @@ def test_connect_round_trips_through_event_bus_worker_and_broker() -> None:
         command_queue = mp.Queue()
         bus = EventBus(event_queue)
         source = _Source()
-        acquisition = Acquisition(
+        acquisition = AcquisitionRuntime(
             data_source=source,
             command_queue=command_queue,
             data_manager=_DataManager(),
             event_bus=bus,
+            source_id="test-source",
+            preparation_required=False,
         )
         broker = CommandResultBroker(_BusEngine(bus), timeout_s=1.0)
         observed_states: list[AcquisitionSnapshot] = []
@@ -120,8 +122,14 @@ def test_connect_round_trips_through_event_bus_worker_and_broker() -> None:
             assert result.ok is True
             assert result.command == "ConnectDataProvider"
             assert source.is_connected is True
+            assert isinstance(acquisition.connection_id, str)
+            assert acquisition.connection_id
             assert observed_states == [
-                AcquisitionSnapshot(connected=True, streaming=False)
+                AcquisitionSnapshot(
+                    connected=True,
+                    streaming=False,
+                    connection_id=acquisition.connection_id,
+                )
             ]
             assert broker.pending_count == 0
         finally:

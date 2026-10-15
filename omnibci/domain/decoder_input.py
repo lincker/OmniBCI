@@ -2,7 +2,7 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from omnibci.domain.montage import ChannelDescriptor
+from omnibci.domain.signal_info import ChannelDescriptor
 
 
 def _names(value: object, field: str) -> tuple[str, ...]:
@@ -60,7 +60,7 @@ class DecoderChannelRequirements:
         }
 
     def validate_channels(self, channels: Sequence[ChannelDescriptor]) -> None:
-        """Validate mapped outputs; callers must exclude trigger/reference-only rows."""
+        """Validate mapped outputs; the acquisition trigger row is not an output."""
         if len(channels) < self.min_count:
             raise ValueError(
                 f"Decoder requires at least {self.min_count} input channels; got {len(channels)}"

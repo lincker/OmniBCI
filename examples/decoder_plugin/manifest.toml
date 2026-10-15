@@ -46,7 +46,7 @@ schema_version = 1
 description = "This tutorial deliberately reads Oz by name. Extra EEG inputs are accepted but ignored."
 # Optional type constraint for every final input row; omit to accept any signal type.
 signal_type = "eeg"
-# Minimum final signal-channel count, excluding trigger and reference-only rows.
+# Minimum final signal-channel count, excluding the trigger row.
 min_count = 1
 # Mandatory channel-name subset; extra inputs are allowed and order is not prescribed.
 required_names = ["Oz"]

@@ -44,20 +44,20 @@ requirements section retain their existing behavior.
 | --- | --- |
 | `description` | Explanation of the algorithm's input assumptions; displayed, not executed. |
 | `signal_type` | Optional required signal type for every final input channel, for example `eeg`. Omit to impose no type restriction. |
-| `min_count` | Positive integer minimum for the final input's signal-channel count. Trigger and reference-only dependencies do not count. |
+| `min_count` | Positive integer minimum for the final input's signal-channel count. The trigger row does not count. |
 | `required_names` | Mandatory channel names, as an unordered subset. Extra channels are allowed. An empty list imposes no named-channel requirement. |
-| `default_names` | Ordered suggestion used when initializing a new Profile. Users can edit the selection, subject to the requirements. An empty list leaves the existing all-source-channel behavior. |
+| `default_names` | Ordered suggestions for output names. The user binds them to Acquisition channel IDs; names alone do not establish a mapping. |
 
 Channel names must match the final mapped input names, including spelling and
 case. A nonempty default selection must satisfy the minimum count and contain
 the mandatory names. It does not establish an exact-order requirement.
 An Acquisition containing a channel is insufficient if the Decoder Profile
-does not include it in the final input. Re-referencing can require additional
-source channels without adding them to the decoder's output rows.
+does not include it in the final input.
 
 The declaration is read-only algorithm metadata. The user's actual selection,
-order and re-reference settings remain in `processing_input` on the Decoder
-Profile. Acquisition metadata remains with its Acquisition Profile. Do not add a
+order, output names, and unknown-type declarations remain in `processing_input`
+on the Decoder Profile. The live Acquisition owns its normalized descriptor;
+raw source metadata remains available separately. Do not add a
 second `parameters.input_channels` setting for the same mapping. Existing
 Profiles are not overwritten by updated defaults or an Acquisition switch;
 preview and runtime preparation validate their resolved input. Offline Profiles
@@ -66,12 +66,15 @@ can be saved before an Acquisition is available.
 In the Processing binding editor, Acquisition channels are on the left and
 ordered algorithm inputs are on the right. Users can select all channels or bind
 individual sources, including an explicit different-name binding such as
-`{"name": "Oz", "source": "CH1"}`. This is a processing input label, not an edit
-to the Acquisition's electrode metadata or a claim about its physical position.
+`{"name": "Oz", "source_channel_id": "channel-0", "signal_type": "eeg"}`.
+The optional type declaration fills an unknown Acquisition type and rejects a
+conflict with a known type. It does not edit the Acquisition descriptor. Mapping
+only selects, orders, and renames signal rows; it preserves sample amplitudes and
+the trigger row.
 The bound signal enters Epoch processing and baseline buffering first. Optional
 ordered filters transform the assembled window before Decoder execution.
 
-For a model whose full channel order, units or references must be exact, validate
+For a model whose full channel order or units must be exact, validate
 those additional assumptions in its constructor using `context.input_signal`.
 `required_names` alone does not express them. Publish only requirements that the
 algorithm actually needs; the tutorial's `Oz` requirement is an arbitrary
@@ -98,10 +101,11 @@ the process working directory or import backend settings and service objects.
 | `decode(self, window, latest) -> Prediction \| None` | Produce an integer target id, optionally a confidence value, or decline. |
 | `for_new_epoch(self)` | Optional for stateless decoders; stateful decoders must return an instance with isolated per-epoch working state. |
 
-`context.input_signal.channels` is the ordered mapped input, including type,
-unit, reference and optional position metadata. Use it to resolve names to matrix
-row indices. `context.channel_names` and `context.acquired_signal` describe the
-original Acquisition, before mapping. Never use their indices for mapped input.
+`context.input_signal` is a `SignalInfo` describing the ordered
+mapped input, including channel IDs, names, types, and units. Use its channels to
+resolve names to matrix row indices. `context.channel_names` and
+`context.acquired_signal` describe the original Acquisition, before mapping.
+Never use their indices for mapped input.
 
 Decoder arrays have shape **signal channels × samples**, without a trigger row.
 `decode` receives the accumulated post-trigger window after ordered filters.
@@ -163,7 +167,7 @@ an installed package/version is immutable. Schema version is separate.
 2. In **Setup → Processing → Decoder**, create a Profile for the contribution.
    Review algorithm parameters and the initialized input selection.
 3. Select the Acquisition Profile, refresh source information and preview input.
-   Check channel names, order, units and reference. Missing required channels,
+   Check channel IDs, output names, order, units and types. Missing required channels,
    too few channels or the wrong signal type must prevent runtime preparation.
 4. Select and apply the Decoder Profile. Start with a known replay file and a
    suitable epoch detector; verify expected targets before using live data.

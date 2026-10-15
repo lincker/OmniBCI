@@ -10,7 +10,8 @@ from omnibci.application.plugin_profiles import ProfileBinding, PluginSelection
 from omnibci.application.processing_source import processing_input as selected_processing_input
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration
-from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, SourceMetadata
+from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
+from omnibci.domain.channel_mapping import ProcessingInput, ChannelBinding
 
 
 SLOTS = {
@@ -120,20 +121,19 @@ def test_node_derives_historical_identity_input_without_changing_authoritative_b
     assert configuration.bindings[1].processing_input is None
 
     legacy = {"source_id": "local_acquisition", "outputs": ["C3"]}
-    legacy_configuration = NodeConfiguration.from_dict({**original, "settings": {**original["settings"],
-        "SIGNAL.setup": legacy}})
-    result = materialize_node_configuration(legacy_configuration, catalog)
-    assert result["SIGNAL.setup"] == legacy
-    assert "processing_input" not in result["PLUGINS.bindings"][1]
+    with pytest.raises(PluginSchemaError, match="unsupported fields"):
+        NodeConfiguration.from_dict({**original, "settings": {**original["settings"], "SIGNAL.setup": legacy}})
 
 
-def test_acquisition_montage_survives_engine_node_projection(runtime):
+
+def test_engine_node_projection_ignores_retired_acquisition_montage(runtime):
     source = ProfileBinding.from_dict(runtime["PLUGINS.bindings"][0])
-    manual = SourceMetadata("local_acquisition", 1000, (ChannelDescriptor(0, "C3", unit="uV"),), 1)
-    runtime["PLUGINS.bindings"][0] = replace(source, manual_montage=manual).to_dict()
+    manual = SignalInfo("local_acquisition", 1000, (ChannelDescriptor(0, "C3", unit="uV"),), 1)
+    runtime["PLUGINS.bindings"][0] = replace(source, legacy={"manual_montage": manual.to_dict()}).to_dict()
     dto = NodeConfiguration.from_dict(project_node_configuration(runtime, "engine").to_dict())
     result = materialize_node_configuration(dto, LocalCatalog({"acquisition", "decoder", "epoch_detector"}))
-    assert result["ACQUISITION.manual_montage"] == manual.to_dict()
+    assert "ACQUISITION.manual_montage" not in result
+    assert "manual_montage" not in result["PLUGINS.bindings"][0]
     assert "ACQUISITION.manual_montage" not in project_node_configuration(runtime, "stimulation").settings
 
 
@@ -148,37 +148,13 @@ def test_projection_requires_no_installed_catalog_and_preserves_parent_identity(
     assert project_node_configuration(runtime, "stimulation").generation is None
 
 
-def test_signal_setup_projects_only_to_engine_and_remains_structured(runtime):
-    setup = {
-        "schema_version": 1, "source_id": "test-source",
-        "assignments": [{"source_index": 0, "electrode": "O1", "expected_name": "CH1"}],
-        "outputs": ["O1"], "reference": {"mode": "original", "channels": []},
-    }
-    runtime["SIGNAL.setup"] = setup
-    engine = project_node_configuration(runtime, "engine")
-    restored = NodeConfiguration.from_dict(engine.to_dict())
-    assert restored.settings["SIGNAL.setup"] == setup
-    result = materialize_node_configuration(restored, LocalCatalog({"acquisition", "decoder", "epoch_detector"}))
-    assert result["SIGNAL.setup"] == setup
-    for role in ("stimulation", "actuation"):
-        projected = project_node_configuration(runtime, role)
-        assert "SIGNAL.setup" not in projected.settings
-        injected = projected.to_dict()
-        injected["settings"]["SIGNAL.setup"] = setup
-        with pytest.raises(PluginSchemaError, match="unsupported fields"):
-            NodeConfiguration.from_dict(injected)
 
 
-def test_invalid_signal_setup_is_rejected_in_engine_projection(runtime):
-    runtime["SIGNAL.setup"] = {"source_id": "test-source", "reference": {"mode": "average", "channels": []}}
-    with pytest.raises(ValueError, match="nonempty"):
-        project_node_configuration(runtime, "engine")
 
 
 @pytest.mark.parametrize("processing_input", [
     ProcessingInput(),
-    ProcessingInput.from_dict({"outputs": ["O2", "O1"],
-                               "reference": {"mode": "single", "channels": ["M1"]}}),
+    ProcessingInput(outputs=(ChannelBinding("O2", "channel-1"), ChannelBinding("O1", "channel-0"))),
 ])
 def test_decoder_input_overrides_legacy_setup_using_pinned_source(runtime, processing_input):
     runtime["SIGNAL.setup"] = {"source_id": "old-device", "outputs": ["obsolete"]}
@@ -283,6 +259,24 @@ def test_source_metadata_can_be_derived_without_flat_aliases(runtime):
     assert "ACQUISITION.channel_names" not in dto.settings
 
 
+@pytest.mark.parametrize(("role", "kinds"), [
+    ("engine", {"acquisition", "decoder", "epoch_detector"}),
+    ("stimulation", {"paradigm", "trigger"}),
+    ("actuation", {"effector"}),
+])
+def test_nodes_can_start_before_source_expectations_are_confirmed(runtime, role, kinds):
+    for name in ("sample_rate", "channel_number"):
+        runtime.pop(f"ACQUISITION.{name}")
+        runtime["PLUGINS.bindings"][0]["parameters"].pop(name)
+    dto = NodeConfiguration.from_dict(project_node_configuration(runtime, role).to_dict())
+    result = materialize_node_configuration(dto, LocalCatalog(kinds))
+    assert "ACQUISITION.sample_rate" not in dto.settings
+    assert "ACQUISITION.channel_number" not in dto.settings
+    assert "ACQUISITION.sample_rate" not in result
+    assert "ACQUISITION.channel_number" not in result
+    assert result["CONFIG.revision"] == runtime["CONFIG.revision"]
+
+
 def test_nonowned_plugin_parameters_never_receive_local_schema_validation(runtime):
     runtime["PLUGINS.bindings"][1]["parameters"] = {"foreign_only_parameter": [1, 2, 3]}
     result = materialize_node_configuration(
@@ -321,3 +315,10 @@ def test_node_transport_and_timing_settings_are_validated(runtime, key, value):
     data["settings"][key] = value
     with pytest.raises(PluginSchemaError):
         NodeConfiguration.from_dict(data)
+
+
+def test_legacy_global_setup_cannot_reach_an_engine_node(runtime):
+    runtime["SIGNAL.setup"] = {"source_id": "test-source", "outputs": ["O1"]}
+    with pytest.raises(ValueError, match="reconfigure"):
+        project_node_configuration(runtime, "engine")
+    assert "SIGNAL.setup" not in project_node_configuration(runtime, "stimulation").settings

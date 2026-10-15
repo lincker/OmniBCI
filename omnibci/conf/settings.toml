@@ -11,8 +11,6 @@ signal_source = "file_reader"
 trigger = 'neuroscan_scan45_trigger'
 # Hexadecimal parallel-port I/O base address for trigger output.
 parallel_port_address = "0x3100"
-channel_number = 10
-sample_rate = 1000
 
 file_reader_chunk_size = 100
 # Select a recording on the backend machine before starting acquisition.

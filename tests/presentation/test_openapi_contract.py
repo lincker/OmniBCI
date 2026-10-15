@@ -185,7 +185,30 @@ class TestResponseDtos:
         assert set(props) == {
             "connected", "streaming", "source", "sample_rate", "channel_count",
             "metadata_available", "metadata_provenance",
+            "connection_id",
         }
+
+    def test_acquisition_metadata_exposes_raw_fields_and_normalized_descriptor(self, spec):
+        props = _schema(spec, "AcquisitionMetadataResponse")["properties"]
+        assert set(props) == {"source_id", "connection_id", "metadata", "descriptor", "comparison"}
+        assert props["metadata"]["type"] == "string"
+        comparison = _schema(spec, "SourceExpectationsModel")["properties"]
+        assert set(comparison) == {"status", "sample_rate", "channel_number"}
+        assert set(comparison["status"]["enum"]) == {"unconfirmed", "matched", "mismatched", "unverified"}
+        refresh = spec["paths"]["/api/v1/acquisition/metadata/refresh"]["post"]
+        assert all(parameter["name"] != "profile_id" for parameter in refresh.get("parameters", []))
+
+    def test_processing_contract_has_only_mapping_and_type_declarations(self, spec):
+        props = _schema(spec, "ProcessingInputModel")["properties"]
+        assert set(props) == {"schema_version", "outputs"}
+        assert props["schema_version"]["const"] == 2
+        props = _schema(spec, "ChannelBindingModel")["properties"]
+        assert set(props) == {"source_channel_id", "name", "signal_type"}
+        props = _schema(spec, "SignalSetupResponse")["properties"]
+        assert "acquisition_descriptor" in props
+        assert not {"setup", "legacy_setup", "accepted_setup", "active_setup", "source_metadata"} & props.keys()
+        props = _schema(spec, "ChannelDescriptorModel")["properties"]
+        assert set(props) == {"channel_id", "index", "name", "signal_type", "unit", "name_provenance"}
 
 
 # ---------------------------------------------------------------------------

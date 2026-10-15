@@ -1,11 +1,27 @@
 """Scan45 frame width follows each saved profile, including its event channel."""
 import struct
+from unittest.mock import AsyncMock
 
 import numpy as np
 import pytest
 
 from omnibci.infrastructure.plugins.acquisition.neuroscan.scan45 import scan45
 from omnibci.sdk import PluginContext
+
+
+@pytest.mark.asyncio
+async def test_metadata_is_unsupported_text_while_output_description_uses_configuration():
+    reader = scan45.Scan45DataReader(parameters={"channel_number": 33, "sample_rate": 500})
+    reader._load_package = AsyncMock()
+
+    metadata = await reader.get_metadata()
+    assert metadata == "Device metadata retrieval is not implemented for Scan45."
+    descriptor = reader.describe_output(source_id=reader.plugin_type, connection_id="connection")
+    assert descriptor.signal_channel_count == 32
+    assert descriptor.output_row_count == 33
+    assert descriptor.sample_rate == 500
+    assert descriptor.provenance == "user-declared"
+    reader._load_package.assert_not_awaited()
 
 
 def packet(channels, events):

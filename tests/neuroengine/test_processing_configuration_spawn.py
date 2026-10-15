@@ -11,6 +11,8 @@ import pytest
 from omnibci.application.events import CommandRequest
 from omnibci.application.plugin_profiles import ProfileBinding
 from omnibci.domain.signal import SignalChunk
+from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
+from omnibci.domain.channel_mapping import ProcessingInput, compile_processing_plan
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.neuroengine.processing.worker import SignalProcessingWorker
@@ -81,6 +83,7 @@ class ValueDecoder(Decoder):
     detector = catalog.resolve_legacy("epoch_detector", "DEFAULT_EPOCH_DETECTOR")
     snapshot = {"CONFIG.revision": "old", "CONFIG.generation": "run",
                 "ACQUISITION.sample_rate": 250, "ALGORITHM.baseline_duration": 0.0,
+                "ACQUISITION.signal_source": "test-source",
                 "PLUGINS.bindings": [
                     ProfileBinding("processing.decoder", "decoder", None, decoder.selection,
                                    {"target": 1}).to_dict(),
@@ -94,7 +97,7 @@ class ValueDecoder(Decoder):
     commands, data, events = (context.Queue() for _ in range(3))
     receiver, sender = context.Pipe(duplex=False)
     reporter = StartupReporter(sender, component="Processing", config_revision="old", generation="run")
-    worker = SignalProcessingWorker(commands, DataManager(data), EventBus(events), sample_rate=250,
+    worker = SignalProcessingWorker(commands, DataManager(data), EventBus(events),
                                     settings_snapshot=snapshot, startup_reporter=reporter)
     process = context.Process(target=worker.run)
     try:
@@ -102,6 +105,16 @@ class ValueDecoder(Decoder):
         reporter.close()
         wait_for_startup_report(receiver, process, component="Processing", timeout_s=10,
                                 expected_revision="old", expected_generation="run")
+        source = SignalInfo("test-source", 250, (ChannelDescriptor(0, "O1"),), 1,
+                            connection_id="connection")
+        plan = compile_processing_plan(source, ProcessingInput(), config_revision="old")
+        receipt = {"generation": "run", "config_revision": "old", "connection_id": "connection",
+                   "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint}
+        commands.put((SignalProcessorCommand.prepare_signal, CommandRequest("prepare", {
+            "plan": plan.to_dict(), "receipt": receipt,
+        })))
+        prepared = _event(events, EventType.CommandResult, lambda event: event.data.command_id == "prepare")
+        assert prepared.ok, prepared.message
         commands.put((SignalProcessorCommand.start_session, CommandRequest("start", {"session_id": "session"})))
         _event(events, EventType.CommandResult, lambda event: event.data.command_id == "start")
         data.put(SignalChunk(1.0, 1, np.array([[1., 1., 1.], [7., 0., 0.]])))

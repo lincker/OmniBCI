@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from omnibci.application.events import CommandRequest
-from omnibci.infrastructure.acquisition.acquisition import Acquisition, AcquisitionCommand
+from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime, AcquisitionCommand
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.plugins.acquisition.file.reader import FileReader
 from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8.curry8 import Curry8DataReader, ClientRequest
@@ -27,8 +27,11 @@ def test_checkpoint_receipt_exposes_only_explicit_live_resume_guarantee(declared
     if declared is not None:
         source.resume_without_checkpoint_safe = declared
     events = []
-    acquisition = Acquisition(source, Queue(), DataManager(Queue()),
-                              SimpleNamespace(put_event=events.append), generation="run", config_revision="revision")
+    acquisition = AcquisitionRuntime(
+        source, Queue(), DataManager(Queue()), SimpleNamespace(put_event=events.append),
+        source_id="test-source", preparation_required=False,
+        generation="run", config_revision="revision",
+    )
     acquisition._configuration_command(AcquisitionCommand.get_checkpoint, CommandRequest("inspect", {
         "generation": "run", "expected_revision": "revision",
     }))
