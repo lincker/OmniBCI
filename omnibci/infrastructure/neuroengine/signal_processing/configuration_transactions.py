@@ -31,26 +31,30 @@ class ConfigurationTransactions:
               current_snapshot, sample_rate, baseline_duration,
               signal_plan=None) -> tuple[bool, CommandResult | None]:
         """Return whether a new candidate was staged, and any immediate receipt."""
+        fingerprint = None
         try:
             completed = self._results.get(request.command_id)
-            if completed is not None:
+            previous = self._fingerprints.get(request.command_id)
+            # Only an early cancellation has a receipt without an original
+            # payload. It blocks every delayed stage using that command id.
+            if completed is not None and previous is None:
                 return False, completed
             fingerprint = hashlib.sha256(json.dumps(
                 request.payload, sort_keys=True, allow_nan=False, separators=(",", ":"),
             ).encode()).hexdigest()
-            previous = self._fingerprints.get(request.command_id)
             if previous is not None and previous != fingerprint:
-                if self._pending is not None and self._pending[0] == request.command_id:
-                    return False, self.cancel_pending(
-                        "A processing configuration command id was reused",
-                        generation=generation, revision=revision,
-                    )
-                raise ValueError("A processing configuration command id cannot be reused")
+                return False, CommandResult(
+                    command_id=request.command_id, command=EventType.StageProcessingConfiguration.name,
+                    ok=False, message="A processing configuration command id cannot be reused with a different payload",
+                    error_code="PROCESSING_CONFIGURATION_CONFLICT", failure_kind=CommandFailureKind.REJECTED,
+                )
+            if completed is not None:
+                return False, completed
+            self._fingerprints[request.command_id] = fingerprint
             if self._pending is not None:
                 if self._pending[0] == request.command_id:
                     return False, None
                 raise ValueError("Another processing configuration is waiting for a trial boundary")
-            self._fingerprints[request.command_id] = fingerprint
             payload = request.payload
             if not isinstance(payload, dict) or set(payload) != {"settings_snapshot", "expected_revision", "generation"}:
                 raise ValueError("Invalid processing configuration request")
@@ -66,14 +70,14 @@ class ConfigurationTransactions:
                 signal_plan=signal_plan,
             )
         except Exception as exc:
-            # Rejecting a conflicting duplicate must not overwrite the receipt
-            # or pending update belonging to the original command.
+            # Invalid JSON cannot reserve an id without a payload fingerprint.
+            # A malformed duplicate also leaves the original command intact.
             result = CommandResult(
                 command_id=request.command_id, command=EventType.StageProcessingConfiguration.name,
                 ok=False, message=str(exc), error_code="PROCESSING_CONFIGURATION_REJECTED",
                 failure_kind=CommandFailureKind.REJECTED,
             )
-            if request.command_id not in self._results and (
+            if fingerprint is not None and request.command_id not in self._results and (
                 self._pending is None or self._pending[0] != request.command_id
             ):
                 self._results[request.command_id] = result

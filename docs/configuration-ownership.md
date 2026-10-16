@@ -180,6 +180,23 @@ Important boundaries:
   configuration editor/API whitelist, and File Reader implementation. The read
   loop is unchanged. Do not add a nonfunctional Profile field.
 
+### Processing configuration command retries
+
+Within one worker generation, a staged configuration command id identifies one
+payload. Dictionary key order does not affect its fingerprint. Repeating that
+payload neither rebuilds a pending candidate nor changes its installation
+boundary; after completion it replays the original receipt. A different
+JSON-serializable payload returns `PROCESSING_CONFIGURATION_CONFLICT` without
+cancelling the original pending update or overwriting its applied, rejected, or
+cancelled result. Rejections because another update is pending also retain the
+original payload fingerprint.
+
+A cancellation received before staging has no original payload and blocks every
+later stage with that id, returning its cancelled receipt. Non-JSON values and
+non-finite numbers are rejected without reserving a new id or changing an
+existing command. Fingerprints and terminal receipts remain for the entire
+worker generation, without LRU eviction; they do not survive a worker restart.
+
 ### Bundled schema coverage
 
 | Schema, relative to `omnibci/infrastructure/plugins/` | Declared parameters |
