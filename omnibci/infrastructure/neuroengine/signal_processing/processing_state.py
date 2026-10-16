@@ -1,34 +1,8 @@
-"""
-SignalProcessor states — refactored to use domain objects.
+"""Epoch-detection states delegate trial completion to their processor context."""
 
-Changes from original:
-  - _emit_result(int) replaced by _complete_trial(Classification).
-  - _complete_trial() calls BCISession.record_trial() so the aggregate root
-    enforces business rules and accumulates trial history.
-  - Domain events are drained from BCISession and published via
-    context.event_publisher (DomainEventPublisher), not via a direct import
-    of processor.py, removing the circular dependency.
-
-ACL change:
-  The end of _complete_trial previously contained a deferred import:
-      from omnibci.infrastructure.neuroengine.processor.processor import _publish_domain_event
-  This worked around a processor/state circular dependency. Translation now
-  lives in DomainEventPublisher, constructed by SignalProcessor and exposed as
-  self.event_publisher. States access it through their context without importing
-  the processor module.
-"""
-
-import logging
 from dataclasses import replace
-from typing import TYPE_CHECKING
 
 from omnibci.domain.signal import SignalChunk
-from omnibci.domain.classification import Classification
-
-if TYPE_CHECKING:
-    from omnibci.domain.session import BCISession
-
-logger = logging.getLogger(__name__)
 
 
 class ProcessingState:
@@ -65,7 +39,7 @@ class ProcessingState:
             if collecting:
                 complete, classification = self.context.current_epoch.process_chunk(chunk)
                 if complete and classification is not None:
-                    self._complete_trial(classification)
+                    self.context.complete_trial(classification)
                     self.context.transition_to_awaiting()
             self.context.pretrigger.push(chunk.data)
             return
@@ -79,7 +53,7 @@ class ProcessingState:
                     self.context.current_epoch.append_until_index(chunk, index)
                 _, classification = self.context.current_epoch.force_decode_at_boundary()
                 if classification is not None:
-                    self._complete_trial(classification)
+                    self.context.complete_trial(classification)
                 self.context.current_epoch = None
                 collecting = False
 
@@ -102,39 +76,6 @@ class ProcessingState:
                 self.context.transition_to_assembling()
         elif was_collecting or opened:
             self.context.transition_to_awaiting()
-
-    def _complete_trial(self, classification: Classification) -> None:
-        """
-        Hand the Classification to the BCISession aggregate root.
-
-        BCISession enforces invariants, records the Trial, and raises a
-        TrialCompleted domain event.  We then hand all pending domain events
-        to context.event_publisher which translates and delivers them to the
-        EventBus (API WebSocket, stimulation feedback, etc.).
-        """
-        session: BCISession = self.context.session
-
-        # Build Epoch VO from the current epoch's buffer before it is dropped
-        try:
-            epoch = self.context.current_epoch.build_epoch()
-        except RuntimeError as exc:
-            logger.error("Could not build Epoch for trial: %s", exc)
-            return
-
-        # Delegate to aggregate root — enforces business rules
-        try:
-            session.record_trial(
-                epoch, classification,
-                config_revision=getattr(self.context.current_epoch, "config_revision", None),
-            )
-        except (RuntimeError, ValueError) as exc:
-            logger.error("BCISession.record_trial() rejected: %s", exc)
-            return
-
-        # Drain domain events and publish via the ACL translator.
-        # SignalProcessor creates this publisher; states access it through the
-        # context without importing the processor module.
-        self.context.event_publisher.publish_all(session.pop_events())
 
 
 class AwaitingEpochState(ProcessingState):

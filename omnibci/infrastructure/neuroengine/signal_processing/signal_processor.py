@@ -10,6 +10,8 @@ from typing import Optional
 
 from omnibci.domain.signal import SignalChunk
 
+from omnibci.domain.classification import Classification
+from omnibci.domain.events import TrialCompleted
 from omnibci.domain.session import BCISession, SessionState
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector
 from omnibci.application.events import (
@@ -74,8 +76,7 @@ class SignalProcessor:
         self.data_manager = data_manager
         self.event_bus = event_bus
         self.command_queue = command_queue
-        # ACL: the single place a domain-event translator is created. States
-        # reach it via self.event_publisher — no import of this module from state.
+        # ACL: the single domain-event translator for this processor.
         self.event_publisher = DomainEventPublisher(event_bus)
 
         # EpochDetector: reads epoch start/end markers from each chunk. Owned
@@ -142,6 +143,27 @@ class SignalProcessor:
             config_revision=self.config_revision,
         )
 
+    def complete_trial(self, classification: Classification) -> TrialCompleted | None:
+        """Record the active epoch and publish pending events; reject inactive sessions.
+
+        Return None only when the session is not running. Construction, active
+        session recording, and publication failures propagate to the caller.
+        """
+        epoch = self.current_epoch.build_epoch()
+        try:
+            completion = self.session.record_trial(
+                epoch, classification,
+                config_revision=getattr(self.current_epoch, "config_revision", None),
+            )
+        except RuntimeError as exc:
+            if self.session.state is not SessionState.RUNNING:
+                logger.error("BCISession.record_trial() rejected: %s", exc)
+                return None
+            raise
+
+        self.event_publisher.publish_all(self.session.pop_events())
+        return completion
+
     async def next_chunk(self, timeout: float = 0.05) -> "SignalChunk | None":
         """Wait off-loop for a chunk and return control after the timeout."""
         loop = asyncio.get_running_loop()
@@ -185,9 +207,8 @@ class SignalProcessor:
             if self.current_epoch is not None:
                 complete, classification = self.current_epoch.decode_if_ready()
                 if complete and classification is not None:
-                    previous_count = self.session.trial_count
-                    self._assembling_state._complete_trial(classification)
-                    if running_session is not None and self.session.trial_count != previous_count + 1:
+                    completion = self.complete_trial(classification)
+                    if running_session is not None and completion is None:
                         raise RuntimeError("Completed drain trial could not be recorded")
                     interrupted = False
             self.transition_to_awaiting()

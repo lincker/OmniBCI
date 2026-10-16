@@ -90,10 +90,11 @@ def _chunk(sequence, *, start=False, samples=2):
     return SignalChunk(0, sequence, raw)
 
 
-def _processor(*, decoder=None, bus=None, data=None):
-    session = BCISession(session_id="session-1")
-    session.start()
-    session.pop_events()
+def _processor(*, decoder=None, bus=None, data=None, session=None):
+    if session is None:
+        session = BCISession(session_id="session-1")
+        session.start()
+        session.pop_events()
     return SignalProcessor(
         _Detector(), decoder or _Decoder(), queue.Queue(), data or DataManager(queue.Queue()),
         bus or _Bus(), session=session, sample_rate=10, baseline_duration=0.2,
@@ -204,6 +205,63 @@ async def test_barrier_finishes_first_chunk_when_ready_without_forcing_partial_d
     assert receipt.interrupted_epoch is False
     assert receipt.outputs_settled is False
     assert processor.current_epoch is None
+
+
+@pytest.mark.asyncio
+async def test_standby_barrier_discards_decoded_epoch_without_recording_a_trial():
+    processor = _processor(decoder=_Decoder(samples=2), session=BCISession())
+    processor.data_manager.put_data(_chunk(0, start=True))
+    processor.data_manager.put_data(_barrier(0, session_id=None))
+
+    await processor._current_state.run()
+    await processor._current_state.run()
+
+    assert processor.session.trial_count == 0
+    assert [event.type for event in processor.event_bus.events] == [EventType.CommandResult]
+    result = processor.event_bus.events[-1].data
+    assert result.ok
+    receipt = StreamDrainReceipt.from_value(result.data)
+    assert receipt.session_id is None
+    assert receipt.completed_trials == 0
+    assert receipt.interrupted_epoch is False
+    assert processor.current_epoch is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["record", "publish"])
+async def test_trial_completion_failure_at_barrier_cannot_be_retried_as_success(failure, monkeypatch):
+    decoder = _Decoder(samples=2)
+    processor = _processor(decoder=decoder)
+    processor.data_manager.put_data(_chunk(0, start=True))
+    await processor._current_state.run()
+    current_epoch = processor.current_epoch
+    record_trial = MagicMock(wraps=processor.session.record_trial)
+    publish_all = MagicMock(wraps=processor.event_publisher.publish_all)
+    monkeypatch.setattr(processor.session, "record_trial", record_trial)
+    monkeypatch.setattr(processor.event_publisher, "publish_all", publish_all)
+    error = RuntimeError("record failed") if failure == "record" else OSError("publish failed")
+    failed_operation = record_trial if failure == "record" else publish_all
+    failed_operation.side_effect = error
+
+    for command_id in ("initial", "retry"):
+        processor.data_manager.put_data(_barrier(0, command_id=command_id))
+        await processor._current_state.run()
+
+        result = processor.event_bus.events[-1].data
+        assert not result.ok
+        assert result.command_id == command_id
+        assert result.failure_kind is CommandFailureKind.EXECUTION_FAILED
+        assert result.error_code == "STREAM_DRAIN_FAILED"
+        assert result.message == str(error)
+        assert result.data is None
+        assert processor.current_epoch is current_epoch
+        assert processor._current_state is processor._assembling_state
+        assert decoder.calls == 1
+        assert record_trial.call_count == 1
+        assert publish_all.call_count == (1 if failure == "publish" else 0)
+        assert processor.session.trial_count == (1 if failure == "publish" else 0)
+        # Even recovery of the failing dependency cannot undo a partial attempt.
+        failed_operation.side_effect = None
 
 
 @pytest.mark.asyncio
