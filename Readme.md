@@ -213,6 +213,11 @@ Open <http://localhost:5173> and perform these steps:
 4. Start reading.
 5. Stop reading after playback finishes to end the active session.
 
+Open **Settings → Logs** to view recent application logs from the connected
+backend. The page refreshes every five seconds while visible and also has a
+manual refresh button. It shows up to 200 lines from the last 64 KiB of the
+current backend process's log file.
+
 Vite proxies `/api` and WebSocket traffic to
 `http://127.0.0.1:8000` by default. To use a backend on another machine:
 

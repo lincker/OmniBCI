@@ -27,6 +27,7 @@ def spec():
 EXPECTED_OPERATIONS = {
     ("/healthz", "get"),
     ("/api/v1/system/info", "get"),
+    ("/api/v1/system/logs", "get"),
     # engine
     ("/api/v1/engine/start", "post"),
     ("/api/v1/engine/stop", "post"),
@@ -137,6 +138,14 @@ def _schema(spec, name):
 
 
 class TestResponseDtos:
+    def test_backend_logs_contract(self, spec):
+        schema = _schema(spec, "BackendLogsResponse")
+        assert set(schema["properties"]) == {"filename", "lines", "truncated"}
+        assert set(schema["required"]) == {"filename", "lines", "truncated"}
+        operation = spec["paths"]["/api/v1/system/logs"]["get"]
+        assert not operation.get("parameters")
+        assert "503" in operation["responses"]
+
     def test_desktop_handshake_and_export_contract(self, spec):
         assert set(_schema(spec, "SystemInfoResponse")["properties"]) == {
             "app_version", "desktop_api_version", "instance_id", "auth_enabled",

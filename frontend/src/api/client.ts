@@ -67,6 +67,7 @@ async function send<T>(method: "POST" | "DELETE" | "PATCH" | "PUT", path: string
 const post = <T = unknown,>(path: string, body?: unknown) => send<T>("POST", path, body);
 
 export const api = {
+  backendLogs: () => get<S["BackendLogsResponse"]>("/api/v1/system/logs"),
   engineStatus: () => get<EngineStatus>("/api/v1/engine/status"),
   acquisitionStatus: () => get<AcquisitionStatus>("/api/v1/acquisition/status"),
   stimulationStatus: () => get<StimulationStatus>("/api/v1/stimulation/status"),

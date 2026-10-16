@@ -145,6 +145,7 @@ button.explorer-item:active:not(:disabled) { background: var(--press-bg); }
 .empty-state > .workbench-icon { width: 36px; height: 36px; opacity: 0.5; }
 .empty-state h2 { font-size: 15px; margin: 0; }
 .empty-search { padding: 28px 14px; color: var(--muted); font-size: 12px; }
+.backend-log-output { margin: 0; padding: 16px; border: 1px solid var(--border-soft); border-radius: var(--control-radius); background: var(--sidebar-bg); font: 12px/1.7 "SFMono-Regular", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Runtime controls and results share a single feed. */
 .runtime-content { min-height: 100%; padding: 0 28px 28px; }

@@ -333,3 +333,83 @@ def test_thread_start_failure_restores_logger_and_closes_file(isolated_logging, 
     assert logger.handlers == []
     assert logger.level == original_level
     assert BackendLogging._owner is None
+
+
+@pytest.mark.parametrize(("content", "expected"), [
+    ("", []), ("first\n\nlast\n", ["first", "", "last"]),
+    ("first\r\nlast", ["first", "last"]),
+])
+def test_log_tail_preserves_empty_and_unterminated_lines(isolated_logging, content, expected):
+    service = BackendLogging({})
+    service.file_path.write_bytes(content.encode("utf-8"))
+    assert service.read_tail() == (expected, False)
+
+
+@pytest.mark.parametrize("count", [200, 201])
+def test_log_tail_limits_line_count(isolated_logging, count):
+    service = BackendLogging({})
+    lines = [f"record {index}" for index in range(count)]
+    service.file_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    assert service.read_tail() == (lines[-200:], count > 200)
+
+
+def test_log_tail_discards_partial_first_line_and_reads_only_bounded_bytes(isolated_logging, monkeypatch):
+    service = BackendLogging({})
+    service.file_path.write_text("old" * 30000 + "\nlatest\n", encoding="utf-8")
+    original_open = Path.open
+    read_sizes = []
+
+    class TrackedFile:
+        def __enter__(self):
+            self.stream = original_open(service.file_path, "rb", buffering=0)
+            return self
+
+        def __exit__(self, *args):
+            self.stream.close()
+
+        def seek(self, *args):
+            return self.stream.seek(*args)
+
+        def read(self, size=-1):
+            assert 0 <= size <= 64 * 1024
+            result = self.stream.read(size)
+            read_sizes.append(len(result))
+            return result
+
+    monkeypatch.setattr(Path, "open", lambda *args, **kwargs: TrackedFile())
+    assert service.read_tail() == (["latest"], True)
+    assert sum(read_sizes) <= 64 * 1024
+
+
+def test_log_tail_keeps_a_complete_line_at_the_byte_boundary(isolated_logging):
+    service = BackendLogging({})
+    latest = "current" * 9362
+    service.file_path.write_text("old\n" + latest + "\n", encoding="utf-8")
+    assert len((latest + "\n").encode()) == 64 * 1024 - 1
+    assert service.read_tail() == ([latest], True)
+
+
+@pytest.mark.parametrize("ending", ["", "\n"])
+def test_log_tail_preserves_readable_suffix_of_oversized_utf8_line(isolated_logging, ending):
+    service = BackendLogging({})
+    service.file_path.write_text("\u2600" * 22000 + "ok" + ending, encoding="utf-8")
+    lines, truncated = service.read_tail()
+    assert truncated is True
+    assert len(lines) == 1
+    assert lines[0].endswith("\u2600ok")
+    assert lines[0].removesuffix("ok").strip("\u2600") == ""
+    assert 0 < len(lines[0].encode("utf-8")) <= 64 * 1024
+
+
+def test_log_tail_exact_byte_limit_is_not_truncated(isolated_logging):
+    service = BackendLogging({})
+    content = "x" * (64 * 1024)
+    service.file_path.write_text(content, encoding="utf-8")
+    assert service.read_tail() == ([content], False)
+
+
+def test_log_tail_missing_current_file_does_not_read_rotated_files(isolated_logging):
+    service = BackendLogging({})
+    Path(f"{service.file_path}.1").write_text("old backend record", encoding="utf-8")
+    with pytest.raises(FileNotFoundError):
+        service.read_tail()

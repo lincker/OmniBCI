@@ -21,6 +21,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Backend Logs */
+        get: operations["backend_logs_api_v1_system_logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/engine/start": {
         parameters: {
             query?: never;
@@ -924,6 +941,20 @@ export interface components {
             message: string;
             data?: components["schemas"]["ActivationResponse"] | null;
         };
+        /** ApiResponse[BackendLogsResponse] */
+        ApiResponse_BackendLogsResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["BackendLogsResponse"] | null;
+        };
         /** ApiResponse[ConfigResponse] */
         ApiResponse_ConfigResponse_: {
             /**
@@ -1278,6 +1309,15 @@ export interface components {
             message: string;
             /** Data */
             data?: components["schemas"]["PluginProfileResponse"][] | null;
+        };
+        /** BackendLogsResponse */
+        BackendLogsResponse: {
+            /** Filename */
+            filename: string;
+            /** Lines */
+            lines: string[];
+            /** Truncated */
+            truncated: boolean;
         };
         /** ChannelBindingModel */
         ChannelBindingModel: {
@@ -2239,6 +2279,89 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_SystemInfoResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    backend_logs_api_v1_system_logs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_BackendLogsResponse_"];
                 };
             };
             /** @description Bad request */

@@ -5,6 +5,7 @@ import { useResultsFeed } from "./hooks/useResultsFeed";
 import { useRuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
 import { RuntimeConfigurationStatus, RuntimeConfigurationReview } from "./RuntimeConfiguration";
 import { ConfigCard } from "./ConfigCard";
+import { BackendLogs } from "./BackendLogs";
 import { PluginProfiles } from "./PluginProfiles";
 import { PluginMarket } from "./PluginMarket";
 import { ConfigDialog } from "./ConfigDialog";
@@ -21,7 +22,7 @@ const setupPages = [
   ["acquisition", "app.acquisition", "signal"], ["processing", "app.processing", "workflow"],
   ["stimulation", "app.stimulation", "system"], ["actuation", "app.actuation", "plug"],
 ] as const;
-const settingsPages = [["general", "app.general", "settings"]] as const;
+const settingsPages = [["general", "app.general", "settings"], ["logs", "app.logs", "profile"]] as const;
 type SetupPage = typeof setupPages[number][0];
 type SettingsPage = typeof settingsPages[number][0];
 type View = SetupPage | SettingsPage | "run" | "results" | "extensions";
@@ -53,7 +54,7 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
   const runtime = useRuntimeConfiguration();
   const engineRunning = engine.data?.running ?? false;
   const isSetup = setupPages.some(([page]) => page === view);
-  const isSettings = view === "general";
+  const isSettings = settingsPages.some(([page]) => page === view);
   const space = isSetup ? "app.setup" : isSettings ? "app.settings" : view === "run" ? "app.run" : view === "extensions" ? "app.extensions" : "app.results";
 
   useEffect(() => {
@@ -145,6 +146,7 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
               <SessionSummary session={feed.session} trialCount={feed.trials.length} />
               <section className="card"><h2>{t("app.results")} <span className="count">{feed.trials.length}</span></h2><TrialResults trials={feed.trials} /></section>
             </div>
+            : view === "logs" ? <BackendLogs navigation={navigation} />
             : <ConfigCard navigation={navigation}
               preferences={preferences} onDirtyChange={setDirty} onBusyChange={setBusy}
               runtime={runtime} />}

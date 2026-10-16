@@ -134,6 +134,28 @@ class BackendLogging:
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
+    def read_tail(self) -> tuple[list[str], bool]:
+        """Read at most 64 KiB from the current file and return its last 200 lines."""
+        with self.file_path.open("rb", buffering=0) as stream:
+            size = stream.seek(0, os.SEEK_END)
+            offset = max(0, size - 64 * 1024)
+            stream.seek(offset)
+            content = stream.read(size - offset)
+        truncated = offset > 0
+        if truncated:
+            # Reserve one byte of the read budget to recognize a line boundary.
+            previous, content = content[:1], content[1:]
+            if previous != b"\n":
+                newline = content.find(b"\n")
+                if 0 <= newline < len(content) - 1:
+                    content = content[newline + 1:]
+                else:
+                    # A single oversized line still has a useful readable tail.
+                    while content and content[0] & 0xC0 == 0x80:
+                        content = content[1:]
+        lines = content.decode("utf-8", errors="replace").splitlines()
+        return lines[-200:], truncated or len(lines) > 200
+
     def start(self) -> BackendLogging:
         with self._ownership_lock:
             if BackendLogging._owner is self and self._handler is not None:

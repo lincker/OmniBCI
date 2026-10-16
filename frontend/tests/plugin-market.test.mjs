@@ -47,13 +47,14 @@ test("offline Decoder guide downloads the executable starter and complete author
   assert.doesNotMatch(html, /href="https?:/);
 });
 
-test("Settings has a single General page and retains console preferences", () => {
+test("Settings exposes Logs alongside General and retains console preferences", () => {
   const previousHash = window.location.hash;
   window.location.hash = "#general";
   try {
     const html = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(App)));
     assert.match(html, /aria-label="Settings"[^>]*aria-current="page"/);
     assert.match(html, /<h1>General settings<\/h1>/);
+    assert.match(html, />Logs<\/span>/);
     assert.match(html, /aria-label="Interface language"/);
     assert.match(html, /aria-label="Appearance"/);
     assert.doesNotMatch(html, /Advanced|Active application configuration|Edit application configuration|Save as/);
