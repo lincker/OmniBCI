@@ -8,7 +8,8 @@ import pytest
 from omnibci.application.events import CommandRequest
 from omnibci.application.plugin_profiles import ProfileBinding
 from omnibci.infrastructure.ipc.data_manager import DataManager
-from omnibci.infrastructure.neuroengine.signal_processing.pipeline_configuration import validate_output_context
+from omnibci.infrastructure.neuroengine.signal_processing import configuration_transactions as transactions_module
+from omnibci.infrastructure.neuroengine.signal_processing.pipeline_configuration import ConfiguredPipeline, validate_output_context
 from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessor, SignalProcessorCommand
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.shared.events import EventType
@@ -68,12 +69,18 @@ def test_confirmed_output_context_keeps_objects_and_updates_next_epoch_revision(
 
 
 @pytest.mark.parametrize("busy", ["epoch", "pending"])
-def test_output_context_rejects_unfinished_epoch_or_staged_pipeline(context_update, busy):
-    processor, _, candidate, events = context_update
-    if busy == "epoch":
-        processor.current_epoch = processor.new_epoch_processor()
-    else:
-        processor._pending_configuration = ("staged", object())
+def test_output_context_rejects_unfinished_epoch_or_staged_pipeline(context_update, busy, monkeypatch):
+    processor, current, candidate, events = context_update
+    processor.current_epoch = processor.new_epoch_processor()
+    if busy == "pending":
+        staged = {**current, "CONFIG.revision": "staged"}
+        monkeypatch.setattr(transactions_module, "build_pipeline_update", lambda *args, **kwargs: ConfiguredPipeline(
+            processor._decoder, tuple(processor._filters), staged,
+        ))
+        processor._execute((SignalProcessorCommand.stage_configuration, CommandRequest("staged", {
+            "settings_snapshot": staged, "generation": "run", "expected_revision": "old",
+        })))
+        processor.current_epoch = None
     update(processor, candidate)
     assert not result(events).ok
     assert processor.config_revision == "old"

@@ -11,7 +11,7 @@ from omnibci.application.events import CommandRequest
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter, Prediction
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.ipc.data_manager import DataManager
-from omnibci.infrastructure.neuroengine.signal_processing import signal_processor as processor_module
+from omnibci.infrastructure.neuroengine.signal_processing import configuration_transactions as transactions_module
 from omnibci.infrastructure.neuroengine.signal_processing.pipeline_configuration import ConfiguredPipeline
 from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessor, SignalProcessorCommand
 from omnibci.shared.events import EventType
@@ -122,7 +122,7 @@ async def test_staged_configuration_applies_between_multiple_epochs_in_one_chunk
     await processor._current_state.run()
     candidate = ConfiguredPipeline(RecordingDecoder(replacement_instances), (), {"CONFIG.revision": "new"})
     build = MagicMock(return_value=candidate)
-    monkeypatch.setattr(processor_module, "build_pipeline_update", build)
+    monkeypatch.setattr(transactions_module, "build_pipeline_update", build)
     processor._execute((SignalProcessorCommand.stage_configuration, CommandRequest("update", {
         "settings_snapshot": candidate.settings_snapshot, "expected_revision": "old", "generation": "run",
     })))

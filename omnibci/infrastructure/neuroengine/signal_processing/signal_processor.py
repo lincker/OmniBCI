@@ -4,8 +4,6 @@ import asyncio
 from copy import deepcopy
 from dataclasses import replace
 from enum import Enum
-import hashlib
-import json
 import logging
 from queue import Empty
 from typing import Optional
@@ -23,7 +21,7 @@ from omnibci.infrastructure.event_translator import DomainEventPublisher
 from .processing_state import AwaitingEpochState, AssemblingEpochState
 from .epoch.epoch_processor import EpochProcessor
 from .epoch.pretrigger_buffer import PreTriggerBuffer
-from .pipeline_configuration import build_pipeline_update
+from .configuration_transactions import ConfigurationTransactions, configuration_receipt
 
 logger = logging.getLogger(__name__)
 
@@ -95,11 +93,7 @@ class SignalProcessor:
         self._settings_snapshot = deepcopy(settings_snapshot)
         self._signal_plan = None
         self._signal_receipt = None
-        self._pending_configuration = None
-        # Command receipts live for this worker generation. A cancelled command
-        # cannot become a new update if a delayed duplicate arrives later.
-        self._configuration_results = {}
-        self._configuration_fingerprints = {}
+        self._configuration_transactions = ConfigurationTransactions()
         # The legacy baseline_duration setting controls pre-trigger capture,
         # independently of whether a baseline-correction filter is configured.
         self.pre_trigger_samples = round(baseline_duration * sample_rate)
@@ -344,7 +338,7 @@ class SignalProcessor:
                 raise ValueError("Signal preparation belongs to a different runtime or connection")
             validate_plan_binding(self._settings_snapshot or {}, plan)
             if receipt != self._signal_receipt:
-                if self.current_epoch is not None or self._pending_configuration is not None:
+                if self.current_epoch is not None or self._configuration_transactions.pending is not None:
                     raise ValueError("Drain the stream before preparing a new signal plan")
                 decoder, detector, filters = load_signal_pipeline(self._settings_snapshot, plan)
                 self._decoder, self.detector, self._filters = decoder, detector, list(filters)
@@ -418,10 +412,6 @@ class SignalProcessor:
         self._closed_session_ids.add(self.session.session_id)
         self.event_publisher.publish_all(self.session.pop_events())
 
-    def _configuration_receipt(self, command_id, status):
-        return {"status": status, "command_id": command_id,
-                "applied_revision": self.config_revision, "generation": self.generation}
-
     def _update_output_context(self, request):
         from .pipeline_configuration import validate_output_context
         try:
@@ -429,17 +419,13 @@ class SignalProcessor:
             if (not isinstance(payload, dict) or payload.get("generation") != self.generation
                     or payload.get("expected_revision") != self.config_revision):
                 raise ValueError("Runtime context command is stale")
-            if self.current_epoch is not None or self._pending_configuration is not None:
+            if self.current_epoch is not None or self._configuration_transactions.pending is not None:
                 raise ValueError("Drain processing before updating output context")
             snapshot = validate_output_context(self._settings_snapshot, payload.get("settings_snapshot"))
-            self._settings_snapshot = snapshot
-            self.config_revision = snapshot["CONFIG.revision"]
-            if self._signal_plan is not None:
-                self._signal_plan = replace(self._signal_plan, config_revision=self.config_revision)
-            if self._signal_receipt is not None:
-                self._signal_receipt["config_revision"] = self.config_revision
+            self._install_configuration(snapshot)
             result = CommandResult(request.command_id, EventType.UpdateProcessingContext.name, ok=True,
-                                   data=self._configuration_receipt(request.command_id, "applied"))
+                                   data=configuration_receipt(request.command_id, "applied",
+                                                              generation=self.generation, revision=self.config_revision))
         except Exception as exc:
             result = CommandResult(request.command_id, EventType.UpdateProcessingContext.name, ok=False,
                                    message=str(exc), error_code="PROCESSING_CONTEXT_FAILED",
@@ -449,117 +435,51 @@ class SignalProcessor:
     def _publish_configuration_result(self, result):
         self.event_bus.put_event(Event(EventType.CommandResult, result))
 
-    def _finish_configuration(self, command_id, *, ok, message=None, error_code=None):
-        result = CommandResult(
-            command_id=command_id, command=EventType.StageProcessingConfiguration.name,
-            ok=ok, message=message, error_code=error_code,
-            failure_kind=None if ok else CommandFailureKind.REJECTED,
-            data=self._configuration_receipt(command_id, "applied" if ok else "cancelled"),
-        )
-        self._configuration_results[command_id] = result
-        self._publish_configuration_result(result)
-
     def _stage_configuration(self, request):
-        try:
-            completed = self._configuration_results.get(request.command_id)
-            if completed is not None:
-                self._publish_configuration_result(completed)
-                return
-            fingerprint = hashlib.sha256(json.dumps(
-                request.payload, sort_keys=True, allow_nan=False, separators=(",", ":"),
-            ).encode()).hexdigest()
-            previous = self._configuration_fingerprints.get(request.command_id)
-            if previous is not None and previous != fingerprint:
-                if self._pending_configuration is not None and self._pending_configuration[0] == request.command_id:
-                    self._cancel_pending_configuration("A processing configuration command id was reused")
-                    return
-                raise ValueError("A processing configuration command id cannot be reused")
-            if self._pending_configuration is not None:
-                if self._pending_configuration[0] == request.command_id:
-                    return
-                raise ValueError("Another processing configuration is waiting for a trial boundary")
-            self._configuration_fingerprints[request.command_id] = fingerprint
-            payload = request.payload
-            if not isinstance(payload, dict) or set(payload) != {"settings_snapshot", "expected_revision", "generation"}:
-                raise ValueError("Invalid processing configuration request")
-            if (not isinstance(payload["generation"], str) or not payload["generation"]
-                    or payload["generation"] != self.generation):
-                raise ValueError("Signal Processing configuration generation mismatch")
-            if (not isinstance(payload["expected_revision"], str)
-                    or payload["expected_revision"] != self.config_revision):
-                raise ValueError("Signal Processing configuration revision mismatch")
-            candidate = build_pipeline_update(
-                self._settings_snapshot, payload["settings_snapshot"],
-                sample_rate=self._sample_rate, baseline_duration=self._baseline_duration,
-                signal_plan=self._signal_plan,
-            )
-        except Exception as exc:
-            # Rejecting a conflicting duplicate must not overwrite the receipt
-            # or pending update belonging to the original command.
-            result = CommandResult(
-                command_id=request.command_id, command=EventType.StageProcessingConfiguration.name,
-                ok=False, message=str(exc), error_code="PROCESSING_CONFIGURATION_REJECTED",
-                failure_kind=CommandFailureKind.REJECTED,
-            )
-            if request.command_id not in self._configuration_results and (
-                self._pending_configuration is None or self._pending_configuration[0] != request.command_id
-            ):
-                self._configuration_results[request.command_id] = result
+        newly_staged, result = self._configuration_transactions.stage(
+            request, generation=self.generation, revision=self.config_revision,
+            current_snapshot=self._settings_snapshot, sample_rate=self._sample_rate,
+            baseline_duration=self._baseline_duration, signal_plan=self._signal_plan,
+        )
+        if result is not None:
             self._publish_configuration_result(result)
-            return
-        self._pending_configuration = (request.command_id, candidate)
-        if self.current_epoch is None:
+        if newly_staged and self.current_epoch is None:
             self._install_pending_configuration()
 
-    def _install_pending_configuration(self):
-        if self._pending_configuration is None:
-            return
-        command_id, candidate = self._pending_configuration
-        self._decoder = candidate.decoder
-        self._filters = list(candidate.filters)
-        self._settings_snapshot = candidate.settings_snapshot
-        self.config_revision = candidate.settings_snapshot["CONFIG.revision"]
+    def _install_configuration(self, snapshot, pipeline=None):
+        if pipeline is not None:
+            self._decoder = pipeline.decoder
+            self._filters = list(pipeline.filters)
+        self._settings_snapshot = snapshot
+        self.config_revision = snapshot["CONFIG.revision"]
         if self._signal_plan is not None:
             self._signal_plan = replace(self._signal_plan, config_revision=self.config_revision)
         if self._signal_receipt is not None:
             self._signal_receipt["config_revision"] = self.config_revision
-        self._pending_configuration = None
-        self._finish_configuration(command_id, ok=True)
+
+    def _install_pending_configuration(self):
+        pending = self._configuration_transactions.pending
+        if pending is None:
+            return
+        _, candidate = pending
+        self._install_configuration(candidate.settings_snapshot, pipeline=candidate)
+        result = self._configuration_transactions.complete_applied(
+            generation=self.generation, revision=self.config_revision,
+        )
+        self._publish_configuration_result(result)
 
     def _cancel_pending_configuration(self, message):
-        if self._pending_configuration is None:
-            return
-        command_id, _ = self._pending_configuration
-        self._pending_configuration = None
-        self._finish_configuration(command_id, ok=False, message=message,
-                                   error_code="PROCESSING_CONFIGURATION_CANCELLED")
+        result = self._configuration_transactions.cancel_pending(
+            message, generation=self.generation, revision=self.config_revision,
+        )
+        if result is not None:
+            self._publish_configuration_result(result)
 
     def _cancel_configuration(self, request):
-        payload = request.payload
-        if (not isinstance(payload, dict) or set(payload) != {"command_id", "generation"}
-                or not isinstance(payload.get("command_id"), str) or not payload["command_id"]
-                or not isinstance(payload.get("generation"), str) or not payload["generation"]
-                or payload.get("generation") != self.generation):
-            self._publish_configuration_result(CommandResult(
-                request.command_id, EventType.CancelProcessingConfiguration.name, False,
-                "Invalid processing configuration cancellation", "INVALID_CONFIGURATION_CANCELLATION",
-                CommandFailureKind.REJECTED,
-            ))
-            return
-        target = payload["command_id"]
-        if self._pending_configuration is not None and self._pending_configuration[0] == target:
-            self._cancel_pending_configuration("Cancelled before the trial boundary")
-        result = self._configuration_results.get(target)
-        if result is None:
-            # A cancellation received before a delayed stage command is a
-            # tombstone: that command must never install later in this run.
-            self._finish_configuration(target, ok=False, message="Cancelled before staging",
-                                       error_code="PROCESSING_CONFIGURATION_CANCELLED")
-            result = self._configuration_results[target]
-        receipt = result.data or self._configuration_receipt(target, "cancelled")
-        self._publish_configuration_result(CommandResult(
-            request.command_id, EventType.CancelProcessingConfiguration.name, True, data=receipt,
-        ))
+        for result in self._configuration_transactions.cancel(
+            request, generation=self.generation, revision=self.config_revision,
+        ):
+            self._publish_configuration_result(result)
 
     def _emit_command_result(
         self,
