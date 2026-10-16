@@ -1,8 +1,12 @@
 """Epoch-detection states delegate trial completion to their processor context."""
 
+import logging
 from dataclasses import replace
+from time import perf_counter
 
 from omnibci.domain.signal import SignalChunk
+
+logger = logging.getLogger(__name__)
 
 
 class ProcessingState:
@@ -34,6 +38,18 @@ class ProcessingState:
         return boundaries
 
     def _process_chunk(self, chunk: SignalChunk, *, collecting: bool) -> None:
+        started = perf_counter()
+        revision = self.context.config_revision
+        try:
+            self._process_epoch_chunk(chunk, collecting=collecting)
+        finally:
+            logger.debug(
+                "Signal chunk processing: sequence_id=%s samples=%d revision_at_start=%s duration_ms=%.3f",
+                chunk.sequence_id, chunk.raw_data.shape[1], revision,
+                (perf_counter() - started) * 1000,
+            )
+
+    def _process_epoch_chunk(self, chunk: SignalChunk, *, collecting: bool) -> None:
         boundaries = self._boundaries(chunk)
         if not boundaries:
             if collecting:

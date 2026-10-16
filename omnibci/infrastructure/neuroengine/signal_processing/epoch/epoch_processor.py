@@ -52,6 +52,7 @@ class EpochProcessor:
         # Accumulated post-trigger samples before epoch filters; pre-trigger
         # reference data is stored separately.
         self._epoch_data: np.ndarray = np.empty((0, 0))
+        self._epoch_storage: np.ndarray = self._epoch_data
         # Pre-trigger samples captured at epoch open (channels × trigger_offset).
         # Empty when pre-trigger capture is disabled or no history is available.
         self._pre_trigger_data: np.ndarray = np.empty((0, 0))
@@ -89,6 +90,8 @@ class EpochProcessor:
             raise ValueError(f"Cannot initialize epoch: invalid start index {start_idx}")
 
         self._epoch_data = chunk.data[:, start_idx:]
+        # Borrow the initial slice; the first nonempty append allocates storage.
+        self._epoch_storage = self._epoch_data
         # Default to empty pre-trigger data with the correct channel count.
         if pre_trigger_data is None:
             pre_trigger_data = chunk.data[:, :0]
@@ -103,9 +106,7 @@ class EpochProcessor:
 
     def append_chunk(self, chunk: SignalChunk) -> None:
         """Append all samples in *chunk* to the epoch buffer."""
-        self._current_chunk_data = chunk.data
-        self._epoch_data = np.append(self._epoch_data, chunk.data, axis=1)
-        self._pending_decode = True
+        self._append_samples(chunk.data)
 
     def append_until_index(self, chunk: SignalChunk, index: int) -> None:
         """
@@ -116,9 +117,28 @@ class EpochProcessor:
         """
         if index < 0:
             raise ValueError(f"Invalid slice index: {index}")
-        data_slice = chunk.data[:, :index]
-        self._current_chunk_data = data_slice
-        self._epoch_data = np.append(self._epoch_data, data_slice, axis=1)
+        self._append_samples(chunk.data[:, :index])
+
+    def _append_samples(self, samples: np.ndarray) -> None:
+        """Grow geometrically, leaving all previously exposed window prefixes intact."""
+        channels, size = self._epoch_data.shape
+        if samples.shape[0] != channels:
+            raise ValueError(f"Cannot append {samples.shape[0]} channels to an epoch with {channels} channels")
+        total = size + samples.shape[1]
+        # Empty appends still promote dtype, matching np.append.
+        dtype = np.result_type(self._epoch_data.dtype, samples.dtype)
+        capacity = self._epoch_storage.shape[1]
+        if total > capacity or dtype != self._epoch_storage.dtype:
+            if total > capacity:
+                capacity = max(total, 2 * capacity)
+            storage = np.empty((channels, capacity), dtype=dtype, order="C")
+            storage[:, :size] = self._epoch_data
+            self._epoch_storage = storage
+        if samples.shape[1]:
+            self._epoch_storage[:, size:total] = samples
+        # A new view fixes each borrowed window's shape while only the suffix changes.
+        self._epoch_data = self._epoch_storage[:, :total]
+        self._current_chunk_data = samples
         self._pending_decode = True
 
     # ------------------------------------------------------------------

@@ -48,6 +48,10 @@ def _chunk(channels: int = 3, samples: int = 8) -> SignalChunk:
     return SignalChunk(timestamp=0.0, sequence_id=0, raw_data=raw)
 
 
+def _data_chunk(data: np.ndarray) -> SignalChunk:
+    return SignalChunk(0.0, 0, np.vstack((data, np.zeros((1, data.shape[1]), dtype=data.dtype))))
+
+
 def _manager(decoder=None, sample_rate=1000) -> EpochProcessor:
     return EpochProcessor(
         decoder=decoder or FakeDecoder(),
@@ -60,6 +64,83 @@ def _manager(decoder=None, sample_rate=1000) -> EpochProcessor:
 # ---------------------------------------------------------------------------
 
 class TestEpochBuffering:
+    @pytest.mark.parametrize("samples", [0, 1])
+    def test_channel_mismatch_does_not_modify_buffer_or_latest_samples(self, samples):
+        mgr = _manager()
+        mgr.initialize_epoch(_chunk(channels=2), start_idx=0, event_id=1)
+        before = mgr._epoch_data
+        latest = mgr._current_chunk_data
+
+        with pytest.raises(ValueError):
+            mgr.append_chunk(_chunk(channels=1, samples=samples))
+
+        assert mgr._epoch_data is before
+        assert mgr._current_chunk_data is latest
+
+    def test_appends_match_numpy_and_preserve_borrowed_windows(self):
+        decoder = FakeDecoder(complete=False)
+        decoder.should_decode = lambda window: decoder.readiness_windows.append(window) or True
+        mgr = _manager(decoder=decoder)
+        raw = np.arange(21, dtype=np.int16).reshape(3, 7)[:, ::-1]
+        initial = SignalChunk(0.0, 0, raw)
+        mgr.initialize_epoch(initial, start_idx=2, event_id=7)
+        expected = initial.data[:, 2:]
+        assert np.shares_memory(mgr._epoch_data, initial.raw_data)
+        mgr.decode_if_ready()
+        snapshots = [expected.copy()]
+        fragments = [
+            (np.full((2, 3), 20, dtype=np.int16), None),
+            (np.full((2, 1), 30, dtype=np.int16), None),
+            (np.full((2, 1), 0.5, dtype=np.float32), None),
+            (np.full((2, 4), 40, dtype=np.float64), 0),
+            (np.full((2, 4), 50, dtype=np.int16), 2),
+            (np.empty((2, 0), dtype=np.float64), None),
+        ]
+        for data, end in fragments:
+            chunk = _data_chunk(data)
+            fragment = chunk.data if end is None else chunk.data[:, :end]
+            expected = np.append(expected, fragment, axis=1)
+            if end is None:
+                mgr.process_chunk(chunk)
+            else:
+                mgr.append_until_index(chunk, end)
+                mgr.decode_if_ready()
+            snapshots.append(expected.copy())
+            window, latest = decoder.calls[-1]
+            np.testing.assert_array_equal(window, expected)
+            assert window.dtype == expected.dtype
+            np.testing.assert_array_equal(latest, fragment)
+            assert latest.dtype == fragment.dtype
+            if fragment.size:
+                assert np.shares_memory(latest, chunk.raw_data)
+            for (retained, _), ready_window, snapshot in zip(
+                decoder.calls, decoder.readiness_windows, snapshots,
+            ):
+                assert retained is ready_window
+                np.testing.assert_array_equal(retained, snapshot)
+                assert retained.dtype == snapshot.dtype
+
+    def test_empty_append_accepts_read_only_initial_storage(self):
+        chunk = _chunk(channels=2, samples=3)
+        chunk.raw_data.flags.writeable = False
+        mgr = _manager()
+        mgr.initialize_epoch(chunk, start_idx=0, event_id=1)
+
+        mgr.append_until_index(chunk, 0)
+
+        np.testing.assert_array_equal(mgr._epoch_data, chunk.data)
+        assert mgr._current_chunk_data.shape == (2, 0)
+
+    def test_empty_initial_slice_and_oversized_end_keep_numpy_slice_semantics(self):
+        mgr = _manager()
+        mgr.initialize_epoch(_chunk(channels=2, samples=3), start_idx=5, event_id=1)
+        chunk = _data_chunk(np.arange(8, dtype=np.float32).reshape(2, 4))
+
+        mgr.append_until_index(chunk, 8)
+
+        np.testing.assert_array_equal(mgr._epoch_data, chunk.data)
+        assert mgr._epoch_data.dtype == np.dtype(np.float64)
+
     def test_initialize_slices_from_start_index(self):
         mgr = _manager()
         mgr.initialize_epoch(_chunk(channels=3, samples=8), start_idx=2, event_id=5)
@@ -97,6 +178,30 @@ class TestEpochBuffering:
 # ---------------------------------------------------------------------------
 
 class TestBuildEpoch:
+    def test_completed_epoch_owns_pretrigger_and_window_across_growth_and_reinitialization(self):
+        mgr = _manager()
+        pre_trigger = np.full((2, 2), -1.0)
+        first = _data_chunk(np.arange(8, dtype=np.float64).reshape(2, 4))
+        mgr.initialize_epoch(first, start_idx=1, event_id=7, pre_trigger_data=pre_trigger)
+        mgr.append_chunk(_data_chunk(np.full((2, 2), 8.0)))
+        retained = mgr._epoch_data
+        before = retained.copy()
+        epoch = mgr.build_epoch()
+        expected = np.concatenate((pre_trigger, before), axis=1)
+
+        mgr.append_chunk(_data_chunk(np.full((2, 20), 9.0)))
+        mgr.initialize_epoch(_chunk(channels=3, samples=3), start_idx=0, event_id=8)
+        mgr.append_chunk(_chunk(channels=3, samples=2))
+        pre_trigger[:] = 100
+
+        np.testing.assert_array_equal(retained, before)
+        np.testing.assert_array_equal(epoch.data, expected)
+        assert epoch.trigger_offset == 2
+        assert not epoch.data.flags.writeable
+        assert not np.shares_memory(epoch.data, retained)
+        assert not np.shares_memory(epoch.data, pre_trigger)
+        assert mgr.build_epoch().window.shape == (3, 5)
+
     def test_build_requires_active_epoch(self):
         with pytest.raises(RuntimeError):
             _manager().build_epoch()
@@ -275,3 +380,36 @@ class TestForNewEpoch:
         # Stateless decoders share one instance across epochs (zero cost).
         dec = FakeDecoder()
         assert dec.for_new_epoch() is dec
+
+
+@pytest.mark.parametrize("algorithm", ["cca", "fbcca"])
+def test_classic40_prediction_matches_numpy_append_reference(algorithm):
+    from omnibci.infrastructure.plugins.algorithms.decoders.classic40_cca.classic_40_cca import Classic40CCA
+    from omnibci.infrastructure.plugins.algorithms.decoders.classic40_fbcca.classic_40_fbcca import Classic40FBCCA
+    from omnibci.sdk import PluginContext
+
+    decoder_class = Classic40CCA if algorithm == "cca" else Classic40FBCCA
+    context = PluginContext(sample_rate=250)
+    decoder = decoder_class(parameters={}, context=context)
+    reference_decoder = decoder_class(parameters={}, context=context)
+    times = np.arange(800) / 250
+    signal = np.vstack((
+        np.sin(2 * np.pi * 12 * times),
+        np.cos(2 * np.pi * 12 * times),
+        np.sin(2 * np.pi * 12 * times) + 0.3 * np.sin(2 * np.pi * 24 * times),
+    )) + np.random.default_rng(12).normal(0, 0.05, (3, 800))
+    chunks = [_data_chunk(signal[:, start:start + 64]) for start in range(0, 800, 64)]
+    mgr = _manager(decoder=decoder, sample_rate=250)
+    mgr.initialize_epoch(chunks[0], start_idx=0, event_id=7)
+    reference = chunks[0].data
+    for chunk in chunks[1:]:
+        mgr.append_chunk(chunk)
+        reference = np.append(reference, chunk.data, axis=1)
+
+    expected = reference_decoder.decode(reference, chunks[-1].data)
+    complete, classification = mgr.force_decode_at_boundary()
+
+    np.testing.assert_array_equal(mgr._epoch_data, reference)
+    assert complete
+    assert classification.target_id == expected.target_id
+    assert classification.confidence == expected.confidence

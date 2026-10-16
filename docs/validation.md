@@ -37,6 +37,16 @@ OpenAPI. Configure these check names as required in branch protection.
 
 ## What these checks establish
 
+The Signal Processing refactor on 2026-10-17 passed the complete headless backend
+suite on macOS with Python 3.14: 2,768 passed, one skipped, and two dependency
+deprecation warnings. All six architecture contracts passed. Coverage includes
+window/latest-sample contracts, configuration transaction retries, trial
+completion failures, strict decoder outputs, runtime worker supervision,
+cross-process queue timing, and buffer equivalence with the original NumPy
+append path. Actual CCA and FBCCA predictions agree with the reference buffer;
+their implementations and plugin timing parameters were not changed. These
+local results do not establish Windows/Linux or physical-device behavior.
+
 The two-panel Signal Processing channel binding update on 2026-10-12 passed 372 focused
 backend tests and all 96 frontend tests. One recording integration test required
 a rerun with loopback sockets enabled after the sandbox blocked engine startup.
@@ -147,6 +157,69 @@ Those require the relevant hardware and display setup. Tests tagged `gui` or
 `hardware` are excluded from both headless jobs. Fake effectors establish host
 protocol ordering only; an installed driver must implement and validate its own
 physical quiescence contract before automatic reconfiguration can use it.
+
+## Signal Processing buffer and latency diagnostics
+
+Epoch buffering grows a C-order backing array geometrically and exposes only its
+valid prefix to the decoder. Appending writes after that prefix; older borrowed
+windows keep their original samples and shape. Dtype promotion follows NumPy's
+`result_type`, including empty appended segments. `latest_samples` remains the
+original most recently appended segment, and completed `Epoch` objects still
+copy and freeze their data. Capacity slack trades additional memory for fewer
+copies; it does not bound the maximum epoch length.
+
+Run `python scripts/benchmark_epoch_buffer.py` to compare the actual processing
+path with the former `np.append` implementation. The benchmark uses a decoder
+whose readiness gate stays closed, so it isolates buffering and readiness checks
+from algorithm, filter, IPC, and completed-Epoch construction costs. Inputs are
+allocated before measurement; wall-clock medians and peak `tracemalloc` memory
+are measured separately. The benchmark checks exact output and dtype equality.
+It is a local microbenchmark, not an end-to-end throughput guarantee.
+
+Measured on 2026-10-17 after the full test suite finished, using macOS 14.8.3
+x86_64, Python 3.14.2, NumPy 2.4.4, float64 data, seed 12, and three timed
+repetitions per implementation:
+
+| Channels | Total samples | Chunk samples | Append median (ms) | Capacity median (ms) | Append peak (MiB) | Capacity peak (MiB) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 8 | 3,000 | 100 | 0.291 | 0.166 | 0.363 | 0.295 |
+| 64 | 30,000 | 100 | 609.975 | 12.590 | 29.252 | 37.504 |
+| 64 | 30,000 | 10 | 5,383.813 | 19.883 | 29.317 | 30.025 |
+
+The long-window cases reduce repeated copying substantially, but the reserved
+capacity increases peak memory in both of these cases. The measurements do not
+include the new queue envelope, clock, or state timing diagnostics overhead.
+The valid window keeps contiguous samples within each channel; its full array
+need not be C-contiguous when unused capacity remains between rows.
+
+With DEBUG logging enabled for
+`omnibci.infrastructure.ipc.data_manager`, `queue_dwell_ms` measures monotonic
+elapsed time from enqueue submission to completed dequeue on the same host.
+This includes multiprocessing feeder, serialization, transport, and
+deserialization time. Raw messages inserted directly into the underlying queue
+are delivered without a timing measurement. This measures the age of a consumed
+message, not queue depth, total pending signal duration, or acquisition-to-output
+latency. It does not depend on acquisition timestamps or `Queue.qsize()`.
+
+DEBUG logging for
+`omnibci.infrastructure.neuroengine.signal_processing.processing_state` reports
+chunk processing duration with sequence ID, sample count, and configuration
+revision at entry. This includes boundary detection, epoch buffering and
+decoding, trial completion, and pre-trigger history updates, including failed
+attempts. It excludes queue waiting, signal preparation before state dispatch,
+and drain-barrier processing. A chunk can cross a configuration boundary, so the
+entry revision is not necessarily the revision of every epoch in that chunk.
+
+The overload policy preserves samples and FIFO barrier ordering. Live acquisition
+must report a failure and stop when its deployment's latency or capacity budget
+cannot be maintained; it must not silently discard or reorder signal samples.
+Offline playback should reduce producer throughput to preserve every sample.
+These are requirements for a future overload controller: this change adds
+measurements, not an automatic stop threshold, adaptive pacing, or a bounded
+queue. The current file reader's fixed delay is not consumer-feedback pacing.
+Until such a controller is configured and implemented, the queue remains
+unbounded and operators must use the existing stop/drain controls when measured
+latency exceeds their deployment budget.
 
 ## Local commands
 
