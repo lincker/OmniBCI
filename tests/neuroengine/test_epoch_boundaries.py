@@ -31,6 +31,7 @@ class RecordingDecoder(Decoder):
     def __init__(self, instances):
         self.instances = instances
         self.windows = []
+        self.latest_samples = []
 
     def for_new_epoch(self):
         decoder = RecordingDecoder(self.instances)
@@ -42,6 +43,7 @@ class RecordingDecoder(Decoder):
 
     def decode(self, window, latest_samples):
         self.windows.append(window.copy())
+        self.latest_samples.append(latest_samples.copy())
         return Prediction(1)
 
 
@@ -135,6 +137,9 @@ async def test_staged_configuration_applies_between_multiple_epochs_in_one_chunk
     assert ordered[1].data.ok
     assert len(original_instances) == 1
     assert len(replacement_instances) == 2
+    # The old epoch closes at chunk index 0, so its latest segment stays empty.
+    np.testing.assert_array_equal(original_instances[0].windows[0], [[1, 2]])
+    assert original_instances[0].latest_samples[0].shape == (1, 0)
     build.assert_called_once()
 
 

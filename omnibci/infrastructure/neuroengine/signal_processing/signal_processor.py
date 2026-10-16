@@ -205,7 +205,7 @@ class SignalProcessor:
             self._emit_drain_result(barrier, ok=True, data=receipt.to_dict())
         except Exception as exc:
             if processing_started:
-                # An incremental decoder or trial publisher may already have
+                # A stateful decoder or trial publisher may already have
                 # mutated state. A retry must not silently discard that failure.
                 self._drain_failure = str(exc)
             logger.exception("Stream drain failed: %s", exc)

@@ -26,13 +26,14 @@ class ProcessingPipeline:
         self,
         epoch_data: np.ndarray,
         *,
+        latest_samples: np.ndarray,
         event_id: Optional[int] = None,
         baseline: Optional[np.ndarray] = None,
-        latest_samples: Optional[np.ndarray] = None,
     ) -> Optional[Prediction]:
         """
-        Apply filters to *epoch_data* (the post-trigger window) in order, then
-        decode.
+        Apply filters to the accumulated post-trigger *epoch_data* in order,
+        then decode. The window contains samples collected so far, not
+        necessarily a completed start-to-end interval.
 
         *baseline* supplies pre-trigger reference data through the FilterContext.
         Filters choose how to use it while the decoder receives only the window.
@@ -40,10 +41,17 @@ class ProcessingPipeline:
 
         *latest_samples* is the most recently appended epoch segment, not all
         samples received since the previous decode. It is passed independently
-        of the filtered window, retaining the supplied input values. When it is
-        omitted, the decoder receives the filtered full window for both inputs.
-        Returns the decoder's Prediction, or None if it declines.
+        of the filtered window, retaining the supplied input values. It is required;
+        supply an empty (channels, 0) array when no samples were appended.
+        Filters and decoders must not modify the supplied arrays in place.
+        Returns the decoder's Prediction, or None if it declines. Either outcome
+        may update the decoder's per-epoch state.
+
+        Raises:
+            TypeError: if *latest_samples* is omitted or None.
         """
+        if latest_samples is None:
+            raise TypeError("latest_samples must be an array; use shape (channels, 0) for an empty segment")
         ctx = FilterContext(
             sample_rate=self.sample_rate,
             event_id=event_id,
@@ -52,4 +60,4 @@ class ProcessingPipeline:
         data = epoch_data
         for stage in self.filters:
             data = stage.apply(data, ctx)
-        return self.decoder.decode(data, latest_samples if latest_samples is not None else data)
+        return self.decoder.decode(data, latest_samples)

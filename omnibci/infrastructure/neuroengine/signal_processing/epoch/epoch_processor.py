@@ -2,7 +2,7 @@
 EpochProcessor — Infrastructure helper for the processor.
 
 Responsibility:
-  - Epoching: collect raw signal chunks into an epoch buffer (boundary indices are
+  - Epoching: collect prepared signal chunks into an epoch buffer (boundary indices are
     located by SignalProcessor's EpochDetector and passed in).
   - Construct an immutable Epoch value-object once the buffer is ready.
   - Run the decoder and wrap the result as a Classification value-object.
@@ -49,14 +49,13 @@ class EpochProcessor:
             decoder=decoder, filters=filters, sample_rate=sample_rate
         )
 
-        # Post-trigger samples (the analysis window). The decoder sees ONLY this,
-        # exactly as before — pre-trigger data is kept separate so decoder inputs are
-        # unchanged.
+        # Accumulated post-trigger samples before epoch filters; pre-trigger
+        # reference data is stored separately.
         self._epoch_data: np.ndarray = np.empty((0, 0))
         # Pre-trigger samples captured at epoch open (channels × trigger_offset).
         # Empty when pre-trigger capture is disabled or no history is available.
         self._pre_trigger_data: np.ndarray = np.empty((0, 0))
-        self._current_chunk_data: Optional[np.ndarray] = None
+        self._current_chunk_data: np.ndarray = self._epoch_data
         self._event_id: Optional[int] = None
         self._pending_decode = False
 

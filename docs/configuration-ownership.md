@@ -47,11 +47,16 @@ Acquisition source names. Aliases do not change Acquisition metadata or infer an
 electrode position from an algorithm input name.
 
 At runtime the bound, reordered and re-referenced signal enters Epoching
-first, including trigger detection and pre-trigger buffering. The assembled window
-then passes through the ordered optional Filters and finally the Decoder. The
-trigger remains separate from signal-channel arithmetic. The separate
-`latest_samples` input contains the most recently appended segment; it is mapped
-but not window-filtered.
+first, including trigger detection and pre-trigger buffering. The post-trigger
+window accumulated up to each decode call passes through the ordered optional
+Filters and finally the Decoder; it need not extend to an end marker. Neither
+pre-trigger data nor the trigger row enters the decoder window. The separate
+`latest_samples` input contains only the most recently appended epoch segment;
+it is mapped and re-referenced but not epoch-filtered. Pipeline callers must
+supply it explicitly, using `(signal_channels, 0)` when no new segment is
+available. It is not all samples received since the previous decode and never
+defaults to the full window. See the [input contract](decoder-plugin-development.md#python-contract)
+for readiness, state and boundary behavior.
 The profile's storage owner does not imply a direct Acquisition-to-Decoder route.
 
 Decoder contributions own read-only `channel_requirements` in their manifests.

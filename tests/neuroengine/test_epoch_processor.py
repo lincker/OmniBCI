@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from omnibci.domain.ports.algorithm import Decoder, Prediction
+from omnibci.domain.ports.algorithm import Decoder, Filter, Prediction
 from omnibci.domain.signal import SignalChunk
 from omnibci.domain.classification import Classification
 from omnibci.infrastructure.neuroengine.signal_processing.epoch.epoch_processor import EpochProcessor
@@ -28,8 +28,10 @@ class FakeDecoder(Decoder):
         self._target = target
         self._ready = ready
         self.calls = []
+        self.readiness_windows = []
 
     def should_decode(self, window) -> bool:
+        self.readiness_windows.append(window.copy())
         return self._ready
 
     def decode(self, window, latest_samples):
@@ -148,6 +150,20 @@ class TestDecoding:
         assert window.shape == (3, 9)
         np.testing.assert_array_equal(latest_samples, newest_chunk.data)
         assert latest_samples.shape == (3, 4)
+
+    def test_readiness_sees_accumulated_window_before_filters(self):
+        class AddFilter(Filter):
+            def apply(self, data, ctx):
+                return data + 10
+
+        decoder = FakeDecoder()
+        mgr = EpochProcessor(decoder=decoder, filters=[AddFilter()])
+        mgr.initialize_epoch(_chunk(samples=3), start_idx=0, event_id=4)
+        mgr.process_chunk(_chunk(samples=2))
+
+        assert len(decoder.readiness_windows) == 1
+        np.testing.assert_array_equal(decoder.readiness_windows[0], np.ones((3, 5)))
+        np.testing.assert_array_equal(decoder.calls[0][0], np.full((3, 5), 11))
 
     def test_marker_forced_path_stamps_forced_on_classification(self):
         # A marker bypasses the decoder's normal readiness gate. The decoder is

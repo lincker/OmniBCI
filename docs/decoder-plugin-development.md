@@ -100,7 +100,7 @@ the process working directory or import backend settings and service objects.
 | --- | --- |
 | `__init__(self, *, parameters, context)` | Initialize the model and verify any additional input assumptions. |
 | `should_decode(self, window) -> bool` | Cheap readiness check on the accumulated window before filters run. |
-| `decode(self, window, latest_samples) -> Prediction \| None` | Produce an integer target id, optionally a confidence value, or decline. |
+| `decode(self, window, latest_samples) -> Prediction \| None` | Produce an integer target id, optionally a confidence value, or return no prediction. Either outcome may update the decoder's working state. |
 | `for_new_epoch(self)` | Optional for stateless decoders; stateful decoders must return an instance with isolated per-epoch working state. |
 
 `context.input_signal.channels` is the ordered mapped input, including type,
@@ -108,21 +108,39 @@ unit, reference and optional position metadata. Use it to resolve names to matri
 row indices. `context.channel_names` and `context.acquired_signal` describe the
 original Acquisition, before mapping. Never use their indices for mapped input.
 
-Decoder arrays have shape **signal channels × samples**, without a trigger row.
-`decode` receives the accumulated post-trigger window after ordered filters.
-`latest_samples` is the most recently appended signal segment. It does not
-accumulate all samples since the previous decode, and the pipeline does not apply
-the window filters to this separate input. A whole-window decoder can ignore it.
-When the caller omits `latest_samples`, the pipeline uses the filtered full window
-instead.
+Decoder arrays have shape **signal channels × samples**, without a trigger row
+or pre-trigger data. `window` contains the post-trigger data accumulated up to
+this call, after the ordered epoch Filter chain. It need not extend to an end
+marker: the host can attempt decoding while collection is still in progress.
+The host calls `should_decode` on the accumulated window **before** those filters.
+
+`latest_samples` is the most recently appended epoch fragment. Upstream channel
+mapping and re-referencing have already run, but this separate input does not
+pass through the epoch Filter chain. It does not accumulate all samples received
+since the previous decode, so it is not a complete incremental-delivery contract.
+A whole-window decoder can ignore it. Every `ProcessingPipeline.run` call must
+supply `latest_samples` explicitly; omission and `None` are rejected. When there
+is no new fragment, pass an empty matrix with shape `(signal_channels, 0)`.
+There is no fallback to the full window.
+
+Do not modify either input array in place. A `decode` call that returns `None`
+may still have updated internal state; `None` means only that no prediction was
+produced. Keep mutable state isolated per epoch with `for_new_epoch()`.
+Complete incremental delivery would require a separate contract.
+
 Pre-trigger segments go to filters separately through `FilterContext.baseline`.
 Capturing these samples does not enable baseline correction.
 `BaselineCorrection` uses the entire supplied segment as its
 reference interval and subtracts its per-channel mean from the window.
 Filters used with named input must
 preserve the declared channel layout; do not silently reinterpret row indices.
-An end-of-epoch event can force `decode` without a successful `should_decode`,
-so handle short windows inside `decode` as the starter does.
+At a closing boundary, `force_decode_at_boundary()` bypasses `should_decode`, so
+handle short windows inside `decode` as the starter does. Stream drain uses
+`decode_if_ready()`: it retains the readiness gate and checks for pending data to
+avoid another decode when no samples have been appended since the last attempt.
+Under the current collection lifecycle, a returned `Prediction` completes the
+trial and ends epoch collection; returning `None` does not guarantee collection
+will continue when a boundary or drain is closing it.
 
 Target ids must agree with the chosen paradigm and effector. A Decoder package
 does not supply an epoch boundary detector, filter or paradigm unless it declares those

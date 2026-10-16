@@ -31,7 +31,8 @@ class Filter(ABC):
 
     Takes the current epoch window, transforms it (band-pass, baseline correction,
     downsample, channel selection, …) and returns it for the next stage.
-    Pure transform: no termination decision.
+    Pure transform: no termination decision. Treat input arrays, including
+    context reference data, as borrowed and read-only; do not modify them in place.
     """
 
     @abstractmethod
@@ -48,23 +49,29 @@ class Prediction:
 
 class Decoder(ABC):
     """
-    Turns a (filtered) epoch window into a recognized target.
+    Turns an accumulated, filtered post-trigger window into a Prediction.
 
-    Contract (general — fits discrete SSVEP/P300/MI and continuous decoders):
-      - should_decode(data) — cheap gate: are the conditions ready
-        for *data* yet? Normal decoding checks this gate; decoding at a closing
+    Contract:
+      - should_decode(window) — cheap gate on the accumulated window before
+        epoch filters run. Normal decoding checks this gate; a closing
         epoch boundary can bypass it.
       - decode(window, latest_samples) — produce a Prediction, or None if not ready /
-        not confident. Pure function of its inputs.
+        not confident. Either outcome may update the decoder's per-epoch state.
+
+    Treat input arrays as borrowed and read-only; copy them if mutable working
+    storage is needed. Stateful decoders must isolate working state per epoch
+    through for_new_epoch(). This interface does not guarantee delivery of every
+    sample through latest_samples.
     """
 
     @abstractmethod
     def should_decode(self, window: npt.NDArray) -> bool:
         """
         Cheap precondition gate — is it worth attempting a decode on *window* now?
-        Looks only at the accumulated epoch window. Override with a *cheap* check
-        (e.g. enough samples / repetitions) so the engine skips the pipeline until
-        the epoch is ready.
+        Receives the accumulated post-trigger window before epoch filters run,
+        without pre-trigger samples or a trigger row. Override with a *cheap*
+        check (e.g. enough samples / repetitions). True permits an attempt; it
+        does not guarantee that decode() will return a Prediction.
         """
 
     @abstractmethod
@@ -75,14 +82,21 @@ class Decoder(ABC):
 
         Args:
             window: the accumulated post-trigger epoch window after configured
-                    filters (channels × samples).
-                    Whole-window decoders (SSVEP CCA, ERP averaging) use this.
-            latest_samples: the most recently appended epoch segment, supplied
-                    independently of filtering. It is not all samples received
-                    since the previous decode. If the pipeline caller omits it,
-                    it defaults to the filtered full window.
+                    filters (channels × samples), from the start sample through
+                    the current collection position, excluding a closing boundary
+                    sample. It need not extend to an end trigger. Whole-window
+                    decoders (SSVEP CCA, ERP averaging) use this input and choose
+                    their own analysis segment.
+            latest_samples: the most recently appended epoch segment before
+                    epoch filters. Upstream channel mapping and re-referencing
+                    already apply to both inputs. This is not all samples received
+                    since the previous decode. It must be supplied explicitly;
+                    an empty segment has shape (channels, 0), never None.
 
-        Either input may be ignored depending on the decoder's style.
+        Neither input contains pre-trigger reference samples or a trigger row.
+        Either input may be ignored depending on the decoder's style. A Prediction
+        completes the current collection. None means no prediction this time, not
+        that the input was unprocessed or decoder state was unchanged.
         """
 
     def for_new_epoch(self) -> "Decoder":
@@ -91,10 +105,10 @@ class Decoder(ABC):
 
         The engine creates one EpochProcessor per epoch and calls this to obtain
         that epoch's decoder. The default returns ``self`` — correct for stateless
-        decoders (which recompute from the full epoch buffer each call), so one
-        shared instance is reused with zero cost and full concurrency safety.
+        decoders (which recompute from the accumulated window each call), so one
+        shared instance can be reused.
 
-        A decoder that keeps mutable per-epoch state across ``should_decode`` calls
+        A decoder that keeps mutable per-epoch state across calls
         must override this to return a **fresh** instance that shares the heavy,
         immutable model (templates/weights) but has its own working state. This
         keeps per-epoch state isolated (no leakage between trials, safe for

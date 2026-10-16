@@ -48,12 +48,17 @@ export function DecoderDeveloperGuide() {
       <p>Import from <code>omnibci.sdk</code>. The API 2 constructor receives <code>parameters</code> and <code>context</code> as keyword arguments.
         No registry decorator is required.</p>
       <ul>
-        <li><code>should_decode(window)</code> performs a cheap readiness check before filters run.</li>
-        <li><code>decode(window, latest_samples)</code> returns <code>Prediction(target_id=…)</code> or <code>None</code>. Handle short windows even when decoding is forced.</li>
-        <li>Arrays contain signal rows × samples, without trigger. Use <code>context.input_signal.channels</code> for mapped row names;
+        <li><code>should_decode(window)</code> performs a cheap readiness check on the accumulated post-trigger window before epoch filters run.</li>
+        <li><code>decode(window, latest_samples)</code> returns <code>Prediction(target_id=…)</code> or <code>None</code>. A Prediction ends epoch collection; a call returning None may still update decoder state.</li>
+        <li>Arrays contain signal rows × samples, without pre-trigger data or a trigger row. Use <code>context.input_signal.channels</code> for mapped row names;
           <code>context.channel_names</code> describes the original Acquisition.</li>
-        <li><code>window</code> passes through ordered filters. <code>latest_samples</code> contains the most recently appended samples and does not pass through those window filters. Whole-window decoders can ignore it.</li>
-        <li>Use <code>context.resource_root</code> for packaged assets. Stateful decoders override <code>for_new_epoch()</code> to isolate per-epoch state.</li>
+        <li><code>window</code> is accumulated up to this call and passes through ordered epoch filters; it need not reach an end marker. <code>latest_samples</code> contains the most recently appended samples and does not pass through those window filters. Mapping and re-referencing have already run.
+          It is not all samples received since the previous decode; whole-window decoders can ignore it.</li>
+        <li>Pipeline callers must supply <code>latest_samples</code> explicitly. Use shape <code>(signal_channels, 0)</code> when there is no new fragment;
+          omission and <code>None</code> are rejected, with no full-window fallback.</li>
+        <li>A closing boundary can bypass readiness, so handle short windows. Drain retains the readiness gate and checks pending data to avoid decoding again without new samples.</li>
+        <li>Do not modify either input array in place. Stateful decoders override <code>for_new_epoch()</code> to isolate per-epoch state.
+          Use <code>context.resource_root</code> for packaged assets.</li>
       </ul>
       <details><summary>Executable decoder.py</summary><pre><code>{decoder}</code></pre></details>
       <details><summary>Parameter schema</summary><pre><code>{schema}</code></pre></details>
