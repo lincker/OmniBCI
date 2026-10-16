@@ -11,7 +11,7 @@ from typing import Optional
 
 from omnibci.application.processing_source import requires_signal_preparation
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector
-from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessor
+from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessor
 from omnibci.infrastructure.process_lifecycle import StartupReporter
 
 logger = logging.getLogger(__name__)

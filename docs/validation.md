@@ -37,7 +37,7 @@ OpenAPI. Configure these check names as required in branch protection.
 
 ## What these checks establish
 
-The two-panel Processing channel binding update on 2026-10-12 passed 372 focused
+The two-panel Signal Processing channel binding update on 2026-10-12 passed 372 focused
 backend tests and all 96 frontend tests. One recording integration test required
 a rerun with loopback sockets enabled after the sandbox blocked engine startup.
 Production build, generated REST type consistency, and all six architecture
@@ -68,7 +68,7 @@ access, and downloaded manifest bytes against the source file. No desktop releas
 package was rebuilt for this follow-up; physical-device and other-OS checks remain
 release validation work.
 
-The Processing source-binding refactor on 2026-10-11 was verified locally with
+The Signal Processing source-binding refactor on 2026-10-11 was verified locally with
 Python 3.14 on macOS. The full backend run produced 2,553 passes, one skip, and
 two failures from integration assertions that still expected the retired
 modern-plan `setup` field. After updating those assertions to `processing_input`

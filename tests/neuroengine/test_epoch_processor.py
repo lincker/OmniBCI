@@ -7,7 +7,7 @@ import pytest
 from omnibci.domain.ports.algorithm import Decoder, Prediction
 from omnibci.domain.signal import SignalChunk
 from omnibci.domain.classification import Classification
-from omnibci.infrastructure.neuroengine.processing.epoch.epoch_processor import EpochProcessor
+from omnibci.infrastructure.neuroengine.signal_processing.epoch.epoch_processor import EpochProcessor
 
 
 # ---------------------------------------------------------------------------

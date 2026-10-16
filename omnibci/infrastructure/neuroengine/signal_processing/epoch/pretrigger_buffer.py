@@ -5,8 +5,8 @@ Why this exists:
   Baseline data lives *before* the trigger.  The detection loop used to discard
   every chunk seen while idle, so by the time a start marker fired the
   pre-trigger signal was already gone.  This buffer keeps the last ``capacity``
-  samples streaming through the idle (AwaitingEpoch) state so that, when a
-  trigger lands, the engine can hand the epoch its baseline segment.
+  samples from the continuous stream, including active epochs, so that a
+  trigger always receives the same baseline regardless of chunk boundaries.
 
   ``capacity`` is fixed for the lifetime of a SignalProcessor — it is derived
   once from the paradigm's configured baseline duration

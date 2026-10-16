@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 import omnibci.conf as conf_module
-import omnibci.infrastructure.neuroengine.processing.worker as worker_module
+import omnibci.infrastructure.neuroengine.signal_processing.worker as worker_module
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter
-from omnibci.infrastructure.neuroengine.processing.worker import (
+from omnibci.infrastructure.neuroengine.signal_processing.worker import (
     SignalProcessingWorker,
 )
 from omnibci.infrastructure.plugins.loader import PluginLoader
@@ -58,7 +58,7 @@ class TestAlgorithmLoading:
     def test_prepared_pipeline_uses_host_sample_rate_without_global_reads(self, monkeypatch):
         from omnibci.application.plugin_profiles import ProfileBinding
         from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, SourceMetadata, compile_processing_plan
-        from omnibci.infrastructure.neuroengine.processing.signal_configuration import load_signal_pipeline
+        from omnibci.infrastructure.neuroengine.signal_processing.signal_configuration import load_signal_pipeline
         from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
         snapshot = {"ACQUISITION.sample_rate": 250, "CONFIG.revision": "test-revision"}
         bindings = []

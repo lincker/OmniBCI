@@ -148,7 +148,7 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
   };
   return <div className="setting-group processing-input"><h2>Processing input</h2>
     <p className="setting-description">Bind Acquisition channels to the names and order the algorithm needs. The bound channels enter Epoch first; filters then process each epoch before decoding.</p>
-    <ol className="processing-flow" aria-label="Processing data flow">
+    <ol className="processing-flow" aria-label="Signal Processing data flow">
       <li>Acquisition</li><li>Channel binding</li><li>Epoch</li><li>Filters <small>(optional)</small></li><li>Decoder</li>
     </ol>
     <p className="setting-description">Bindings and software reference are saved with this decoder profile. Epoch timing and baseline settings remain in the processing pipeline.</p>
@@ -157,7 +157,7 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
         {binding?.profile_revision != null && ` · profile revision ${binding.profile_revision}`}</p>
       {binding && <p>{binding.state === "active" ? "Applied Acquisition source" : "Selected for next engine start"} · {binding.metadata_origin === "connected"
         ? "Connected source information" : binding.metadata_origin === "profile" ? "Saved Acquisition profile information" : "Source information unavailable"}</p>}
-      <p>Processing automatically uses the current Acquisition source. Switching Acquisition preserves these bindings for review.</p>
+      <p>Signal Processing automatically uses the current Acquisition source. Switching Acquisition preserves these bindings for review.</p>
       {source ? <><p>{source.source_id} · {source.sample_rate} Hz · {source.channels.length} signal channels · trigger row {source.trigger_row_index + 1}</p>
         <p>Original reference: {source.original_reference ?? "Unknown"}</p></>
         : config?.source_error ? <p className="inline-message error" role="alert">{config.source_error}</p>

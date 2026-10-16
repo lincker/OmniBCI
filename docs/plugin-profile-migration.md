@@ -59,7 +59,7 @@ all use `PluginProfileService.validate_activation()`:
 - Enabled Actuation requires an Effector binding.
 - Every binding must match its installed configuration schema and version, with
   all defaults resolved, including dormant output bindings.
-- Acquisition and Processing capabilities must support the current platform.
+- Acquisition and Signal Processing capabilities must support the current platform.
   The Effector must also be available when Actuation is enabled. Runtime changes
   additionally check outputs that are already active.
 - Stimulation starts separately, so its dormant Paradigm/Trigger selections do

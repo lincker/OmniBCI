@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 from omnibci.application.events import CommandRequest, CommandResult
 from omnibci.domain.session import SessionState
 from omnibci.shared.events import EventType
-from omnibci.infrastructure.neuroengine.processing.signal_processor import (
+from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import (
     SignalProcessor,
     SignalProcessorCommand,
 )

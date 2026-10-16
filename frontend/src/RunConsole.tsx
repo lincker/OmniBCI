@@ -178,7 +178,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
     <section className="card engine-card" aria-label="Engine controls">
       <div><h2>Engine</h2><div className="engine-status">
         <Dot on={running} label="Running" /><Dot on={engine.data?.acquisition_alive} label="Acquisition process" />
-        <Dot on={engine.data?.processor_alive} label="Processing process" />
+        <Dot on={engine.data?.processor_alive} label="Signal Processing process" />
       </div>{engine.error && <p className="error" role="alert">{engine.error.message}</p>}</div>
       <div className="actions"><button className="primary" disabled={controlsBlocked || !engineAvailable || running || !selection || !!loadError || missingRecording}
         onClick={() => void start.run()}><Icon name="play" />{start.pending ? "Starting…" : "Start engine"}</button>

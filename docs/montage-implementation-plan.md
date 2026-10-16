@@ -10,7 +10,7 @@ evidence remains required.
    Acquisition > Source montage**, read the connected source or fill missing
    facts manually. Both the read-only observation and manual declarations are
    saved with the acquisition profile. Save, review, and apply manual changes.
-2. In **Setup > Processing > Decoder > Channel input**, configure the selected
+2. In **Setup > Signal Processing > Decoder > Channel input**, configure the selected
    decoder profile's ordered outputs, exclusions, and original, single, average,
    or bipolar software reference. Channel names resolve against the current
    selected Acquisition montage automatically; source facts are read-only here.
@@ -74,7 +74,7 @@ Start worker control loops
 ```
 
 During streaming, the acquisition adapter supplies the original signal rows and
-the normalized trigger row. Processing applies the prepared signal transform
+the normalized trigger row. Signal Processing applies the prepared signal transform
 once per chunk before baseline storage or epoch assembly. Events retain their
 values and sample positions. The acquisition payload is not modified in place.
 
@@ -88,9 +88,9 @@ configuration changes, and session history cannot silently change row meaning.
 | --- | --- |
 | [SignalChunk](../omnibci/domain/signal.py) treats its final row as trigger | Normalize device-specific events in the adapter and keep trigger outside signal arithmetic |
 | [Acquisition metadata handling](../omnibci/infrastructure/acquisition/acquisition.py) currently logs the result | Return typed metadata through command results and expose its availability to the application |
-| [ProcessingWorker](../omnibci/infrastructure/neuroengine/processing/worker.py) constructs plugins before device connection | Defer signal-dependent construction until source and mapping preparation completes |
-| [SignalProcessor](../omnibci/infrastructure/neuroengine/processing/signal_processor.py) fixes sample rate and baseline capacity at construction | Construct it from resolved metadata; updating a status field is insufficient |
-| [ProcessingPipeline](../omnibci/infrastructure/neuroengine/processing/epoch/pipeline.py) transforms the window but leaves supplied baseline and latest unchanged | Apply this channel transform before all three are accumulated |
+| [SignalProcessingWorker](../omnibci/infrastructure/neuroengine/signal_processing/worker.py) constructs plugins before device connection | Defer signal-dependent construction until source and mapping preparation completes |
+| [SignalProcessor](../omnibci/infrastructure/neuroengine/signal_processing/signal_processor.py) fixes sample rate and baseline capacity at construction | Construct it from resolved metadata; updating a status field is insufficient |
+| [ProcessingPipeline](../omnibci/infrastructure/neuroengine/signal_processing/epoch/pipeline.py) transforms the window but leaves supplied baseline and latest unchanged | Apply this channel transform before all three are accumulated |
 | [PluginContext](../omnibci/sdk/__init__.py) documents channel names as acquired channels | Add an explicit description of the actual plugin input instead of silently changing the existing field |
 | [ActivationSnapshot](../omnibci/application/plugin_profiles.py) hashes settings and pinned bindings | Include signal configuration in the accepted snapshot and retain old revision semantics |
 | [Profile review](../frontend/src/PluginProfiles.tsx) normally excludes saved host changes | Include channel input in the selected decoder binding refresh |
@@ -107,7 +107,7 @@ electrode name. Known device/file facts cannot be edited through the profile API
 
 Decoder profiles own `processing_input`: ordered outputs, software reference,
 and excluded channels. The field is copied into the accepted decoder binding.
-Processing reads that pinned input directly and binds it to `SourceMetadata`
+Signal Processing reads that pinned input directly and binds it to `SourceMetadata`
 from the currently selected Acquisition. Managed and standalone engine nodes
 retain the same canonical binding and generate no `SIGNAL.setup` projection for
 modern input. `compile_processing_plan` and the legacy compiler share channel
@@ -403,10 +403,10 @@ Runtime continuity rules:
   No old queued chunk, buffer, or preparation receipt crosses into a new plan.
 
 Primary seams: [workers and builder](../omnibci/infrastructure/neuroengine/builder.py),
-[signal processor](../omnibci/infrastructure/neuroengine/processing/signal_processor.py),
+[signal processor](../omnibci/infrastructure/neuroengine/signal_processing/signal_processor.py),
 [recording service](../omnibci/application/services/recording_service.py),
 [runtime apply](../omnibci/application/services/runtime_apply_service.py),
-[pipeline replacement](../omnibci/infrastructure/neuroengine/processing/pipeline_configuration.py),
+[pipeline replacement](../omnibci/infrastructure/neuroengine/signal_processing/pipeline_configuration.py),
 [checkpoint policy](../omnibci/application/source_checkpoint.py), and
 [session records](../omnibci/domain/repositories.py).
 
@@ -426,7 +426,7 @@ Deliver the user-facing workflow after backend preparation is available.
    or refresh action that respects source lifecycle restrictions. Save missing
    names, types, units, reference and optional coordinates in this profile.
 2. Acquisition shows source row, label, type, unit, field provenance, and optional
-   position. There is no second writable source-description editor in Processing.
+   position. There is no second writable source-description editor in Signal Processing.
 3. Each decoder profile shows ordered algorithm outputs, reference mode/pool,
    and excluded channels. Source information identifies the current Acquisition
    binding and its connected, profile, or unavailable metadata origin. It is

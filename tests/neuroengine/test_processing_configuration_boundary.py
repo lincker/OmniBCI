@@ -11,8 +11,8 @@ from omnibci.application.events import CommandRequest
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter, Prediction
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.ipc.data_manager import DataManager
-from omnibci.infrastructure.neuroengine.processing import signal_processor as module
-from omnibci.infrastructure.neuroengine.processing.pipeline_configuration import ConfiguredPipeline
+from omnibci.infrastructure.neuroengine.signal_processing import signal_processor as module
+from omnibci.infrastructure.neuroengine.signal_processing.pipeline_configuration import ConfiguredPipeline
 from omnibci.shared.events import EventType
 
 

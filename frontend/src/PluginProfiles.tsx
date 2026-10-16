@@ -236,7 +236,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
       <div className="explorer-footer"><p>Choose a plugin, then one of its saved profiles. Manage installed packages in Extensions.</p></div>
     </aside>
     <div className="settings-editor">
-      <header className="editor-heading"><div><p className="eyebrow">{module} / {slot.label}</p>
+      <header className="editor-heading"><div><p className="eyebrow">{module === "processing" ? "Signal Processing" : module} / {slot.label}</p>
         <h1>{slot.label === "Source" ? "Acquisition source" : slot.label}</h1><p>Choose a plugin and a reusable configuration.</p></div>
         <button className="primary" disabled={busy || dirty || !editor.profile || !definition?.available || (!engineAvailable && slot.kind !== "filter") || (runtime.blocked && slot.kind !== "filter")}
           onClick={() => {

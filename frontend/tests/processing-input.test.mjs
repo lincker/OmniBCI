@@ -458,7 +458,7 @@ test("required slots bind an Acquisition source under an explicit algorithm name
     assert.equal(elements(view.tree).some((element) => element.props["aria-label"] === "Bind required Oz"), false);
     const left = elements(view.tree).find((element) => element.props["aria-label"] === "Available Acquisition channels");
     assert.match(text(left), /C4Row 2 · eeg · V→ Oz/);
-    const flow = elements(view.tree).find((element) => element.props["aria-label"] === "Processing data flow");
+    const flow = elements(view.tree).find((element) => element.props["aria-label"] === "Signal Processing data flow");
     assert.equal(text(flow), "AcquisitionChannel bindingEpochFilters (optional)Decoder");
     assert.match(text(view.tree), /Epoch timing and baseline settings remain/);
     await click(view, "Preview mapping");

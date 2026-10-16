@@ -29,7 +29,7 @@ from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.acquisition.acquisition import Acquisition, AcquisitionCommand
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
-from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessor, SignalProcessorCommand
+from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessor, SignalProcessorCommand
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 from omnibci.shared.events import Event, EventType
 
@@ -333,7 +333,7 @@ async def test_recording_waits_for_slow_backlog_and_checks_actual_projection(pro
     repository = InMemorySessionRepository()
     repository.save(SessionRecord("session-1", None, SessionRecordState.RUNNING, datetime.now(UTC)))
     sessions = SessionAppService(repository)
-    broker = CommandResultBroker(SimpleNamespace(dispatch=event_bus.put_event), timeout_s=3)
+    broker = CommandResultBroker(SimpleNamespace(dispatch=event_bus.put_event, is_engine_ready=True), timeout_s=3)
     recording = RecordingService(sessions, AcquisitionAppService(broker))
     event_bus.register_event_listener(EventType.CommandResult, broker.on_result)
 

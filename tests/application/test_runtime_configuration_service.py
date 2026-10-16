@@ -447,7 +447,7 @@ def test_source_context_and_decoder_use_pinned_values_until_explicit_refresh(run
     from omnibci.infrastructure.neuroengine.builder import NeuroEngineConfig
     from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin, plugin_context
     from omnibci.sdk import Decoder
-    from omnibci.infrastructure.neuroengine.processing.signal_configuration import signal_context
+    from omnibci.infrastructure.neuroengine.signal_processing.signal_configuration import signal_context
 
     def load_prepared(snapshot):
         return load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
@@ -505,7 +505,7 @@ def test_source_context_and_decoder_use_pinned_values_until_explicit_refresh(run
 
 
 def test_stripped_legacy_fields_preserve_decoder_trial_application(runtime):
-    from omnibci.infrastructure.neuroengine.processing.pipeline_configuration import build_pipeline_update
+    from omnibci.infrastructure.neuroengine.signal_processing.pipeline_configuration import build_pipeline_update
 
     service, selections, _ = runtime
     accepted = accept_historical_settings(runtime, LEGACY_PLUGIN_VALUES)
@@ -526,7 +526,7 @@ def test_stripped_legacy_fields_preserve_decoder_trial_application(runtime):
 
 
 def test_stripped_legacy_fields_preserve_output_module_application(runtime):
-    from omnibci.infrastructure.neuroengine.processing.pipeline_configuration import validate_output_context
+    from omnibci.infrastructure.neuroengine.signal_processing.pipeline_configuration import validate_output_context
 
     service, selections, _ = runtime
     accepted = accept_historical_settings(runtime, LEGACY_PLUGIN_VALUES)

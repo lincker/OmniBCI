@@ -43,7 +43,7 @@ def _capture_worker_settings(worker_type, snapshot, output):
         worker._load_data_source = lambda: output.put(settings.snapshot())
         worker._run = lambda: None
     else:
-        from omnibci.infrastructure.neuroengine.processing.worker import SignalProcessingWorker
+        from omnibci.infrastructure.neuroengine.signal_processing.worker import SignalProcessingWorker
         worker = SignalProcessingWorker(command_queue=None, settings_snapshot=snapshot)
         worker._load_algorithm = lambda: (output.put(settings.snapshot()), None, None)
         worker._run_processor = lambda *args: None

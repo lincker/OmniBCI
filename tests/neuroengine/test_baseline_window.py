@@ -15,8 +15,8 @@ import pytest
 
 from omnibci.domain.epoch import Epoch
 from omnibci.domain.ports.algorithm import Decoder, Prediction
-from omnibci.infrastructure.neuroengine.processing.epoch.epoch_processor import EpochProcessor
-from omnibci.infrastructure.neuroengine.processing.epoch.pretrigger_buffer import PreTriggerBuffer
+from omnibci.infrastructure.neuroengine.signal_processing.epoch.epoch_processor import EpochProcessor
+from omnibci.infrastructure.neuroengine.signal_processing.epoch.pretrigger_buffer import PreTriggerBuffer
 from omnibci.domain.signal import SignalChunk
 
 
@@ -168,7 +168,7 @@ class TestEpochProcessorBaseline:
 class TestSignalProcessorBaselineSamples:
     def _processor(self, baseline_duration, sample_rate=1000):
         from unittest.mock import MagicMock
-        from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessor
+        from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessor
         from omnibci.domain.session import BCISession
         sess = BCISession()
         sess.start()

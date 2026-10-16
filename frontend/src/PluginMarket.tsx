@@ -135,7 +135,7 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
     <section className="settings-editor">
       <div className="breadcrumbs">Extensions<Icon name="chevron" />{tab === "guide" ? "Decoder developer guide" : tab === "installed" ? "Installed plugins" : "Signed repository"}</div>
       <header className="editor-heading"><div><p className="eyebrow">Plugin library</p><h1>{tab === "guide" ? "Decoder developer guide" : tab === "installed" ? "Installed plugins" : "Plugin repository"}</h1>
-        <p>{tab === "guide" ? "Required files, channel declarations and an executable starter." : "Manage acquisition, processing, stimulation and actuation packages."}</p></div>
+        <p>{tab === "guide" ? "Required files, channel declarations and an executable starter." : "Manage acquisition, signal processing, stimulation and actuation packages."}</p></div>
         <button disabled={locked} onClick={() => { if (tab === "guide") setTab("installed"); upload.current?.click(); }}><Icon name="plus" />Install ZIP…</button>
         <input ref={upload} type="file" accept=".zip,application/zip" hidden aria-label="Choose plugin ZIP" onChange={(event) => {
           const file = event.target.files?.[0]; event.target.value = "";

@@ -9,7 +9,7 @@ import pytest
 from omnibci.application.plugin_profiles import ProfileBinding
 from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, SourceMetadata, compile_processing_plan
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-from omnibci.infrastructure.neuroengine.processing import pipeline_configuration as configuration
+from omnibci.infrastructure.neuroengine.signal_processing import pipeline_configuration as configuration
 
 
 def selected_snapshot(revision="old"):
@@ -143,5 +143,5 @@ def test_output_context_cannot_change_decoder_input():
     before = selected_snapshot()
     after = deepcopy(before)
     after["PLUGINS.bindings"][1]["processing_input"] = {"outputs": ["O2"]}
-    with pytest.raises(ValueError, match="Processing or source changes"):
+    with pytest.raises(ValueError, match="Signal Processing or source changes"):
         configuration.validate_output_context(before, after)

@@ -5,7 +5,7 @@ Translates rich domain events into lightweight Event(EventType, data)
 envelopes for the infrastructure EventBus. The domain stays independent of
 IPC transports, while pickle-safe application payloads cross process boundaries.
 
-This module owns the translation table. Processing states and their processor
+This module owns the translation table. Signal Processing states and their processor
 share this publisher without importing one another.
 """
 

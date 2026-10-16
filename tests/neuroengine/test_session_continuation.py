@@ -6,7 +6,7 @@ import numpy as np
 from omnibci.domain.classification import Classification
 from omnibci.domain.epoch import Epoch
 from omnibci.domain.session import SessionState
-from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessor
+from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessor
 from omnibci.shared.events import EventType
 
 

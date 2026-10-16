@@ -18,7 +18,7 @@ import { useI18n } from "./i18n";
 import "./styles.css";
 
 const setupPages = [
-  ["acquisition", "Acquisition", "signal"], ["processing", "Processing", "workflow"],
+  ["acquisition", "Acquisition", "signal"], ["processing", "Signal Processing", "workflow"],
   ["stimulation", "Stimulation", "system"], ["actuation", "Actuation", "plug"],
 ] as const;
 const settingsPages = [["general", "General", "settings"]] as const;

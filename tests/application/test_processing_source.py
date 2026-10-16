@@ -1,4 +1,4 @@
-"""Processing follows pinned decoder input and the selected acquisition source."""
+"""Signal Processing follows pinned decoder input and the selected acquisition source."""
 from copy import deepcopy
 from dataclasses import replace
 

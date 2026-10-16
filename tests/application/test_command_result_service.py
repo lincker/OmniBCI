@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -22,6 +23,8 @@ from omnibci.shared.events import Event, EventType
 
 
 class _Engine:
+    is_engine_ready = True
+
     def __init__(self) -> None:
         self.dispatched: list[Event] = []
         self.on_dispatch = None
@@ -156,6 +159,51 @@ def test_timeout_removes_waiter_and_late_result_is_ignored(caplog):
     assert broker.pending_count == 0
     broker.on_result(_result(engine.dispatched[0], ok=True))
     assert "Late or unknown command result ignored" in caplog.text
+
+
+def test_engine_failure_completes_pending_command_before_its_deadline():
+    engine = _Engine()
+    broker = CommandResultBroker(engine, timeout_s=2)
+    dispatched = threading.Event()
+    engine.on_dispatch = lambda event: dispatched.set()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(broker.request, EventType.StartStream)
+        assert dispatched.wait(1)
+        engine.is_engine_ready = False
+        with pytest.raises(CommandExecutionError) as raised:
+            future.result(timeout=0.5)
+
+    assert raised.value.result.command_id == engine.dispatched[0].data.command_id
+    assert raised.value.result.command == EventType.StartStream.name
+    assert raised.value.result.error_code == "ENGINE_STOPPED"
+    assert broker.pending_count == 0
+
+
+def test_received_result_wins_when_engine_stops_at_the_same_time():
+    engine = _Engine()
+    broker = CommandResultBroker(engine, timeout_s=0.2)
+
+    def respond_and_stop(event):
+        broker.on_result(_result(event, ok=True))
+        engine.is_engine_ready = False
+
+    engine.on_dispatch = respond_and_stop
+    assert broker.request(EventType.StopStream).ok
+    assert broker.pending_count == 0
+
+
+def test_result_arriving_during_engine_failure_check_wins():
+    class StoppingEngine(_Engine):
+        @property
+        def is_engine_ready(self):
+            broker.on_result(_result(self.dispatched[0], ok=True))
+            return False
+
+    engine = StoppingEngine()
+    broker = CommandResultBroker(engine, timeout_s=0.5)
+
+    assert broker.request(EventType.StopStream).ok
+    assert broker.pending_count == 0
 
 
 def test_concurrent_results_do_not_cross_requests():

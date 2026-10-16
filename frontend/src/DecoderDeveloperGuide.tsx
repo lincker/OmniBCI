@@ -66,7 +66,7 @@ export function DecoderDeveloperGuide() {
       <ol>
         <li>Keep <code>manifest.toml</code> at the ZIP root. Rename the tutorial package identity for your plugin; increment its version when distributing changed files.</li>
         <li>Use <strong>Extensions → Install ZIP…</strong>, then enable the installed version.</li>
-        <li>In <strong>Setup → Processing → Decoder</strong>, create a Profile, review its input, select it and apply. Choose an Acquisition that provides the required named channels.</li>
+        <li>In <strong>Setup → Signal Processing → Decoder</strong>, create a Profile, review its input, select it and apply. Choose an Acquisition that provides the required named channels.</li>
         <li>Preview the mapped input and run known replay data with a suitable epoch detector. Check targets, reordered inputs, missing channels and short windows.</li>
       </ol>
       <p>Installation checks metadata and schemas without executing your algorithm. The host does not install dependencies.

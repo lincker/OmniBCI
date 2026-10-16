@@ -95,6 +95,7 @@ def test_connect_round_trips_through_event_bus_worker_and_broker() -> None:
                 command_queue,
                 AcquisitionCommand.connect,
                 carry_data=True,
+                event_bus=bus,
             ),
         )
         bus.register_event_listener(EventType.AcquisitionState,

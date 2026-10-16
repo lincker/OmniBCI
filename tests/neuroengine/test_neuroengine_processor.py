@@ -3,11 +3,12 @@
 import asyncio
 import queue
 import time
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from omnibci.infrastructure.ipc.data_manager import DataManager
-from omnibci.infrastructure.neuroengine.processing.signal_processor import (
+from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import (
     SignalProcessor,
+    SignalProcessorCommand,
 )
 
 
@@ -51,3 +52,23 @@ class TestNextChunkEventDriven:
                              command_queue=MagicMock(), data_manager=dm,
                              event_bus=MagicMock(), auto_start_session=False)
         assert asyncio.run(sp.next_chunk(timeout=0.05)) is None
+
+
+def test_stop_command_does_not_depend_on_queue_empty_probe():
+    command_queue = queue.Queue()
+    command_queue.put_nowait(SignalProcessorCommand.should_stop)
+    command_queue.empty = MagicMock(return_value=True)
+    processor = SignalProcessor(
+        detector=MagicMock(), decoder=MagicMock(), command_queue=command_queue,
+        data_manager=MagicMock(), event_bus=MagicMock(), auto_start_session=False,
+    )
+
+    async def stop_after_data_read():
+        processor._should_stop = True
+
+    processor._current_state.run = AsyncMock(side_effect=stop_after_data_read)
+
+    asyncio.run(processor.serve())
+
+    processor._current_state.run.assert_not_awaited()
+    command_queue.empty.assert_not_called()

@@ -19,7 +19,7 @@ python -m zipfile -c ../oz-polarity-demo.zip manifest.toml decoder.py default.sc
 
 The manifest must be at the ZIP root, without an enclosing directory. In OmniBCI,
 open **Extensions → Install ZIP…**, install the archive, and enable its version.
-In **Setup → Processing → Decoder**, create a profile for **Oz Polarity Demo**.
+In **Setup → Signal Processing → Decoder**, create a profile for **Oz Polarity Demo**.
 Choose an Acquisition whose named EEG channels include `Oz`, preview the input,
 select the Decoder profile, and apply the configuration. Use a suitable epoch
 detector. Targets `1` and `2` must also agree with your paradigm and effector if

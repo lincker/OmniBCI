@@ -13,8 +13,8 @@ from omnibci.application.plugin_profiles import ProfileBinding
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
-from omnibci.infrastructure.neuroengine.processing.worker import SignalProcessingWorker
-from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessorCommand
+from omnibci.infrastructure.neuroengine.signal_processing.worker import SignalProcessingWorker
+from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessorCommand
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.infrastructure.process_lifecycle import StartupReporter, wait_for_startup_report
 from omnibci.shared.events import EventType
@@ -93,14 +93,14 @@ class ValueDecoder(Decoder):
     context = mp.get_context("spawn")
     commands, data, events = (context.Queue() for _ in range(3))
     receiver, sender = context.Pipe(duplex=False)
-    reporter = StartupReporter(sender, component="Processing", config_revision="old", generation="run")
+    reporter = StartupReporter(sender, component="Signal Processing", config_revision="old", generation="run")
     worker = SignalProcessingWorker(commands, DataManager(data), EventBus(events), sample_rate=250,
                                     settings_snapshot=snapshot, startup_reporter=reporter)
     process = context.Process(target=worker.run)
     try:
         process.start()
         reporter.close()
-        wait_for_startup_report(receiver, process, component="Processing", timeout_s=10,
+        wait_for_startup_report(receiver, process, component="Signal Processing", timeout_s=10,
                                 expected_revision="old", expected_generation="run")
         commands.put((SignalProcessorCommand.start_session, CommandRequest("start", {"session_id": "session"})))
         _event(events, EventType.CommandResult, lambda event: event.data.command_id == "start")

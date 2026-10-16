@@ -63,7 +63,7 @@ Profiles are not overwritten by updated defaults or an Acquisition switch;
 preview and runtime preparation validate their resolved input. Offline Profiles
 can be saved before an Acquisition is available.
 
-In the Processing binding editor, Acquisition channels are on the left and
+In the Signal Processing binding editor, Acquisition channels are on the left and
 ordered algorithm inputs are on the right. Users can select all channels or bind
 individual sources, including an explicit different-name binding such as
 `{"name": "Oz", "source": "CH1"}`. This is a processing input label, not an edit
@@ -160,7 +160,7 @@ an installed package/version is immutable. Schema version is separate.
 1. Open **Extensions → Install ZIP…**, select the archive, then enable that exact
    package version. Installation checks metadata and schemas without importing
    Python; successful installation alone does not prove the algorithm executes.
-2. In **Setup → Processing → Decoder**, create a Profile for the contribution.
+2. In **Setup → Signal Processing → Decoder**, create a Profile for the contribution.
    Review algorithm parameters and the initialized input selection.
 3. Select the Acquisition Profile, refresh source information and preview input.
    Check channel names, order, units and reference. Missing required channels,

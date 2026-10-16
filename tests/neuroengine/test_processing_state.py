@@ -12,16 +12,20 @@ from omnibci.domain.epoch import Epoch
 from omnibci.domain.events import TrialCompleted
 from omnibci.domain.session import BCISession
 from omnibci.domain.signal import SignalChunk
-from omnibci.infrastructure.neuroengine.processing.processing_state import (
+from omnibci.infrastructure.neuroengine.signal_processing.processing_state import (
     AssemblingEpochState,
     AwaitingEpochState,
     ProcessingState,
 )
 
 
-def _chunk(samples: int = 6) -> SignalChunk:
+def _chunk(samples: int = 6, *, start=None, end=None) -> SignalChunk:
     signal = np.arange(2 * samples, dtype=float).reshape(2, samples)
     triggers = np.zeros((1, samples), dtype=float)
+    if start is not None:
+        triggers[0, start[0]] = start[1]
+    if end is not None:
+        triggers[0, end] = 255
     return SignalChunk(
         timestamp=1.0,
         sequence_id=1,
@@ -45,11 +49,17 @@ def _classification(event_id: int = 7) -> Classification:
 def _context(chunk: SignalChunk | None):
     context = MagicMock()
     context.next_chunk = AsyncMock(return_value=chunk)
-    context.detector.detect_start.return_value = (-1, None)
-    context.detector.detect_end.return_value = (-1, None)
+    context.detector.detect_start.side_effect = lambda item: _first_marker(item, starts=True)
+    context.detector.detect_end.side_effect = lambda item: _first_marker(item, starts=False)
     context.current_epoch = MagicMock()
     context.new_epoch_processor.return_value = MagicMock()
     return context
+
+
+def _first_marker(chunk, *, starts):
+    selected = (chunk.triggers > 0) & (chunk.triggers < 255) if starts else chunk.triggers == 255
+    positions = np.flatnonzero(selected)
+    return (int(positions[0]), int(chunk.triggers[positions[0]])) if positions.size else (-1, None)
 
 
 class TestProcessingStateContract:
@@ -74,7 +84,6 @@ class TestAwaitingEpochState:
     async def test_chunk_without_start_is_saved_as_pretrigger_history(self):
         chunk = _chunk()
         context = _context(chunk)
-        context.detector.detect_start.return_value = (-1, None)
 
         await AwaitingEpochState(context).run()
 
@@ -85,11 +94,10 @@ class TestAwaitingEpochState:
 
     @pytest.mark.asyncio
     async def test_start_builds_fresh_epoch_with_pretrigger_baseline(self):
-        chunk = _chunk()
+        chunk = _chunk(start=(2, 7))
         baseline = np.ones((2, 3))
         epoch_processor = MagicMock()
         context = _context(chunk)
-        context.detector.detect_start.return_value = (2, 7)
         context.pretrigger.take_baseline.return_value = baseline
         context.new_epoch_processor.return_value = epoch_processor
 
@@ -97,7 +105,8 @@ class TestAwaitingEpochState:
 
         extra = context.pretrigger.take_baseline.call_args.kwargs["extra"]
         np.testing.assert_array_equal(extra, chunk.data[:, :2])
-        context.pretrigger.clear.assert_called_once_with()
+        np.testing.assert_array_equal(context.pretrigger.push.call_args.args[0], chunk.data)
+        context.pretrigger.clear.assert_not_called()
         assert context.current_epoch is epoch_processor
         args = epoch_processor.initialize_epoch.call_args.args
         kwargs = epoch_processor.initialize_epoch.call_args.kwargs
@@ -147,31 +156,29 @@ class TestAssemblingEpochState:
 
     @pytest.mark.asyncio
     async def test_end_without_result_returns_to_awaiting(self):
-        chunk = _chunk()
+        chunk = _chunk(end=3)
         context = _context(chunk)
-        context.detector.detect_end.return_value = (3, None)
+        previous_epoch = context.current_epoch
         context.current_epoch.force_recognize.return_value = (False, None)
         state = AssemblingEpochState(context)
         state._complete_trial = MagicMock()
 
         await state.run()
 
-        assert context.current_epoch.append_until_index.call_args.args == (chunk, 3)
-        context.current_epoch.force_recognize.assert_called_once_with()
+        assert previous_epoch.append_until_index.call_args.args == (chunk, 3)
+        previous_epoch.force_recognize.assert_called_once_with()
         state._complete_trial.assert_not_called()
         context.transition_to_awaiting.assert_called_once_with()
 
     @pytest.mark.asyncio
     async def test_end_and_start_in_same_chunk_complete_and_reopen_epoch(self):
-        chunk = _chunk()
+        chunk = _chunk(start=(4, 9), end=2)
         classification = _classification()
         baseline = np.ones((2, 2))
         next_epoch = MagicMock()
         context = _context(chunk)
-        context.detector.detect_end.return_value = (2, None)
-        context.detector.detect_start.return_value = (4, 9)
         context.current_epoch.force_recognize.return_value = (True, classification)
-        context.baseline_from_chunk.return_value = baseline
+        context.pretrigger.take_baseline.return_value = baseline
         context.new_epoch_processor.return_value = next_epoch
         state = AssemblingEpochState(context)
         state._complete_trial = MagicMock()
@@ -179,7 +186,7 @@ class TestAssemblingEpochState:
         await state.run()
 
         state._complete_trial.assert_called_once_with(classification)
-        context.baseline_from_chunk.assert_called_once_with(chunk, 4)
+        context.pretrigger.take_baseline.assert_called_once()
         assert context.current_epoch is next_epoch
         args = next_epoch.initialize_epoch.call_args.args
         kwargs = next_epoch.initialize_epoch.call_args.kwargs
@@ -189,11 +196,10 @@ class TestAssemblingEpochState:
 
     @pytest.mark.asyncio
     async def test_unexpected_start_without_result_still_reopens_epoch(self):
-        chunk = _chunk()
+        chunk = _chunk(start=(3, 8))
         next_epoch = MagicMock()
         context = _context(chunk)
         previous_epoch = context.current_epoch
-        context.detector.detect_start.return_value = (3, 8)
         previous_epoch.force_recognize.return_value = (False, None)
         context.new_epoch_processor.return_value = next_epoch
         state = AssemblingEpochState(context)
@@ -208,12 +214,11 @@ class TestAssemblingEpochState:
 
     @pytest.mark.asyncio
     async def test_unexpected_start_completes_previous_trial_before_reopening(self):
-        chunk = _chunk()
+        chunk = _chunk(start=(3, 8))
         classification = _classification()
         next_epoch = MagicMock()
         context = _context(chunk)
         previous_epoch = context.current_epoch
-        context.detector.detect_start.return_value = (3, 8)
         previous_epoch.force_recognize.return_value = (True, classification)
         context.new_epoch_processor.return_value = next_epoch
         state = AssemblingEpochState(context)

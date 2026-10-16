@@ -8,7 +8,7 @@ from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
 from omnibci.domain.decoder_input import DecoderChannelRequirements
 from omnibci.domain.montage import ChannelDescriptor, ProcessingInput, ReferenceSpec, SourceMetadata, compile_processing_plan
 from omnibci.domain.ports.algorithm import Decoder
-from omnibci.infrastructure.neuroengine.processing.signal_configuration import signal_context
+from omnibci.infrastructure.neuroengine.signal_processing.signal_configuration import signal_context
 from omnibci.infrastructure.plugins.loader import PluginLoadError
 from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
 from omnibci.sdk import PluginContext

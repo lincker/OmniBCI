@@ -8,8 +8,8 @@ import pytest
 from omnibci.application.events import CommandRequest
 from omnibci.application.plugin_profiles import ProfileBinding
 from omnibci.infrastructure.ipc.data_manager import DataManager
-from omnibci.infrastructure.neuroengine.processing.pipeline_configuration import validate_output_context
-from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessor, SignalProcessorCommand
+from omnibci.infrastructure.neuroengine.signal_processing.pipeline_configuration import validate_output_context
+from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessor, SignalProcessorCommand
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.shared.events import EventType
 from tests.neuroengine.test_pipeline_configuration import selected_snapshot
