@@ -2,17 +2,10 @@
 EpochProcessor — Infrastructure helper for the processor.
 
 Responsibility:
-  - Collect raw signal chunks into an epoch buffer (boundary indices are
+  - Epoching: collect raw signal chunks into an epoch buffer (boundary indices are
     located by SignalProcessor's EpochDetector and passed in).
   - Construct an immutable Epoch value-object once the buffer is ready.
   - Run the decoder and wrap the result as a Classification value-object.
-
-What changed from the original:
-  - run_pipeline() now returns (bool, Optional[Classification]) instead of
-    (bool, int), so callers hold a rich domain object, not a bare int.
-  - build_epoch() explicitly constructs an Epoch VO before decoding.
-  - The decoder's legacy (bool, int) return is wrapped here; existing decoder
-    plugins do NOT need to change their signatures.
 """
 
 import logging
@@ -38,7 +31,7 @@ class EpochProcessor:
         initialize_epoch()            — first samples stored from start_idx
         append_chunk() / append_until_index() — stream more samples
         build_epoch()                 — construct immutable Epoch VO
-        run_pipeline()                — decode Epoch → Classification
+        _run_pipeline()               — decode window → Classification
     """
 
     def __init__(
@@ -51,19 +44,18 @@ class EpochProcessor:
         self.decoder = decoder
         self.sample_rate = sample_rate
         self.config_revision = config_revision
-        # Ordered preprocessing + terminal decoder. No filters configured yet,
-        # so the pipeline is behaviourally identical to calling decoder.analyse.
+        # Ordered preprocessing followed by the terminal decoder.
         self.pipeline = ProcessingPipeline(
             decoder=decoder, filters=filters, sample_rate=sample_rate
         )
 
         # Post-trigger samples (the analysis window). The decoder sees ONLY this,
-        # exactly as before — baseline is kept separate so decoder inputs are
+        # exactly as before — pre-trigger data is kept separate so decoder inputs are
         # unchanged.
         self._epoch_data: np.ndarray = np.empty((0, 0))
         # Pre-trigger samples captured at epoch open (channels × trigger_offset).
-        # Empty when no baseline is configured.
-        self._baseline_data: np.ndarray = np.empty((0, 0))
+        # Empty when pre-trigger capture is disabled or no history is available.
+        self._pre_trigger_data: np.ndarray = np.empty((0, 0))
         self._current_chunk_data: Optional[np.ndarray] = None
         self._event_id: Optional[int] = None
         self._pending_decode = False
@@ -77,7 +69,7 @@ class EpochProcessor:
         chunk: SignalChunk,
         start_idx: int,
         event_id: int,
-        baseline: Optional[np.ndarray] = None,
+        pre_trigger_data: Optional[np.ndarray] = None,
     ) -> None:
         """
         Start a new epoch buffer from *start_idx* within *chunk*.
@@ -86,10 +78,10 @@ class EpochProcessor:
         EpochDetector (SignalProcessor), so the epoch processor stays free of
         trigger-channel concerns.
 
-        *baseline* (channels × n) is the optional pre-trigger segment supplied by
+        *pre_trigger_data* (channels × n) is the optional reference data supplied by
         the caller's PreTriggerBuffer. It is stored separately from the analysis
         window: the decoder still sees only post-trigger samples, while
-        ``build_epoch`` stitches baseline+window into the Epoch VO.
+        ``build_epoch`` stitches pre-trigger data + window into the Epoch VO.
 
         Raises:
             ValueError: if *start_idx* is negative.
@@ -98,16 +90,16 @@ class EpochProcessor:
             raise ValueError(f"Cannot initialize epoch: invalid start index {start_idx}")
 
         self._epoch_data = chunk.data[:, start_idx:]
-        # Default to an empty baseline with the correct channel count.
-        if baseline is None:
-            baseline = chunk.data[:, :0]
-        self._baseline_data = baseline
+        # Default to empty pre-trigger data with the correct channel count.
+        if pre_trigger_data is None:
+            pre_trigger_data = chunk.data[:, :0]
+        self._pre_trigger_data = pre_trigger_data
         self._event_id = event_id
         self._current_chunk_data = self._epoch_data
         self._pending_decode = True
         logger.info(
-            "Epoch initialised: event_id=%d, window_shape=%s, baseline_samples=%d",
-            event_id, self._epoch_data.shape, self._baseline_data.shape[1],
+            "Epoch initialised: event_id=%d, window_shape=%s, pre_trigger_samples=%d",
+            event_id, self._epoch_data.shape, self._pre_trigger_data.shape[1],
         )
 
     def append_chunk(self, chunk: SignalChunk) -> None:
@@ -148,11 +140,11 @@ class EpochProcessor:
             raise RuntimeError("Epoch buffer is empty; cannot build Epoch VO")
 
         channel_count = self._epoch_data.shape[0]
-        # Stitch [ baseline | window ] into one contiguous segment; the trigger
-        # sits at index trigger_offset == baseline length.
-        trigger_offset = self._baseline_data.shape[1]
+        # Stitch [ pre_trigger_data | window ] into one contiguous segment; the
+        # trigger sits at index trigger_offset == pre-trigger sample count.
+        trigger_offset = self._pre_trigger_data.shape[1]
         if trigger_offset:
-            full = np.concatenate([self._baseline_data, self._epoch_data], axis=1)
+            full = np.concatenate([self._pre_trigger_data, self._epoch_data], axis=1)
         else:
             full = self._epoch_data
         return Epoch(
@@ -189,16 +181,17 @@ class EpochProcessor:
             return False, None
         return self._run_pipeline()
 
-    def force_recognize(self) -> Tuple[bool, Optional[Classification]]:
-        return self._run_pipeline(force_recognize=True)
+    def force_decode_at_boundary(self) -> Tuple[bool, Optional[Classification]]:
+        """Attempt decoding at a closing boundary, bypassing the readiness gate."""
+        return self._run_pipeline(forced=True)
 
-    def recognize_if_ready(self) -> Tuple[bool, Optional[Classification]]:
-        """Finish undecoded buffered samples without forcing an incomplete epoch."""
+    def decode_if_ready(self) -> Tuple[bool, Optional[Classification]]:
+        """Decode newly buffered data only when the decoder's readiness gate is met."""
         if not self._pending_decode or not self.should_decode():
             return False, None
         return self._run_pipeline()
 
-    def _run_pipeline(self, force_recognize: bool = False) -> Tuple[bool, Optional[Classification]]:
+    def _run_pipeline(self, forced: bool = False) -> Tuple[bool, Optional[Classification]]:
         """
         Decode the current buffer. Used by marker-forced paths
         (end / unexpected-start), which bypass the should_decode() gate.
@@ -209,8 +202,8 @@ class EpochProcessor:
         prediction = self.pipeline.run(
             self._epoch_data,
             event_id=self._event_id,
-            baseline=self._baseline_data,
-            latest=self._current_chunk_data,  # delta for incremental decoders
+            baseline=self._pre_trigger_data,
+            latest_samples=self._current_chunk_data,  # most recently appended segment
         )
         if prediction is None:
             return False, None
@@ -218,7 +211,7 @@ class EpochProcessor:
             target_id=int(prediction.target_id),
             event_id=self._event_id,
             confidence=prediction.confidence,
-            forced=force_recognize,
+            forced=forced,
         )
-        logger.info("Decoder produced: %s (forced=%s)", classification, force_recognize)
+        logger.info("Decoder produced: %s (forced=%s)", classification, forced)
         return True, classification

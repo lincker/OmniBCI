@@ -41,7 +41,7 @@ all acquired channels with their original reference. The current session reposit
 OmniBCI will discover the acquisition source, establish the correspondence
 between signal rows and electrodes, and prepare the channels required by the
 selected algorithm. Channel preparation may include rereferencing. Preparation
-must finish before samples enter baseline or epoch buffers.
+must finish before samples enter pre-trigger or epoch buffers.
 
 The first release covers the bundled Scan45, CURRY 8, and CNT sources, manual
 metadata where discovery is unavailable, channel selection and ordering, and
@@ -75,7 +75,7 @@ Start worker control loops
 
 During streaming, the acquisition adapter supplies the original signal rows and
 the normalized trigger row. Signal Processing applies the prepared signal transform
-once per chunk before baseline storage or epoch assembly. Events retain their
+once per chunk before pre-trigger storage or epoch assembly. Events retain their
 values and sample positions. The acquisition payload is not modified in place.
 
 The release is complete when different source row orders produce the intended
@@ -89,8 +89,8 @@ configuration changes, and session history cannot silently change row meaning.
 | [SignalChunk](../omnibci/domain/signal.py) treats its final row as trigger | Normalize device-specific events in the adapter and keep trigger outside signal arithmetic |
 | [Acquisition metadata handling](../omnibci/infrastructure/acquisition/acquisition.py) currently logs the result | Return typed metadata through command results and expose its availability to the application |
 | [SignalProcessingWorker](../omnibci/infrastructure/neuroengine/signal_processing/worker.py) constructs plugins before device connection | Defer signal-dependent construction until source and mapping preparation completes |
-| [SignalProcessor](../omnibci/infrastructure/neuroengine/signal_processing/signal_processor.py) fixes sample rate and baseline capacity at construction | Construct it from resolved metadata; updating a status field is insufficient |
-| [ProcessingPipeline](../omnibci/infrastructure/neuroengine/signal_processing/epoch/pipeline.py) transforms the window but leaves supplied baseline and latest unchanged | Apply this channel transform before all three are accumulated |
+| [SignalProcessor](../omnibci/infrastructure/neuroengine/signal_processing/signal_processor.py) fixes sample rate and pre-trigger capacity at construction | Construct it from resolved metadata; updating a status field is insufficient |
+| [ProcessingPipeline](../omnibci/infrastructure/neuroengine/signal_processing/epoch/pipeline.py) transforms the window but leaves supplied pre-trigger data and latest_samples unchanged | Apply this channel transform before all three are accumulated |
 | [PluginContext](../omnibci/sdk/__init__.py) documents channel names as acquired channels | Add an explicit description of the actual plugin input instead of silently changing the existing field |
 | [ActivationSnapshot](../omnibci/application/plugin_profiles.py) hashes settings and pinned bindings | Include signal configuration in the accepted snapshot and retain old revision semantics |
 | [Profile review](../frontend/src/PluginProfiles.tsx) normally excludes saved host changes | Include channel input in the selected decoder binding refresh |
@@ -331,7 +331,7 @@ be split into a preparation-handshake commit and an execution/session commit.
    during bootstrap.
 2. Use the existing command/result transport for a preparation command carrying
    the resolved plan. Construct decoder, detector, filters, processor, and
-   baseline buffer only after validating the plan. Use the observed sample rate
+   pre-trigger buffer only after validating the plan. Use the observed sample rate
    or an explicitly declared fallback. Known conflicting expectations remain
    errors until the user corrects the configuration.
 3. Add explicit acquired-signal and plugin-input descriptions to the SDK.
@@ -412,8 +412,8 @@ Primary seams: [workers and builder](../omnibci/infrastructure/neuroengine/build
 
 Acceptance: no sample is consumed before preparation acknowledgement; failed
 preparation creates no recording; duplicate/late commands are handled safely;
-500 Hz and a 0.2 second baseline produce 100 baseline samples. Known numerical
-transforms must reach baseline, window, and latest consistently. Test mid-chunk
+500 Hz and a 0.2 second pre-trigger duration produce 100 pre-trigger samples. Known numerical
+transforms must reach pre-trigger data, window, and latest_samples consistently. Test mid-chunk
 epoch boundaries, standalone streaming, drains, unprepared shutdown, reconnect,
 intentional continuation, rollback, and trial-boundary decoder replacement.
 
@@ -466,7 +466,7 @@ and updated user/developer documentation.
 | Source order changes | Old mapping is rejected or explicitly re-resolved and accepted; electrode meaning never follows a stale index silently |
 | Reference outside output subset | Numerical output uses all intended reference inputs |
 | Trigger/event normalization | Exact values and sample positions survive mapping, including chunk boundaries |
-| Baseline, window, latest | All three use the same prepared channel semantics |
+| Pre-trigger data, window, latest_samples | All three use the same prepared channel semantics |
 | Save while running | Running plan and session provenance remain unchanged |
 | Same number of channels but new order/reference | Semantic change requires rebuild |
 | Reconnect or late acknowledgement | Old readiness cannot authorize a new connection |

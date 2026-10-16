@@ -20,7 +20,7 @@ class ValueDecoder(Decoder):
     def should_decode(self, window):
         return True
 
-    def decode(self, window, latest):
+    def decode(self, window, latest_samples):
         return Prediction(int(window[0, 0]))
 
 

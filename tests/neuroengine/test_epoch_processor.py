@@ -32,8 +32,8 @@ class FakeDecoder(Decoder):
     def should_decode(self, window) -> bool:
         return self._ready
 
-    def decode(self, window, latest):
-        self.calls.append((window, latest))
+    def decode(self, window, latest_samples):
+        self.calls.append((window, latest_samples))
         return Prediction(target_id=self._target) if self._complete else None
 
 
@@ -115,7 +115,7 @@ class TestBuildEpoch:
 
 class TestDecoding:
     def test_empty_buffer_returns_incomplete(self):
-        assert _manager().force_recognize() == (False, None)
+        assert _manager().force_decode_at_boundary() == (False, None)
 
     def test_decoder_not_complete_returns_none(self):
         mgr = _manager(decoder=FakeDecoder(complete=False))
@@ -133,6 +133,22 @@ class TestDecoding:
         assert clf.event_id == 4
         assert clf.forced is False
 
+    def test_latest_samples_are_only_the_most_recent_append(self):
+        decoder = FakeDecoder(ready=False)
+        mgr = _manager(decoder=decoder)
+        mgr.initialize_epoch(_chunk(samples=3), start_idx=0, event_id=4)
+        assert mgr.process_chunk(_chunk(samples=2)) == (False, None)
+        assert decoder.calls == []
+
+        decoder._ready = True
+        newest_chunk = _chunk(samples=4)
+        mgr.process_chunk(newest_chunk)
+
+        window, latest_samples = decoder.calls[0]
+        assert window.shape == (3, 9)
+        np.testing.assert_array_equal(latest_samples, newest_chunk.data)
+        assert latest_samples.shape == (3, 4)
+
     def test_marker_forced_path_stamps_forced_on_classification(self):
         # A marker bypasses the decoder's normal readiness gate. The decoder is
         # still invoked with the partial window and the engine stamps forced=True.
@@ -141,7 +157,7 @@ class TestDecoding:
         mgr.initialize_epoch(_chunk(), start_idx=0, event_id=4)
         assert mgr.should_decode() is False
 
-        is_complete, clf = mgr.force_recognize()
+        is_complete, clf = mgr.force_decode_at_boundary()
         assert is_complete is True
         assert clf.forced is True
         assert clf.target_id == 2

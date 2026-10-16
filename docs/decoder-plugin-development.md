@@ -68,8 +68,13 @@ ordered algorithm inputs are on the right. Users can select all channels or bind
 individual sources, including an explicit different-name binding such as
 `{"name": "Oz", "source": "CH1"}`. This is a processing input label, not an edit
 to the Acquisition's electrode metadata or a claim about its physical position.
-The bound signal enters Epoch processing and baseline buffering first. Optional
+The bound signal enters Epoching and pre-trigger buffering first. Optional
 ordered filters transform the assembled window before Decoder execution.
+
+**Epoching** names the segmentation operation; **Epoch** names its data object.
+`Epoch.pre_trigger_data` and `Epoch.has_pre_trigger_data` describe captured
+history, independently of whether baseline correction is enabled. The data
+layout is `[pre-trigger data | window]`, and the full duration includes both.
 
 For a model whose full channel order, units or references must be exact, validate
 those additional assumptions in its constructor using `context.input_signal`.
@@ -95,7 +100,7 @@ the process working directory or import backend settings and service objects.
 | --- | --- |
 | `__init__(self, *, parameters, context)` | Initialize the model and verify any additional input assumptions. |
 | `should_decode(self, window) -> bool` | Cheap readiness check on the accumulated window before filters run. |
-| `decode(self, window, latest) -> Prediction \| None` | Produce an integer target id, optionally a confidence value, or decline. |
+| `decode(self, window, latest_samples) -> Prediction \| None` | Produce an integer target id, optionally a confidence value, or decline. |
 | `for_new_epoch(self)` | Optional for stateless decoders; stateful decoders must return an instance with isolated per-epoch working state. |
 
 `context.input_signal.channels` is the ordered mapped input, including type,
@@ -105,16 +110,22 @@ original Acquisition, before mapping. Never use their indices for mapped input.
 
 Decoder arrays have shape **signal channels × samples**, without a trigger row.
 `decode` receives the accumulated post-trigger window after ordered filters.
-`latest` is the most recent input delta; the current pipeline does not apply the
-window filters to that separate delta. A whole-window decoder can ignore it.
-When no delta is supplied, the pipeline uses the filtered full window instead.
-Baseline segments go to filters separately. Filters used with named input must
+`latest_samples` is the most recently appended signal segment. It does not
+accumulate all samples since the previous decode, and the pipeline does not apply
+the window filters to this separate input. A whole-window decoder can ignore it.
+When the caller omits `latest_samples`, the pipeline uses the filtered full window
+instead.
+Pre-trigger segments go to filters separately through `FilterContext.baseline`.
+Capturing these samples does not enable baseline correction.
+`BaselineCorrection` uses the entire supplied segment as its
+reference interval and subtracts its per-channel mean from the window.
+Filters used with named input must
 preserve the declared channel layout; do not silently reinterpret row indices.
 An end-of-epoch event can force `decode` without a successful `should_decode`,
 so handle short windows inside `decode` as the starter does.
 
 Target ids must agree with the chosen paradigm and effector. A Decoder package
-does not supply an epoch detector, filter or paradigm unless it declares those
+does not supply an epoch boundary detector, filter or paradigm unless it declares those
 as additional contributions. Keep decoding independent of device connections,
 GUI components and filesystem writes. Load model weights during construction
 rather than on every window, and test new-epoch isolation for stateful models.
@@ -166,7 +177,7 @@ an installed package/version is immutable. Schema version is separate.
    Check channel names, order, units and reference. Missing required channels,
    too few channels or the wrong signal type must prevent runtime preparation.
 4. Select and apply the Decoder Profile. Start with a known replay file and a
-   suitable epoch detector; verify expected targets before using live data.
+   suitable epoch boundary detector; verify expected targets before using live data.
 5. Test reordered source/input channels, a missing required channel, short and
    non-finite windows, repeated epochs and supported OSes. Compare against known
    offline outputs from your real model.

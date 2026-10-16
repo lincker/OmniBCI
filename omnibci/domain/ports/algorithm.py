@@ -19,9 +19,9 @@ class FilterContext:
     """Per-run metadata handed to each Filter (immutable)."""
     sample_rate: int
     event_id: Optional[int] = None
-    # Pre-trigger segment (channels × n) captured for this epoch, or None when no
-    # baseline was configured. A baseline-correction Filter reads it from here so
-    # the main data stream stays the analysis window only.
+    # Pre-trigger reference data for this epoch (channels × n), or None when
+    # not supplied. Capturing it does not apply baseline correction; each Filter
+    # chooses how to use these samples.
     baseline: Optional[npt.NDArray] = None
 
 
@@ -29,7 +29,7 @@ class Filter(ABC):
     """
     A single ordered preprocessing stage in a ProcessingPipeline.
 
-    Takes the current epoch window, transforms it (band-pass, baseline,
+    Takes the current epoch window, transforms it (band-pass, baseline correction,
     downsample, channel selection, …) and returns it for the next stage.
     Pure transform: no termination decision.
     """
@@ -52,9 +52,9 @@ class Decoder(ABC):
 
     Contract (general — fits discrete SSVEP/P300/MI and continuous decoders):
       - should_decode(data) — cheap gate: are the conditions ready
-        for *data* yet? The engine calls this each chunk and only runs the
-        pipeline when it returns True.
-      - decode(window, latest) — produce a Prediction, or None if not ready /
+        for *data* yet? Normal decoding checks this gate; decoding at a closing
+        epoch boundary can bypass it.
+      - decode(window, latest_samples) — produce a Prediction, or None if not ready /
         not confident. Pure function of its inputs.
     """
 
@@ -68,17 +68,19 @@ class Decoder(ABC):
         """
 
     @abstractmethod
-    def decode(self, window: npt.NDArray, latest: npt.NDArray) -> Optional[Prediction]:
+    def decode(self, window: npt.NDArray, latest_samples: npt.NDArray) -> Optional[Prediction]:
         """
         Decode → Prediction, or None if the decoder declines (not ready / not
         confident).
 
         Args:
-            window: the whole accumulated epoch buffer (channels × samples).
+            window: the accumulated post-trigger epoch window after configured
+                    filters (channels × samples).
                     Whole-window decoders (SSVEP CCA, ERP averaging) use this.
-            latest: the most-recently appended chunk (the delta). Incremental /
-                    online decoders use this (+ their per-epoch state from
-                    ``for_new_epoch``) to avoid reprocessing the whole buffer.
+            latest_samples: the most recently appended epoch segment, supplied
+                    independently of filtering. It is not all samples received
+                    since the previous decode. If the pipeline caller omits it,
+                    it defaults to the filtered full window.
 
         Either input may be ignored depending on the decoder's style.
         """

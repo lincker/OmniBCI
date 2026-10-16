@@ -27,7 +27,8 @@ decoder = "THUBCI_SSVEP_classic40CCA"
 epoch_detector = 'DEFAULT_EPOCH_DETECTOR'
 window_duration = 3
 offset_time = 0.14
-# Seconds of pre-trigger baseline captured per epoch (0 = none). Per-paradigm.
+# Seconds of continuous pre-trigger data retained per epoch (0 = none).
+# These samples are available for baseline correction; capture does not enable it.
 baseline_duration = 0.0
 # Ordered preprocessing filters applied to the window before decoding.
 # Plugin_type ids, applied in order. Empty = none.

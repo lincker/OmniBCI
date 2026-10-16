@@ -46,11 +46,12 @@ sources must be resolved before preparation. References and exclusions identify
 Acquisition source names. Aliases do not change Acquisition metadata or infer an
 electrode position from an algorithm input name.
 
-At runtime the bound, reordered and re-referenced signal enters Epoch processing
-first, including trigger detection and baseline buffering. The assembled window
+At runtime the bound, reordered and re-referenced signal enters Epoching
+first, including trigger detection and pre-trigger buffering. The assembled window
 then passes through the ordered optional Filters and finally the Decoder. The
-trigger remains separate from signal-channel arithmetic. The separate `latest`
-delta follows the existing Decoder contract and is mapped but not window-filtered.
+trigger remains separate from signal-channel arithmetic. The separate
+`latest_samples` input contains the most recently appended segment; it is mapped
+but not window-filtered.
 The profile's storage owner does not imply a direct Acquisition-to-Decoder route.
 
 Decoder contributions own read-only `channel_requirements` in their manifests.
@@ -124,7 +125,7 @@ contribution, and version identities remain in the bindings.
 | --- | --- | --- |
 | `ACQUISITION.signal_source` | `acquisition.source` | Setup / Acquisition / Source |
 | `ALGORITHM.decoder` | `processing.decoder` | Setup / Signal Processing / Decoder |
-| `ALGORITHM.epoch_detector` | `processing.epoch_detector` | Setup / Signal Processing / Epoch detector |
+| `ALGORITHM.epoch_detector` | `processing.epoch_detector` | Setup / Signal Processing / Epoch boundary detector |
 | `ALGORITHM.filters` | Ordered `processing.filter.<uuid>` bindings | Setup / Signal Processing / Filters |
 | `STIMULATION.paradigm` | `stimulation.paradigm` | Setup / Stimulation / Paradigm |
 | `ACQUISITION.trigger` | `stimulation.trigger` | Setup / Stimulation / Trigger |
@@ -212,6 +213,13 @@ Plugin Profile merely because a key starts with a module name.
 | `NEUROENGINE.command_timeout_s` | REST command-result waiting policy | Backend startup; the command broker captures the value |
 | `PERSISTENCE.session_repository` | Backend session repository implementation | Backend startup; do not replace the live repository during configuration application |
 | `PLUGINS.user_dir` | Local plugin discovery/install location | Deployment/startup setting; currently environment override, then raw settings, then platform default |
+
+The console labels `ALGORITHM.baseline_duration` as **Pre-trigger duration (s)**;
+the stored key remains compatible. It retains up to the configured number of
+samples immediately before each start marker, including the tail of a previous
+trial when present. Capture is independent of baseline correction. The
+`BaselineCorrection` filter uses the entire retained segment as its reference
+interval and subtracts its per-channel mean from the window.
 
 The host runtime section of a future activation must contain only settings used
 by that runtime. Startup-only and deployment inputs must not trigger a runtime
@@ -405,7 +413,7 @@ edits, deletion, and changes to defaults invalidate stale edits. This is a host
 storage revision, independent of the BCI activation revision. A conflict returns
 409; the console retains its draft and requires an explicit refresh. There is
 no automatic overwrite or retry. Invalid input returns 422; inaccessible
-storage returns 503. Queue capacity must be positive; baseline duration must be
+storage returns 503. Queue capacity must be positive; pre-trigger duration must be
 finite and nonnegative.
 
 Host writes use a process lock (`flock` on POSIX, `msvcrt.locking` on Windows),
@@ -465,7 +473,7 @@ revision, engine generation, necessary host/context settings, and owned bindings
 
 | Role | Locally validated and loaded contributions |
 | --- | --- |
-| Engine | Acquisition, Decoder, Epoch Detector, Filters |
+| Engine | Acquisition, Decoder, Epoch boundary detector, Filters |
 | Stimulation | Paradigm, Trigger |
 | Actuation | Effector |
 

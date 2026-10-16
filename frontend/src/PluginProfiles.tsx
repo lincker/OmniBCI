@@ -16,7 +16,7 @@ const slots: Record<Module, Slot[]> = {
   acquisition: [{ slot: "acquisition.source", kind: "acquisition", label: "Source" }],
   processing: [
     { slot: "processing.decoder", kind: "decoder", label: "Decoder" },
-    { slot: "processing.epoch_detector", kind: "epoch_detector", label: "Epoch detector" },
+    { slot: "processing.epoch_detector", kind: "epoch_detector", label: "Epoch boundary detector" },
     { slot: "processing.filters", kind: "filter", label: "Filters" },
   ],
   stimulation: [

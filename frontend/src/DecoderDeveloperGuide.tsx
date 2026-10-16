@@ -30,7 +30,7 @@ export function DecoderDeveloperGuide() {
 
     <section aria-labelledby="decoder-channels-title"><h2 id="decoder-channels-title">2. Describe the channels your algorithm needs</h2>
       <p>Declare read-only requirements in the manifest. The Decoder Profile keeps the user's actual input selection and reference settings.</p>
-      <p>Bind Acquisition channels on the left to algorithm inputs on the right. Bound signals enter Epoch processing first;
+      <p>Bind Acquisition channels on the left to algorithm inputs on the right. Bound signals pass through Epoching first;
         optional ordered filters transform the assembled window before the Decoder runs.</p>
       <dl>
         <dt>description</dt><dd>Explain the input assumptions; this text does not run validation.</dd>
@@ -49,10 +49,10 @@ export function DecoderDeveloperGuide() {
         No registry decorator is required.</p>
       <ul>
         <li><code>should_decode(window)</code> performs a cheap readiness check before filters run.</li>
-        <li><code>decode(window, latest)</code> returns <code>Prediction(target_id=…)</code> or <code>None</code>. Handle short windows even when decoding is forced.</li>
+        <li><code>decode(window, latest_samples)</code> returns <code>Prediction(target_id=…)</code> or <code>None</code>. Handle short windows even when decoding is forced.</li>
         <li>Arrays contain signal rows × samples, without trigger. Use <code>context.input_signal.channels</code> for mapped row names;
           <code>context.channel_names</code> describes the original Acquisition.</li>
-        <li>The window passes through ordered filters; the separate latest delta does not. Whole-window decoders can ignore the delta.</li>
+        <li><code>window</code> passes through ordered filters. <code>latest_samples</code> contains the most recently appended samples and does not pass through those window filters. Whole-window decoders can ignore it.</li>
         <li>Use <code>context.resource_root</code> for packaged assets. Stateful decoders override <code>for_new_epoch()</code> to isolate per-epoch state.</li>
       </ul>
       <details><summary>Executable decoder.py</summary><pre><code>{decoder}</code></pre></details>
@@ -67,7 +67,7 @@ export function DecoderDeveloperGuide() {
         <li>Keep <code>manifest.toml</code> at the ZIP root. Rename the tutorial package identity for your plugin; increment its version when distributing changed files.</li>
         <li>Use <strong>Extensions → Install ZIP…</strong>, then enable the installed version.</li>
         <li>In <strong>Setup → Signal Processing → Decoder</strong>, create a Profile, review its input, select it and apply. Choose an Acquisition that provides the required named channels.</li>
-        <li>Preview the mapped input and run known replay data with a suitable epoch detector. Check targets, reordered inputs, missing channels and short windows.</li>
+        <li>Preview the mapped input and run known replay data with a suitable epoch boundary detector. Check targets, reordered inputs, missing channels and short windows.</li>
       </ol>
       <p>Installation checks metadata and schemas without executing your algorithm. The host does not install dependencies.
         Optional <code>package.host_version</code> and <code>[package.requires]</code> declare exact host and library versions, not version ranges.</p>

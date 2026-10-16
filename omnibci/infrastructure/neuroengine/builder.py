@@ -28,7 +28,7 @@ class NeuroEngineConfig:
     message_server_ip: str = "127.0.0.1"    # result-push server bind host
     message_server_port: int = 8000         # result-push server bind port
     sample_rate: int = 1000                 # Hz, passed to the SignalProcessor
-    baseline_duration: float = 0.2          # seconds of pre-trigger baseline (0 = none)
+    baseline_duration: float = 0.2          # seconds of pre-trigger data (0 = none)
     actuation_enabled: bool = False          # open an actuation listen port + wiring
     actuation_server_ip: str = "127.0.0.1"  # actuation channel bind host
     actuation_server_port: int = 8001        # actuation channel bind port

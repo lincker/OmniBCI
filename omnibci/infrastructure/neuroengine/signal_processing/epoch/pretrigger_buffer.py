@@ -2,16 +2,16 @@
 PreTriggerBuffer — rolling store of the most-recent pre-trigger samples.
 
 Why this exists:
-  Baseline data lives *before* the trigger.  The detection loop used to discard
+  Pre-trigger data lives *before* the trigger. The detection loop used to discard
   every chunk seen while idle, so by the time a start marker fired the
   pre-trigger signal was already gone.  This buffer keeps the last ``capacity``
   samples from the continuous stream, including active epochs, so that a
-  trigger always receives the same baseline regardless of chunk boundaries.
+  trigger always receives the same reference data regardless of chunk boundaries.
 
-  ``capacity`` is fixed for the lifetime of a SignalProcessor — it is derived
-  once from the paradigm's configured baseline duration
-  (``baseline_samples = round(baseline_duration * sample_rate)``).  A capacity
-  of 0 disables baseline capture entirely (the legacy behaviour).
+  ``capacity`` is derived from the pre-trigger capture duration (legacy key
+  ``baseline_duration``) and the current signal sample rate:
+  ``pre_trigger_samples = round(baseline_duration * sample_rate)``. A capacity
+  of 0 disables pre-trigger capture entirely (the legacy behaviour).
 """
 
 from typing import Optional
@@ -35,7 +35,7 @@ class PreTriggerBuffer:
         else:
             self._buf = np.concatenate([self._buf, data], axis=1)[:, -self.capacity:].copy()
 
-    def take_baseline(self, extra: np.ndarray) -> np.ndarray:
+    def take_pre_trigger_data(self, extra: np.ndarray) -> np.ndarray:
         """
         Return up to ``capacity`` samples ending exactly at the trigger.
 

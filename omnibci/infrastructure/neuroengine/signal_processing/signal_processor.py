@@ -100,13 +100,12 @@ class SignalProcessor:
         # cannot become a new update if a delayed duplicate arrives later.
         self._configuration_results = {}
         self._configuration_fingerprints = {}
-        # Baseline length is fixed for this processor's lifetime (a new paradigm
-        # rebuilds the whole worker). Convert the paradigm's configured baseline
-        # duration (seconds) into a sample count once, here.
-        self.baseline_samples = round(baseline_duration * sample_rate)
+        # The legacy baseline_duration setting controls pre-trigger capture,
+        # independently of whether a baseline-correction filter is configured.
+        self.pre_trigger_samples = round(baseline_duration * sample_rate)
         # Rolling history of the continuous signal; supplies the samples before
-        # each start marker, including prior trials. Capacity 0 = no baseline.
-        self.pretrigger = PreTriggerBuffer(capacity=self.baseline_samples)
+        # each start marker, including prior trials. Capacity 0 disables capture.
+        self.pretrigger = PreTriggerBuffer(capacity=self.pre_trigger_samples)
         # The EpochProcessor for the epoch currently being collected (or None
         # between epochs). Replaced — never reset — on each new start.
         self.current_epoch: Optional[EpochProcessor] = None
@@ -190,7 +189,7 @@ class SignalProcessor:
             processing_started = True
             interrupted = self.current_epoch is not None
             if self.current_epoch is not None:
-                complete, classification = self.current_epoch.recognize_if_ready()
+                complete, classification = self.current_epoch.decode_if_ready()
                 if complete and classification is not None:
                     previous_count = self.session.trial_count
                     self._assembling_state._complete_trial(classification)
@@ -350,8 +349,8 @@ class SignalProcessor:
                 decoder, detector, filters = load_signal_pipeline(self._settings_snapshot, plan)
                 self._decoder, self.detector, self._filters = decoder, detector, list(filters)
                 self._sample_rate = plan.source.sample_rate
-                self.baseline_samples = round(self._baseline_duration * self._sample_rate)
-                self.pretrigger = PreTriggerBuffer(capacity=self.baseline_samples)
+                self.pre_trigger_samples = round(self._baseline_duration * self._sample_rate)
+                self.pretrigger = PreTriggerBuffer(capacity=self.pre_trigger_samples)
                 self._signal_plan = plan
                 self._signal_receipt = deepcopy(receipt)
             result = CommandResult(request.command_id, EventType.PrepareSignalProcessing.name,

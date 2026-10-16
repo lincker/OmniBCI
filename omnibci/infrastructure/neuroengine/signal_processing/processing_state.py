@@ -77,7 +77,7 @@ class ProcessingState:
                 # Epochs opened in this chunk already end at this boundary.
                 if not opened:
                     self.context.current_epoch.append_until_index(chunk, index)
-                _, classification = self.context.current_epoch.force_recognize()
+                _, classification = self.context.current_epoch.force_decode_at_boundary()
                 if classification is not None:
                     self._complete_trial(classification)
                 self.context.current_epoch = None
@@ -86,13 +86,13 @@ class ProcessingState:
             if starts_epoch:
                 # History holds previous chunks until this whole chunk is done.
                 # Every start combines it with its prefix exactly once.
-                baseline = self.context.pretrigger.take_baseline(extra=chunk.data[:, :index])
+                pre_trigger_data = self.context.pretrigger.take_pre_trigger_data(extra=chunk.data[:, :index])
                 # The start sample belongs to this epoch; the next boundary does
                 # not. A simultaneous end/start closes the old epoch first.
                 end = boundaries[position + 1][0] if position + 1 < len(boundaries) else chunk.raw_data.shape[1]
                 segment = chunk if end == chunk.raw_data.shape[1] else replace(chunk, raw_data=chunk.raw_data[:, :end])
                 self.context.current_epoch = self.context.new_epoch_processor()
-                self.context.current_epoch.initialize_epoch(segment, index, event_id, baseline=baseline)
+                self.context.current_epoch.initialize_epoch(segment, index, event_id, pre_trigger_data=pre_trigger_data)
                 collecting = True
                 opened = True
 

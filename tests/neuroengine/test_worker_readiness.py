@@ -234,7 +234,7 @@ def legacy_decoder(tmp_path, monkeypatch):
             def should_decode(self, window):
                 return False
 
-            def decode(self, window, latest):
+            def decode(self, window, latest_samples):
                 return None
     '''), encoding="utf-8")
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(plugin_dir))

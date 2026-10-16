@@ -18,12 +18,15 @@ class ConfigPolicy:
 
 # Plugin selections and parameters are edited through Plugin Profiles only.
 CONFIG_WHITELIST: Dict[str, ConfigPolicy] = {
-    "ALGORITHM.baseline_duration": ConfigPolicy("float", "engine-restart", "Baseline duration (s)"),
+    "ALGORITHM.baseline_duration": ConfigPolicy(
+        "float", "engine-restart",
+        "Duration of continuous pre-trigger data retained per epoch (s), available for baseline correction.",
+    ),
     "NEUROENGINE.queue_size": ConfigPolicy("int", "engine-restart", "Inter-process queue capacity"),
 }
 
 
-def _valid_baseline(value: Any) -> bool:
+def _valid_pre_trigger_duration(value: Any) -> bool:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return False
     try:
@@ -34,7 +37,7 @@ def _valid_baseline(value: Any) -> bool:
 
 _CHECKS = {
     "int": lambda v: isinstance(v, int) and not isinstance(v, bool) and v > 0,
-    "float": _valid_baseline,
+    "float": _valid_pre_trigger_duration,
 }
 _EXPECTATIONS = {"int": "positive integer", "float": "finite nonnegative number"}
 

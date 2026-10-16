@@ -92,7 +92,7 @@ const dialog = (component) => elements(component.tree).find((item) => item.type.
 
 async function withSettings(action, overrides = {}) {
   const cfg = { revision: "a".repeat(64), entries: [
-    { key: "ALGORITHM.baseline_duration", type: "float", value: 0.5, requires: "engine_restart", description: "Baseline duration in seconds" },
+    { key: "ALGORITHM.baseline_duration", type: "float", value: 0.5, requires: "engine_restart", description: "Duration of continuous pre-trigger data retained per epoch (s), available for baseline correction." },
     { key: "NEUROENGINE.queue_size", type: "int", value: 32, requires: "engine_restart", description: "Queue capacity" },
   ] };
   const activation = { revision: "accepted", bindings: [
@@ -137,6 +137,8 @@ for (const running of [false, true]) {
       const fields = elements(component.tree).filter((item) => item.type === "input");
       assert.deepEqual(fields.map((item) => item.props.id), ["setting-ALGORITHM.baseline_duration", "setting-NEUROENGINE.queue_size"]);
       assert.equal(input(component, "ALGORITHM.baseline_duration").props.value, "0.5");
+      assert.equal(input(component, "ALGORITHM.baseline_duration").props["aria-label"], "Pre-trigger duration (s)");
+      assert.match(text(component.tree), /continuous pre-trigger data retained.*baseline correction/);
       assert.equal(input(component, "NEUROENGINE.queue_size").props.value, "32");
       assert.match(text(component.tree), /Console preferences/);
       assert.doesNotMatch(text(component.tree), /Advanced|Default configuration|Edit configuration|Active configuration|Save as|Delete|Category|Saved resolved/);

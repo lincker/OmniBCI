@@ -45,7 +45,7 @@ contracts passed. Browser checks against an isolated backend verified subset
 selection, explicit source-to-input aliases, ordering, mapping preview, unchanged
 Acquisition metadata, profile save/reload, dynamic all-channel selection, and
 responsive layout at 1440 by 1000 and 390 by 844. Runtime coverage confirms that
-bound signals enter Epoch and baseline buffering before ordered window filters
+bound signals enter Epoching and pre-trigger buffering before ordered window filters
 and decoding. The complete backend suite was not repeated for this update.
 
 Decoder channel requirements and the offline authoring guide on 2026-10-12 were

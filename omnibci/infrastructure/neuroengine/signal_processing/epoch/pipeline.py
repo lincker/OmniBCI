@@ -1,5 +1,5 @@
 """
-ProcessingPipeline —  Filter* → Decoder。
+ProcessingPipeline — Filter* → Decoder.
 """
 
 from typing import List, Optional, Sequence
@@ -28,21 +28,21 @@ class ProcessingPipeline:
         *,
         event_id: Optional[int] = None,
         baseline: Optional[np.ndarray] = None,
-        latest: Optional[np.ndarray] = None,
+        latest_samples: Optional[np.ndarray] = None,
     ) -> Optional[Prediction]:
         """
         Apply filters to *epoch_data* (the post-trigger window) in order, then
         decode.
 
-        *baseline* (the pre-trigger segment) travels in the FilterContext, not in
-        the main data stream — so a baseline-correction Filter can use it while
-        the decoder still receives only the window.
+        *baseline* supplies pre-trigger reference data through the FilterContext.
+        Filters choose how to use it while the decoder receives only the window.
+        Supplying it does not apply baseline correction by itself.
 
-        *latest* is the most-recently appended chunk (the delta) required by the
-        Decoder port's two-argument contract ``decode(window, latest)``;
-        incremental decoders consume it, whole-window decoders ignore it. When
-        the caller has no delta (e.g. a marker-forced decode) it defaults to the
-        full window. Returns the decoder's Prediction, or None if it declines.
+        *latest_samples* is the most recently appended epoch segment, not all
+        samples received since the previous decode. It is passed independently
+        of the filtered window, retaining the supplied input values. When it is
+        omitted, the decoder receives the filtered full window for both inputs.
+        Returns the decoder's Prediction, or None if it declines.
         """
         ctx = FilterContext(
             sample_rate=self.sample_rate,
@@ -52,4 +52,4 @@ class ProcessingPipeline:
         data = epoch_data
         for stage in self.filters:
             data = stage.apply(data, ctx)
-        return self.decoder.decode(data, latest if latest is not None else data)
+        return self.decoder.decode(data, latest_samples if latest_samples is not None else data)

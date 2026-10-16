@@ -40,7 +40,7 @@ class RecordingDecoder(Decoder):
     def should_decode(self, window):
         return False
 
-    def decode(self, window, latest):
+    def decode(self, window, latest_samples):
         self.windows.append(window.copy())
         return Prediction(1)
 

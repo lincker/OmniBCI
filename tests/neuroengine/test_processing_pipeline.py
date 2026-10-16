@@ -19,11 +19,11 @@ class _SpyDecoder(Decoder):
     def should_decode(self, data) -> bool:
         return self._ready
 
-    def decode(self, data, latest) -> Optional[Prediction]:
-        # Two-arg port contract: decode(window, latest). The pipeline defaults
-        # latest to the full window when the caller supplies no delta.
+    def decode(self, data, latest_samples) -> Optional[Prediction]:
+        # Two-arg port contract: decode(window, latest_samples). The pipeline defaults
+        # latest_samples to the filtered full window when omitted.
         self.seen_data = data
-        self.seen_latest = latest
+        self.seen_latest_samples = latest_samples
         if self._ready:
             return Prediction(target_id=self._target, confidence=0.9)
         return None
@@ -62,6 +62,16 @@ class TestPipelineWithFilters:
         pipe = ProcessingPipeline(decoder=dec, filters=[_AddFilter(1), _AddFilter(10)])
         pipe.run(np.zeros((2, 3)), event_id=7)
         assert np.all(dec.seen_data == 11)   # 0 + 1 + 10
+        assert dec.seen_latest_samples is dec.seen_data
+
+    def test_supplied_latest_samples_keep_input_values(self):
+        dec = _SpyDecoder()
+        pipe = ProcessingPipeline(decoder=dec, filters=[_AddFilter(10)])
+        latest_samples = np.ones((2, 1))
+        pipe.run(np.zeros((2, 3)), latest_samples=latest_samples)
+        assert np.all(dec.seen_data == 10)
+        assert dec.seen_latest_samples is latest_samples
+        np.testing.assert_array_equal(dec.seen_latest_samples, np.ones((2, 1)))
 
     def test_filter_receives_context_metadata(self):
         dec = _SpyDecoder()

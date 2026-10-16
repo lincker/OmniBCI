@@ -11,7 +11,7 @@ import { pluginConfigApi } from "./api/plugin-config";
 import type { RuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
 
 const fieldLabels: Record<string, string> = {
-  "ALGORITHM.baseline_duration": "Baseline duration (s)",
+  "ALGORITHM.baseline_duration": "Pre-trigger duration (s)",
   "NEUROENGINE.queue_size": "Queue capacity",
 };
 function parseInput(raw: string, type: string): number {

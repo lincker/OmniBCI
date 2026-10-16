@@ -68,7 +68,7 @@ class ValueDecoder(Decoder):
         (self.root / f"constructed-{self.target}").write_text("ready")
     def should_decode(self, data):
         return False
-    def decode(self, data, latest):
+    def decode(self, data, latest_samples):
         return Prediction(self.target)
     def for_new_epoch(self):
         (self.root / f"epoch-{self.target}").write_text("ready")

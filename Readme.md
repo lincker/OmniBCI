@@ -19,7 +19,7 @@ runs on Windows, macOS, and Linux.
 ## Features
 
 - File playback and multiple EEG acquisition devices.
-- Pluggable epoch detection, preprocessing filters, and decoding algorithms.
+- Pluggable epoch boundary detection, preprocessing filters, and decoding algorithms.
 - Visual stimulation in an independent process.
 - External-device control through effector plugins.
 - A REST API, real-time WebSocket results, and a React web console.

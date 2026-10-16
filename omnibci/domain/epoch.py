@@ -10,12 +10,13 @@ Rules encoded here (previously buried in EpochManager / state.py):
   - event_id identifies the stimulus that opened this epoch.
 
 Windowing model (generic, paradigm-neutral):
-  - ``data`` is one contiguous segment laid out as  [ baseline | window ].
+  - ``data`` is one contiguous segment laid out as [ pre_trigger_data | window ].
   - ``trigger_offset`` is the number of pre-trigger samples, i.e. the index of
-    the trigger within ``data``.  ``baseline`` is everything before it and
+    the trigger within ``data``. ``pre_trigger_data`` is everything before it and
     ``window`` everything from it onward (the main analysis segment).
-  - ``trigger_offset == 0`` means "no baseline captured" — fully backward
-    compatible with epochs that begin at the trigger.
+  - Capturing pre-trigger data does not apply baseline correction. A filter
+    chooses how to use these reference samples.
+  - ``trigger_offset == 0`` means "no pre-trigger data captured".
 """
 
 from dataclasses import dataclass
@@ -31,12 +32,12 @@ class Epoch:
 
     Attributes:
         data:          EEG signal matrix, shape (channels, samples). Read-only view.
-                       Laid out as [ baseline | window ].
+                       Laid out as [ pre_trigger_data | window ].
         event_id:      Trigger event identifier that opened this epoch.
         sample_rate:   Samples per second.
         channel_count: Number of EEG channels.
         trigger_offset:Pre-trigger sample count = index of the trigger within
-                       ``data``. 0 means no baseline was captured.
+                       ``data``. 0 means no pre-trigger data was captured.
     """
     data: np.ndarray          # shape: (channels, samples)
     event_id: int
@@ -76,6 +77,7 @@ class Epoch:
 
     @property
     def duration_samples(self) -> int:
+        """Total captured samples, including pre-trigger data."""
         return self.data.shape[1]
 
     @property
@@ -83,7 +85,7 @@ class Epoch:
         return self.duration_samples / self.sample_rate
 
     @property
-    def baseline(self) -> np.ndarray:
+    def pre_trigger_data(self) -> np.ndarray:
         """Pre-trigger segment (channels × trigger_offset). Empty if none."""
         return self.data[:, : self.trigger_offset]
 
@@ -93,7 +95,7 @@ class Epoch:
         return self.data[:, self.trigger_offset :]
 
     @property
-    def has_baseline(self) -> bool:
+    def has_pre_trigger_data(self) -> bool:
         return self.trigger_offset > 0
 
     # ------------------------------------------------------------------

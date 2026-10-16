@@ -163,7 +163,7 @@ test("plugin requirements describe final input without replacing a saved all-sou
     assert.match(text(view.tree), /Signal type: eeg · Minimum channel count: 2/);
     assert.match(text(view.tree), /Required channels: C3/);
     assert.match(text(view.tree), /Plugin default channels: C4, C3/);
-    assert.match(text(view.tree), /This set enters Epoch before filters and Decoder/);
+    assert.match(text(view.tree), /This set enters Epoching before filters and Decoder/);
     assert.match(text(view.tree), /All follows the current Acquisition source/);
     assert.deepEqual(view.props.value.outputs, []);
     assert.equal(calls.change.length, 0);
@@ -450,7 +450,7 @@ test("All can become an ordered subset and removing the last input never means A
   }, { value: { schema_version: 1, outputs: [], reference: { mode: "original", channels: [] }, excluded_channels: [] } });
 });
 
-test("required slots bind an Acquisition source under an explicit algorithm name before Epoch", async () => {
+test("required slots bind an Acquisition source under an explicit algorithm name before Epoching", async () => {
   await withInput(async (view, calls) => {
     assert.match(text(view.tree), /Required channels to bind/);
     await change(view, "Bind required Oz", "C4", "select");
@@ -459,8 +459,8 @@ test("required slots bind an Acquisition source under an explicit algorithm name
     const left = elements(view.tree).find((element) => element.props["aria-label"] === "Available Acquisition channels");
     assert.match(text(left), /C4Row 2 · eeg · V→ Oz/);
     const flow = elements(view.tree).find((element) => element.props["aria-label"] === "Signal Processing data flow");
-    assert.equal(text(flow), "AcquisitionChannel bindingEpochFilters (optional)Decoder");
-    assert.match(text(view.tree), /Epoch timing and baseline settings remain/);
+    assert.equal(text(flow), "AcquisitionChannel bindingEpochingFilters (optional)Decoder");
+    assert.match(text(view.tree), /Epoching and pre-trigger settings remain/);
     await click(view, "Preview mapping");
     assert.deepEqual(calls.preview.at(-1).processing_input.outputs, ["C3", { name: "Oz", source: "C4" }]);
     assert.deepEqual(source.channels.map((channel) => channel.name), ["C3", "C4", "M1"]);

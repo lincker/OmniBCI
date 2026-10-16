@@ -147,11 +147,11 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
     finally { if (sequence === request.current) setPreviewing(false); }
   };
   return <div className="setting-group processing-input"><h2>Processing input</h2>
-    <p className="setting-description">Bind Acquisition channels to the names and order the algorithm needs. The bound channels enter Epoch first; filters then process each epoch before decoding.</p>
+    <p className="setting-description">Bind Acquisition channels to the names and order the algorithm needs. The bound channels pass through Epoching first; filters then process each epoch before decoding.</p>
     <ol className="processing-flow" aria-label="Signal Processing data flow">
-      <li>Acquisition</li><li>Channel binding</li><li>Epoch</li><li>Filters <small>(optional)</small></li><li>Decoder</li>
+      <li>Acquisition</li><li>Channel binding</li><li>Epoching</li><li>Filters <small>(optional)</small></li><li>Decoder</li>
     </ol>
-    <p className="setting-description">Bindings and software reference are saved with this decoder profile. Epoch timing and baseline settings remain in the processing pipeline.</p>
+    <p className="setting-description">Bindings and software reference are saved with this decoder profile. Epoching and pre-trigger settings remain in the processing pipeline.</p>
     <div className="input-source" aria-label="Acquisition source information">
       <p>Data source: {binding ? `${binding.profile_name ?? binding.profile_id ?? binding.source_id} · ${binding.source_id}` : "No Acquisition source selected"}
         {binding?.profile_revision != null && ` · profile revision ${binding.profile_revision}`}</p>
@@ -207,7 +207,7 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
         </section>
         <section className="channel-panel" aria-label="Algorithm input bindings">
           <div className="channel-panel-heading"><h3>Algorithm input channels</h3><span>{value.reference.mode === "bipolar" ? value.outputs.length : rows.length} inputs</span></div>
-          <p className="channel-help">Algorithm channel names, in processing order. This set enters Epoch before filters and Decoder.</p>
+          <p className="channel-help">Algorithm channel names, in processing order. This set enters Epoching before filters and Decoder.</p>
           {requirements}
           {value.reference.mode !== "bipolar" ? <>
             <div className="channel-selection-mode"><strong>{allChannels ? "All source channels" : "Selected channels"}</strong>
@@ -265,7 +265,7 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
       <p className="setting-description">Reference and excluded channels use Acquisition names. Reference channels may be outside the selected inputs. Rereferencing requires known units and an original reference. Renaming an input changes its processing name; it does not move an electrode or change Acquisition metadata.</p>
       {processingInputErrors(value).map((message) => <p className="inline-message error" key={message} role="alert">{message}</p>)}
       <button disabled={disabled || !source || processingInputErrors(value).length > 0} onClick={() => void previewInput()}>Preview mapping</button>
-      {preview && <><p className="setting-description">{preview.plan.source.sample_rate} Hz · {preview.plan.output_channels.length} Epoch input channels · trigger preserved</p>
+      {preview && <><p className="setting-description">{preview.plan.source.sample_rate} Hz · {preview.plan.output_channels.length} Epoching input channels · trigger preserved</p>
         <ol>{preview.plan.output_channels.map((channel, index) => <li key={channel.name}>{channel.name} · {channel.unit ?? "Unknown unit"} · {channel.reference ?? "Unknown reference"}
           {channel.derivation && ` · ${channel.derivation.join(" − ")}`}
           <span className="setting-description"> · Source rows: {(preview.plan.coefficients[index] ?? []).flatMap((coefficient, row) => coefficient === 0 ? []

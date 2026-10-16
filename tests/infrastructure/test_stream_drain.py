@@ -73,7 +73,7 @@ class _Decoder(Decoder):
     def should_decode(self, window):
         return window.shape[1] >= self.samples
 
-    def decode(self, window, latest):
+    def decode(self, window, latest_samples):
         self.calls += 1
         if self.delay:
             time.sleep(self.delay)
@@ -221,13 +221,13 @@ async def test_incomplete_epoch_and_pretrigger_are_discarded_with_diagnostic_rec
     assert processor.session.trial_count == 0
     assert processor.current_epoch is None
     assert processor._current_state is processor._awaiting_state
-    assert processor.pretrigger.take_baseline(np.empty((1, 0))).shape[1] == 0
+    assert processor.pretrigger.take_pre_trigger_data(np.empty((1, 0))).shape[1] == 0
     receipt = StreamDrainReceipt.from_value(processor.event_bus.events[-1].data.data)
     assert receipt.interrupted_epoch is True
 
 
 @pytest.mark.asyncio
-async def test_barrier_does_not_feed_an_incremental_decoder_the_same_delta_twice():
+async def test_barrier_does_not_feed_an_incremental_decoder_the_same_latest_samples_twice():
     decoder = _Decoder(samples=4, decline=True)
     processor = _processor(decoder=decoder)
     for item in (_chunk(0, start=True), _chunk(1), _barrier(1)):

@@ -29,11 +29,11 @@ class OzPolarityDemo(Decoder):
         # Called before the ordered filters; keep this readiness check cheap.
         return window.shape[1] >= self.sample_count
 
-    def decode(self, window: NDArray, latest: NDArray) -> Prediction | None:
+    def decode(self, window: NDArray, latest_samples: NDArray) -> Prediction | None:
         # A forced end-of-epoch decode can bypass should_decode().
         if not self.should_decode(window):
             return None
-        # Rows exclude trigger; whole-window decoders can ignore the latest delta.
+        # Rows exclude trigger; whole-window decoders can ignore latest_samples.
         mean = float(np.mean(window[self.oz_index, :self.sample_count]))
         if not math.isfinite(mean):
             return None

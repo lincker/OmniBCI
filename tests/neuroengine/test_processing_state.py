@@ -93,17 +93,17 @@ class TestAwaitingEpochState:
         context.transition_to_assembling.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_start_builds_fresh_epoch_with_pretrigger_baseline(self):
+    async def test_start_builds_fresh_epoch_with_pretrigger_data(self):
         chunk = _chunk(start=(2, 7))
-        baseline = np.ones((2, 3))
+        pre_trigger_data = np.ones((2, 3))
         epoch_processor = MagicMock()
         context = _context(chunk)
-        context.pretrigger.take_baseline.return_value = baseline
+        context.pretrigger.take_pre_trigger_data.return_value = pre_trigger_data
         context.new_epoch_processor.return_value = epoch_processor
 
         await AwaitingEpochState(context).run()
 
-        extra = context.pretrigger.take_baseline.call_args.kwargs["extra"]
+        extra = context.pretrigger.take_pre_trigger_data.call_args.kwargs["extra"]
         np.testing.assert_array_equal(extra, chunk.data[:, :2])
         np.testing.assert_array_equal(context.pretrigger.push.call_args.args[0], chunk.data)
         context.pretrigger.clear.assert_not_called()
@@ -111,7 +111,7 @@ class TestAwaitingEpochState:
         args = epoch_processor.initialize_epoch.call_args.args
         kwargs = epoch_processor.initialize_epoch.call_args.kwargs
         assert args == (chunk, 2, 7)
-        assert kwargs["baseline"] is baseline
+        assert kwargs["pre_trigger_data"] is pre_trigger_data
         context.transition_to_assembling.assert_called_once_with()
 
 
@@ -159,14 +159,14 @@ class TestAssemblingEpochState:
         chunk = _chunk(end=3)
         context = _context(chunk)
         previous_epoch = context.current_epoch
-        context.current_epoch.force_recognize.return_value = (False, None)
+        context.current_epoch.force_decode_at_boundary.return_value = (False, None)
         state = AssemblingEpochState(context)
         state._complete_trial = MagicMock()
 
         await state.run()
 
         assert previous_epoch.append_until_index.call_args.args == (chunk, 3)
-        previous_epoch.force_recognize.assert_called_once_with()
+        previous_epoch.force_decode_at_boundary.assert_called_once_with()
         state._complete_trial.assert_not_called()
         context.transition_to_awaiting.assert_called_once_with()
 
@@ -174,11 +174,11 @@ class TestAssemblingEpochState:
     async def test_end_and_start_in_same_chunk_complete_and_reopen_epoch(self):
         chunk = _chunk(start=(4, 9), end=2)
         classification = _classification()
-        baseline = np.ones((2, 2))
+        pre_trigger_data = np.ones((2, 2))
         next_epoch = MagicMock()
         context = _context(chunk)
-        context.current_epoch.force_recognize.return_value = (True, classification)
-        context.pretrigger.take_baseline.return_value = baseline
+        context.current_epoch.force_decode_at_boundary.return_value = (True, classification)
+        context.pretrigger.take_pre_trigger_data.return_value = pre_trigger_data
         context.new_epoch_processor.return_value = next_epoch
         state = AssemblingEpochState(context)
         state._complete_trial = MagicMock()
@@ -186,12 +186,12 @@ class TestAssemblingEpochState:
         await state.run()
 
         state._complete_trial.assert_called_once_with(classification)
-        context.pretrigger.take_baseline.assert_called_once()
+        context.pretrigger.take_pre_trigger_data.assert_called_once()
         assert context.current_epoch is next_epoch
         args = next_epoch.initialize_epoch.call_args.args
         kwargs = next_epoch.initialize_epoch.call_args.kwargs
         assert args == (chunk, 4, 9)
-        assert kwargs["baseline"] is baseline
+        assert kwargs["pre_trigger_data"] is pre_trigger_data
         context.transition_to_awaiting.assert_not_called()
 
     @pytest.mark.asyncio
@@ -200,7 +200,7 @@ class TestAssemblingEpochState:
         next_epoch = MagicMock()
         context = _context(chunk)
         previous_epoch = context.current_epoch
-        previous_epoch.force_recognize.return_value = (False, None)
+        previous_epoch.force_decode_at_boundary.return_value = (False, None)
         context.new_epoch_processor.return_value = next_epoch
         state = AssemblingEpochState(context)
         state._complete_trial = MagicMock()
@@ -219,7 +219,7 @@ class TestAssemblingEpochState:
         next_epoch = MagicMock()
         context = _context(chunk)
         previous_epoch = context.current_epoch
-        previous_epoch.force_recognize.return_value = (True, classification)
+        previous_epoch.force_decode_at_boundary.return_value = (True, classification)
         context.new_epoch_processor.return_value = next_epoch
         state = AssemblingEpochState(context)
         state._complete_trial = MagicMock()

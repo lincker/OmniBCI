@@ -74,9 +74,9 @@ class _Decoder(Decoder):
     def should_decode(self, window):
         return True
 
-    def decode(self, window, latest):
+    def decode(self, window, latest_samples):
         self.window = window.copy()
-        self.latest = latest.copy()
+        self.latest_samples = latest_samples.copy()
         return None
 
 
@@ -158,7 +158,7 @@ def test_prepare_binds_observed_rate_and_is_idempotent(monkeypatch, modern):
     assert processor._decoder is decoder
     assert processor.detector is detector
     assert processor._sample_rate == 250
-    assert processor.baseline_samples == 2
+    assert processor.pre_trigger_samples == 2
     processor.pretrigger.push(np.array([[9.0], [7.0]]))
     buffer = processor.pretrigger
     processor._prepare_signal(_request(plan))
@@ -267,7 +267,7 @@ async def test_data_and_session_start_are_rejected_before_preparation(modern):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("modern", [False, True])
-async def test_montage_precedes_detector_baseline_window_and_latest(monkeypatch, modern):
+async def test_montage_precedes_detector_baseline_window_and_latest_samples(monkeypatch, modern):
     plan = _plan(modern=modern)
     processor = _processor(plan)
     decoder, detector, signal_filter, _ = _prepare(monkeypatch, processor, plan)
@@ -283,7 +283,7 @@ async def test_montage_precedes_detector_baseline_window_and_latest(monkeypatch,
     await processor._current_state.run()
     np.testing.assert_array_equal(signal_filter.baseline, [[29, 30], [9, 10]])
     np.testing.assert_array_equal(decoder.window, [[31, 32, 33], [11, 12, 13]])
-    np.testing.assert_array_equal(decoder.latest, [[32, 33], [12, 13]])
+    np.testing.assert_array_equal(decoder.latest_samples, [[32, 33], [12, 13]])
     assert signal_filter.sample_rate == 250
     for observed, original in zip(detector.seen, chunks, strict=True):
         np.testing.assert_array_equal(observed.triggers, original.triggers)
@@ -314,9 +314,9 @@ async def test_bound_channels_enter_epoch_before_ordered_filters_and_decoder(mon
             return data * 2
 
     class OrderedDecoder(_Decoder):
-        def decode(self, window, latest):
+        def decode(self, window, latest_samples):
             calls.append("decoder")
-            return super().decode(window, latest)
+            return super().decode(window, latest_samples)
 
     decoder, detector = OrderedDecoder(), _Detector()
     monkeypatch.setattr(signal_configuration, "load_signal_pipeline", MagicMock(
@@ -334,10 +334,10 @@ async def test_bound_channels_enter_epoch_before_ordered_filters_and_decoder(mon
 
     assert calls == ["baseline", "scale", "decoder"]
     epoch = processor.current_epoch.build_epoch()
-    np.testing.assert_array_equal(epoch.baseline, [[29, 30], [9, 10]])
+    np.testing.assert_array_equal(epoch.pre_trigger_data, [[29, 30], [9, 10]])
     np.testing.assert_array_equal(epoch.window, [[31, 32, 33], [11, 12, 13]])
     np.testing.assert_array_equal(decoder.window, [[3, 5, 7], [3, 5, 7]])
-    np.testing.assert_array_equal(decoder.latest, [[32, 33], [12, 13]])
+    np.testing.assert_array_equal(decoder.latest_samples, [[32, 33], [12, 13]])
     assert epoch.event_id == 1
     assert epoch.channel_count == 2
     assert epoch.sample_rate == 250

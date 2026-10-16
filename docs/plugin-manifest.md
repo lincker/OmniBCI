@@ -116,7 +116,7 @@ non-Actuation manifests without entrypoints remain visible in the old list;
 exact resolution and `list_contributions` require executable entrypoints.
 
 Bundled packages now use v2 manifests. Scan45 declares acquisition and Windows
-parallel trigger contributions independently. Epoch detection and baseline
+parallel trigger contributions independently. Epoch boundary detection and baseline
 correction also have explicit entrypoints. Classic40's metadata describes its
 existing 240 stimulus frames at 60 Hz (four seconds); no rendering timing changed.
 Profile storage and runtime selection wiring are separate steps.
@@ -149,7 +149,7 @@ including units, references, and optional positions in meters. The final trigger
 row remains outside channel arithmetic. Undeclared plugins retain the legacy
 identity path and reject transformed input before streaming. The bundled CCA
 and FBCCA declare contract 2 with flexible EEG input and no mandatory electrode
-names. The bundled epoch detector and baseline filter retain contract 1.
+names. The bundled epoch boundary detector and baseline-correction filter retain contract 1.
 
 API `1` keeps its existing constructor arguments and alias checks. Constructor
 errors never cause a retry using a different API. All bundled contributions use
