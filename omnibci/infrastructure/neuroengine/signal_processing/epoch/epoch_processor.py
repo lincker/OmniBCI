@@ -15,7 +15,7 @@ import numpy as np
 
 from omnibci.domain.classification import Classification
 from omnibci.domain.epoch import Epoch
-from omnibci.domain.ports.algorithm import Decoder, Filter
+from omnibci.domain.ports.algorithm import Decoder, Filter, Prediction
 from omnibci.infrastructure.neuroengine.signal_processing.epoch.pipeline import ProcessingPipeline
 from omnibci.domain.signal import SignalChunk
 
@@ -206,11 +206,23 @@ class EpochProcessor:
         )
         if prediction is None:
             return False, None
-        classification = Classification(
-            target_id=int(prediction.target_id),
-            event_id=self._event_id,
-            confidence=prediction.confidence,
-            forced=forced,
-        )
+        try:
+            if not isinstance(prediction, Prediction):
+                raise TypeError(f"Decoder must return Prediction or None, got {type(prediction).__name__}")
+            target_id = prediction.target_id
+            if isinstance(target_id, (bool, np.bool_)) or not isinstance(target_id, (int, np.integer)):
+                raise TypeError(f"Prediction.target_id must be an integer scalar, got {type(target_id).__name__}")
+            classification = Classification(
+                target_id=int(target_id),
+                event_id=self._event_id,
+                confidence=prediction.confidence,
+                forced=forced,
+            )
+        except (TypeError, ValueError) as exc:
+            decoder_type = type(self.decoder)
+            raise type(exc)(
+                f"Invalid Prediction from {decoder_type.__module__}.{decoder_type.__qualname__} "
+                f"(event_id={self._event_id}, config_revision={self.config_revision!r}): {exc}"
+            ) from exc
         logger.info("Decoder produced: %s (forced=%s)", classification, forced)
         return True, classification

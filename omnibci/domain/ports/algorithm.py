@@ -42,7 +42,13 @@ class Filter(ABC):
 
 @dataclass(frozen=True)
 class Prediction:
-    """A decoder's output for one epoch window (immutable)."""
+    """A decoder's output for one epoch window (immutable).
+
+    target_id must be a Python int or NumPy integer scalar, excluding booleans.
+    Signal Processing validates this before conversion; floats (even 1.0),
+    strings, and arrays are rejected. Classification enforces nonnegative
+    targets and confidence in [0, 1] when converting a valid Prediction.
+    """
     target_id: int
     confidence: Optional[float] = None
 

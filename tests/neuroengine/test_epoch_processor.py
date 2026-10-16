@@ -1,6 +1,9 @@
 """Unit tests for EpochProcessor buffering, epoch construction, and decoding."""
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 import numpy as np
 import pytest
 
@@ -116,6 +119,89 @@ class TestBuildEpoch:
 # ---------------------------------------------------------------------------
 
 class TestDecoding:
+    @pytest.mark.parametrize(
+        "target",
+        [True, np.bool_(True), 1.0, 1.9, np.float64(1.0), "1", np.array(1), np.nan],
+        ids=["bool", "numpy-bool", "float-integer", "float-fraction", "numpy-float", "string", "array-scalar", "nan"],
+    )
+    def test_rejects_non_integer_targets_before_coercion(self, target):
+        decoder = FakeDecoder(target=target)
+        mgr = EpochProcessor(decoder=decoder, config_revision="revision-1")
+        mgr.initialize_epoch(_chunk(), start_idx=0, event_id=4)
+
+        with pytest.raises(TypeError) as error:
+            mgr.process_chunk(_chunk())
+
+        message = str(error.value)
+        assert f"{FakeDecoder.__module__}.{FakeDecoder.__qualname__}" in message
+        assert "event_id=4" in message
+        assert "revision-1" in message
+        assert "target_id" in message
+        assert isinstance(error.value.__cause__, TypeError)
+
+    @pytest.mark.parametrize("target", [0, 7, np.int32(7), np.int64(7), np.uint64(2**63)])
+    def test_accepts_python_and_numpy_integer_targets(self, target):
+        mgr = _manager(decoder=FakeDecoder(target=target))
+        mgr.initialize_epoch(_chunk(), start_idx=0, event_id=4)
+
+        complete, classification = mgr.process_chunk(_chunk())
+
+        assert complete
+        assert classification.target_id == target
+        assert type(classification.target_id) is int
+
+    @pytest.mark.parametrize("result", [3, SimpleNamespace(target_id=1, confidence=None)])
+    def test_rejects_results_other_than_prediction_or_none(self, result, monkeypatch):
+        decoder = FakeDecoder()
+        monkeypatch.setattr(decoder, "decode", MagicMock(return_value=result))
+        mgr = EpochProcessor(decoder=decoder, config_revision="revision-1")
+        mgr.initialize_epoch(_chunk(), start_idx=0, event_id=4)
+
+        with pytest.raises(TypeError) as error:
+            mgr.process_chunk(_chunk())
+
+        assert "Prediction or None" in str(error.value)
+        assert f"{FakeDecoder.__module__}.{FakeDecoder.__qualname__}" in str(error.value)
+        assert "event_id=4" in str(error.value)
+        assert "revision-1" in str(error.value)
+        assert isinstance(error.value.__cause__, TypeError)
+
+    @pytest.mark.parametrize("prediction,error_type", [
+        (Prediction(-1), ValueError),
+        (Prediction(1, confidence=-0.1), ValueError),
+        (Prediction(1, confidence=1.1), ValueError),
+        (Prediction(1, confidence=np.nan), ValueError),
+        (Prediction(1, confidence="0.5"), TypeError),
+    ])
+    def test_classification_validation_preserves_error_type_and_adds_context(self, prediction, error_type, monkeypatch):
+        decoder = FakeDecoder()
+        monkeypatch.setattr(decoder, "decode", MagicMock(return_value=prediction))
+        mgr = EpochProcessor(decoder=decoder, config_revision="revision-1")
+        mgr.initialize_epoch(_chunk(), start_idx=0, event_id=4)
+
+        with pytest.raises(error_type) as error:
+            mgr.process_chunk(_chunk())
+
+        assert type(error.value) is error_type
+        assert type(error.value.__cause__) is error_type
+        assert str(error.value.__cause__) in str(error.value)
+        assert f"{FakeDecoder.__module__}.{FakeDecoder.__qualname__}" in str(error.value)
+        assert "event_id=4" in str(error.value)
+        assert "revision-1" in str(error.value)
+
+    @pytest.mark.parametrize("cause", [TypeError("algorithm type failure"), ValueError("algorithm value failure")])
+    def test_algorithm_errors_propagate_without_prediction_validation_wrapper(self, cause, monkeypatch):
+        decoder = FakeDecoder()
+        monkeypatch.setattr(decoder, "decode", MagicMock(side_effect=cause))
+        mgr = _manager(decoder=decoder)
+        mgr.initialize_epoch(_chunk(), start_idx=0, event_id=4)
+
+        with pytest.raises(type(cause)) as error:
+            mgr.process_chunk(_chunk())
+
+        assert error.value is cause
+        assert error.value.__cause__ is None
+
     def test_empty_buffer_returns_incomplete(self):
         assert _manager().force_decode_at_boundary() == (False, None)
 

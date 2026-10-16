@@ -1,17 +1,25 @@
 """Tests for SignalProcessingWorker plugin loading and processor wiring."""
 from __future__ import annotations
 
+from queue import Queue
 from unittest.mock import MagicMock, call, patch
 
+import numpy as np
 import pytest
 
 import omnibci.conf as conf_module
 import omnibci.infrastructure.neuroengine.signal_processing.worker as worker_module
-from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter
+from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter, Prediction
+from omnibci.domain.signal import SignalChunk
+from omnibci.infrastructure.ipc.data_manager import DataManager
+from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessorCommand
 from omnibci.infrastructure.neuroengine.signal_processing.worker import (
     SignalProcessingWorker,
 )
+from omnibci.infrastructure.plugins.algorithms.epoch.detector import DefaultEpochDetector
 from omnibci.infrastructure.plugins.loader import PluginLoader
+from omnibci.infrastructure.process_lifecycle import StartupReporter
+from omnibci.shared.events import EventType
 
 
 def _worker(**overrides) -> SignalProcessingWorker:
@@ -91,6 +99,43 @@ class TestAlgorithmLoading:
 
 
 class TestProcessorWiring:
+    def test_invalid_prediction_after_ready_propagates_from_real_processor(self, monkeypatch):
+        reporter = MagicMock(spec=StartupReporter)
+
+        class InvalidTargetDecoder(Decoder):
+            def should_decode(self, window):
+                return False
+
+            def decode(self, window, latest_samples):
+                reporter.ready.assert_called_once_with()
+                return Prediction(1.9)
+
+        commands = Queue()
+        commands.put((SignalProcessorCommand.start_session, {"session_id": "test-session"}))
+        # If validation regresses, the loop exits instead of hanging the test.
+        commands.put(SignalProcessorCommand.should_stop)
+        data_manager = DataManager(buffer=Queue())
+        data_manager.put_data(SignalChunk(1.0, 1, np.array([[1., 2., 3.], [7., 0., 9.]])))
+        worker = _worker(
+            command_queue=commands, data_manager=data_manager, startup_reporter=reporter,
+            settings_snapshot={"CONFIG.revision": "test-revision", "CONFIG.generation": "test-run"},
+        )
+        monkeypatch.setattr(conf_module.settings, "use_snapshot", lambda snapshot: None)
+        monkeypatch.setattr(worker, "_load_algorithm", lambda: (InvalidTargetDecoder(), DefaultEpochDetector(), []))
+
+        with pytest.raises(TypeError) as raised:
+            worker.run()
+
+        message = str(raised.value)
+        assert "InvalidTargetDecoder" in message
+        assert "event_id=7" in message
+        assert "test-revision" in message
+        reporter.failed.assert_called_once_with("run", raised.value)
+        reporter.close.assert_called_once_with()
+        assert worker.signal_processor.session.trial_count == 0
+        assert all(item.args[0].type is not EventType.TrialCompleted
+                   for item in worker.event_bus.put_event.call_args_list)
+
     def test_constructs_standby_processor_and_runs_it(self, monkeypatch):
         processor = MagicMock()
         processor_type = MagicMock(return_value=processor)
