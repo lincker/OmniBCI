@@ -1,8 +1,13 @@
 """Composition root for application services and infrastructure adapters."""
 
 import logging
+import os
+from contextlib import ExitStack
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Iterable, Tuple
+
+from platformdirs import user_data_path
 
 from omnibci.shared.events import EventType
 from omnibci.application.activation_settings import backend_startup_settings
@@ -22,10 +27,12 @@ from omnibci.application.services.plugin_installation_service import PluginInsta
 from omnibci.application.services.plugin_package_service import PluginPackageService
 from omnibci.application.services.plugin_market_service import PluginMarketService
 from omnibci.application.plugin_packages import package_references_from_settings
-from omnibci.domain.repositories import SessionRepository
+from omnibci.domain.repositories import SessionRepository, SessionRecordState
 from omnibci.infrastructure.backend_logging import BackendLogging
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
+from omnibci.infrastructure.repositories.sqlite_session_repository import SQLiteSessionRepository
+from omnibci.infrastructure.storage_lock import StorageLease
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
@@ -84,6 +91,15 @@ class AppContainer:
     plugin_package_service: "PluginPackageService | None" = None
     plugin_market_service: "PluginMarketService | None" = None
     signal_setup_service: object | None = None
+    storage_lease: StorageLease | None = None
+
+    def close_storage(self):
+        """Release storage only after worker events have stopped."""
+        close = getattr(self.session_repository, "close", None)
+        if callable(close):
+            close()
+        if self.storage_lease is not None:
+            self.storage_lease.close()
 
 
 # ---------------------------------------------------------------------------
@@ -92,10 +108,34 @@ class AppContainer:
 
 def _build_session_repository(kind: "str | None") -> SessionRepository:
     """Build the configured repository or fail on an unknown implementation."""
-    if kind in (None, "in_memory"):
+    if kind in (None, "sqlite"):
+        return SQLiteSessionRepository(_session_database_path())
+    if kind == "in_memory":
         return InMemorySessionRepository()
 
     raise ValueError(f"Unknown session_repository implementation: {kind!r}")
+
+
+def _session_database_path() -> Path:
+    override = os.environ.get("OMNIBCI_DATABASE_PATH")
+    if override is not None and not Path(override).expanduser().is_absolute():
+        raise ValueError("OMNIBCI_DATABASE_PATH must be an absolute path")
+    return (Path(override).expanduser() if override is not None
+            else user_data_path("OmniBCI", appauthor=False) / "omnibci.sqlite3")
+
+
+def _close_previous_sessions(repository):
+    """A backend restart ends old sessions only after checking writer ownership."""
+    records = [record for record in repository.find_all() if record.state == SessionRecordState.RUNNING]
+    with ExitStack() as leases:
+        for record in records:
+            path = (record.recording or {}).get("path")
+            if path and Path(path).is_dir():
+                leases.enter_context(StorageLease(Path(path) / ".writer.lock"))
+        for record in records:
+            repository.update(record.session_id, lambda candidate: candidate.mark_ended(
+                interruption_reason="Backend restarted before the session ended",
+            ))
 
 
 # ---------------------------------------------------------------------------
@@ -169,11 +209,28 @@ def assemble(
 async def build_container(*, host_settings: dict | None = None,
                           allow_process_termination: bool = True) -> AppContainer:
     """Wire services; resolve configuration and build workers on engine start."""
+    host_settings = load_host_settings() if host_settings is None else dict(host_settings)
+    kind = host_settings.get("PERSISTENCE.session_repository", "sqlite")
+    lease = StorageLease(str(_session_database_path()) + ".lock") if kind in (None, "sqlite") else None
+    repository = None
+    try:
+        repository = _build_session_repository(kind)
+        _close_previous_sessions(repository)
+        container = await _build_container_services(host_settings, repository, allow_process_termination)
+        container.storage_lease = lease
+        return container
+    except BaseException:
+        close = getattr(repository, "close", None)
+        if callable(close):
+            close()
+        if lease is not None:
+            lease.close()
+        raise
+
+
+async def _build_container_services(host_settings, repository, allow_process_termination):
     from omnibci.conf import settings
 
-    host_settings = load_host_settings() if host_settings is None else dict(host_settings)
-    repository = _build_session_repository(
-        host_settings.get("PERSISTENCE.session_repository", "in_memory"))
     auto_spawn = bool(host_settings.get("STIMULATION.auto_spawn", True))
     # Actuation subprocess management: disabled subsystem → auto_spawn=False,
     # making every lifecycle hook a no-op (multi-machine runs the script).

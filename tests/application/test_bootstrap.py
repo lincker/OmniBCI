@@ -6,7 +6,7 @@ Covers the pure, I/O-free parts of omnibci.bootstrap:
     session service is built on the given repository.
   - register_engine_listeners(): registers read-model + extra subscriptions via
     engine.subscribe, in order, and no-ops when the engine isn't ready.
-  - _build_session_repository(): defaults to the in-memory adapter.
+  - _build_session_repository(): defaults to the persistent SQLite adapter.
 
 build_container() itself is not unit-tested here because it performs real
 engine startup; assemble() is the seam that lets us test wiring without it.
@@ -163,9 +163,11 @@ class TestRegisterListeners:
 # _build_session_repository()
 # ---------------------------------------------------------------------------
 
-def test_build_session_repository_defaults_to_in_memory():
+def test_build_session_repository_defaults_to_sqlite():
+    from omnibci.infrastructure.repositories.sqlite_session_repository import SQLiteSessionRepository
     repo = _build_session_repository(None)
-    assert isinstance(repo, InMemorySessionRepository)
+    assert isinstance(repo, SQLiteSessionRepository)
+    repo.close()
 
 
 def test_build_session_repository_in_memory_explicit():
@@ -174,5 +176,5 @@ def test_build_session_repository_in_memory_explicit():
 
 def test_build_session_repository_unknown_kind_fails_fast():
     import pytest
-    with pytest.raises(ValueError, match="sqlite"):
-        _build_session_repository("sqlite")
+    with pytest.raises(ValueError, match="unknown"):
+        _build_session_repository("unknown")

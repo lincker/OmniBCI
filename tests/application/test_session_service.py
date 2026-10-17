@@ -386,7 +386,7 @@ class TestConcurrentTrialRecording:
 
         def worker():
             for _ in range(per_thread):
-                session_service.on_trial_completed(_outcome_event(sid))
+                session_service.on_trial_completed(_outcome_event(sid, trial_number=0))
 
         threads = [threading.Thread(target=worker) for _ in range(threads_n)]
         for t in threads: t.start()

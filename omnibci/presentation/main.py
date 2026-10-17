@@ -144,6 +144,7 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
         app.state.shutdown_errors = errors
         if errors:
             raise RuntimeError("; ".join(errors))
+        container.close_storage()
         logger.info("OmniBCI API server stopped")
 
 

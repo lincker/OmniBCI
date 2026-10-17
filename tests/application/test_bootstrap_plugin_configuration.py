@@ -166,6 +166,7 @@ async def test_host_review_compares_loaded_backend_values_after_restart(bootstra
     assert first.command_results._timeout_s == 10.0
     assert _toml_files(config_root()) == original_files
 
+    first.close_storage()
     restarted = await build_container()
 
     assert restarted.command_results._timeout_s == 15.0
@@ -221,6 +222,7 @@ async def test_existing_activation_keeps_its_revision_and_pinned_inputs(bootstra
     original_files = _toml_files(profiles.repository.root)
     original_settings = bootstrap_settings._config_path.read_bytes()
 
+    first.close_storage()
     restarted = await build_container()
 
     assert restarted.plugin_profile_service.repository.get_activation() == historical
@@ -250,6 +252,7 @@ async def test_bootstrap_keeps_management_available_but_blocks_legacy_mapping_st
     profiles.repository.save_activation(legacy, expected_revision=current.revision)
     files = _toml_files(profiles.repository.root)
 
+    first.close_storage()
     restarted = await build_container()
 
     assert restarted.plugin_profile_service.repository.get_activation() == legacy
@@ -285,6 +288,7 @@ async def test_broken_activation_keeps_management_available_without_replacement(
     path.write_text('format_version = "unterminated', encoding="utf-8")
     original_files = _toml_files(repository.root)
 
+    first.close_storage()
     container = await build_container()
 
     assert container.config_service.list_entries()[0]

@@ -423,7 +423,7 @@ class SessionAppService:
         def _append(record: SessionRecord) -> None:
             # Zero means the producer could not provide an aggregate sequence.
             trial_number = payload.trial_number or record.trial_count + 1
-            record.append_trial(TrialRecord(
+            trial = TrialRecord(
                 trial_number=trial_number,
                 target_id=clf.target_id,
                 event_id=clf.event_id,
@@ -432,7 +432,13 @@ class SessionAppService:
                 produced_at=clf.produced_at,
                 config_revision=(payload.config_revision if payload.config_revision is not None
                                  else record.config_revision),
-            ))
+            )
+            existing = next((item for item in record.trials if item.trial_number == trial_number), None)
+            if existing is not None:
+                if existing != trial:
+                    raise ValueError(f"Conflicting result for trial {trial_number} in session {record.session_id}")
+                return
+            record.append_trial(trial)
             logger.debug("Trial #%d recorded: session=%s target=%d",
                          trial_number, record.session_id, clf.target_id)
 
