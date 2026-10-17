@@ -5,6 +5,7 @@ POST   /sessions              Create + start a new session
 GET    /sessions              List all sessions
 GET    /sessions/active       Get the currently active session
 GET    /sessions/{id}         Get session metadata
+GET    /sessions/{id}/configurations  Archived runtime inputs and application receipts
 DELETE /sessions/{id}         End a session
 GET    /sessions/{id}/trials  Full trial history
 GET    /sessions/{id}/trials/last  Most recent classification result
@@ -298,6 +299,20 @@ def end_session(
             str(exc),
         )
     return ApiResponse(message="Session ended")
+
+
+@router.get(
+    "/{session_id}/configurations",
+    response_model=ApiResponse[List[dict]],
+    summary="Get archived configurations and application receipts for a session",
+    description=("Select revisions linked to this session. Each revision includes its global application "
+                 "history across sessions and engine generations, identified by session_id, generation and context."),
+)
+def get_configurations(session_id: str, svc: SessionAppService = Depends(get_session_service)):
+    try:
+        return ApiResponse(data=svc.handle_get_configurations(session_id))
+    except KeyError:
+        raise ApiError(status.HTTP_404_NOT_FOUND, ErrorCode.SESSION_NOT_FOUND, f"Session '{session_id}' not found")
 
 
 @router.get(

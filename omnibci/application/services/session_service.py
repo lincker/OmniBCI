@@ -123,6 +123,7 @@ class SessionAppService:
         self._acquisition = None
         self._signal_lock = RLock()
         self._recover_recording = None
+        self._configuration_archive = None
 
     def set_signal_preparer(self, callback, lifecycle_lock):
         self._prepare_signal = callback
@@ -136,6 +137,10 @@ class SessionAppService:
     def set_recording_recovery(self, callback):
         """Inject inactive-file reconciliation without depending on a file format."""
         self._recover_recording = callback
+
+    def set_configuration_archive(self, archive):
+        """Link sessions to immutable runtime inputs before dispatching them."""
+        self._configuration_archive = archive
 
     @property
     def manages_recording_lifecycle(self) -> bool:
@@ -178,10 +183,14 @@ class SessionAppService:
                 raise RuntimeError("A continuation requires an ended previous session")
             if self._repo.find_active() is not None:
                 raise RuntimeError("Cannot resume while another session is active")
+        current_revision = self._current_config_revision()
         config_revision = (
             cmd.config_revision if cmd.config_revision is not None
-            else self._current_config_revision()
+            else current_revision
         )
+        if (self._configuration_archive is not None and current_revision is not None
+                and config_revision != current_revision):
+            raise RuntimeError("Session configuration must match the applied runtime revision")
         signal_plan = self._prepare_signal() if self._prepare_signal is not None else None
         session_id = str(uuid.uuid4())
         record = SessionRecord(
@@ -195,6 +204,14 @@ class SessionAppService:
             subject_id=cmd.subject_id,
         )
         self._repo.save(record)
+        if self._configuration_archive is not None:
+            try:
+                if config_revision is None:
+                    raise RuntimeError("A session requires an archived runtime configuration")
+                self._configuration_archive.link_session(session_id, config_revision)
+            except BaseException:
+                self._repo.delete(session_id)
+                raise
         payload = {"session_id": session_id, "paradigm": cmd.paradigm}
         if cmd.subject_id is not None:
             payload["subject_id"] = cmd.subject_id
@@ -439,6 +456,11 @@ class SessionAppService:
 
     def handle_get_session(self, query: GetSessionQuery) -> SessionDTO:
         return _session_record_to_dto(self._require(query.session_id))
+
+    def handle_get_configurations(self, session_id: str) -> list[dict]:
+        self._require(session_id)
+        return (self._configuration_archive.get_for_session(session_id)
+                if self._configuration_archive is not None else [])
 
     def handle_list_sessions(self, query: ListSessionsQuery) -> List[SessionDTO]:
         return [_session_record_to_dto(r) for r in self._repo.find_all()]

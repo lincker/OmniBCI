@@ -32,7 +32,8 @@ class _RestoreState:
 class RuntimeApplyCoordinator:
     supported_strategies = {"select_on_start", "no_change", "rebuild", "trial_boundary", "module"}
 
-    def __init__(self, engine, profiles, acquisition, sessions, stimulation, commands, *, signal_preparer=None):
+    def __init__(self, engine, profiles, acquisition, sessions, stimulation, commands, *,
+                 signal_preparer=None, archive=None):
         self.engine = engine
         self.profiles = profiles
         self.acquisition = acquisition
@@ -40,6 +41,7 @@ class RuntimeApplyCoordinator:
         self.stimulation = stimulation
         self.commands = commands
         self.signal_preparer = signal_preparer
+        self.archive = archive
 
     def active_kinds(self, snapshot):
         kinds = {"acquisition", "decoder", "epoch_detector", "filter"}
@@ -67,17 +69,51 @@ class RuntimeApplyCoordinator:
                     "The previous engine still owns resources; stop it before selecting configuration"
                 )
             self.profiles.validate_activation(candidate, active_kinds=self.active_kinds(candidate))
-            if plan.strategy in ("select_on_start", "no_change"):
-                progress("persisting")
-                self.profiles.repository.save_activation(candidate, expected_revision=plan.expected_revision)
-                return {"outcome": "selected" if not plan.running else "applied"}
             if plan.strategy not in self.supported_strategies:
                 raise ValueError("The planned update boundary is unavailable")
-            if plan.strategy == "trial_boundary":
-                return await self._apply_pipeline(stored, previous, progress)
-            if plan.strategy == "module":
-                return await self._apply_outputs(stored, previous, progress)
-            return await self._rebuild(stored, previous, progress)
+            target = self.profiles.materialize(candidate) if self.archive is not None else None
+            if target is not None and plan.running and plan.strategy != "rebuild":
+                target["CONFIG.generation"] = plan.generation
+            attempt = self._archive_stage(target, context=plan.strategy)
+            try:
+                if plan.strategy in ("select_on_start", "no_change"):
+                    progress("persisting")
+                    self.profiles.repository.save_activation(candidate, expected_revision=plan.expected_revision)
+                    if plan.running:
+                        self._archive_confirm(attempt, self.engine.applied_snapshot,
+                                              {"already_applied": True})
+                    return {"outcome": "selected" if not plan.running else "applied"}
+                if plan.strategy == "trial_boundary":
+                    return await self._apply_pipeline(stored, previous, progress, attempt=attempt)
+                if plan.strategy == "module":
+                    return await self._apply_outputs(stored, previous, progress, attempt=attempt)
+                return await self._rebuild(stored, previous, progress, attempt=attempt)
+            except Exception as exc:
+                if (attempt is not None and not isinstance(exc, CommandTimeoutError)
+                        and not getattr(exc, "recovery_required", False)):
+                    self.archive.fail(attempt, str(exc))
+                raise
+
+    def _archive_stage(self, snapshot, *, context):
+        if self.archive is None:
+            return None
+        preserves_session = context in {
+            "no_change", "trial_boundary", "module", "trial_boundary_rollback", "module_rollback",
+        }
+        return self.archive.stage(
+            snapshot, context=context,
+            session_id=self.sessions.active_session_id if preserves_session else None,
+        )
+
+    def _archive_confirm(self, attempt, snapshot, receipt):
+        if attempt is not None:
+            try:
+                self.archive.confirm(attempt, snapshot, receipt=receipt)
+            except Exception as exc:
+                raise RuntimeApplyFailure(
+                    f"Runtime applied configuration but its receipt could not be archived: {exc}",
+                    recovery_required=True,
+                ) from exc
 
     async def _stage_pipeline(self, snapshot, expected_revision):
         try:
@@ -100,6 +136,7 @@ class RuntimeApplyCoordinator:
                     raise RuntimeApplyFailure("Signal Processing cancellation identity mismatch", recovery_required=True)
                 raise RuntimeApplyFailure("Trial boundary was not reached; update cancelled, previous pipeline retained") from exc
         self._pipeline_receipt(data, snapshot)
+        return data
 
     @staticmethod
     def _pipeline_receipt(data, snapshot):
@@ -116,18 +153,22 @@ class RuntimeApplyCoordinator:
         if (not isinstance(data, dict) or data.get("generation") != snapshot["CONFIG.generation"]
                 or data.get("config_revision") != snapshot["CONFIG.revision"]):
             raise RuntimeApplyFailure("Acquisition revision was not acknowledged", recovery_required=True)
+        return data
 
-    async def _apply_pipeline(self, stored, previous, progress):
+    async def _apply_pipeline(self, stored, previous, progress, *, attempt=None):
         before = self.engine.applied_snapshot
         target = self.profiles.materialize(stored.snapshot)
         target["CONFIG.generation"] = before["CONFIG.generation"]
         progress("waiting_for_trial_boundary")
-        await self._stage_pipeline(target, before["CONFIG.revision"])
+        processing_receipt = await self._stage_pipeline(target, before["CONFIG.revision"])
         try:
-            await self._update_source_revision(target, before["CONFIG.revision"])
+            acquisition_receipt = await self._update_source_revision(target, before["CONFIG.revision"])
         except Exception as exc:
             raise RuntimeApplyFailure(f"Signal Processing applied {target['CONFIG.revision']}, but acquisition acknowledgement failed: {exc}",
                                       recovery_required=True) from exc
+        self._archive_confirm(attempt, target, {
+            "processing": processing_receipt, "acquisition": acquisition_receipt,
+        })
         self.engine.acknowledge_configuration(target)
         try:
             progress("persisting")
@@ -138,8 +179,12 @@ class RuntimeApplyCoordinator:
                 selected = self.profiles.repository.get_activation()
                 if selected is None or selected.revision != previous.revision:
                     raise RuntimeError("Selected configuration was changed by another writer")
-                await self._stage_pipeline(before, target["CONFIG.revision"])
-                await self._update_source_revision(before, target["CONFIG.revision"])
+                rollback = self._archive_stage(before, context="trial_boundary_rollback")
+                processing_receipt = await self._stage_pipeline(before, target["CONFIG.revision"])
+                acquisition_receipt = await self._update_source_revision(before, target["CONFIG.revision"])
+                self._archive_confirm(rollback, before, {
+                    "processing": processing_receipt, "acquisition": acquisition_receipt,
+                })
                 self.engine.acknowledge_configuration(before)
             except Exception as recovery:
                 raise RuntimeApplyFailure(f"Saving failed: {exc}; pipeline recovery failed: {recovery}",
@@ -153,6 +198,7 @@ class RuntimeApplyCoordinator:
             "generation": snapshot["CONFIG.generation"],
         })
         self._pipeline_receipt(data, snapshot)
+        return data
 
     async def _start_outputs(self, snapshot, state):
         await self.engine.restart_actuation_for_configuration(snapshot)
@@ -167,7 +213,7 @@ class RuntimeApplyCoordinator:
             self._receipt(data, snapshot, "restored")
         await self._resume_stream(state)
 
-    async def _apply_outputs(self, stored, previous, progress):
+    async def _apply_outputs(self, stored, previous, progress, *, attempt=None):
         before = self.engine.applied_snapshot
         target = self.profiles.materialize(stored.snapshot)
         target["CONFIG.generation"] = before["CONFIG.generation"]
@@ -186,10 +232,14 @@ class RuntimeApplyCoordinator:
             # explicitly before any old driver may be recreated.
             outputs_replaced = True
             await self._start_outputs(target, state)
-            await self._output_context(target, processing_revision)
+            processing_receipt = await self._output_context(target, processing_revision)
             processing_revision = target["CONFIG.revision"]
-            await self._update_source_revision(target, acquisition_revision)
+            acquisition_receipt = await self._update_source_revision(target, acquisition_revision)
             acquisition_revision = target["CONFIG.revision"]
+            self._archive_confirm(attempt, target, {
+                "processing": processing_receipt, "acquisition": acquisition_receipt,
+                "output_modules_ready": True,
+            })
             self.engine.acknowledge_configuration(target)
             progress("persisting")
             self.profiles.repository.save_activation(stored.snapshot, expected_revision=previous.revision)
@@ -209,6 +259,7 @@ class RuntimeApplyCoordinator:
                 expected = stored.snapshot.revision if persisted else previous.revision
                 if selected is None or selected.revision != expected:
                     raise RuntimeError("Selected configuration was changed by another writer")
+                rollback = self._archive_stage(before, context="module_rollback")
                 if target.get("ACTUATION.enabled", False):
                     data = await self._request(EventType.SettleActuation)
                     self._receipt(data, target, "paused", "execution_complete", "outputs_settled")
@@ -217,10 +268,15 @@ class RuntimeApplyCoordinator:
                     self._receipt(data, target, "paused", "renderer_stopped")
                 await self._stop_stimulation()
                 await self._start_outputs(before, state)
+                processing_receipt = acquisition_receipt = None
                 if processing_revision != before["CONFIG.revision"]:
-                    await self._output_context(before, processing_revision)
+                    processing_receipt = await self._output_context(before, processing_revision)
                 if acquisition_revision != before["CONFIG.revision"]:
-                    await self._update_source_revision(before, acquisition_revision)
+                    acquisition_receipt = await self._update_source_revision(before, acquisition_revision)
+                self._archive_confirm(rollback, before, {
+                    "processing": processing_receipt, "acquisition": acquisition_receipt,
+                    "output_modules_ready": True,
+                })
                 self.engine.acknowledge_configuration(before)
                 if persisted:
                     self.profiles.repository.save_activation(previous, expected_revision=stored.snapshot.revision)
@@ -290,9 +346,10 @@ class RuntimeApplyCoordinator:
             await asyncio.to_thread(self.stimulation.handle_stop_stimulation, StopStimulationCommand())
 
     async def _restore_ready(self, snapshot, state, previous_session_id, checkpoint,
-                             *, require_live_resume=False):
+                             *, require_live_resume=False, archive_attempt=None):
         await self.engine.start_for_configuration(snapshot)
         running = self.engine.applied_snapshot
+        self._archive_confirm(archive_attempt, running, {"engine_ready": True})
         resumed_checkpoint = False
         if state.connected:
             await asyncio.to_thread(self.acquisition.handle_connect, ConnectDataProviderCommand())
@@ -328,7 +385,7 @@ class RuntimeApplyCoordinator:
         if state.streaming:
             await asyncio.to_thread(self.acquisition.handle_start_stream, StartStreamCommand())
 
-    async def _rebuild(self, stored, previous, progress):
+    async def _rebuild(self, stored, previous, progress, *, attempt=None):
         plan, candidate = stored.plan, stored.snapshot
         before = self.engine.applied_snapshot
         target = self.profiles.materialize(candidate)
@@ -363,6 +420,7 @@ class RuntimeApplyCoordinator:
             continuation, replay_resumed = await self._restore_ready(
                 target, state, state.session_id, state.checkpoint if same_source else None,
                 require_live_resume=state.streaming and same_source and state.checkpoint is None,
+                archive_attempt=attempt,
             )
             progress("persisting")
             self.profiles.repository.save_activation(candidate, expected_revision=plan.expected_revision)
@@ -408,9 +466,12 @@ class RuntimeApplyCoordinator:
                 accepted = self.profiles.repository.get_activation()
                 if accepted is None or accepted.revision != previous.revision:
                     raise RuntimeError("Selected configuration was changed by another writer")
+                rollback_snapshot = {key: value for key, value in before.items() if key != "CONFIG.generation"}
+                rollback = self._archive_stage(rollback_snapshot, context="rebuild_rollback")
                 await self._restore_ready(
                     before, state, previous_session_id, state.checkpoint,
                     require_live_resume=state.streaming and state.checkpoint is None,
+                    archive_attempt=rollback,
                 )
                 await self._resume_stream(state)
             except BaseException as recovery:

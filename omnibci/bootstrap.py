@@ -21,6 +21,7 @@ from omnibci.application.services.plugin_profile_service import PluginProfileSer
 from omnibci.application.services.plugin_config_initialization import SettingsPluginConfigInitializer
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
+from omnibci.application.services.configuration_archive_service import ConfigurationArchiveService
 from omnibci.application.services.node_configuration_service import NodeConfigurationService
 from omnibci.application.services.plugin_installation_service import PluginInstallationService
 from omnibci.application.services.plugin_package_service import PluginPackageService
@@ -32,6 +33,7 @@ from omnibci.infrastructure.backend_logging import BackendLogging
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 from omnibci.infrastructure.repositories.sqlite_session_repository import SQLiteSessionRepository
+from omnibci.infrastructure.repositories.sqlite_configuration_archive import SQLiteConfigurationArchive
 from omnibci.infrastructure.storage_lock import StorageLease
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
@@ -92,9 +94,12 @@ class AppContainer:
     plugin_market_service: "PluginMarketService | None" = None
     signal_setup_service: object | None = None
     storage_lease: StorageLease | None = None
+    configuration_archive: ConfigurationArchiveService | None = None
 
     def close_storage(self):
         """Release storage only after worker events have stopped."""
+        if self.configuration_archive is not None:
+            self.configuration_archive.repository.close()
         close = getattr(self.session_repository, "close", None)
         if callable(close):
             close()
@@ -205,13 +210,20 @@ async def build_container(*, host_settings: dict | None = None,
     kind = host_settings.get("PERSISTENCE.session_repository", "sqlite")
     lease = StorageLease(str(_session_database_path()) + ".lock") if kind in (None, "sqlite") else None
     repository = None
+    archive_repository = None
     try:
         repository = _build_session_repository(kind)
         _close_previous_sessions(repository)
-        container = await _build_container_services(host_settings, repository, allow_process_termination)
+        if kind in (None, "sqlite"):
+            archive_repository = SQLiteConfigurationArchive(_session_database_path())
+        container = await _build_container_services(
+            host_settings, repository, allow_process_termination, archive_repository,
+        )
         container.storage_lease = lease
         return container
     except BaseException:
+        if archive_repository is not None:
+            archive_repository.close()
         close = getattr(repository, "close", None)
         if callable(close):
             close()
@@ -220,7 +232,7 @@ async def build_container(*, host_settings: dict | None = None,
         raise
 
 
-async def _build_container_services(host_settings, repository, allow_process_termination):
+async def _build_container_services(host_settings, repository, allow_process_termination, archive_repository=None):
     from omnibci.conf import settings
 
     auto_spawn = bool(host_settings.get("STIMULATION.auto_spawn", True))
@@ -260,6 +272,9 @@ async def _build_container_services(host_settings, repository, allow_process_ter
         startup_settings_resolver=_effective_backend_startup_settings,
         loaded_startup_settings=host_settings,
     )
+    archive = (ConfigurationArchiveService(archive_repository, catalog=plugin_profiles.catalog)
+               if archive_repository is not None else None)
+    engine_service.set_configuration_archive(archive)
     try:
         initializer = SettingsPluginConfigInitializer(plugin_profiles)
         if initializer.existing() is None:
@@ -279,6 +294,8 @@ async def _build_container_services(host_settings, repository, allow_process_ter
                          admission=engine_service.admission)
     container.config_service = config_service
     container.plugin_profile_service = plugin_profiles
+    container.configuration_archive = archive
+    container.session_service.set_configuration_archive(archive)
     container.acquisition_service.set_metadata_binding(lambda: _acquisition_binding(engine_service))
     from omnibci.application.services.signal_setup_service import SignalSetupService
     container.signal_setup_service = SignalSetupService(
@@ -295,7 +312,8 @@ async def _build_container_services(host_settings, repository, allow_process_ter
         executor=RuntimeApplyCoordinator(engine_service, plugin_profiles, container.acquisition_service,
                                           container.session_service, container.stimulation_service,
                                           container.command_results,
-                                          signal_preparer=container.signal_setup_service.prepare),
+                                          signal_preparer=container.signal_setup_service.prepare,
+                                          archive=archive),
     )
     packages = PluginPackageService(
         ManagedPluginPackageStore(), plugin_profiles,
