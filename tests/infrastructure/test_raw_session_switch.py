@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from tests.processing_helpers import make_processor
 from omnibci.application.commands.acquisition_commands import StartStreamCommand
 from omnibci.application.commands.session_commands import CreateSessionCommand, EndSessionCommand
 from omnibci.application.services.acquisition_service import AcquisitionAppService
@@ -22,7 +23,7 @@ from omnibci.infrastructure.acquisition.recording import LocalSignalRecorder, it
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
-from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessor, SignalProcessorCommand
+from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
 from omnibci.shared.events import EventType
 
 
@@ -89,7 +90,7 @@ async def test_live_switch_drains_old_epoch_splits_raw_files_and_resumes_stream(
         preparation_required=False, generation="generation", config_revision="revision",
         recorder=LocalSignalRecorder(tmp_path),
     )
-    processor = SignalProcessor(
+    processor = make_processor(
         detector, decoder, processor_commands, data, bus, auto_start_session=False,
         sample_rate=250, baseline_duration=0.01, generation="generation", config_revision="revision",
     )
@@ -137,7 +138,7 @@ async def test_live_switch_drains_old_epoch_splits_raw_files_and_resumes_stream(
         source.chunks.put_nowait(old_raw)
         await asyncio.wait_for(detector.processed[0].wait(), timeout=2)
         assert processor.current_epoch is not None
-        assert processor.session.trial_count == 0
+        assert processor.session_runtime.session.trial_count == 0
         assert processor.pretrigger._buf is not None
 
         new_id = await asyncio.to_thread(sessions.handle_create_session,

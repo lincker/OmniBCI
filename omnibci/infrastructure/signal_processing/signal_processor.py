@@ -12,14 +12,14 @@ from omnibci.domain.signal import SignalChunk
 
 from omnibci.domain.classification import Classification
 from omnibci.domain.events import TrialCompleted
-from omnibci.domain.session import BCISession, SessionState
+from omnibci.domain.epoch import EpochInfo
+from omnibci.application.processing_session import DecodedTrial, ProcessingSession
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector
 from omnibci.application.events import (
-    CommandFailureKind, CommandRequest, CommandResult, StreamBarrier, StreamDrainReceipt,
+    CommandFailureKind, CommandRequest, CommandResult, StreamBarrier,
 )
 from omnibci.application.processing_source import requires_signal_preparation, validate_plan_binding
 from omnibci.shared.events import Event, EventType
-from omnibci.infrastructure.event_translator import DomainEventPublisher
 from .processing_state import AwaitingEpochState, AssemblingEpochState
 from .epoch.epoch_processor import EpochProcessor
 from .epoch.pretrigger_buffer import PreTriggerBuffer
@@ -45,7 +45,6 @@ class SignalProcessor:
 
     Owns:
       - EpochDetector  — reads start/end markers from each chunk
-      - BCISession     — aggregate root for trial recording
       - State machine  — AwaitingEpochState / AssemblingEpochState
       - current_epoch  — the EpochProcessor for the epoch in flight (or None)
 
@@ -64,11 +63,10 @@ class SignalProcessor:
         command_queue,
         data_manager,
         event_bus,
-        session: Optional[BCISession] = None,
+        session_runtime: ProcessingSession,
         sample_rate: int | None = None,
         baseline_duration: float = 0.0,
         filters=None,
-        auto_start_session: bool = True,
         generation: str | None = None,
         config_revision: str | None = None,
         settings_snapshot: dict | None = None,
@@ -76,8 +74,7 @@ class SignalProcessor:
         self.data_manager = data_manager
         self.event_bus = event_bus
         self.command_queue = command_queue
-        # ACL: the single domain-event translator for this processor.
-        self.event_publisher = DomainEventPublisher(event_bus)
+        self.session_runtime = session_runtime
 
         # EpochDetector: reads epoch start/end markers from each chunk. Owned
         # here (the orchestration/state-machine level), not by EpochProcessor —
@@ -107,23 +104,6 @@ class SignalProcessor:
         # between epochs). Replaced — never reset — on each new start.
         self.current_epoch: Optional[EpochProcessor] = None
 
-        # BCISession: created externally and injected so the process owner
-        # controls session lifecycle. With session=None the behaviour depends
-        # on auto_start_session:
-        #   True  (default, tests/standalone): auto-create AND start — legacy.
-        #   False (worker): create but DO NOT start — "standby": the session
-        #          identity arrives later via a start_session command pushed
-        #          down from the API (docs/session-id-unification.md). Trials
-        #          decoded before that are dropped by record_trial's invariant.
-        if session is None:
-            session = BCISession(config_revision=config_revision)
-            if auto_start_session:
-                session.start()
-        self.session: BCISession = session
-        self._closed_session_ids = (
-            {session.session_id} if session.state is SessionState.ENDED else set()
-        )
-
         # States hold a reference to this processor (the context)
         self._awaiting_state = AwaitingEpochState(self)
         self._assembling_state = AssemblingEpochState(self)
@@ -146,25 +126,12 @@ class SignalProcessor:
         )
 
     def complete_trial(self, classification: Classification) -> TrialCompleted | None:
-        """Record the active epoch and publish pending events; reject inactive sessions.
-
-        Return None only when the session is not running. Construction, active
-        session recording, and publication failures propagate to the caller.
-        """
+        """Synchronously hand off one result before advancing to the next epoch."""
         epoch = self.current_epoch.build_epoch()
-        try:
-            completion = self.session.record_trial(
-                epoch, classification,
-                config_revision=getattr(self.current_epoch, "config_revision", None),
-            )
-        except RuntimeError as exc:
-            if self.session.state is not SessionState.RUNNING:
-                logger.error("BCISession.record_trial() rejected: %s", exc)
-                return None
-            raise
-
-        self.event_publisher.publish_all(self.session.pop_events())
-        return completion
+        return self.session_runtime.record_trial(DecodedTrial(
+            epoch_info=EpochInfo.from_epoch(epoch), classification=classification,
+            config_revision=getattr(self.current_epoch, "config_revision", None),
+        ))
 
     async def next_chunk(self, timeout: float = 0.05) -> "SignalChunk | None":
         """Wait off-loop for a chunk and return control after the timeout."""
@@ -200,9 +167,7 @@ class SignalProcessor:
                 raise ValueError("Drain barrier belongs to a different runtime generation or revision")
             if barrier.last_sequence != self._last_sequence:
                 raise ValueError("Drain barrier sequence differs from the last consumed signal chunk")
-            running_session = self.session.session_id if self.session.state is SessionState.RUNNING else None
-            if barrier.session_id is not None and barrier.session_id != running_session:
-                raise ValueError("Drain barrier session differs from the running session")
+            running_session = self.session_runtime.validate_drain(barrier.session_id)
             if self._drain_failure is not None:
                 raise RuntimeError(self._drain_failure)
             processing_started = True
@@ -216,9 +181,9 @@ class SignalProcessor:
                     interrupted = False
             self.transition_to_awaiting()
             self.pretrigger.clear()
-            receipt = StreamDrainReceipt(
-                self.generation, self.config_revision, self._last_sequence,
-                running_session, self.session.trial_count, interrupted,
+            receipt = self.session_runtime.drain_receipt(
+                generation=self.generation, config_revision=self.config_revision,
+                last_sequence=self._last_sequence, interrupted_epoch=interrupted,
             )
             self._emit_drain_result(barrier, ok=True, data=receipt.to_dict())
         except Exception as exc:
@@ -315,8 +280,7 @@ class SignalProcessor:
             ok = self._end_session(payload)
             if not ok:
                 message = (
-                    f"EndSession id {payload!r} does not match the current session "
-                    f"{self.session.session_id!r}"
+                    f"EndSession id {payload!r} does not match the current session"
                 )
                 error_code = "SESSION_ID_MISMATCH"
         else:
@@ -379,66 +343,16 @@ class SignalProcessor:
         self._publish_configuration_result(result)
 
     def _start_session(self, payload) -> bool:
-        """Open a session with the API-supplied identity (single-active invariant)."""
-        if (
-            not isinstance(payload, dict)
-            or not isinstance(payload.get("session_id"), str)
-            or not payload["session_id"]
-        ):
-            logger.error("start_session: bad payload %r; ignored", payload)
-            return False
-        session_id = payload["session_id"]
-        if session_id in self._closed_session_ids:
-            logger.warning("start_session: ended session %s cannot be reused", session_id)
-            return False
-        if session_id == self.session.session_id and self.session.state is SessionState.RUNNING:
-            # Retrying a confirmed identity must not reset its trials or events.
-            return all(
-                field not in payload or payload[field] == getattr(self.session, field)
-                for field in ("paradigm", "continuation_of", "config_revision", "subject_id")
-            )
-        try:
-            candidate = BCISession(
-                session_id=session_id,
-                paradigm=payload.get("paradigm"),
-                continuation_of=payload.get("continuation_of"),
-                config_revision=payload.get("config_revision", self.config_revision),
-                subject_id=payload.get("subject_id"),
-            )
-        except ValueError as exc:
-            logger.error("start_session: %s", exc)
-            return False
-        # Single-active-session invariant: a new start ends the previous one.
-        self._end_current_session()
-        self.session = candidate
-        self.session.start()
-        self.event_publisher.publish_all(self.session.pop_events())
-        logger.info("Session started in worker: %s", self.session.session_id)
-        return True
+        return self.session_runtime.start_session(
+            payload, config_revision=self.config_revision,
+            before_end=self._cancel_pending_configuration,
+        )
 
     def _end_session(self, payload) -> bool:
-        """End the current session — only if the id matches (stale-command guard)."""
-        session_id = payload.get("session_id") if isinstance(payload, dict) else payload
-        reason = payload.get("interruption_reason") if isinstance(payload, dict) else None
-        if not isinstance(session_id, str) or not session_id or (reason is not None and not isinstance(reason, str)):
-            logger.error("end_session: bad payload %r; ignored", payload)
-            return False
-        if session_id != self.session.session_id:
-            logger.warning("end_session for %s ignored (current is %s)",
-                           session_id, self.session.session_id)
-            return False
-        self._end_current_session(interruption_reason=reason)
-        return True
+        return self.session_runtime.end_session(payload, before_end=self._cancel_pending_configuration)
 
-    def _end_current_session(self, *, interruption_reason: str | None = None) -> None:
-        """End + publish if RUNNING; silently no-op otherwise."""
-        self._cancel_pending_configuration("Session ended before the trial boundary")
-        try:
-            self.session.end(interruption_reason=interruption_reason)
-        except RuntimeError:
-            return  # already ended or never started
-        self._closed_session_ids.add(self.session.session_id)
-        self.event_publisher.publish_all(self.session.pop_events())
+    def _end_current_session(self) -> None:
+        self.session_runtime.end_current_session(before_end=self._cancel_pending_configuration)
 
     def _update_output_context(self, request):
         from .pipeline_configuration import validate_output_context

@@ -10,6 +10,8 @@ from copy import deepcopy
 from typing import Optional
 
 from omnibci.application.processing_source import processing_input
+from omnibci.application.session_runtime import SessionRuntime
+from omnibci.infrastructure.event_translator import DomainEventPublisher
 from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessor
 from omnibci.infrastructure.process_lifecycle import StartupReporter
 
@@ -36,6 +38,7 @@ class SignalProcessingWorker(mp.Process):
         self.baseline_duration = baseline_duration
         self.settings_snapshot = deepcopy(settings_snapshot)
         self.signal_processor: Optional[SignalProcessor] = None
+        self.session_runtime: Optional[SessionRuntime] = None
         self.startup_reporter = startup_reporter
         self._startup_stage = "settings"
 
@@ -63,21 +66,21 @@ class SignalProcessingWorker(mp.Process):
         return settings.snapshot()
 
     def _run_processor(self) -> None:
-        # No self-created session id: the worker starts in "standby" and waits
-        # for a start_session command carrying the REST-created session_id, so
-        # the aggregate and the read model share one identity
-        # (docs/session-id-unification.md). Trials decoded before the first
-        # start_session are dropped by BCISession's RUNNING invariant.
+        # The aggregate and processor share one child process and event producer.
+        # Result publication completes synchronously before a drain acknowledgment.
+        self.session_runtime = SessionRuntime(
+            DomainEventPublisher(self.event_bus).publish_all,
+            config_revision=(self.settings_snapshot or {}).get("CONFIG.revision"),
+        )
         self.signal_processor = SignalProcessor(
             decoder=None,
             detector=None,
             command_queue=self.command_queue,
             data_manager=self.data_manager,
             event_bus=self.event_bus,
-            session=None,
+            session_runtime=self.session_runtime,
             baseline_duration=self.baseline_duration,
             filters=[],
-            auto_start_session=False,
             generation=(self.settings_snapshot or {}).get("CONFIG.generation"),
             config_revision=(self.settings_snapshot or {}).get("CONFIG.revision"),
             settings_snapshot=self._snapshot(),

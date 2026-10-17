@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from tests.processing_helpers import make_processor
 from omnibci.application.events import CommandRequest, StreamBarrier
 from omnibci.application.plugin_profiles import ProfileBinding
 from omnibci.domain.channel_mapping import (
@@ -15,7 +16,7 @@ from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.signal_processing import pipeline_configuration, signal_configuration
-from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessor, SignalProcessorCommand
+from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
 from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
 from omnibci.infrastructure.plugins.loader import PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
@@ -92,7 +93,7 @@ class _Filter(Filter):
 
 
 def _processor(plan):
-    return SignalProcessor(
+    return make_processor(
         detector=None, decoder=None, command_queue=MagicMock(),
         data_manager=MagicMock(), event_bus=MagicMock(),
         sample_rate=1000, baseline_duration=0.008, auto_start_session=False,

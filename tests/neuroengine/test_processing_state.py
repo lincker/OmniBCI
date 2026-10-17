@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import numpy as np
 import pytest
 
+from tests.processing_helpers import make_processor
 from omnibci.domain.classification import Classification
 from omnibci.domain.epoch import Epoch
 from omnibci.domain.events import SessionStarted, TrialCompleted
@@ -15,7 +16,6 @@ from omnibci.infrastructure.signal_processing.processing_state import (
     AwaitingEpochState,
     ProcessingState,
 )
-from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessor
 
 
 def _chunk(samples: int = 6, *, start=None, end=None) -> SignalChunk:
@@ -62,7 +62,7 @@ def _first_marker(chunk, *, starts):
 
 
 def _processor(*, auto_start_session=True):
-    processor = SignalProcessor(
+    processor = make_processor(
         detector=MagicMock(), decoder=MagicMock(), command_queue=MagicMock(),
         data_manager=MagicMock(), event_bus=MagicMock(),
         auto_start_session=auto_start_session, config_revision="session-revision",
@@ -72,7 +72,7 @@ def _processor(*, auto_start_session=True):
     processor.current_epoch = MagicMock(
         build_epoch=MagicMock(return_value=_epoch()), config_revision="epoch-revision",
     )
-    processor.event_publisher = MagicMock()
+    processor.session_runtime._publish_events = MagicMock()
     processor.transition_to_assembling()
     return processor
 
@@ -144,9 +144,9 @@ class TestAssemblingEpochState:
         if failure == "build":
             current_epoch.build_epoch.side_effect = RuntimeError("epoch build failed")
         elif failure == "record":
-            monkeypatch.setattr(processor.session, "record_trial", MagicMock(side_effect=RuntimeError("record failed")))
+            monkeypatch.setattr(processor.session_runtime.session, "record_trial", MagicMock(side_effect=RuntimeError("record failed")))
         elif failure == "publish":
-            processor.event_publisher.publish_all.side_effect = OSError("publisher failed")
+            processor.session_runtime._publish_events.side_effect = OSError("publisher failed")
 
         error = ValueError if failure == "event_mismatch" else OSError if failure == "publish" else RuntimeError
         with pytest.raises(error):
@@ -154,7 +154,7 @@ class TestAssemblingEpochState:
 
         assert processor.current_epoch is current_epoch
         assert processor._current_state is processor._assembling_state
-        assert processor.session.trial_count == (1 if failure == "publish" else 0)
+        assert processor.session_runtime.session.trial_count == (1 if failure == "publish" else 0)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("boundary", [False, True])
@@ -168,8 +168,8 @@ class TestAssemblingEpochState:
 
         assert processor.current_epoch is None
         assert processor._current_state is processor._awaiting_state
-        assert processor.session.trial_count == 0
-        processor.event_publisher.publish_all.assert_not_called()
+        assert processor.session_runtime.session.trial_count == 0
+        processor.session_runtime._publish_events.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_timeout_leaves_active_epoch_unchanged(self):
@@ -285,15 +285,15 @@ class TestCompleteTrial:
 
         completion = processor.complete_trial(_classification())
 
-        assert processor.session.trial_count == 1
-        events = processor.event_publisher.publish_all.call_args.args[0]
+        assert processor.session_runtime.session.trial_count == 1
+        events = processor.session_runtime._publish_events.call_args.args[0]
         assert [type(event) for event in events] == [SessionStarted, TrialCompleted]
         assert completion is events[1]
-        assert completion.session_id == processor.session.session_id
+        assert completion.session_id == processor.session_runtime.session.session_id
         assert completion.trial_number == 1
         assert completion.config_revision == "epoch-revision"
-        assert processor.session.trials[0].config_revision == "epoch-revision"
-        assert processor.session.pop_events() == []
+        assert processor.session_runtime.session.trials[0].config_revision == "epoch-revision"
+        assert processor.session_runtime.session.pop_events() == []
 
     @pytest.mark.parametrize(
         "error",
@@ -306,21 +306,21 @@ class TestCompleteTrial:
         with pytest.raises(type(error), match=str(error)):
             processor.complete_trial(_classification())
 
-        assert processor.session.trial_count == 0
-        processor.event_publisher.publish_all.assert_not_called()
+        assert processor.session_runtime.session.trial_count == 0
+        processor.session_runtime._publish_events.assert_not_called()
 
     @pytest.mark.parametrize("ended", [False, True])
     def test_inactive_session_returns_none_without_recording_or_publishing(self, ended):
         processor = _processor(auto_start_session=ended)
         if ended:
-            processor.session.end()
-        processor.session.pop_events()
+            processor.session_runtime.session.end()
+        processor.session_runtime.session.pop_events()
 
         assert processor.complete_trial(_classification()) is None
 
-        assert processor.session.trial_count == 0
-        assert processor.session.pop_events() == []
-        processor.event_publisher.publish_all.assert_not_called()
+        assert processor.session_runtime.session.trial_count == 0
+        assert processor.session_runtime.session.pop_events() == []
+        processor.session_runtime._publish_events.assert_not_called()
 
     def test_event_id_mismatch_propagates_without_recording_or_publishing(self):
         processor = _processor()
@@ -328,5 +328,5 @@ class TestCompleteTrial:
         with pytest.raises(ValueError, match="does not match"):
             processor.complete_trial(_classification(event_id=8))
 
-        assert processor.session.trial_count == 0
-        processor.event_publisher.publish_all.assert_not_called()
+        assert processor.session_runtime.session.trial_count == 0
+        processor.session_runtime._publish_events.assert_not_called()

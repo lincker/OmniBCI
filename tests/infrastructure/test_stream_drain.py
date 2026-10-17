@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from tests.processing_helpers import make_processor
 from omnibci.application.events import (
     CommandFailureKind, CommandRequest, CommandResult, StreamBarrier, StreamDrainReceipt,
 )
@@ -29,7 +30,7 @@ from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime, AcquisitionCommand
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
-from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessor, SignalProcessorCommand
+from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 from omnibci.shared.events import Event, EventType
 
@@ -95,7 +96,7 @@ def _processor(*, decoder=None, bus=None, data=None, session=None):
         session = BCISession(session_id="session-1")
         session.start()
         session.pop_events()
-    return SignalProcessor(
+    return make_processor(
         _Detector(), decoder or _Decoder(), queue.Queue(), data or DataManager(queue.Queue()),
         bus or _Bus(), session=session, sample_rate=10, baseline_duration=0.2,
         generation="generation-1", config_revision="revision-1",
@@ -205,7 +206,7 @@ async def test_barrier_finishes_first_chunk_when_ready_without_forcing_partial_d
     await processor._current_state.run()
 
     assert decoder.calls == 1
-    assert processor.session.trial_count == 1
+    assert processor.session_runtime.session.trial_count == 1
     events = processor.event_bus.events
     assert [event.type for event in events] == [EventType.TrialCompleted, EventType.CommandResult]
     assert events[0].data.classification.forced is False
@@ -225,7 +226,7 @@ async def test_standby_barrier_discards_decoded_epoch_without_recording_a_trial(
     await processor._current_state.run()
     await processor._current_state.run()
 
-    assert processor.session.trial_count == 0
+    assert processor.session_runtime.session.trial_count == 0
     assert [event.type for event in processor.event_bus.events] == [EventType.CommandResult]
     result = processor.event_bus.events[-1].data
     assert result.ok
@@ -244,10 +245,10 @@ async def test_trial_completion_failure_at_barrier_cannot_be_retried_as_success(
     processor.data_manager.put_data(_chunk(0, start=True))
     await processor._current_state.run()
     current_epoch = processor.current_epoch
-    record_trial = MagicMock(wraps=processor.session.record_trial)
-    publish_all = MagicMock(wraps=processor.event_publisher.publish_all)
-    monkeypatch.setattr(processor.session, "record_trial", record_trial)
-    monkeypatch.setattr(processor.event_publisher, "publish_all", publish_all)
+    record_trial = MagicMock(wraps=processor.session_runtime.session.record_trial)
+    publish_all = MagicMock(wraps=processor.session_runtime._publish_events)
+    monkeypatch.setattr(processor.session_runtime.session, "record_trial", record_trial)
+    monkeypatch.setattr(processor.session_runtime, "_publish_events", publish_all)
     error = RuntimeError("record failed") if failure == "record" else OSError("publish failed")
     failed_operation = record_trial if failure == "record" else publish_all
     failed_operation.side_effect = error
@@ -268,7 +269,7 @@ async def test_trial_completion_failure_at_barrier_cannot_be_retried_as_success(
         assert decoder.calls == 1
         assert record_trial.call_count == 1
         assert publish_all.call_count == (1 if failure == "publish" else 0)
-        assert processor.session.trial_count == (1 if failure == "publish" else 0)
+        assert processor.session_runtime.session.trial_count == (1 if failure == "publish" else 0)
         # Even recovery of the failing dependency cannot undo a partial attempt.
         failed_operation.side_effect = None
 
@@ -285,7 +286,7 @@ async def test_incomplete_epoch_and_pretrigger_are_discarded_with_diagnostic_rec
     await processor._current_state.run()
 
     assert decoder.calls == 0
-    assert processor.session.trial_count == 0
+    assert processor.session_runtime.session.trial_count == 0
     assert processor.current_epoch is None
     assert processor._current_state is processor._awaiting_state
     assert processor.pretrigger.take_pre_trigger_data(np.empty((1, 0))).shape[1] == 0
@@ -334,7 +335,7 @@ async def test_decoder_error_at_barrier_returns_execution_failure():
     result = processor.event_bus.events[-1].data
     assert result.failure_kind is CommandFailureKind.EXECUTION_FAILED
     assert not result.ok
-    assert processor.session.trial_count == 0
+    assert processor.session_runtime.session.trial_count == 0
     processor.data_manager.put_data(_barrier(0, command_id="retry"))
     await processor._current_state.run()
     assert not processor.event_bus.events[-1].data.ok
@@ -438,7 +439,7 @@ async def test_recording_waits_for_slow_backlog_and_checks_actual_projection(pro
             assert record.state is SessionRecordState.ENDED
             assert record.trial_count == 1
         assert time.monotonic() - started >= 0.4
-        assert processor.session.trial_count == 1
+        assert processor.session_runtime.session.trial_count == 1
     finally:
         processor._should_stop = True
         await processing_task

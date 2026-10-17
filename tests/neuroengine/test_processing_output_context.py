@@ -5,12 +5,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.processing_helpers import make_processor
 from omnibci.application.events import CommandRequest
 from omnibci.application.plugin_profiles import ProfileBinding
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.signal_processing import configuration_transactions as transactions_module
 from omnibci.infrastructure.signal_processing.pipeline_configuration import ConfiguredPipeline, validate_output_context
-from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessor, SignalProcessorCommand
+from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.shared.events import EventType
 from tests.neuroengine.test_pipeline_configuration import selected_snapshot
@@ -28,7 +29,7 @@ def context_update():
         PluginCatalog().resolve_legacy("effector", "logger").selection, {},
     ).to_dict())
     events = []
-    processor = SignalProcessor(
+    processor = make_processor(
         detector=Markers(), decoder=ValueDecoder(), filters=[Add(1)],
         command_queue=Queue(), data_manager=DataManager(buffer=Queue()),
         event_bus=SimpleNamespace(put_event=events.append), sample_rate=250,
@@ -51,7 +52,7 @@ def result(events):
 
 def test_confirmed_output_context_keeps_objects_and_updates_next_epoch_revision(context_update):
     processor, before, candidate, events = context_update
-    decoder, filters, detector, session = processor._decoder, processor._filters, processor.detector, processor.session
+    decoder, filters, detector, session = processor._decoder, processor._filters, processor.detector, processor.session_runtime.session
     update(processor, candidate)
     receipt = result(events)
     assert receipt.ok
@@ -60,8 +61,8 @@ def test_confirmed_output_context_keeps_objects_and_updates_next_epoch_revision(
     assert processor._decoder is decoder
     assert processor._filters is filters
     assert processor.detector is detector
-    assert processor.session is session
-    assert processor.session.config_revision == "old"
+    assert processor.session_runtime.session is session
+    assert processor.session_runtime.session.config_revision == "old"
     assert processor.new_epoch_processor().config_revision == "new"
     candidate["PLUGINS.bindings"][-1]["parameters"]["mutated"] = True
     assert processor._settings_snapshot["PLUGINS.bindings"][-1]["parameters"] == {}

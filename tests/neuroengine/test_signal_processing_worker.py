@@ -166,9 +166,9 @@ class TestProcessorWiring:
         assert "test-revision" in message
         reporter.failed.assert_called_once_with("run", raised.value)
         reporter.close.assert_called_once_with()
-        assert worker.signal_processor.session.session_id == "test-session"
+        assert worker.session_runtime.session.session_id == "test-session"
         assert worker.signal_processor._signal_receipt == receipt
-        assert worker.signal_processor.session.trial_count == 0
+        assert worker.session_runtime.session.trial_count == 0
         assert all(item.args[0].type is not EventType.TrialCompleted
                    for item in worker.event_bus.put_event.call_args_list)
 
@@ -186,10 +186,9 @@ class TestProcessorWiring:
             command_queue=worker.command_queue,
             data_manager=worker.data_manager,
             event_bus=worker.event_bus,
-            session=None,
+            session_runtime=worker.session_runtime,
             baseline_duration=0.3,
             filters=[],
-            auto_start_session=False,
             generation=None,
             config_revision=None,
             settings_snapshot=worker._snapshot(),

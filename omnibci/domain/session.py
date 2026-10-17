@@ -10,7 +10,7 @@ The aggregate root is intentionally decoupled from persistence, transport,
 and infrastructure.  It holds a list of pending domain events that the
 infrastructure layer must drain and publish after each operation.
 
-Usage (inside SignalProcessor or an application service):
+Usage (inside SessionRuntime or an application service):
     session = BCISession(session_id="abc", paradigm="classic40SSVEP")
     session.start()
     ...
@@ -173,11 +173,11 @@ class BCISession:
         )
 
     def record_trial(
-        self, epoch: Epoch, classification: Classification,
+        self, epoch: Epoch | EpochInfo, classification: Classification,
         *, config_revision: Optional[str] = None,
     ) -> TrialCompleted:
         """
-        Record a completed trial and emit TrialCompleted.
+        Record a completed trial from an Epoch or its metadata and emit TrialCompleted.
 
         Business rules:
           - Session must be RUNNING.
@@ -202,7 +202,7 @@ class BCISession:
         trial = Trial(
             trial_number=trial_number,
             # Trial history keeps only metadata, never the signal matrix.
-            epoch_info=EpochInfo.from_epoch(epoch),
+            epoch_info=epoch if isinstance(epoch, EpochInfo) else EpochInfo.from_epoch(epoch),
             classification=classification,
             config_revision=revision,
         )
