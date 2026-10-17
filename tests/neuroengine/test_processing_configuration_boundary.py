@@ -7,12 +7,13 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from omnibci.application.events import CommandRequest
+from omnibci.application.events import CommandFailureKind, CommandRequest
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter, Prediction
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.ipc.data_manager import DataManager
-from omnibci.infrastructure.neuroengine.processing import signal_processor as module
-from omnibci.infrastructure.neuroengine.processing.pipeline_configuration import ConfiguredPipeline
+from omnibci.infrastructure.neuroengine.signal_processing import configuration_transactions as transactions_module
+from omnibci.infrastructure.neuroengine.signal_processing import signal_processor as module
+from omnibci.infrastructure.neuroengine.signal_processing.pipeline_configuration import ConfiguredPipeline
 from omnibci.shared.events import EventType
 
 
@@ -20,7 +21,7 @@ class ValueDecoder(Decoder):
     def should_decode(self, window):
         return True
 
-    def decode(self, window, latest):
+    def decode(self, window, latest_samples):
         return Prediction(int(window[0, 0]))
 
 
@@ -68,7 +69,7 @@ def configured(monkeypatch):
     replacement = ConfiguredPipeline(ValueDecoder(), (Add(2), Multiply(3)),
                                       {"CONFIG.revision": "new", "CONFIG.generation": "run"})
     builder = MagicMock(return_value=replacement)
-    monkeypatch.setattr(module, "build_pipeline_update", builder)
+    monkeypatch.setattr(transactions_module, "build_pipeline_update", builder)
     return processor, events, replacement, builder
 
 
@@ -151,7 +152,7 @@ def test_preparation_failure_retains_previous_objects_and_revision(configured):
     _stage(processor)
     assert processor._decoder is old_decoder
     assert processor.config_revision == "old"
-    assert processor._pending_configuration is None
+    assert processor._configuration_transactions.pending is None
     assert not _results(events)[0].ok
 
 
@@ -182,16 +183,98 @@ async def test_one_pending_update_and_duplicate_id_never_construct_twice(configu
 
 
 @pytest.mark.asyncio
-async def test_conflicting_duplicate_cancels_pending_update_without_orphan_switch(configured):
-    processor, events, _, _ = configured
+async def test_conflicting_duplicate_preserves_pending_update_until_boundary(configured):
+    processor, events, replacement, builder = configured
     await _feed(processor, [7, 0, 0])
     _stage(processor)
     _stage(processor, settings_snapshot={"CONFIG.revision": "different"})
-    assert not _results(events)[0].ok
-    assert _results(events)[0].data["status"] == "cancelled"
+    conflict, = _results(events)
+    assert not conflict.ok
+    assert conflict.error_code == "PROCESSING_CONFIGURATION_CONFLICT"
+    assert conflict.failure_kind is CommandFailureKind.REJECTED
+    assert conflict.data is None
+    _stage(processor)
+    assert _results(events) == [conflict]
     await _feed(processor, [0, 255, 9, 0], 2)
-    assert processor.config_revision == "old"
-    assert processor.current_epoch.config_revision == "old"
+    assert processor.config_revision == "new"
+    assert processor.current_epoch.config_revision == "new"
+    assert processor.current_epoch.decoder is replacement.decoder
+    assert _results(events)[-1].data["status"] == "applied"
+    builder.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["applied", "rejected", "cancelled", "busy"])
+async def test_conflicting_duplicate_preserves_terminal_receipt_and_original_retry(configured, outcome):
+    processor, events, _, builder = configured
+    if outcome in {"cancelled", "busy"}:
+        await _feed(processor, [7, 0, 0])
+    if outcome == "busy":
+        _stage(processor, "waiting")
+    elif outcome == "rejected":
+        builder.side_effect = ValueError("invalid replacement")
+    _stage(processor)
+    if outcome == "cancelled":
+        _cancel(processor)
+    original, = [result for result in _results(events, EventType.StageProcessingConfiguration.name)
+                 if result.command_id == "update"]
+    calls = builder.call_count
+    _stage(processor, settings_snapshot={"CONFIG.revision": "different"})
+    conflict = _results(events)[-1]
+    assert not conflict.ok
+    assert conflict.error_code == "PROCESSING_CONFIGURATION_CONFLICT"
+    assert conflict.data is None
+    _stage(processor)
+    assert _results(events)[-1] == original
+    assert builder.call_count == calls
+    if outcome == "busy":
+        await _feed(processor, [0, 255, 9, 0], 2)
+        assert processor.config_revision == "new"
+        assert _results(events)[-1].command_id == "waiting"
+        _stage(processor)
+        assert _results(events)[-1] == original
+
+
+def test_retry_ignores_dictionary_key_order(configured):
+    processor, events, _, builder = configured
+    _stage(processor)
+    original, = _results(events)
+    processor._execute((module.SignalProcessorCommand.stage_configuration, CommandRequest("update", {
+        "generation": "run", "expected_revision": "old",
+        "settings_snapshot": {"CONFIG.generation": "run", "CONFIG.revision": "new"},
+    })))
+    assert _results(events) == [original, original]
+    builder.assert_called_once()
+
+
+@pytest.mark.parametrize("invalid", [object(), float("nan")], ids=["not-json", "nan"])
+def test_unfingerprintable_request_does_not_reserve_command_id(configured, invalid):
+    processor, events, _, builder = configured
+    _stage(processor, settings_snapshot={"invalid": invalid})
+    rejected, = _results(events)
+    assert rejected.error_code == "PROCESSING_CONFIGURATION_REJECTED"
+    _stage(processor)
+    assert _results(events)[-1].ok
+    assert processor.config_revision == "new"
+    builder.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pending", [False, True])
+async def test_unfingerprintable_duplicate_preserves_original_command(configured, pending):
+    processor, events, _, builder = configured
+    if pending:
+        await _feed(processor, [7, 0, 0])
+    _stage(processor)
+    _stage(processor, settings_snapshot={"invalid": float("nan")})
+    assert _results(events)[-1].error_code == "PROCESSING_CONFIGURATION_REJECTED"
+    if pending:
+        await _feed(processor, [0, 255, 9, 0], 2)
+    original = next(result for result in _results(events) if result.ok)
+    _stage(processor)
+    assert _results(events)[-1] == original
+    assert processor.config_revision == "new"
+    builder.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -218,13 +301,38 @@ def test_timeout_cancel_after_install_reports_applied_and_never_rolls_back(confi
     assert processor.config_revision == "new"
 
 
-def test_cancel_tombstone_blocks_a_later_stage_with_same_id(configured):
+@pytest.mark.parametrize("snapshot", [
+    {"CONFIG.revision": "new", "CONFIG.generation": "run"},
+    {"CONFIG.revision": "different"},
+    {"invalid": float("nan")},
+])
+def test_cancel_tombstone_blocks_a_later_stage_with_same_id(configured, snapshot):
     processor, events, _, builder = configured
     _cancel(processor)
-    _stage(processor)
+    cancelled = _results(events)[0]
+    _stage(processor, settings_snapshot=snapshot)
     assert processor.config_revision == "old"
-    assert _results(events)[-1].data["status"] == "cancelled"
+    assert _results(events)[-1] == cancelled
     builder.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_early_cancellation_preserves_another_pending_update(configured):
+    processor, events, _, builder = configured
+    await _feed(processor, [7, 0, 0])
+    _stage(processor)
+    _cancel(processor, target="delayed")
+    cancelled, acknowledgement = _results(events)
+    assert cancelled.command_id == "delayed"
+    assert cancelled.data["status"] == "cancelled"
+    assert acknowledgement.ok
+    await _feed(processor, [0, 255, 9, 0], 2)
+    assert processor.config_revision == "new"
+    assert _results(events)[-1].command_id == "update"
+    assert _results(events)[-1].data["status"] == "applied"
+    _stage(processor, "delayed")
+    assert _results(events)[-1] == cancelled
+    builder.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -238,7 +346,7 @@ async def test_stop_or_session_end_returns_cancelled_receipt_for_pending_update(
     result, = _results(events)
     assert not result.ok
     assert result.data["status"] == "cancelled"
-    assert processor._pending_configuration is None
+    assert processor._configuration_transactions.pending is None
     assert processor.config_revision == "old"
 
 

@@ -121,6 +121,11 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
 
   return <div className="setting-group processing-input"><h2>{t("processing.heading")}</h2>
     <p className="setting-description">{t("processing.intro")}</p>
+    <ol className="processing-flow" aria-label={t("processing.flowLabel")}>
+      <li>{t("app.acquisition")}</li><li>{t("processing.flowMapping")}</li><li>{t("processing.flowEpoching")}</li>
+      <li>{t("profiles.slotFilters")} <small>{t("processing.flowOptional")}</small></li><li>{t("profiles.slotDecoder")}</li>
+    </ol>
+    <p className="setting-description">{t("processing.pipelineSettings")}</p>
     <div className="input-source" aria-label={t("processing.sourceInfoLabel")}>
       <p>{t("processing.dataSource", { source: binding ? `${binding.profile_name ?? binding.profile_id ?? binding.source_id} · ${binding.source_id}` : t("processing.noSource") })}</p>
       {source ? <p>{t("processing.sourceSummary", { rate: source.sample_rate, count: channels.length })}</p>

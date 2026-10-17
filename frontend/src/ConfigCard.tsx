@@ -120,7 +120,7 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
     const label = t(fieldLabels[entry.key]);
     return <div className={`setting-row ${draft[entry.key] !== undefined ? "modified" : ""}`} key={entry.key}>
       <label className="setting-label" htmlFor={fieldId}>{label}</label>
-      <p className="setting-description">{entry.key === "NEUROENGINE.queue_size" ? t("settings.queueDescription") : t("settings.baselineDuration")}</p>
+      <p className="setting-description">{entry.key === "NEUROENGINE.queue_size" ? t("settings.queueDescription") : t("settings.preTriggerDescription")}</p>
       <input id={fieldId} aria-label={label} disabled={busy} value={raw} type="number"
         step={entry.type === "int" ? 1 : "any"} onChange={(event) => onChange(event.target.value)} />
     </div>;

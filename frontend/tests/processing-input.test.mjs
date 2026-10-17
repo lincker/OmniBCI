@@ -122,6 +122,9 @@ async function withInput(action, { value = mapping("C3", "C4"), descriptor = sou
 test("mapping orders stable channel IDs and decoder names without altering Acquisition metadata", async () => {
   const original = clone(source);
   await withInput(async (view, calls) => {
+    const flow = elements(view.tree).find((element) => element.props["aria-label"] === "Signal Processing data flow");
+    assert.equal(text(flow), "AcquisitionChannel mappingEpochingFilters (optional)Decoder");
+    assert.match(text(view.tree), /Epoching and pre-trigger settings remain/);
     await click(view, "Move input 2 up");
     await change(view, "Input 1 name", "MotorRight");
     await click(view, "Preview mapping");

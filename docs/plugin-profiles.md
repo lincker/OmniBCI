@@ -28,7 +28,7 @@ persists its values. Use **Review and apply profile** to change the selected
 configuration. The module summary distinguishes the configuration selected for
 the next start from a running configuration whose revision has been acknowledged.
 
-Processing separates Decoder, Epoch detector, and the ordered Filter chain. Each
+Signal Processing separates Decoder, Epoch boundary detector, and the ordered Filter chain. Each
 filter instance selects its own plugin and profile. Browsing or saving another
 profile preserves pending filter order; applying the chain is a separate action.
 

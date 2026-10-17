@@ -42,7 +42,7 @@ not an attempt to reconstruct that old Profile.
   validated and preserved, including zero.
 - Filter order and repeated aliases are retained with distinct instance IDs.
 - Host settings and unrelated settings remain in the accepted snapshot.
-- Source, Decoder, Epoch Detector and Paradigm aliases must be explicit. Empty
+- Source, Decoder, Epoch boundary detector and Paradigm aliases must be explicit. Empty
   Trigger and Effector aliases remain unselected.
 - Each alias must resolve to an exact package, contribution and version with a
   configuration schema. Missing or ambiguous identities block initialization.
@@ -55,11 +55,11 @@ not an attempt to reconstruct that old Profile.
 Initialization, direct activation, runtime review, application and engine startup
 all use `PluginProfileService.validate_activation()`:
 
-- Source, Decoder, Epoch Detector and Paradigm bindings are required.
+- Source, Decoder, Epoch boundary detector and Paradigm bindings are required.
 - Enabled Actuation requires an Effector binding.
 - Every binding must match its installed configuration schema and version, with
   all defaults resolved, including dormant output bindings.
-- Acquisition and Processing capabilities must support the current platform.
+- Acquisition and Signal Processing capabilities must support the current platform.
   The Effector must also be available when Actuation is enabled. Runtime changes
   additionally check outputs that are already active.
 - Stimulation starts separately, so its dormant Paradigm/Trigger selections do

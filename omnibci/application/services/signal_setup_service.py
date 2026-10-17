@@ -178,7 +178,7 @@ class SignalSetupService:
             result = self.commands.request(EventType.PrepareSignalProcessing,
                                            {"plan": plan.to_dict(), "receipt": receipt})
             if result.data != receipt:
-                raise RuntimeError("Processing did not acknowledge the current signal plan")
+                raise RuntimeError("Signal Processing did not acknowledge the current signal plan")
             self._receipt, self._plan = receipt, plan
             self._bound_key, self._source_fingerprint = source_key, metadata.fingerprint
             return deepcopy(receipt)

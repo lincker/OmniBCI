@@ -5,13 +5,14 @@ import multiprocessing as mp
 import threading
 from queue import Full
 
+from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
-from omnibci.shared.events import EventType
-from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessorCommand
-from omnibci.infrastructure.neuroengine.processing.worker import SignalProcessingWorker
+from omnibci.shared.events import Event, EventType
+from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessorCommand
+from omnibci.infrastructure.neuroengine.signal_processing.worker import SignalProcessingWorker
 from omnibci.infrastructure.neuroengine.gateway import PeerGateway
 from omnibci.infrastructure.neuroengine.stimulation_feedback import StimulationFeedbackHandler
 from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
@@ -267,8 +268,16 @@ class NeuroEngine:
         self._startup_channels_closed = True
 
     async def _main_loop(self) -> None:
-        # The timeout is a fallback for stop flags set before the loop is bound.
+        # The timeout also bounds detection of a worker that exits after READY.
         while not self.should_stop:
+            for started, process, name in (
+                (self._acquisition_started, self.acquisition_worker, "Acquisition"),
+                (self._processor_started, self.signal_processing_worker, "Signal Processing"),
+            ):
+                if started and not process.is_alive():
+                    raise RuntimeError(
+                        f"{name} subprocess exited unexpectedly (exit code {process.exitcode})"
+                    )
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=1.0)
             except asyncio.TimeoutError:
@@ -434,7 +443,9 @@ class NeuroEngine:
     def _register_event_listeners(self) -> None:
         for event_type, (queue, command, carry_data) in self._command_routes().items():
             self.event_bus.register_event_listener(
-                event_type, self._make_command_router(queue, command, carry_data)
+                event_type, self._make_command_router(
+                    queue, command, carry_data, event_bus=self.event_bus,
+                )
             )
         # Non-routing event: flips the shutdown flag, no command enqueued.
         self.event_bus.register_event_listener(
@@ -462,19 +473,30 @@ class NeuroEngine:
                 )
 
     @staticmethod
-    def _make_command_router(queue: mp.Queue, command, carry_data: bool = False) -> "callable":
+    def _make_command_router(queue: mp.Queue, command, carry_data: bool = False,
+                             *, event_bus: EventBus) -> "callable":
         """
         Build a listener that enqueues *command* on *queue*.
 
         With carry_data the event's payload travels along as ``(command, data)``;
         otherwise the bare command is enqueued and the event is ignored.
         """
-        if carry_data:
-            def _route(event) -> None:
-                queue.put((command, event.data))
-        else:
-            def _route(*_) -> None:
-                queue.put(command)
+        def _route(event) -> None:
+            try:
+                queue.put_nowait((command, event.data) if carry_data else command)
+            except Full:
+                request = CommandRequest.from_value(event.data) if carry_data else None
+                if request is None:
+                    logger.warning("Command queue is full; rejecting %s", event.type.name)
+                    return
+                event_bus.put_event(Event(EventType.CommandResult, CommandResult(
+                    command_id=request.command_id,
+                    command=event.type.name,
+                    ok=False,
+                    message="Command queue is full; retry when the worker is available",
+                    error_code="COMMAND_QUEUE_FULL",
+                    failure_kind=CommandFailureKind.REJECTED,
+                )))
         return _route
 
     def _stop_neuro_engine_system(self, *_) -> None:

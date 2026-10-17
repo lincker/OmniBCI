@@ -7,16 +7,19 @@ multiprocessing or OS resources are used.
 from __future__ import annotations
 
 import asyncio
+import queue
 import threading
 import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from omnibci.application.events import CommandFailureKind, CommandRequest
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
+from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.shared.events import EventType, Event
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
-from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessorCommand
+from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessorCommand
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +53,12 @@ def _mark_resources_started(eng: NeuroEngine) -> None:
     eng._processor_started = True
     eng._event_bus_started = True
     eng._gateway_started = True
+
+
+class _BoundedCommandQueue(queue.Queue):
+    def put(self, item, block=True, timeout=None):
+        # Bound a regression's blocking write so the test cannot hang.
+        return super().put(item, block=block, timeout=0.05 if block else None)
 
 
 _COMMAND_ROUTES = [
@@ -226,6 +235,49 @@ class TestThreadReadiness:
 # ---------------------------------------------------------------------------
 
 class TestEventRouting:
+    @pytest.mark.parametrize("event_type,queue_name", [
+        (EventType.StartStream, "acquisition_command_queue"),
+        (EventType.StopAndDrain, "acquisition_command_queue"),
+        (EventType.StageProcessingConfiguration, "processor_command_queue"),
+    ])
+    def test_full_command_queue_returns_correlated_rejection(self, event_type, queue_name):
+        command_queue = _BoundedCommandQueue(maxsize=1)
+        command_queue.put_nowait("existing command")
+        eng = _make_engine(**{queue_name: command_queue})
+        handler = _registered_handlers(eng)[event_type]
+
+        handler(Event(event_type, CommandRequest("request-1", {})))
+
+        result_event = eng.event_bus.put_event.call_args.args[0]
+        assert result_event.type is EventType.CommandResult
+        assert result_event.data.command_id == "request-1"
+        assert result_event.data.command == event_type.name
+        assert result_event.data.ok is False
+        assert result_event.data.failure_kind is CommandFailureKind.REJECTED
+        assert result_event.data.error_code == "COMMAND_QUEUE_FULL"
+        assert command_queue.get_nowait() == "existing command"
+        assert command_queue.empty()
+
+    @pytest.mark.asyncio
+    async def test_full_command_queue_keeps_event_dispatch_responsive(self):
+        command_queue = _BoundedCommandQueue(maxsize=1)
+        command_queue.put_nowait("existing command")
+        bus = EventBus(queue.Queue())
+        eng = _make_engine(event_bus=bus, processor_command_queue=command_queue)
+        eng._register_event_listeners()
+        received = asyncio.get_running_loop().create_future()
+        bus.register_event_listener(EventType.CommandResult, received.set_result)
+        await bus.start()
+        try:
+            bus.put_event(Event(EventType.StartSession, CommandRequest("session-1", {})))
+            bus.put_event(Event(EventType.CloseAllNeuroEngineProcessSystem))
+            result_event = await asyncio.wait_for(received, timeout=1)
+            assert result_event.data.command_id == "session-1"
+            assert result_event.data.error_code == "COMMAND_QUEUE_FULL"
+            assert eng.should_stop is True
+        finally:
+            await bus.stop()
+
     def test_registers_each_expected_event_once(self):
         eng = _make_engine()
         _registered_handlers(eng)
@@ -257,14 +309,14 @@ class TestEventRouting:
         }
         expected = (command, payload) if carries_payload else command
         target_queue = getattr(eng, queue_name)
-        target_queue.put.assert_called_once_with(expected)
+        target_queue.put_nowait.assert_called_once_with(expected)
 
         other_queue = (
             eng.processor_command_queue
             if queue_name == "acquisition_command_queue"
             else eng.acquisition_command_queue
         )
-        other_queue.put.assert_not_called()
+        other_queue.put_nowait.assert_not_called()
 
     def test_registered_close_handler_stops_without_queueing(self):
         eng = _make_engine()
@@ -274,8 +326,8 @@ class TestEventRouting:
         handler(Event(EventType.CloseAllNeuroEngineProcessSystem))
 
         assert eng.should_stop is True
-        eng.acquisition_command_queue.put.assert_not_called()
-        eng.processor_command_queue.put.assert_not_called()
+        eng.acquisition_command_queue.put_nowait.assert_not_called()
+        eng.processor_command_queue.put_nowait.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -372,8 +424,12 @@ class TestServeLifecycle:
 
     def test_cross_thread_stop_wakes_main_loop_promptly(self):
         eng = _make_engine()
-        eng.acquisition_worker.is_alive.return_value = False
-        eng.signal_processing_worker.is_alive.return_value = False
+        for worker in (eng.acquisition_worker, eng.signal_processing_worker):
+            worker.is_alive.return_value = True
+            worker.join.side_effect = lambda **kw: [
+                setattr(process.is_alive, "return_value", False)
+                for process in (eng.acquisition_worker, eng.signal_processing_worker)
+            ]
         stop_time = {}
 
         def stop_engine():

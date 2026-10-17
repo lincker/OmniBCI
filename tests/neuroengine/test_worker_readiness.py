@@ -15,8 +15,8 @@ from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
-from omnibci.infrastructure.neuroengine.processing.worker import SignalProcessingWorker
-from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessorCommand
+from omnibci.infrastructure.neuroengine.signal_processing.worker import SignalProcessingWorker
+from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessorCommand
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessStartupError, ChildProcessStartupTimeout, StartupChannel,
     StartupReport, StartupReporter, wait_for_startup_report,
@@ -25,7 +25,7 @@ from omnibci.infrastructure.process_lifecycle import (
 
 @pytest.mark.parametrize("worker_type,service_path,run_name", [
     (AcquisitionWorker, "omnibci.infrastructure.acquisition.worker.AcquisitionRuntime", "_run"),
-    (SignalProcessingWorker, "omnibci.infrastructure.neuroengine.processing.worker.SignalProcessor", "_run_processor"),
+    (SignalProcessingWorker, "omnibci.infrastructure.neuroengine.signal_processing.worker.SignalProcessor", "_run_processor"),
 ])
 def test_worker_reports_ready_after_construction_before_loop(worker_type, service_path, run_name):
     reporter = MagicMock(spec=StartupReporter)
@@ -61,7 +61,7 @@ def test_worker_reports_all_startup_failures_and_closes(worker_type, loader, sta
 
 @pytest.mark.parametrize("worker_type,loader,service_path,stage", [
     (AcquisitionWorker, "_load_data_source", "omnibci.infrastructure.acquisition.worker.AcquisitionRuntime", "acquisition"),
-    (SignalProcessingWorker, "_snapshot", "omnibci.infrastructure.neuroengine.processing.worker.SignalProcessor", "processor"),
+    (SignalProcessingWorker, "_snapshot", "omnibci.infrastructure.neuroengine.signal_processing.worker.SignalProcessor", "processor"),
 ])
 def test_service_constructor_failure_never_reports_ready(worker_type, loader, service_path, stage):
     reporter = MagicMock(spec=StartupReporter)
@@ -79,7 +79,7 @@ def test_service_constructor_failure_never_reports_ready(worker_type, loader, se
 def _engine_with_channels(*, delayed=None, stale=False, timeout=1):
     workers = [MagicMock(), MagicMock()]
     channels = []
-    for index, (name, process) in enumerate(zip(("Acquisition", "Processing"), workers)):
+    for index, (name, process) in enumerate(zip(("Acquisition", "Signal Processing"), workers)):
         process.is_alive.return_value = True
         process.join.side_effect = lambda **kw: [setattr(p.is_alive, "return_value", False) for p in workers]
         receiver = MagicMock()
@@ -96,6 +96,30 @@ def _engine_with_channels(*, delayed=None, stale=False, timeout=1):
                          MagicMock(), gateway, startup_channels=tuple(channels),
                          startup_timeout_s=timeout, config_revision="r", generation="g")
     return engine, channels
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker_index", [0, 1])
+async def test_worker_exit_after_ready_stops_the_engine_graph(worker_index):
+    engine, channels = _engine_with_channels()
+    task = asyncio.create_task(engine.serve())
+    try:
+        assert await asyncio.to_thread(engine._startup_complete.wait, 1)
+        channel = channels[worker_index]
+        channel.process.exitcode = 7
+        channel.process.is_alive.return_value = False
+
+        with pytest.raises(RuntimeError, match=f"{channel.component} subprocess exited unexpectedly"):
+            await asyncio.wait_for(task, timeout=1.5)
+
+        assert engine.shutdown_complete
+        engine.event_bus.stop.assert_awaited_once()
+        engine.peer_gateway.stop.assert_awaited_once()
+        assert all(not item.process.is_alive() for item in channels)
+    finally:
+        engine.should_stop = True
+        if not task.done():
+            await task
 
 
 @pytest.mark.asyncio
@@ -210,7 +234,7 @@ def legacy_decoder(tmp_path, monkeypatch):
             def should_decode(self, window):
                 return False
 
-            def decode(self, window, latest):
+            def decode(self, window, latest_samples):
                 return None
     '''), encoding="utf-8")
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(plugin_dir))
@@ -247,7 +271,7 @@ def test_spawned_configured_worker_reports_real_plugin_initialization(kind, brok
     context = mp.get_context("spawn")
     commands, data, events = (context.Queue() for _ in range(3))
     receiver, sender = context.Pipe(duplex=False)
-    component = "Acquisition" if kind == "acquisition" else "Processing"
+    component = "Acquisition" if kind == "acquisition" else "Signal Processing"
     reporter = StartupReporter(sender, component=component, config_revision="r", generation="g")
     broken_kind = ("acquisition" if kind == "acquisition" else "decoder") if broken else None
     snapshot = _pinned_worker_snapshot(decoder_alias, broken_kind)

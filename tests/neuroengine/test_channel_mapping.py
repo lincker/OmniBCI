@@ -14,9 +14,9 @@ from omnibci.domain.channel_mapping import (
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter
 from omnibci.domain.signal import SignalChunk
-from omnibci.infrastructure.neuroengine.processing import pipeline_configuration, signal_configuration
-from omnibci.infrastructure.neuroengine.processing.signal_processor import SignalProcessor, SignalProcessorCommand
-from omnibci.infrastructure.neuroengine.processing.worker import SignalProcessingWorker
+from omnibci.infrastructure.neuroengine.signal_processing import pipeline_configuration, signal_configuration
+from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessor, SignalProcessorCommand
+from omnibci.infrastructure.neuroengine.signal_processing.worker import SignalProcessingWorker
 from omnibci.infrastructure.plugins.loader import PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
@@ -65,9 +65,9 @@ class _Decoder(Decoder):
     def should_decode(self, window):
         return True
 
-    def decode(self, window, latest):
+    def decode(self, window, latest_samples):
         self.window = window.copy()
-        self.latest = latest.copy()
+        self.latest_samples = latest_samples.copy()
         return None
 
 
@@ -115,10 +115,11 @@ def test_worker_with_explicit_setup_starts_control_loop_before_plugin_constructi
     monkeypatch.setattr(settings, "use_snapshot", lambda _: None)
     plan = _plan()
     worker = SignalProcessingWorker(command_queue=MagicMock(), settings_snapshot=_snapshot(plan))
-    worker._load_algorithm = MagicMock(side_effect=AssertionError("premature plugin construction"))
+    load = MagicMock(side_effect=AssertionError("premature plugin construction"))
+    monkeypatch.setattr(signal_configuration, "load_signal_pipeline", load)
     worker._run_processor = MagicMock()
     worker.run()
-    worker._load_algorithm.assert_not_called()
+    load.assert_not_called()
     worker._run_processor.assert_called_once_with()
 
 
@@ -132,10 +133,11 @@ def test_historical_decoder_projection_waits_for_observed_input_before_loading(m
     snapshot = {"PLUGINS.bindings": [materialize_processing_binding(
         historical)]}
     worker = SignalProcessingWorker(command_queue=MagicMock(), settings_snapshot=snapshot)
-    worker._load_algorithm = MagicMock(side_effect=AssertionError("premature plugin construction"))
+    load = MagicMock(side_effect=AssertionError("premature plugin construction"))
+    monkeypatch.setattr(signal_configuration, "load_signal_pipeline", load)
     worker._run_processor = MagicMock()
     worker.run()
-    worker._load_algorithm.assert_not_called()
+    load.assert_not_called()
     worker._run_processor.assert_called_once_with()
     assert historical.processing_input is None
 
@@ -147,7 +149,7 @@ def test_prepare_binds_observed_rate_and_is_idempotent(monkeypatch):
     assert processor._decoder is decoder
     assert processor.detector is detector
     assert processor._sample_rate == 250
-    assert processor.baseline_samples == 2
+    assert processor.pre_trigger_samples == 2
     processor.pretrigger.push(np.array([[9.0], [7.0]]))
     buffer = processor.pretrigger
     processor._prepare_signal(_request(plan))
@@ -306,7 +308,7 @@ async def test_subset_or_reordered_channels_still_copy_selected_rows_and_events(
 
 
 @pytest.mark.asyncio
-async def test_channel_mapping_precedes_detector_baseline_window_and_latest(monkeypatch):
+async def test_channel_mapping_precedes_detector_pretrigger_window_and_latest_samples(monkeypatch):
     plan = _plan()
     processor = _processor(plan)
     decoder, detector, signal_filter, _ = _prepare(monkeypatch, processor, plan)
@@ -322,7 +324,7 @@ async def test_channel_mapping_precedes_detector_baseline_window_and_latest(monk
     await processor._current_state.run()
     np.testing.assert_array_equal(signal_filter.baseline, [[31, 32], [11, 12]])
     np.testing.assert_array_equal(decoder.window, [[33, 34, 35], [13, 14, 15]])
-    np.testing.assert_array_equal(decoder.latest, [[34, 35], [14, 15]])
+    np.testing.assert_array_equal(decoder.latest_samples, [[34, 35], [14, 15]])
     assert signal_filter.sample_rate == 250
     for observed, original in zip(detector.seen, chunks, strict=True):
         np.testing.assert_array_equal(observed.triggers, original.triggers)
@@ -353,9 +355,9 @@ async def test_bound_channels_enter_epoch_before_ordered_filters_and_decoder(mon
             return data * 2
 
     class OrderedDecoder(_Decoder):
-        def decode(self, window, latest):
+        def decode(self, window, latest_samples):
             calls.append("decoder")
-            return super().decode(window, latest)
+            return super().decode(window, latest_samples)
 
     decoder, detector = OrderedDecoder(), _Detector()
     monkeypatch.setattr(signal_configuration, "load_signal_pipeline", MagicMock(
@@ -373,10 +375,10 @@ async def test_bound_channels_enter_epoch_before_ordered_filters_and_decoder(mon
 
     assert calls == ["baseline", "scale", "decoder"]
     epoch = processor.current_epoch.build_epoch()
-    np.testing.assert_array_equal(epoch.baseline, [[31, 32], [11, 12]])
+    np.testing.assert_array_equal(epoch.pre_trigger_data, [[31, 32], [11, 12]])
     np.testing.assert_array_equal(epoch.window, [[33, 34, 35], [13, 14, 15]])
     np.testing.assert_array_equal(decoder.window, [[3, 5, 7], [3, 5, 7]])
-    np.testing.assert_array_equal(decoder.latest, [[34, 35], [14, 15]])
+    np.testing.assert_array_equal(decoder.latest_samples, [[34, 35], [14, 15]])
     assert epoch.event_id == 1
     assert epoch.channel_count == 2
     assert epoch.sample_rate == 250
@@ -495,5 +497,5 @@ def test_bundled_pipeline_constructs_with_prepared_sample_rate():
 def test_configured_processor_does_not_allocate_baseline_from_expected_rate():
     processor = _processor(_plan())
     assert processor._sample_rate is None
-    assert processor.baseline_samples == 0
+    assert processor.pre_trigger_samples == 0
     assert processor.pretrigger.capacity == 0

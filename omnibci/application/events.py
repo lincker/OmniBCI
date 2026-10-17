@@ -48,7 +48,7 @@ class StreamBarrier:
 
 @dataclass(frozen=True)
 class StreamDrainReceipt:
-    """Processing completion evidence; physical outputs are not acknowledged."""
+    """Signal Processing completion evidence; physical outputs are not acknowledged."""
 
     generation: str | None
     config_revision: str | None

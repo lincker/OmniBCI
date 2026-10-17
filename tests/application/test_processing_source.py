@@ -1,4 +1,4 @@
-"""Processing follows pinned mappings and the connected acquisition descriptor."""
+"""Signal Processing follows pinned mappings and the connected acquisition descriptor."""
 from copy import deepcopy
 from dataclasses import replace
 

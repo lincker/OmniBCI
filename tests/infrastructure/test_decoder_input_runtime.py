@@ -11,7 +11,7 @@ from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 from omnibci.domain.ports.algorithm import Decoder
 from omnibci.domain.signal import SignalChunk
-from omnibci.infrastructure.neuroengine.processing.signal_configuration import signal_context
+from omnibci.infrastructure.neuroengine.signal_processing.signal_configuration import signal_context
 from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8.curry8 import Curry8DataReader, Curry8Metadata
 from omnibci.infrastructure.plugins.loader import PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog

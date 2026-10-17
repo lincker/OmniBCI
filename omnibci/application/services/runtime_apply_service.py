@@ -91,13 +91,13 @@ class RuntimeApplyCoordinator:
                     "command_id": exc.command_id, "generation": snapshot["CONFIG.generation"],
                 })
             except Exception as reconciliation:
-                raise RuntimeApplyFailure("Processing update outcome could not be reconciled",
+                raise RuntimeApplyFailure("Signal Processing update outcome could not be reconciled",
                                           recovery_required=True) from reconciliation
             if not isinstance(data, dict) or data.get("command_id") != exc.command_id:
-                raise RuntimeApplyFailure("Processing reconciliation command mismatch", recovery_required=True)
+                raise RuntimeApplyFailure("Signal Processing reconciliation command mismatch", recovery_required=True)
             if isinstance(data, dict) and data.get("status") == "cancelled":
                 if data.get("generation") != snapshot["CONFIG.generation"] or data.get("applied_revision") != expected_revision:
-                    raise RuntimeApplyFailure("Processing cancellation identity mismatch", recovery_required=True)
+                    raise RuntimeApplyFailure("Signal Processing cancellation identity mismatch", recovery_required=True)
                 raise RuntimeApplyFailure("Trial boundary was not reached; update cancelled, previous pipeline retained") from exc
         self._pipeline_receipt(data, snapshot)
 
@@ -106,7 +106,7 @@ class RuntimeApplyCoordinator:
         if (not isinstance(data, dict) or data.get("generation") != snapshot["CONFIG.generation"]
                 or data.get("applied_revision") != snapshot["CONFIG.revision"]
                 or data.get("status") != "applied"):
-            raise RuntimeApplyFailure("Processing revision was not acknowledged", recovery_required=True)
+            raise RuntimeApplyFailure("Signal Processing revision was not acknowledged", recovery_required=True)
 
     async def _update_source_revision(self, snapshot, expected_revision):
         data = await self._request(EventType.UpdateAcquisitionRevision, {
@@ -126,7 +126,7 @@ class RuntimeApplyCoordinator:
         try:
             await self._update_source_revision(target, before["CONFIG.revision"])
         except Exception as exc:
-            raise RuntimeApplyFailure(f"Processing applied {target['CONFIG.revision']}, but acquisition acknowledgement failed: {exc}",
+            raise RuntimeApplyFailure(f"Signal Processing applied {target['CONFIG.revision']}, but acquisition acknowledgement failed: {exc}",
                                       recovery_required=True) from exc
         self.engine.acknowledge_configuration(target)
         try:

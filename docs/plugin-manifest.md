@@ -116,7 +116,7 @@ non-Actuation manifests without entrypoints remain visible in the old list;
 exact resolution and `list_contributions` require executable entrypoints.
 
 Bundled packages now use v2 manifests. Scan45 declares acquisition and Windows
-parallel trigger contributions independently. Epoch detection and baseline
+parallel trigger contributions independently. Epoch boundary detection and baseline
 correction also have explicit entrypoints. Classic40's metadata describes its
 existing 240 stimulus frames at 60 Hz (four seconds); no rendering timing changed.
 Profile storage and runtime selection wiring are separate steps.
@@ -131,7 +131,7 @@ Context contains metadata, not global settings or live service objects.
 The class implements its domain port; a registry decorator and `plugin_type`
 attribute are no longer required. The manifest owns its selection identity.
 
-Processing contributions that support prepared channel input declare
+Signal Processing contributions that support prepared channel input declare
 `signal_input_contract = 1` beside their contribution `kind`. Decoder
 contributions can declare `signal_input_contract = 2` together with
 `[contributions.channel_requirements]` to add minimum count, signal type and
@@ -150,13 +150,13 @@ row remains separate. Channel mapping selects and orders rows without changing
 sample values. Undeclared plugins retain the legacy identity path and reject
 changed input before streaming. The bundled CCA
 and FBCCA declare contract 2 with flexible EEG input and no mandatory electrode
-names. The bundled epoch detector and baseline filter retain contract 1.
+names. The bundled epoch boundary detector and baseline-correction filter retain contract 1.
 
 API `1` keeps its existing constructor arguments and alias checks. Constructor
 errors never cause a retry using a different API. All bundled contributions use
 API `2`; direct legacy constructor calls remain compatible during migration.
 Paradigms receive the selected trigger through `bind_trigger()` before setup.
-Acquisition, Processing, Stimulation, and Actuation load only their selected
+Acquisition, Signal Processing, Stimulation, and Actuation load only their selected
 entrypoints. A missing pinned selection never falls back to a legacy alias.
 
 ### Signal-source resumption

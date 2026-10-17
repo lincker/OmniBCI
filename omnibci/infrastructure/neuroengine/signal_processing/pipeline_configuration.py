@@ -40,7 +40,7 @@ def validate_output_context(current: dict, candidate: dict) -> dict:
     output_kinds = {"paradigm", "trigger", "effector"}
     if ([_binding_content(b) for b in before if b.kind not in output_kinds]
             != [_binding_content(b) for b in after if b.kind not in output_kinds]):
-        raise ValueError("Processing or source changes require a pipeline update")
+        raise ValueError("Signal Processing or source changes require a pipeline update")
     mirrors = {"PLUGINS.bindings", "CONFIG.revision", "STIMULATION.paradigm", "ACQUISITION.trigger", "ACTUATION.effector"}
     if ({k: v for k, v in current.items() if k not in mirrors}
             != {k: v for k, v in candidate.items() if k not in mirrors}):

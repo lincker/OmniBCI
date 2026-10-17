@@ -26,15 +26,20 @@ class OzPolarityDemo(Decoder):
         )
 
     def should_decode(self, window: NDArray) -> bool:
-        # Called before the ordered filters; keep this readiness check cheap.
+        # The host checks the accumulated post-trigger window before epoch filters.
         return window.shape[1] >= self.sample_count
 
-    def decode(self, window: NDArray, latest: NDArray) -> Prediction | None:
-        # A forced end-of-epoch decode can bypass should_decode().
+    def decode(self, window: NDArray, latest_samples: NDArray) -> Prediction | None:
+        # window is filtered post-trigger data accumulated so far, not necessarily
+        # a complete trial. A closing boundary can bypass the readiness gate.
         if not self.should_decode(window):
             return None
-        # Rows exclude trigger; whole-window decoders can ignore the latest delta.
+        # latest_samples is required: the most recent mapped epoch
+        # fragment, without epoch filters, or shape (channels, 0) when absent.
+        # It is not all samples since the last decode. This stateless whole-window
+        # decoder ignores it and never modifies either input array in place.
         mean = float(np.mean(window[self.oz_index, :self.sample_count]))
         if not math.isfinite(mean):
             return None
+        # A Prediction ends collection of the current epoch.
         return Prediction(target_id=1 if mean >= 0 else 2)

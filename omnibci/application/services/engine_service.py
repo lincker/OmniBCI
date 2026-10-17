@@ -411,15 +411,22 @@ class NeuroEngineService(EnginePort):
 
     @property
     def is_engine_ready(self) -> bool:
-        """True only after the engine has crossed its startup barrier."""
+        """True after startup only while the engine and both workers are alive."""
         thread = self._engine_thread
-        return bool(
+        if not (
             self._engine is not None
             and self._running
             and self._accepting_commands
             and thread is not None
             and thread.is_alive()
-        )
+        ):
+            return False
+        try:
+            return bool(self._engine.acquisition_worker.is_alive()
+                        and self._engine.signal_processing_worker.is_alive())
+        except ValueError:
+            # Worker cleanup can close handles before the engine thread exits.
+            return False
 
     @property
     def applied_snapshot(self) -> dict | None:
@@ -492,9 +499,11 @@ class NeuroEngineService(EnginePort):
     def _run_engine(self):
         try:
             self._engine.run()
-        except BaseException:
+        except BaseException as exc:
             # Startup failures also cross the explicit readiness barrier. Keep
             # the thread exception contained so recovery owns the failed graph.
+            if self._running:
+                self._admission.quarantine(str(exc))
             logger.exception("NeuroEngine execution failed")
         finally:
             self._accepting_commands = False

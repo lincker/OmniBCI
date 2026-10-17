@@ -46,9 +46,11 @@ export function DecoderDeveloperGuide() {
       <p>{t("guide.importFrom")}<code>omnibci.sdk</code>{t("guide.constructorReceives")}<code>parameters</code>{t("guide.and")}<code>context</code>{t("guide.constructorKeywords")}</p>
       <ul>
         <li><code>should_decode(window)</code>{t("guide.readinessCheck")}</li>
-        <li><code>decode(window, latest)</code>{t("guide.returns")}<code>Prediction(target_id=…)</code>{t("guide.or")}<code>None</code>{t("guide.shortWindowHandling")}</li>
+        <li><code>decode(window, latest_samples)</code>{t("guide.returns")}<code>Prediction(target_id=…)</code>{t("guide.or")}<code>None</code>{t("guide.predictionOutcome")}</li>
         <li>{t("guide.arrayShape")}<code>context.input_signal.channels</code>{t("guide.mappedRows")}<code>context.channel_names</code>{t("guide.originalAcquisition")}</li>
-        <li>{t("guide.orderedFilters")}</li>
+        <li><code>window</code>{t("guide.orderedFilters")}<code>latest_samples</code>{t("guide.latestSamples")}</li>
+        <li>{t("guide.latestRequired")}<code>latest_samples</code>{t("guide.emptyFragment")}<code>(signal_channels, 0)</code>{t("guide.noFallback")}</li>
+        <li>{t("guide.boundaryAndDrain")}</li>
         <li>{t("guide.use")}<code>context.resource_root</code>{t("guide.packagedAssets")}<code>for_new_epoch()</code>{t("guide.epochState")}</li>
       </ul>
       <details><summary>{t("guide.decoderSummary")}</summary><pre><code>{decoder}</code></pre></details>

@@ -2,6 +2,7 @@
 import asyncio
 import json
 from threading import Event as ThreadEvent
+from types import SimpleNamespace
 
 import pytest
 
@@ -61,6 +62,10 @@ class HardwareFreeGraph:
     def __init__(self, snapshot):
         self._started = ThreadEvent()
         self._stopped = ThreadEvent()
+        self.acquisition_worker = SimpleNamespace(
+            is_alive=lambda: self._started.is_set() and not self._stopped.is_set(),
+        )
+        self.signal_processing_worker = self.acquisition_worker
 
     @property
     def should_stop(self):

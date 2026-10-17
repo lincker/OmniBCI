@@ -16,7 +16,7 @@ import pytest
 
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineConfig
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
-from omnibci.infrastructure.neuroengine.processing.worker import SignalProcessingWorker
+from omnibci.infrastructure.neuroengine.signal_processing.worker import SignalProcessingWorker
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +69,7 @@ class TestConfigFromSettings:
         assert cfg.baseline_duration == 0.25
 
     def test_baseline_duration_default(self):
-        # Dataclass default is 0.2 s of pre-trigger baseline (see builder.py).
+        # Dataclass default is 0.2 s of pre-trigger data (see builder.py).
         assert NeuroEngineConfig().baseline_duration == 0.2
 
     def test_worker_stores_baseline_duration(self):

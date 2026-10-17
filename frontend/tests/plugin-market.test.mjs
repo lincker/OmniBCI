@@ -44,6 +44,8 @@ test("offline Decoder guide downloads the executable starter and complete author
   }
   assert.match(html, /required_names/);
   assert.match(html, /context.input_signal.channels/);
+  assert.match(html, /decode\(window, latest_samples\)/);
+  assert.match(html, /latest_samples<\/code> contains the most recently appended samples and does not pass through those window filters/);
   assert.doesNotMatch(html, /href="https?:/);
 });
 

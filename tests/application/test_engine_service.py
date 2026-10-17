@@ -14,6 +14,7 @@ from omnibci.application.commands.engine_commands import (
 )
 from omnibci.application.queries.engine_queries import GetEngineStatusQuery
 from omnibci.application.services.engine_service import NeuroEngineService
+from omnibci.application.services.command_result_service import CommandExecutionError, CommandResultBroker
 from omnibci.shared.events import Event, EventType
 
 
@@ -69,6 +70,49 @@ class TestNeuroEngineServicePortState:
         engine_service._engine_thread.is_alive.return_value = False
 
         assert engine_service.is_engine_ready is False
+
+    @pytest.mark.parametrize("worker", ["acquisition_worker", "signal_processing_worker"])
+    def test_worker_exit_closes_command_admission_before_engine_cleanup(
+        self, engine_service, mock_engine, worker
+    ):
+        engine_service._running = True
+        engine_service._accepting_commands = True
+        engine_service._engine_thread = MagicMock()
+        engine_service._engine_thread.is_alive.return_value = True
+        mock_engine.event_bus.put_event.side_effect = lambda event: setattr(
+            getattr(mock_engine, worker).is_alive, "return_value", False,
+        )
+        broker = CommandResultBroker(engine_service, timeout_s=1)
+
+        with pytest.raises(CommandExecutionError) as raised:
+            broker.request(EventType.StartStream)
+
+        assert raised.value.result.error_code == "ENGINE_STOPPED"
+        assert broker.pending_count == 0
+        assert engine_service.is_engine_ready is False
+        with pytest.raises(RuntimeError, match="not running"):
+            engine_service.dispatch(Event(EventType.StartStream))
+        mock_engine.event_bus.put_event.assert_called_once()
+
+    def test_closed_worker_handle_is_not_running_ready(self, engine_service, mock_engine):
+        engine_service._running = True
+        engine_service._accepting_commands = True
+        engine_service._engine_thread = MagicMock()
+        engine_service._engine_thread.is_alive.return_value = True
+        mock_engine.signal_processing_worker.is_alive.side_effect = ValueError("closed")
+
+        assert engine_service.is_engine_ready is False
+
+    @pytest.mark.parametrize("running", [False, True])
+    def test_execution_failure_quarantines_only_a_running_graph(self, engine_service, mock_engine, running):
+        engine_service._running = running
+        engine_service._accepting_commands = running
+        mock_engine.run.side_effect = RuntimeError("worker exited")
+
+        engine_service._run_engine()
+
+        assert not engine_service._accepting_commands
+        assert engine_service.admission.recovery_required is running
 
     @pytest.mark.asyncio
     async def test_stop_closes_dispatch_gate_before_waiting_for_thread(

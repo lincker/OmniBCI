@@ -14,7 +14,7 @@ Accounts, cloud synchronization, and montage remain outside this implementation.
 | 6 | Versioned profiles, ordered bindings, and activation snapshots | Complete: `da4406a` |
 | 7 | Recoverable legacy configuration migration | Complete: `280672f` |
 | 8 | Explicit Acquisition loading and parameters | Complete: `0b4bd5b` |
-| 9 | Explicit Processing loading and parameters | Complete: `d92615b` |
+| 9 | Explicit Signal Processing loading and parameters | Complete: `d92615b` |
 | 10 | Explicit Stimulation and Actuation loading | Complete: `61635d8` |
 | 11 | One complete configuration snapshot across workers | Complete: `99309e6` |
 | 12 | Worker readiness and revision acknowledgement | Complete: `7ad4e8d` |

@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from omnibci.application.runtime_admission import admitted
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Protocol
@@ -127,16 +128,27 @@ class CommandResultBroker:
                 self._pending.pop(command_id, None)
             raise
 
-        completed = pending.done.wait(wait_s)
+        deadline = time.monotonic() + wait_s
+        engine_stopped = False
+        while not pending.done.wait(min(max(deadline - time.monotonic(), 0), 0.1)):
+            if not self._engine.is_engine_ready:
+                engine_stopped = True
+                break
+            if time.monotonic() >= deadline:
+                break
         with self._lock:
             self._pending.pop(command_id, None)
             result = pending.result
 
         # A result may race the timeout boundary: prefer an already-stored
-        # terminal result even if Event.wait() returned False just before set().
-        if not completed and result is None:
-            raise CommandTimeoutError(command_id, command_name, wait_s)
-        if result is None:  # defensive: done must imply a stored result
+        # terminal result even when a deadline or worker exit was just observed.
+        if result is None and engine_stopped:
+            raise CommandExecutionError(CommandResult(
+                command_id=command_id, command=command_name, ok=False,
+                message="Engine stopped before confirming command execution",
+                error_code="ENGINE_STOPPED", failure_kind=CommandFailureKind.EXECUTION_FAILED,
+            ))
+        if result is None:
             raise CommandTimeoutError(command_id, command_name, wait_s)
         if not result.ok:
             if result.failure_kind is CommandFailureKind.EXECUTION_FAILED:

@@ -1,4 +1,4 @@
-# Signal information and Processing channel mapping
+# Signal information and Signal Processing channel mapping
 
 Acquisition adapts external data sources into a common signal stream and a
 `SignalInfo`. Its `descriptor` describes the adapter output; source
@@ -20,8 +20,8 @@ flowchart LR
         P["Source plugin<br/>Protocol parsing and data conversion"] --> R["Acquisition runtime<br/>Connection, reading, publishing"]
         R --> O["SignalInfo<br/>SignalChunk"]
     end
-    O --> M["Processing<br/>Channel mapping and type declarations"]
-    M --> E["Epoch → Filters → Decoder"]
+    O --> M["Signal Processing<br/>Channel mapping and type declarations"]
+    M --> E["Epoching → Filters → Decoder"]
     C["Application runtime coordination"] -.-> R
     C -.-> M
 ```
@@ -85,7 +85,7 @@ event row are not inserted into that source text.
 
 `SignalSource.describe_output(...) -> SignalInfo` describes the
 adapter's normalized output from the same observation, without querying again.
-The runtime, application and Processing never parse the display text. Plugins
+The runtime, application and Signal Processing never parse the display text. Plugins
 without a valid descriptor can still show metadata, but cannot prepare channel
 mapping.
 
@@ -151,18 +151,18 @@ settings snapshot, loads the source, and passes only the required context to
 `source_id` identifies the configured source. `generation` identifies the current
 engine instance, while `config_revision` identifies its applied configuration.
 `preparation_required` determines whether starting a stream requires a valid
-Processing preparation receipt. Every selected decoder requires preparation,
+Signal Processing preparation receipt. Every selected decoder requires preparation,
 including when its input defaults to all source channels. The Worker derives
-the requirement from the Processing input;
+the requirement from the Signal Processing input;
 the runtime does not read configuration or interpret decoder bindings. Changes
-to Processing input rebuild the runtime with a new preparation requirement.
+to Signal Processing input rebuild the runtime with a new preparation requirement.
 
 The runtime owns connection and stream lifecycle, source metadata inspection,
 and delivery of `SignalChunk` objects. Stopping still waits for the read task,
 and stream draining still sends a barrier after the final chunk. Channel mapping
 and signal processing remain downstream.
 
-## Processing mapping
+## Signal Processing mapping
 
 A decoder profile owns an ordered `ProcessingInput` with schema version 2:
 
@@ -188,37 +188,37 @@ override a conflicting known source type and never mutates Acquisition metadata.
 Decoder requirements validate the resulting types, names and channel count.
 
 Compilation produces ordered `source_indices`, output descriptors, and a derived
-`requires_data_mapping` flag. Processing reuses the incoming `SignalChunk` when
+`requires_data_mapping` flag. Signal Processing reuses the incoming `SignalChunk` when
 all signal channels remain in their physical order, including when only names
 or type declarations change. Selecting a subset or changing the order requires
 mapping, which copies the selected rows and the original event row. It preserves
 sample values and dtype; there is no reference subtraction, bipolar derivation,
 position template, interpolation, scaling or other channel arithmetic.
-The mapped signal then enters Epoch processing, optional Filters and Decoder.
+The mapped signal then enters Epoching, optional Filters and Decoder.
 
 The flag is computed when constructing a plan, including after IPC
 deserialization. It is not configurable, is omitted from serialized plan
 dictionaries, and does not change plan fingerprints. This avoids the mapping
-copy within Processing; cross-process queue transport retains its existing
+copy within Signal Processing; cross-process queue transport retains its existing
 behavior.
 
 Saving a profile does not change a running experiment. Review and Apply pins
-its mapping, rebuilds when necessary, and prepares Processing against the
+its mapping, rebuilds when necessary, and prepares Signal Processing against the
 connected descriptor. Generation, configuration revision, connection identity,
 source fingerprint and plan fingerprint must match before streaming.
 
-Processing starts in standby without constructing Epoch, Filter or Decoder
+Signal Processing starts in standby without constructing EpochDetector, Filter or Decoder
 plugins. Preparation supplies the actual sample rate and mapped channels from
-`SignalInfo`, including the sample rate used for baseline buffering. Later
+`SignalInfo`, including the sample rate used for pre-trigger buffering. Later
 trial-boundary updates reuse that prepared context. Updates received before
 preparation retain validated configuration and defer plugin construction until
 source information is available. Profile expectations are never a fallback
-Processing sample rate.
+Signal Processing sample rate.
 
 ## API and compatibility
 
 Source plugins must return a string from `get_metadata()` and implement
-`describe_output()` to support Processing mapping. The REST metadata response
+`describe_output()` to support Signal Processing mapping. The REST metadata response
 keeps its connection envelope, with `metadata` now a string and `descriptor`
 separate. Third-party sources returning the previous metadata dictionary must
 update this contract; the host does not guess a descriptor by parsing text.

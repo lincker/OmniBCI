@@ -7,7 +7,7 @@ from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
-from omnibci.infrastructure.neuroengine.processing.worker import SignalProcessingWorker
+from omnibci.infrastructure.neuroengine.signal_processing.worker import SignalProcessingWorker
 from omnibci.infrastructure.neuroengine.gateway import PeerGateway
 from omnibci.infrastructure.neuroengine.gateway.peers import (
     stimulation_peer_config,
@@ -27,7 +27,7 @@ class NeuroEngineConfig:
     queue_size: int = 100                    # max items in each mp.Queue
     message_server_ip: str = "127.0.0.1"    # result-push server bind host
     message_server_port: int = 8000         # result-push server bind port
-    baseline_duration: float = 0.2          # seconds of pre-trigger baseline (0 = none)
+    baseline_duration: float = 0.2          # seconds of pre-trigger data (0 = none)
     actuation_enabled: bool = False          # open an actuation listen port + wiring
     actuation_server_ip: str = "127.0.0.1"  # actuation channel bind host
     actuation_server_port: int = 8001        # actuation channel bind port
@@ -119,7 +119,7 @@ class NeuroEngineBuilder:
             config_revision=revision, generation=generation,
         )
         processor_reporter = StartupReporter(
-            processor_sender, component="Processing",
+            processor_sender, component="Signal Processing",
             config_revision=revision, generation=generation,
         )
         acquisition_worker = AcquisitionWorker(
@@ -182,7 +182,7 @@ class NeuroEngineBuilder:
             debug=cfg.debug,
             startup_channels=(
                 StartupChannel("Acquisition", acquisition_worker, acquisition_receiver, acquisition_reporter),
-                StartupChannel("Processing", signal_processing_worker, processor_receiver, processor_reporter),
+                StartupChannel("Signal Processing", signal_processing_worker, processor_receiver, processor_reporter),
             ),
             startup_timeout_s=cfg.startup_timeout_s,
             config_revision=revision,
