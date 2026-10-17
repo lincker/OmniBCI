@@ -78,6 +78,8 @@ _COMMAND_ROUTES = [
      {"session_id": "session-1", "subject_id": "subject-1"}),
     (EventType.EndRawRecording, "acquisition_command_queue", AcquisitionCommand.end_recording,
      {"session_id": "session-1"}),
+    (EventType.AbortRawRecording, "acquisition_command_queue", AcquisitionCommand.abort_recording,
+     {"session_id": "session-1"}),
     (
         EventType.StageProcessingConfiguration,
         "processor_command_queue",

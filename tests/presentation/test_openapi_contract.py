@@ -55,6 +55,8 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/sessions/export", "get"),
     ("/api/v1/sessions/{session_id}", "get"),
     ("/api/v1/sessions/{session_id}", "delete"),
+    ("/api/v1/sessions/{session_id}/abort", "post"),
+    ("/api/v1/sessions/{session_id}/configurations", "get"),
     ("/api/v1/sessions/{session_id}/trials", "get"),
     ("/api/v1/sessions/{session_id}/trials/last", "get"),
     # recording (session + stream orchestration)

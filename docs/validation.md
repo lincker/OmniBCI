@@ -37,6 +37,9 @@ OpenAPI. Configure these check names as required in branch protection.
 
 ## What these checks establish
 
+The dated results below describe the corresponding implementation checkpoints.
+They do not certify every subsequent change or hardware/storage deployment.
+
 The local raw-session recording and format-boundary update on 2026-10-17 passed
 all 2,976 headless backend tests. The complete integration suite passed 26 tests
 with one skip. Coverage includes real-worker recording, session switching,
@@ -231,6 +234,42 @@ Until such a controller is configured and implemented, the queue remains
 unbounded and operators must use the existing stop/drain controls when measured
 latency exceeds their deployment budget.
 
+## Session persistence and ownership
+
+The default `PERSISTENCE.session_repository` is `sqlite`. Session metadata,
+subject references, append-only Trial results, prepared signal plans, and raw-file
+receipts are stored in `omnibci.sqlite3` in the platform application-data directory
+for `OmniBCI`. `OMNIBCI_DATABASE_PATH` selects an alternative absolute database
+path. `in_memory` remains available for tests and explicitly transient runs.
+The database does not contain raw signal arrays or filtered epoch matrices.
+
+The SQLite adapter uses transactions, WAL, foreign keys, and full synchronous
+writes. Duplicate Trial events with identical content are idempotent; conflicting
+content for the same session/trial number is rejected. A backend holds an OS
+lease beside the database for its lifetime. Starting a second backend against
+the same database fails instead of reconciling another backend's active sessions.
+
+Before accepting commands after restart, the backend checks ownership of any
+referenced recording writers. Old `running` sessions become `ended` with an
+interruption reason; acquisition and stimulation are not resumed. A continuation
+uses a new session ID and retains `continuation_of` and `subject_id`. Recovery
+can locate a unique recording for an existing session whose start receipt was
+lost. It does not import arbitrary orphan directories as invented sessions.
+
+`omnibci.application.session_runtime.SessionRuntime` owns `BCISession` inside the
+existing Signal Processing child process. `SignalProcessor` delivers decoded
+Trial metadata to that runtime synchronously; the aggregate records and publishes
+the result before the stream-drain acknowledgment. `SessionAppService` in the
+main process coordinates commands, recording lifecycle, and persistent projections.
+Acquisition writes the original signal through the `SignalRecorder` port.
+
+For a failed or uncertain session, use `POST /api/v1/sessions/{id}/abort` with
+`{"reason": "description of the failure"}`. Abort blocks new ordinary operations,
+attempts drain and file closure, stops the old engine generation, and preserves
+failure diagnostics. It closes the session only after worker shutdown and recording
+ownership are confirmed. A timeout retains the recovery requirement; it does not
+authorize another writer or turn a failed recording into `completed`.
+
 ## Local raw session recordings
 
 Connect the acquisition source before creating a session. The normal session
@@ -252,7 +291,8 @@ and JSON/CSV exports expose the local recording receipt in the optional
 Each directory contains:
 
 - `metadata.json`: format identifier/version, session/subject identifiers, continuation,
-  source descriptor, runtime/configuration context, status, and final counts.
+  source descriptor, runtime/configuration context, status, counts, and the last
+  successful durability checkpoint.
 - `chunks.npy`: consecutive NumPy arrays containing each plugin-produced raw
   matrix, including every source signal channel and the final trigger row,
   before Signal Processing channel mapping, filtering, epoching, or decoding.
@@ -266,11 +306,18 @@ recording. Ending a session stops and drains acquisition before finalizing its
 recording. Creating a session while another is active drains and ends the old
 session first, opens a separate recording, and restores a previously running
 stream. An unfinished epoch is discarded at this boundary, while its original
-samples remain in the old raw file. A shutdown or write failure leaves an interrupted or failed status;
-an abrupt process exit can leave `recording` status and partial trailing data.
-Only a successfully finalized recording reports `completed`. Flushed files
-survive restart, but the current session list remains an in-memory projection
-and is not rebuilt from the recording directories.
+samples remain in the old raw file. A shutdown or write failure leaves an
+interrupted or failed status; an abrupt process exit can leave `recording` status
+and partial trailing data. Only a successfully finalized recording reports
+`completed`. The default database preserves the Session and Trial history across
+restart and reconciles its associated raw-file receipts.
+
+While recording, acquisition requests a flush approximately once per second;
+pause and finish also force flushing. A successful checkpoint requires data
+flush/fsync, index flush/fsync, and an atomic manifest update, in that order.
+This guarantees the successfully checkpointed prefix under the filesystem's
+durability semantics, not a fixed one-second maximum loss after power failure.
+Synchronous disk operations can delay both acquisition and checkpoint scheduling.
 
 Read indexed chunks lazily through the infrastructure reader:
 
@@ -281,10 +328,19 @@ for chunk in iter_recorded_chunks("/absolute/path/to/recording-uuid"):
     raw = chunk.raw_data  # Original dtype and trigger row are preserved.
 ```
 
-The reader follows the chunk index; a single `numpy.load` call does not read an
-entire multi-chunk file. Inspect `metadata.json` before using an unfinished
-recording, and retain the index with the arrays. The local format is not a
-dataset catalog or an automatic recovery/import service.
+The strict reader follows the chunk index; a single `numpy.load` call does not
+read an entire multi-chunk file. `inspect_recording(path)` reports the valid
+indexed prefix, checkpoint, and unindexed or invalid trailing bytes.
+`iter_valid_recorded_chunks(path)` explicitly reads that validated prefix of a
+partial recording. `recover_recording(path)` requires the writer's OS lease and
+marks an abandoned active file interrupted without truncating its arrays or index.
+
+Recovery rejects corruption inside the durable prefix. Complete indexed chunks
+beyond the checkpoint can be readable, but were not covered by that checkpoint's
+durability guarantee. Unindexed arrays cannot recover their original timestamps,
+sequence IDs, or configuration revisions, so recovery does not invent those
+values. These checks validate structure and boundaries; they are not bit-level
+integrity checksums. Keep all three original files together.
 
 Storage implementations follow `omnibci.domain.ports.recording.SignalRecorder`:
 `start`, `append`, `flush`, and `finish`. AcquisitionRuntime receives this port;
@@ -300,10 +356,120 @@ Receipts and metadata now identify `format="omnibci.numpy-chunks"` and
 `format_version=1`. A new implementation must use a distinct format identifier,
 and incompatible layout changes must increment its version. The current reader
 accepts original v1 manifests without a format identifier and rejects unknown
-formats/versions before reading data. Add the corresponding reader when adding
-a storage implementation; changing the default writer does not migrate old files.
+formats/versions before reading data. Legacy v1 files without checkpoints remain
+readable, but do not acquire a retrospective durability guarantee.
+`RecordedSignalReader` and `open_recording_reader` in
+`omnibci.infrastructure.acquisition.recording_reader` isolate playback from the
+file layout. Add the matching reader and recovery support when adding a storage
+implementation; changing the default writer does not migrate old files.
+
+## Immutable configuration history
+
+`GET /api/v1/sessions/{id}/configurations` returns archived configuration snapshots
+and their application attempts in the standard API response envelope. Snapshots
+contain ordered plugin bindings, exact selected versions, materialized parameters,
+decoder channel mappings, and selected runtime settings. They are keyed by
+`config_revision` and do not depend on mutable Profile files. Trial records retain
+the revision actually used for each result.
+
+Session links select which revisions the endpoint returns. Each snapshot's
+`applications` list is the global history of that revision, including its use in
+other engine runs; it is not a per-session event timeline. Inspect each attempt's
+`generation`, `session_id`, and `context` when interpreting it. Engine-start attempts
+have no session ID because the engine becomes ready before a Session is created.
+
+A candidate is archived before workers may apply it. Each application attempt
+records its own generation, context, timestamps, status, and acknowledged receipts.
+`pending` means the outcome has not been confirmed; a command timeout alone does
+not make it `applied`. Known failures remain `failed`. If a candidate really applied
+and a later step required rollback, history retains that applied candidate and a
+separate rollback attempt. A rebuild associates the new revision with the new
+continuation session, rather than claiming the old session used it.
+
+Profile IDs/revisions and engine generations are excluded from immutable runtime
+content identity. Unrelated host settings are not copied. Parameters declared
+`x-scope="secret"` are redacted, with their paths listed in the archived binding.
+Reading history does not require the original Profile or plugin to remain installed.
+The archive records runtime inputs and receipts; it does not bundle plugin binaries,
+capture filtered waveforms, or promise reproduction across changed core code and
+implicit defaults.
+
+## Replay of local recordings
+
+Select the built-in Acquisition plugin `recording_replay` (display name
+**Recording Replay**). Its `recording_path` accepts an absolute recording directory
+or that directory's `metadata.json`. A completed recording is accepted by default.
+Set `allow_partial=true` only to explicitly replay the validated prefix of an
+inactive `interrupted` or `failed` recording. A file still marked `recording`
+requires recovery first; a live writer prevents opening it for replay.
+
+Replay preserves the stored dtype, all source channels and trigger row, and the
+source sample rate. It paces delivery using that sample rate. Acquisition creates
+new host timestamps for the replay run; these do not replace the original timestamps
+retained in the source index. A replay run creates a new Session and recording,
+with `source_recording` provenance identifying the original recording. Original
+signal files remain unchanged.
+
+The replay source supports stop/join/checkpoint/restore. A checkpoint identifies
+the recording and the next undelivered chunk; changed files invalidate it. Explicit
+checkpoint restoration resumes without repeating delivered chunks. Starting without
+a restored checkpoint begins at the recording's first chunk.
+
+## Raw recording performance validation
+
+Writing currently runs synchronously in the acquisition process. Measure acquisition
+intervals, append/flush latency, memory, and input-versus-file equality for the target
+device and storage. The local soak workload is 128 signal channels plus a trigger
+row at 2,048 Hz for 30 minutes. Synthetic local storage results do not establish
+behavior for other disks or physical devices.
+Inject slow writes and write failures when verifying that errors are reported and
+shutdown remains explicit. A writer thread or queue should be introduced only when
+those measurements justify the additional concurrency.
+
+Run the reproducible writer-only workload with:
+
+```sh
+python scripts/benchmark_recording.py --seconds 1800 --channels 128 --sample-rate 2048 --output recording-benchmark.json
+```
+
+The [2026-10-17 local result](benchmarks/recording-local-2026-10-17.json) used
+macOS 14.8.3, Python 3.14.2 and NumPy 2.4.4. Backend regression tests also ran on
+the machine during this measurement. It verified all 57,600 chunks, 3,686,400
+samples per channel, timestamps, float64 values and trigger rows after completion;
+the original payload total was 3,804,364,800 bytes. Temporary signal files were
+removed after verification.
+
+| Measurement | Result |
+| --- | ---: |
+| Chunk interval / budget | 31.25 ms |
+| Write plus periodic checkpoint, p99 | 3.50 ms |
+| Write plus periodic checkpoint, maximum | 129.03 ms |
+| Writes exceeding the chunk budget | 12 / 57,600 (0.021%) |
+| Maximum scheduling lateness | 125.66 ms |
+| Peak traced allocation | 3.10 MiB |
+
+Timing includes synthetic array construction and synchronous append/checkpoint
+work. Traced allocation is not process RSS. The test checks the writer's complete
+output, not hardware driver buffers, IPC throughput or processing latency.
+
+The default remains synchronous: p99 is below the chunk interval, and this
+measurement does not isolate disk latency from scheduling, allocation and other
+host work. It does expose occasional pauses beyond the interval, so the result
+does not establish a hard real-time bound or lossless physical-device capture.
+Before deploying a source that cannot tolerate such pauses, measure its buffer
+and stop latency and introduce a bounded writer queue with explicit overflow
+failure if needed. Queue capacity and shutdown deadlines require that device's
+budget; an unbounded background writer would only conceal overload.
 
 ## Local commands
+
+The 2026-10-17 architecture validation ran the full headless backend suite
+(3,176 initial passes), followed by 98 passing tests in the affected command,
+OpenAPI and configuration contract files after their four outdated expectations
+were updated. Production code was unchanged between those runs. Real-process
+integration tests reported 26 passed and one skipped. The frontend's 152 tests,
+TypeScript typecheck, generated API type comparison and all eight architecture
+import contracts passed.
 
 ```sh
 python -m pytest -m "not gui and not hardware and not integration"

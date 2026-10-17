@@ -135,16 +135,30 @@ npx openapi-typescript docs/openapi.json -o src/api/types.ts
 | GET | `/sessions/active` | — | `SessionResponse` | 200 | 404 无活动会话 |
 | GET | `/sessions/{id}` | — | `SessionResponse` | 200 | 404 会话不存在 |
 | DELETE | `/sessions/{id}` | — | （无 data，结束会话） | 200 | 404 |
+| POST | `/sessions/{id}/abort` | `AbortSessionRequest` | No data; confirmed abort | 200 | 404 / 503 |
+| GET | `/sessions/{id}/configurations` | — | Archived snapshots and application attempts | 200 | 404 |
 | GET | `/sessions/{id}/trials` | — | `TrialResponse[]` | 200 | 404 |
 | GET | `/sessions/{id}/trials/last` | — | `TrialResponse` | 200 | 404 会话不存在 / 无试次 |
 
 DTO 字段：
 
-- `CreateSessionRequest`：`paradigm?: string`
-- `SessionResponse`：`session_id: string`、`paradigm?: string`、`state: SessionStateDTO("running"|"ended")`、`trial_count: int`、`started_at?: datetime`、`ended_at?: datetime`
+- `CreateSessionRequest`: `paradigm?: string`, `subject_id?: string | null`.
+- `AbortSessionRequest`: required nonblank `reason: string`.
+- `SessionResponse`: `session_id`, optional `paradigm`, `state` (`running` or `ended`),
+  `trial_count`, timestamps, and optional `subject_id`, `continuation_of`,
+  `config_revision`, `interruption_reason`, `signal_plan`, and `recording`.
 - `SessionDetailResponse`：继承 `SessionResponse` + `trials: TrialResponse[]`（注：当前路由未使用该 detail 模型，`/trials` 直接返回 `TrialResponse[]`）
 - `SessionListResponse`：`sessions: SessionResponse[]`、`total: int`
-- `TrialResponse`：`trial_number: int`、`target_id: int`、`event_id: int`、`confidence?: float[0..1]`、`forced: bool`、`produced_at: datetime`
+- `TrialResponse`: `trial_number`, `target_id`, `event_id`, optional `confidence`,
+  `forced`, `produced_at`, and the result's optional `config_revision`.
+
+Current persistence behavior: Session and Trial queries survive backend restart
+with the default SQLite repository. The restarted backend ends old running sessions
+with an interruption reason; it does not resume collection. Configuration history
+distinguishes pending, applied, and failed attempts. Raw signals remain Acquisition
+files linked by `recording`; filtered signal arrays are not stored in the database.
+See [validation.md](validation.md#session-persistence-and-ownership) for database
+paths, storage ownership, abort, recovery, and recording replay.
 
 ### 3.6 Health
 
@@ -186,7 +200,11 @@ DTO 字段：
 2. ✅ **WS 消息补全 `session_id`/`trial_number`**，且会话 id 已全链路统一（可直接回查 REST）。
 3. **WS 重连/快照语义（方案已定，待实现）**。会话 id 统一后方案变得简单：**WS 只做增量，REST 负责快照**——前端重连成功后调 `GET /sessions/active` + `GET /sessions/{id}/trials` 拉全量补齐断线期间错过的试次，再继续消费 WS 增量；以 `trial_number` 去重（聚合根单调递增，天然幂等键）。服务端无需消息缓冲/重放机制。另需 WS 心跳（服务端定期 ping 或空消息），否则死连接只能在下次广播失败时才被清理。
 4. **CORS 收敛 + 鉴权**。现状 `allow_origins=["*"]` 且零鉴权——任何能访问端口的人都能 start/stop 引擎。最小方案：settings 配置单 token，`Authorization: Bearer` 校验中间件，CORS 收敛到控制台域名；本机单用户场景可绑定 `127.0.0.1` 暂缓。
-5. **控制权与并发**。引擎单例、会话默认内存仓储（重启即丢）。需定义「单控制者锁 vs 只读观察者」：建议控制类端点（engine/acquisition/stimulation 的 POST + sessions 写操作）要求持有控制锁，锁经 `POST /control/acquire` 获取、带 TTL 心跳续期，未持锁返回 409 `CONTROL_HELD`；查询与 WS 对所有客户端开放。持久化：把 `PERSISTENCE.session_repository`（装配根已预留开关）补一个 SQLite 适配器。
+5. **Control and persistence.** The original proposal separated a single controller
+   from read-only observers. Session persistence is now implemented through the
+   default SQLite adapter; `in_memory` is an explicit transient option. The backend
+   database lease prevents simultaneous backend ownership and is separate from
+   the client control lock. Restart retains history and ends interrupted sessions.
 6. ✅ **刺激命令回执**。`StimulationAck` 链路已完整：stim 进程 → socket（入站白名单）→ 引擎 `StimulationFeedbackHandler` → WS `StimulationAck` 消息推给前端。
 7. **范式列表动态化**。`/stimulation/paradigms` 仍硬编码 `[classic40SSVEP]`；配置型前端需要它来自插件注册表（`Paradigm._target_registry`），否则新增范式插件前端不可见。
 8. **配置读写端点缺失**。控制台要做"设备/范式配置"，但后端没有暴露 settings 的读写 API；需要新增 `GET/PATCH /config`（白名单键、改后需重启引擎的键要标注）——否则前端只能展示、不能配置。
@@ -207,7 +225,10 @@ Vite + React/Vue + TS；数据层 = REST 轮询（engine/acquisition status，2s
 控制台接入 start/stop 引擎、connect/stream、创建/结束会话、触发刺激试次。同步落地 §五.4 token 鉴权 + CORS 收敛、§五.5 控制者锁。验收：两个浏览器标签页，一个持锁可操作、一个只读观察，互不干扰。
 
 **阶段 3 —— 状态健壮性（1 周）**
-SQLite 会话仓储（装配根开关切换，应用层零改动）；WS 心跳 ✅（服务端 15s `Ping` + 前端 45s 静默看门狗，见 §四）。
+SQLite session persistence is implemented and enabled by default. Raw-file recovery,
+explicit Session abort, immutable configuration history, and recording replay extend
+this historical stage. WebSocket heartbeat is implemented (server `Ping` every 15s,
+frontend watchdog after 45s of silence; see section IV).
 
 > 已划掉「`/engine/status` 增补当前会话 id 与处理器待命/运行态」：动机（前端区分"引擎活着但无会话"）已被 `GET /sessions/active`（`NO_ACTIVE_SESSION` 为正常态）+ WS `SessionStarted/SessionEnded` + 重连快照覆盖；处理器"待命/运行"可由 `processor_alive && 有活动会话` 推导，进程内部真实状态机的回传链路成本不抵收益。剩余价值（单请求原子状态快照）归入阶段 4 调试面板按需做。
 
