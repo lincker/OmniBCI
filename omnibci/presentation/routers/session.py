@@ -28,6 +28,7 @@ from omnibci.presentation.errors import (
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.session import (
     CreateSessionRequest,
+    AbortSessionRequest,
     SessionDetailResponse,
     SessionListResponse,
     SessionResponse,
@@ -37,6 +38,7 @@ from omnibci.presentation.schemas.session import (
 from omnibci.application.commands.session_commands import (
     CreateSessionCommand,
     EndSessionCommand,
+    AbortSessionCommand,
 )
 from omnibci.application.queries.session_queries import (
     GetLastClassificationQuery,
@@ -54,6 +56,20 @@ from omnibci.application.services.command_result_service import (
 )
 
 router = APIRouter(prefix="/sessions", tags=["Session"])
+
+
+@router.post("/{session_id}/abort", response_model=ApiResponse, summary="Abort an incomplete session")
+async def abort_session(session_id: str, body: AbortSessionRequest,
+                        svc: SessionAppService = Depends(get_session_service)):
+    try:
+        await svc.handle_abort_session(AbortSessionCommand(session_id, body.reason))
+    except KeyError:
+        raise ApiError(status.HTTP_404_NOT_FOUND, ErrorCode.SESSION_NOT_FOUND, f"Session '{session_id}' not found")
+    except ProfileRevisionConflict:
+        raise
+    except RuntimeError as exc:
+        raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(exc))
+    return ApiResponse(message="Session aborted")
 
 
 # ---------------------------------------------------------------------------

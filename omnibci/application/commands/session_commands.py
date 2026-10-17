@@ -24,3 +24,14 @@ class EndSessionCommand:
     """Mark a session as ended; no new trials may be recorded."""
     session_id: str
     interruption_reason: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class AbortSessionCommand:
+    """Stop an uncertain session, retaining its failure and partial data."""
+    session_id: str
+    reason: str
+
+    def __post_init__(self):
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("An abort reason is required")

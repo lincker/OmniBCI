@@ -168,6 +168,16 @@ class AcquisitionAppService:
         self._connection_id = None
         self._clear_metadata()
 
+    @admitted(recovery=True)
+    def abort_raw_recording(self, session_id: str) -> dict:
+        """Close an unhealthy recording without claiming successful completion."""
+        with self.lifecycle_lock:
+            result = self._command_executor.request(EventType.AbortRawRecording, {"session_id": session_id})
+            receipt = self._recording_receipt(result.data, session_id)
+            if receipt.get("status") not in {"completed", "failed", "interrupted"}:
+                raise RuntimeError("Raw recording did not report a terminal state")
+            return receipt
+
     # ------------------------------------------------------------------
     # EventBus listeners (registered in bootstrap.register_engine_listeners)
     # ------------------------------------------------------------------

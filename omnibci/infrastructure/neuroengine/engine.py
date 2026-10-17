@@ -428,6 +428,7 @@ class NeuroEngine:
             EventType.GetSourceMetadata:              (acq, AcquisitionCommand.get_metadata, True),
             EventType.BeginRawRecording:              (acq, AcquisitionCommand.begin_recording, True),
             EventType.EndRawRecording:                (acq, AcquisitionCommand.end_recording, True),
+            EventType.AbortRawRecording:              (acq, AcquisitionCommand.abort_recording, True),
             EventType.StopStream:                     (acq, AcquisitionCommand.stop_stream, True),
             EventType.StopAndDrain:                   (acq, AcquisitionCommand.stop_and_drain, True),
             EventType.GetSourceCheckpoint:            (acq, AcquisitionCommand.get_checkpoint, True),

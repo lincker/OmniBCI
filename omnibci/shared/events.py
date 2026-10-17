@@ -16,6 +16,7 @@ class EventType(IntEnum):
     GetSourceMetadata = 108
     BeginRawRecording = 109
     EndRawRecording = 110
+    AbortRawRecording = 111
     StartStream = 111
     StopStream = 112
     StopAndDrain = 113  # acquisition stop followed by an ordered processing barrier

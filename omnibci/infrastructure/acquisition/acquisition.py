@@ -52,6 +52,7 @@ class AcquisitionCommand(Enum):
     update_revision   = 'update revision'
     begin_recording   = 'begin raw recording'
     end_recording     = 'end raw recording'
+    abort_recording   = 'abort raw recording'
 
 
 class AcquisitionCommandRejected(RuntimeError):
@@ -74,6 +75,7 @@ _COMMAND_RESULT_NAMES = {
     AcquisitionCommand.get_metadata: EventType.GetSourceMetadata.name,
     AcquisitionCommand.begin_recording: EventType.BeginRawRecording.name,
     AcquisitionCommand.end_recording: EventType.EndRawRecording.name,
+    AcquisitionCommand.abort_recording: EventType.AbortRawRecording.name,
 }
 
 
@@ -111,6 +113,7 @@ class AcquisitionRuntime:
         self._recorder = recorder
         self._recording = None
         self._closed_recording = None
+        self._next_recording_flush = time.monotonic() + 1.0
         self._clear_metadata()
         self.connection_id = uuid4().hex if getattr(data_source, "is_connected", False) else None
 
@@ -142,6 +145,13 @@ class AcquisitionRuntime:
         while not self.should_exit:
             if not self.command_queue.empty():
                 await self.execute(self.command_queue.get())
+            if (self._recording is not None and self._fetch_failure is None
+                    and time.monotonic() >= self._next_recording_flush):
+                try:
+                    self._flush_recording()
+                except Exception:
+                    await self._cancel_fetch_task()
+                    await self._finish_stream()
             await asyncio.sleep(0.01)
 
     async def execute(self, item) -> None:
@@ -156,7 +166,8 @@ class AcquisitionRuntime:
                        AcquisitionCommand.update_revision):
             self._configuration_command(command, request)
             return
-        if command in (AcquisitionCommand.begin_recording, AcquisitionCommand.end_recording):
+        if command in (AcquisitionCommand.begin_recording, AcquisitionCommand.end_recording,
+                       AcquisitionCommand.abort_recording):
             await self._recording_command(command, request)
             return
         handler = {
@@ -266,18 +277,24 @@ class AcquisitionRuntime:
                                 source_id=self.source_id,
                                 signal_info=self._descriptor.to_dict() if self._descriptor is not None else None)
                 data = self._recorder.start(metadata)
+                if self.generation is not None:
+                    data = {**data, "generation": self.generation}
                 self._recording = data
+                self._next_recording_flush = time.monotonic() + 1.0
                 self._emit_recording_state({**data, "status": "recording"})
             elif self._recording is not None:
                 if self._recording["session_id"] != session_id:
                     raise ValueError("Recording session ID does not match")
-                self._require_healthy_stream()
-                data = self._finish_recording(status="completed")
-                if data.get("status") != "completed":
+                if command is AcquisitionCommand.abort_recording:
+                    data = self._finish_recording(status="interrupted", error=self._fetch_failure)
+                else:
+                    self._require_healthy_stream()
+                    data = self._finish_recording(status="completed")
+                if command is not AcquisitionCommand.abort_recording and data.get("status") != "completed":
                     raise RuntimeError("Recording did not complete successfully")
             elif self._closed_recording is not None and self._closed_recording["session_id"] == session_id:
                 data = self._closed_recording
-                if data.get("status") != "completed":
+                if command is not AcquisitionCommand.abort_recording and data.get("status") != "completed":
                     raise RuntimeError("Recording did not complete successfully")
             else:
                 raise ValueError("No recording belongs to this session")
@@ -291,6 +308,7 @@ class AcquisitionRuntime:
         if self._recording is not None:
             try:
                 self._recorder.flush()
+                self._next_recording_flush = time.monotonic() + 1.0
             except Exception as exc:
                 self._fetch_failure = self._fetch_failure or f"Recording flush failed: {exc}"
                 self._emit_recording_state({**self._recording, "status": "failed", "error": self._fetch_failure})
@@ -301,6 +319,8 @@ class AcquisitionRuntime:
             return self._closed_recording
         try:
             result = self._recorder.finish(status=status, error=error)
+            if self.generation is not None:
+                result = {**result, "generation": self.generation}
         except Exception as exc:
             self._fetch_failure = self._fetch_failure or f"Recording finalization failed: {exc}"
             self._emit_recording_state({**self._recording, "status": "failed", "error": self._fetch_failure})
@@ -312,7 +332,10 @@ class AcquisitionRuntime:
 
     def _emit_recording_state(self, info):
         if self.event_bus is not None:
-            self.event_bus.put_event(Event(EventType.RawRecordingState, dict(info)))
+            data = dict(info)
+            if self.generation is not None:
+                data["generation"] = self.generation
+            self.event_bus.put_event(Event(EventType.RawRecordingState, data))
 
     def _configuration_command(self, command, request) -> None:
         if request is None:

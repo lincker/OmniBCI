@@ -185,7 +185,11 @@ def test_missing_or_duplicate_trial_projection_prevents_file_and_session_finaliz
     sid = runtime.sessions.handle_create_session(CreateSessionCommand())
     runtime.completed_trials = 2
     for number in trial_numbers:
-        runtime.project_trial(sid, number)
+        if any(trial.trial_number == number for trial in runtime.repository.find_by_id(sid).trials):
+            with pytest.raises(ValueError, match="Conflicting result"):
+                runtime.project_trial(sid, number)
+        else:
+            runtime.project_trial(sid, number)
     runtime.events.clear()
     with pytest.raises(RuntimeError, match="projection is incomplete"):
         runtime.sessions.handle_end_session(EndSessionCommand(sid))

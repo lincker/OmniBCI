@@ -13,6 +13,8 @@ Dependency graph (follows DIP):
 """
 
 import logging
+import asyncio
+from contextlib import nullcontext
 from copy import deepcopy
 from threading import RLock
 from omnibci.application.runtime_admission import admitted
@@ -23,7 +25,9 @@ from typing import List, Optional, TYPE_CHECKING
 from omnibci.application.commands.session_commands import (
     CreateSessionCommand,
     EndSessionCommand,
+    AbortSessionCommand,
 )
+from omnibci.application.commands.engine_commands import StopEngineCommand
 from omnibci.application.queries.session_queries import (
     GetLastClassificationQuery,
     GetSessionQuery,
@@ -118,6 +122,7 @@ class SessionAppService:
         self._prepare_signal = None
         self._acquisition = None
         self._signal_lock = RLock()
+        self._recover_recording = None
 
     def set_signal_preparer(self, callback, lifecycle_lock):
         self._prepare_signal = callback
@@ -127,6 +132,10 @@ class SessionAppService:
         """Bind raw recording to the session lifecycle at composition time."""
         self._acquisition = acquisition
         self._signal_lock = acquisition.lifecycle_lock
+
+    def set_recording_recovery(self, callback):
+        """Inject inactive-file reconciliation without depending on a file format."""
+        self._recover_recording = callback
 
     @property
     def manages_recording_lifecycle(self) -> bool:
@@ -297,7 +306,79 @@ class SessionAppService:
         logger.info("Session ended: %s (%d trials)", cmd.session_id, record.trial_count)
 
     def _set_recording(self, session_id: str, info: dict) -> None:
-        self._repo.update(session_id, lambda record: setattr(record, "recording", deepcopy(info)))
+        def update(record):
+            value = deepcopy(info)
+            previous = record.recording or {}
+            for key in ("abort_pending", "generation"):
+                if key in previous and key not in value:
+                    value[key] = previous[key]
+            record.recording = value
+        self._repo.update(session_id, update)
+
+    async def handle_abort_session(self, cmd: AbortSessionCommand) -> None:
+        """Confirm worker termination before closing an uncertain session."""
+        admission = self._admission
+        with admission.transition() if admission is not None else nullcontext():
+            record = self._require(cmd.session_id)
+            recording = record.recording or {}
+            if record.state == SessionRecordState.ENDED and not recording.get("abort_pending") and (
+                not recording or recording.get("status") == "completed"
+                or recording.get("abort_pending") is False
+            ):
+                return
+            active = self.active_session_id
+            if active is not None and active != cmd.session_id:
+                raise RuntimeError("Cannot abort a different active session")
+            if admission is not None:
+                admission.quarantine(cmd.reason)
+            self._set_recording(cmd.session_id, {
+                **(record.recording or {}), "session_id": cmd.session_id, "abort_pending": True,
+            })
+            errors = []
+
+            def stop_recording():
+                with self._signal_lock:
+                    if self._acquisition is None:
+                        return
+                    try:
+                        receipt = self._acquisition.handle_stop_and_drain(session_id=cmd.session_id)
+                        trials = self._require(cmd.session_id).trials
+                        if [trial.trial_number for trial in trials] != list(range(1, receipt.completed_trials + 1)):
+                            raise RuntimeError("Session trial projection is incomplete")
+                    except Exception as exc:
+                        errors.append(f"Drain: {exc}")
+                    try:
+                        self._set_recording(cmd.session_id, self._acquisition.abort_raw_recording(cmd.session_id))
+                    except Exception as exc:
+                        errors.append(f"Recording close: {exc}")
+
+            try:
+                await asyncio.to_thread(stop_recording)
+                if self._engine is not None:
+                    # Stopping the generation also prevents late trials from
+                    # crossing into the next session after an uncertain drain.
+                    await self._engine.handle_stop_engine(StopEngineCommand())
+                elif self._command_results is not None:
+                    raise RuntimeError("Engine shutdown is unavailable; cannot confirm session abort")
+                if self._acquisition is not None:
+                    self._acquisition.reset()
+                record = self._require(cmd.session_id)
+                info = dict(record.recording or {})
+                if self._recover_recording is not None and info:
+                    info = await asyncio.to_thread(self._recover_recording, record)
+                if info.get("status") not in {"completed", "failed", "interrupted"}:
+                    info["status"] = "failed" if errors else "interrupted"
+                info["abort_pending"] = False
+                if errors:
+                    info["abort_errors"] = errors
+                self._set_recording(cmd.session_id, info)
+                self._repo.update(cmd.session_id, lambda item: item.mark_ended(interruption_reason=cmd.reason))
+            except BaseException:
+                if admission is not None:
+                    admission.quarantine(f"Session {cmd.session_id} abort requires recovery")
+                raise
+            if admission is not None:
+                admission.clear_quarantine()
 
     def _begin_raw_recording(self, session_id: str) -> None:
         record = self._require(session_id)
@@ -332,8 +413,25 @@ class SessionAppService:
     def on_raw_recording_state(self, event: Event) -> None:
         """Reconcile late acknowledgements and interrupted worker shutdowns."""
         info = event.data
-        if isinstance(info, dict) and isinstance(info.get("session_id"), str):
-            self._set_recording(info["session_id"], info)
+        if not isinstance(info, dict) or not isinstance(info.get("session_id"), str):
+            return
+
+        def reconcile(record):
+            previous = record.recording or {}
+            generation = previous.get("generation")
+            if generation is not None and info.get("generation") != generation:
+                return
+            current_status, next_status = previous.get("status"), info.get("status")
+            if current_status in {"completed", "failed", "interrupted"} and next_status != current_status:
+                return
+            if record.state == SessionRecordState.ENDED and next_status in {"pending", "recording"}:
+                return
+            value = deepcopy(info)
+            if "abort_pending" in previous:
+                value["abort_pending"] = previous["abort_pending"]
+            record.recording = value
+
+        self._repo.update(info["session_id"], reconcile)
 
     # ------------------------------------------------------------------
     # Query handlers

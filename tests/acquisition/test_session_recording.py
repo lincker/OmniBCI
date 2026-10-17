@@ -169,10 +169,12 @@ async def test_stop_joins_producer_then_flushes_before_ack_or_barrier(tmp_path, 
 
     monkeypatch.setattr(recording_module.os, "fsync", fsync)
     original_sink = acquisition.data_manager.put_data
+    # Data and index precede the metadata checkpoint and its directory entry.
+    flushed = ["producer joined"] + ["fsync"] * (3 if recording_module.os.name == "nt" else 4)
 
     def sink(value):
         if isinstance(value, StreamBarrier):
-            assert trace == ["producer joined", "fsync", "fsync"]
+            assert trace == flushed
             trace.append("barrier")
         original_sink(value)
 
@@ -180,11 +182,11 @@ async def test_stop_joins_producer_then_flushes_before_ack_or_barrier(tmp_path, 
     result = await command(acquisition, operation, "stop")
     if operation is AcquisitionCommand.stop_and_drain:
         assert result is None
-        assert trace == ["producer joined", "fsync", "fsync", "barrier"]
+        assert trace == flushed + ["barrier"]
         assert acquisition.data_manager.items[-1].session_id == "session-1"
     else:
         assert result.ok
-        assert trace == ["producer joined", "fsync", "fsync"]
+        assert trace == flushed
     assert manifest(info)["status"] == "recording"
     assert len(list(iter_recorded_chunks(info["path"]))) == 1
     await command(acquisition, AcquisitionCommand.end_recording, "end")
@@ -308,6 +310,41 @@ async def test_flush_failure_prevents_barrier_and_cannot_be_retried_as_success(t
     assert not any(isinstance(value, StreamBarrier) for value in acquisition.data_manager.items)
     await acquisition.shutdown()
     assert manifest(info)["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_abort_closes_failed_recording_without_claiming_completion(tmp_path, monkeypatch):
+    acquisition = runtime(tmp_path)
+    info = await begin(acquisition)
+    await stream_one(acquisition)
+    await acquisition._on_stop_stream()
+    acquisition._fetch_failure = "disk full"
+    result = await command(acquisition, AcquisitionCommand.abort_recording, "abort")
+    assert result.ok
+    assert result.data["status"] == "failed"
+    assert manifest(info)["status"] == "failed"
+    repeated = await command(acquisition, AcquisitionCommand.abort_recording, "abort-again")
+    assert repeated.ok and repeated.data == result.data
+    completed = await command(acquisition, AcquisitionCommand.end_recording, "end")
+    assert not completed.ok
+    await acquisition.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_running_acquisition_periodically_checkpoints_recording(tmp_path):
+    acquisition = runtime(tmp_path)
+    info = await begin(acquisition)
+    await stream_one(acquisition)
+    acquisition._next_recording_flush = 0
+    loop = asyncio.create_task(acquisition.main_loop())
+    try:
+        await asyncio.sleep(0.03)
+        assert manifest(info)["checkpoint"]["chunk_count"] == 1
+        assert acquisition.data_source.is_streaming
+    finally:
+        acquisition.should_exit = True
+        await loop
+        await acquisition.shutdown()
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,6 @@
 
 import logging
 import os
-from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Tuple
@@ -27,7 +26,8 @@ from omnibci.application.services.plugin_installation_service import PluginInsta
 from omnibci.application.services.plugin_package_service import PluginPackageService
 from omnibci.application.services.plugin_market_service import PluginMarketService
 from omnibci.application.plugin_packages import package_references_from_settings
-from omnibci.domain.repositories import SessionRepository, SessionRecordState
+from omnibci.domain.repositories import SessionRepository
+from omnibci.infrastructure.acquisition.recording_catalog import reconcile_sessions, recover_session_recording
 from omnibci.infrastructure.backend_logging import BackendLogging
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
@@ -126,16 +126,7 @@ def _session_database_path() -> Path:
 
 def _close_previous_sessions(repository):
     """A backend restart ends old sessions only after checking writer ownership."""
-    records = [record for record in repository.find_all() if record.state == SessionRecordState.RUNNING]
-    with ExitStack() as leases:
-        for record in records:
-            path = (record.recording or {}).get("path")
-            if path and Path(path).is_dir():
-                leases.enter_context(StorageLease(Path(path) / ".writer.lock"))
-        for record in records:
-            repository.update(record.session_id, lambda candidate: candidate.mark_ended(
-                interruption_reason="Backend restarted before the session ended",
-            ))
+    reconcile_sessions(repository)
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +167,7 @@ def assemble(
         admission=admission,
     )
     session_service.set_recording_controller(acquisition_service)
+    session_service.set_recording_recovery(recover_session_recording)
     acquisition_service.set_recording_validator(session_service.validate_recording_before_stream)
 
     process_manager = stimulation_process_manager or StimulationProcessManager(auto_spawn=auto_spawn)

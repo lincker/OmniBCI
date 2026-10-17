@@ -27,6 +27,10 @@ class TrialResponse(BaseModel):
     config_revision: Optional[str] = None
 
 
+class AbortSessionRequest(BaseModel):
+    reason: str = Field(strict=True, pattern=r"\S", description="Why the incomplete session must be stopped")
+
+
 class SessionResponse(BaseModel):
     session_id: str
     paradigm: Optional[str]
