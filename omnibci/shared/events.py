@@ -2,10 +2,11 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-04-21 10:16
-from enum import IntEnum
+from enum import IntEnum, unique
 from typing import Any, Optional
 
 
+@unique
 class EventType(IntEnum):
     # acquisition
     ConnectDataProvider = 101
@@ -16,7 +17,7 @@ class EventType(IntEnum):
     GetSourceMetadata = 108
     BeginRawRecording = 109
     EndRawRecording = 110
-    AbortRawRecording = 111
+    AbortRawRecording = 114
     StartStream = 111
     StopStream = 112
     StopAndDrain = 113  # acquisition stop followed by an ordered processing barrier
