@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "recording_path": {
+      "type": "string",
+      "title": "Recording metadata.json or directory",
+      "default": "",
+      "x-widget": "file-path",
+      "x-scope": "machine",
+      "x-apply": "module"
+    },
+    "allow_partial": {
+      "type": "boolean",
+      "title": "Allow validated partial recordings",
+      "description": "Read only complete indexed chunks from an interrupted or failed recording whose writer has stopped.",
+      "default": false,
+      "x-scope": "portable",
+      "x-apply": "module"
+    }
+  },
+  "required": ["recording_path", "allow_partial"]
+}

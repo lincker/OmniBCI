@@ -393,4 +393,6 @@ def recover_recording(path: Path | str, *, expected_session_id: str | None = Non
             "path": str(path.resolve()), "status": metadata.get("status"),
             "chunk_count": prefix["chunk_count"], "sample_count": prefix["sample_count"],
             "recovery": report, **({"error": metadata["error"]} if "error" in metadata else {}),
+            **({"source_recording": deepcopy(metadata["source_recording"])}
+               if isinstance(metadata.get("source_recording"), dict) else {}),
         }

@@ -1,5 +1,6 @@
 """Acquisition runtime and worker command contracts."""
 import asyncio
+from copy import deepcopy
 import logging
 import time
 from uuid import uuid4
@@ -276,7 +277,12 @@ class AcquisitionRuntime:
                 metadata.update(generation=self.generation, config_revision=self.config_revision,
                                 source_id=self.source_id,
                                 signal_info=self._descriptor.to_dict() if self._descriptor is not None else None)
+                source_recording = getattr(self.data_source, "recording_provenance", None)
+                if isinstance(source_recording, dict):
+                    metadata["source_recording"] = deepcopy(source_recording)
                 data = self._recorder.start(metadata)
+                if isinstance(source_recording, dict):
+                    data = {**data, "source_recording": deepcopy(source_recording)}
                 if self.generation is not None:
                     data = {**data, "generation": self.generation}
                 self._recording = data
@@ -319,6 +325,8 @@ class AcquisitionRuntime:
             return self._closed_recording
         try:
             result = self._recorder.finish(status=status, error=error)
+            if "source_recording" in self._recording:
+                result = {**result, "source_recording": deepcopy(self._recording["source_recording"])}
             if self.generation is not None:
                 result = {**result, "generation": self.generation}
         except Exception as exc:

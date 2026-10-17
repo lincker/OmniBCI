@@ -21,9 +21,9 @@ def record(session_id="session-1", **changes):
                          datetime.now(timezone.utc), subject_id="subject-1", **changes)
 
 
-def recorded(tmp_path, session_id="session-1", *, status="completed"):
+def recorded(tmp_path, session_id="session-1", *, status="completed", **start_metadata):
     writer = LocalSignalRecorder(tmp_path)
-    info = writer.start({"session_id": session_id, "subject_id": "subject-1"})
+    info = writer.start({"session_id": session_id, "subject_id": "subject-1", **start_metadata})
     writer.append(SignalChunk(1234, 0, np.array([[1., 2.], [0., 9.]])))
     info = writer.finish(status=status)
     return Path(info["path"]), info
@@ -196,6 +196,21 @@ def test_lost_begin_ack_finds_only_existing_sessions_unique_file(tmp_path):
     assert restored.recording["status"] == "interrupted"
     assert len(repository.find_all()) == 1
     assert (orphan_path / "metadata.json").read_bytes() == orphan_before
+
+
+def test_lost_begin_ack_recovery_preserves_replay_source_identity(tmp_path):
+    source = {"recording_id": "original-recording", "session_id": "original-session",
+              "format": "omnibci.numpy-chunks", "format_version": 1, "partial": False}
+    path, info = recorded(tmp_path / "recordings", source_recording=source)
+    stale_manifest(path)
+    repository = InMemorySessionRepository()
+    repository.save(record(recording={"session_id": "session-1", "status": "pending"}))
+    reconcile_sessions(repository)
+    restored = repository.find_by_id("session-1")
+    assert restored.recording["source_recording"] == source
+    assert restored.recording["id"] == info["id"] != source["recording_id"]
+    restored.recording["source_recording"]["recording_id"] = "changed"
+    assert json.loads((path / "metadata.json").read_text())["source_recording"] == source
 
 
 def test_lost_begin_ack_live_writer_blocks_all_startup_changes(tmp_path):
