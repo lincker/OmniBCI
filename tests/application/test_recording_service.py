@@ -20,6 +20,8 @@ from omnibci.application.services.command_result_service import CommandTimeoutEr
 
 
 class _FakeSessions:
+    manages_recording_lifecycle = False
+
     def __init__(self):
         self.active = None
         self.created = []

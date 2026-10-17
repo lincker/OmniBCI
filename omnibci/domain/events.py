@@ -45,6 +45,7 @@ class SessionStarted(DomainEvent):
     paradigm: Optional[str] = None
     continuation_of: Optional[str] = None
     config_revision: Optional[str] = None
+    subject_id: Optional[str] = None
 
 
 @dataclass(frozen=True)

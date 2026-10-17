@@ -16,7 +16,7 @@ import numpy as np
 from omnibci.domain.classification import Classification
 from omnibci.domain.epoch import Epoch
 from omnibci.domain.ports.algorithm import Decoder, Filter, Prediction
-from omnibci.infrastructure.neuroengine.signal_processing.epoch.pipeline import ProcessingPipeline
+from omnibci.infrastructure.signal_processing.epoch.pipeline import ProcessingPipeline
 from omnibci.domain.signal import SignalChunk
 
 logger = logging.getLogger(__name__)

@@ -14,9 +14,9 @@ from omnibci.domain.channel_mapping import (
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter
 from omnibci.domain.signal import SignalChunk
-from omnibci.infrastructure.neuroengine.signal_processing import pipeline_configuration, signal_configuration
-from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessor, SignalProcessorCommand
-from omnibci.infrastructure.neuroengine.signal_processing.worker import SignalProcessingWorker
+from omnibci.infrastructure.signal_processing import pipeline_configuration, signal_configuration
+from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessor, SignalProcessorCommand
+from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
 from omnibci.infrastructure.plugins.loader import PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin

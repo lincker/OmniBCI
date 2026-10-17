@@ -81,6 +81,8 @@ def _session_record_to_dto(r: SessionRecord, include_trials: bool = False) -> Se
         config_revision=r.config_revision,
         interruption_reason=r.interruption_reason,
         signal_plan=deepcopy(r.signal_plan),
+        subject_id=r.subject_id,
+        recording=deepcopy(r.recording),
     )
 
 
@@ -114,11 +116,21 @@ class SessionAppService:
         self._engine = engine_port  # EnginePort | None
         self._command_results = command_results
         self._prepare_signal = None
+        self._acquisition = None
         self._signal_lock = RLock()
 
     def set_signal_preparer(self, callback, lifecycle_lock):
         self._prepare_signal = callback
         self._signal_lock = lifecycle_lock
+
+    def set_recording_controller(self, acquisition):
+        """Bind raw recording to the session lifecycle at composition time."""
+        self._acquisition = acquisition
+        self._signal_lock = acquisition.lifecycle_lock
+
+    @property
+    def manages_recording_lifecycle(self) -> bool:
+        return self._acquisition is not None
 
     # ------------------------------------------------------------------
     # Command handlers
@@ -127,7 +139,28 @@ class SessionAppService:
     @admitted
     def handle_create_session(self, cmd: CreateSessionCommand) -> str:
         with self._signal_lock:
-            return self._create_session(cmd)
+            resume_stream = False
+            if self._acquisition is not None:
+                if cmd.continuation_of is not None:
+                    if self._require(cmd.continuation_of).state != SessionRecordState.ENDED:
+                        raise RuntimeError("A continuation requires an ended previous session")
+                    if self.active_session_id is not None:
+                        raise RuntimeError("Cannot resume while another session is active")
+                resume_stream = self._acquisition.is_streaming
+                active_id = self.active_session_id
+                if active_id is not None:
+                    self.handle_end_session(EndSessionCommand(active_id))
+                else:
+                    # Clear buffered samples even if a standalone stream was
+                    # already stopped before this session was requested.
+                    self._acquisition.handle_stop_and_drain()
+            session_id = self._create_session(cmd)
+            if self._acquisition is not None:
+                self._begin_raw_recording(session_id)
+                if resume_stream:
+                    from omnibci.application.commands.acquisition_commands import StartStreamCommand
+                    self._acquisition.handle_start_stream(StartStreamCommand())
+            return session_id
 
     def _create_session(self, cmd: CreateSessionCommand) -> str:
         if cmd.continuation_of is not None:
@@ -150,9 +183,12 @@ class SessionAppService:
             continuation_of=cmd.continuation_of,
             config_revision=config_revision,
             signal_plan=deepcopy(signal_plan),
+            subject_id=cmd.subject_id,
         )
         self._repo.save(record)
         payload = {"session_id": session_id, "paradigm": cmd.paradigm}
+        if cmd.subject_id is not None:
+            payload["subject_id"] = cmd.subject_id
         if cmd.continuation_of is not None:
             payload["continuation_of"] = cmd.continuation_of
         if config_revision is not None:
@@ -172,6 +208,11 @@ class SessionAppService:
                 # Timeout is an unknown outcome, not a confirmed failure: the
                 # worker may have started this exact session and its late
                 # SessionStarted event will reconcile the projection.
+                if self._acquisition is not None:
+                    # The source remains stopped. Arm recording even when the
+                    # aggregate acknowledgement is late, so recovery cannot
+                    # resume a session without its raw file.
+                    self._begin_raw_recording(session_id)
                 raise
             except BaseException:
                 self._repo.delete(session_id)
@@ -200,12 +241,35 @@ class SessionAppService:
             paradigm=previous.paradigm if paradigm is None else paradigm,
             continuation_of=previous_id,
             config_revision=config_revision,
+            subject_id=previous.subject_id,
         ))
 
     @admitted(recovery=True)
     def handle_end_session(self, cmd: EndSessionCommand) -> None:
-        if self._repo.find_by_id(cmd.session_id) is None:
-            raise KeyError(f"Session '{cmd.session_id}' not found")
+        with self._signal_lock:
+            record = self._require(cmd.session_id)
+            if self._acquisition is not None and record.state != SessionRecordState.ENDED:
+                status = record.recording.get("status") if record.recording else None
+                # A completed file already proves the drain and flush succeeded.
+                # Retrying an EndSession acknowledgement must not drain an
+                # aggregate that may have ended in the meantime.
+                if status != "completed":
+                    receipt = self._acquisition.handle_stop_and_drain(session_id=cmd.session_id)
+                    trials = self._require(cmd.session_id).trials
+                    if [trial.trial_number for trial in trials] != list(range(1, receipt.completed_trials + 1)):
+                        raise RuntimeError("Session trial projection is incomplete; session retained for reconciliation")
+                    if status == "interrupted":
+                        cmd = EndSessionCommand(cmd.session_id, interruption_reason=(
+                            cmd.interruption_reason or "Raw recording interrupted by source disconnect"
+                        ))
+                    elif record.recording is not None:
+                        if status == "pending":
+                            self._begin_raw_recording(cmd.session_id)
+                        info = self._acquisition.end_raw_recording(cmd.session_id)
+                        self._set_recording(cmd.session_id, info)
+            self._end_aggregate(cmd)
+
+    def _end_aggregate(self, cmd: EndSessionCommand) -> None:
         payload = cmd.session_id if cmd.interruption_reason is None else {
             "session_id": cmd.session_id,
             "interruption_reason": cmd.interruption_reason,
@@ -231,6 +295,45 @@ class SessionAppService:
         if record is None:  # defensive: repository deletion raced the command
             raise KeyError(f"Session '{cmd.session_id}' not found")
         logger.info("Session ended: %s (%d trials)", cmd.session_id, record.trial_count)
+
+    def _set_recording(self, session_id: str, info: dict) -> None:
+        self._repo.update(session_id, lambda record: setattr(record, "recording", deepcopy(info)))
+
+    def _begin_raw_recording(self, session_id: str) -> None:
+        record = self._require(session_id)
+        self._set_recording(session_id, {"session_id": session_id, "status": "pending"})
+        try:
+            info = self._acquisition.begin_raw_recording({
+                "session_id": session_id, "subject_id": record.subject_id,
+                "paradigm": record.paradigm, "continuation_of": record.continuation_of,
+            })
+        except CommandTimeoutError:
+            # A late RawRecordingState event can still associate the file.
+            raise
+        except Exception:
+            self._set_recording(session_id, {"session_id": session_id, "status": "failed"})
+            try:
+                info = self._acquisition.end_raw_recording(session_id)
+            except Exception:
+                logger.warning("Raw recording cleanup failed for session %s", session_id, exc_info=True)
+            else:
+                self._set_recording(session_id, info)
+            self._end_aggregate(EndSessionCommand(
+                session_id, interruption_reason="Raw recording could not be started",
+            ))
+            raise
+        self._set_recording(session_id, {**info, "status": "recording"})
+
+    def validate_recording_before_stream(self) -> None:
+        record = self._repo.find_active()
+        if record is not None and (record.recording is None or record.recording.get("status") != "recording"):
+            raise RuntimeError("The active session has no writable raw recording; end it before streaming")
+
+    def on_raw_recording_state(self, event: Event) -> None:
+        """Reconcile late acknowledgements and interrupted worker shutdowns."""
+        info = event.data
+        if isinstance(info, dict) and isinstance(info.get("session_id"), str):
+            self._set_recording(info["session_id"], info)
 
     # ------------------------------------------------------------------
     # Query handlers

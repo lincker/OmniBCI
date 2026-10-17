@@ -45,7 +45,7 @@ def start_recording(
     svc: RecordingService = Depends(get_recording_service),
 ):
     try:
-        session_id = svc.start(paradigm=body.paradigm)
+        session_id = svc.start(paradigm=body.paradigm, subject_id=body.subject_id)
     except RecordingConflictError as e:
         raise ApiError(status.HTTP_409_CONFLICT, ErrorCode.ALREADY_RECORDING, str(e))
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:

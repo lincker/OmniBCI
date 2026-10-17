@@ -1404,6 +1404,11 @@ export interface components {
              * @description Paradigm name; defaults to config value
              */
             paradigm?: string | null;
+            /**
+             * Subject Id
+             * @description Optional external subject identifier
+             */
+            subject_id?: string | null;
         };
         /** CreateVersionProfileRequest */
         CreateVersionProfileRequest: {
@@ -2007,6 +2012,12 @@ export interface components {
             signal_plan?: {
                 [key: string]: unknown;
             } | null;
+            /** Subject Id */
+            subject_id?: string | null;
+            /** Recording */
+            recording?: {
+                [key: string]: unknown;
+            } | null;
             /**
              * Trials
              * @default []
@@ -2059,6 +2070,12 @@ export interface components {
             interruption_reason?: string | null;
             /** Signal Plan */
             signal_plan?: {
+                [key: string]: unknown;
+            } | null;
+            /** Subject Id */
+            subject_id?: string | null;
+            /** Recording */
+            recording?: {
                 [key: string]: unknown;
             } | null;
         };
@@ -2166,6 +2183,11 @@ export interface components {
              * @description Paradigm name for the session; defaults to config value
              */
             paradigm?: string | null;
+            /**
+             * Subject Id
+             * @description Optional external subject identifier
+             */
+            subject_id?: string | null;
         };
         /** StartStimulationRequest */
         StartStimulationRequest: {

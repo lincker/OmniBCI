@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from omnibci.domain.ports.algorithm import Decoder, Filter, FilterContext, Prediction
-from omnibci.infrastructure.neuroengine.signal_processing.epoch.pipeline import ProcessingPipeline
+from omnibci.infrastructure.signal_processing.epoch.pipeline import ProcessingPipeline
 
 
 class _SpyDecoder(Decoder):

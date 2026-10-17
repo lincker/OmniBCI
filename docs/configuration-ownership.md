@@ -242,7 +242,7 @@ by that runtime. Startup-only and deployment inputs must not trigger a runtime
 rebuild or be reported as applied when their consumers have not been recreated.
 
 Code evidence: [engine configuration](../omnibci/infrastructure/neuroengine/builder.py),
-[processing context](../omnibci/infrastructure/neuroengine/signal_processing/pipeline_configuration.py),
+[processing context](../omnibci/infrastructure/signal_processing/pipeline_configuration.py),
 [backend assembly](../omnibci/bootstrap.py),
 [renderer selection](../omnibci/infrastructure/stimulation/stimulator.py), and
 [Actuation setup](../omnibci/infrastructure/actuation/application.py).

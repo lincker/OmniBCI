@@ -15,7 +15,9 @@ from omnibci.application.events import (
 )
 from omnibci.domain.signal_info import SignalInfo
 from omnibci.domain.ports.acquisition import SignalSource
+from omnibci.domain.ports.recording import SignalRecorder
 from omnibci.domain.signal import SignalChunk
+from omnibci.domain.session import validate_subject_id
 from omnibci.shared.events import Event, EventType
 
 logger = logging.getLogger(__name__)
@@ -48,6 +50,8 @@ class AcquisitionCommand(Enum):
     get_checkpoint    = 'get checkpoint'
     restore_checkpoint = 'restore checkpoint'
     update_revision   = 'update revision'
+    begin_recording   = 'begin raw recording'
+    end_recording     = 'end raw recording'
 
 
 class AcquisitionCommandRejected(RuntimeError):
@@ -68,6 +72,8 @@ _COMMAND_RESULT_NAMES = {
     AcquisitionCommand.restore_checkpoint: EventType.RestoreSourceCheckpoint.name,
     AcquisitionCommand.update_revision: EventType.UpdateAcquisitionRevision.name,
     AcquisitionCommand.get_metadata: EventType.GetSourceMetadata.name,
+    AcquisitionCommand.begin_recording: EventType.BeginRawRecording.name,
+    AcquisitionCommand.end_recording: EventType.EndRawRecording.name,
 }
 
 
@@ -88,6 +94,7 @@ class AcquisitionRuntime:
         preparation_required: bool,
         generation: str | None = None,
         config_revision: str | None = None,
+        recorder: SignalRecorder | None = None,
     ) -> None:
         self.data_source = data_source
         self.command_queue = command_queue
@@ -101,6 +108,9 @@ class AcquisitionRuntime:
         self.config_revision = config_revision
         self._last_sequence = -1
         self._fetch_failure: str | None = None
+        self._recorder = recorder
+        self._recording = None
+        self._closed_recording = None
         self._clear_metadata()
         self.connection_id = uuid4().hex if getattr(data_source, "is_connected", False) else None
 
@@ -119,11 +129,14 @@ class AcquisitionRuntime:
 
     async def shutdown(self) -> None:
         logger.info('Acquisition shutting down')
-        if self.data_source.is_connected or self.data_source.is_streaming:
-            await self._on_disconnect()
-        else:
-            await self._cancel_fetch_task()
-            self._emit_state()
+        try:
+            if self.data_source.is_connected or self.data_source.is_streaming:
+                await self._on_disconnect()
+            else:
+                await self._cancel_fetch_task()
+                self._emit_state()
+        finally:
+            self._finish_recording(status="interrupted", error=self._fetch_failure)
 
     async def main_loop(self) -> None:
         while not self.should_exit:
@@ -142,6 +155,9 @@ class AcquisitionRuntime:
         if command in (AcquisitionCommand.get_checkpoint, AcquisitionCommand.restore_checkpoint,
                        AcquisitionCommand.update_revision):
             self._configuration_command(command, request)
+            return
+        if command in (AcquisitionCommand.begin_recording, AcquisitionCommand.end_recording):
+            await self._recording_command(command, request)
             return
         handler = {
             AcquisitionCommand.connect:          self._on_connect,
@@ -222,6 +238,82 @@ class AcquisitionRuntime:
         if request is not None:
             self._emit_command_result(request, command, ok=True, data=data)
 
+    async def _recording_command(self, command, request) -> None:
+        if request is None:
+            return
+        try:
+            payload = request.payload
+            if not isinstance(payload, dict) or not isinstance(payload.get("session_id"), str) or not payload["session_id"]:
+                raise ValueError("A recording requires a session ID")
+            if self.data_source.is_streaming or self.fetch_task is not None:
+                raise ValueError("Stop and join acquisition before changing a recording")
+            session_id = payload["session_id"]
+            if command is AcquisitionCommand.begin_recording:
+                if self._recorder is None:
+                    raise ValueError("Raw recording is not configured")
+                self._require_healthy_stream()
+                validate_subject_id(payload.get("subject_id"))
+                if self._recording is not None and self._recording["session_id"] != session_id:
+                    raise ValueError("End the current recording before starting another session")
+                if not self.data_source.is_connected:
+                    raise ValueError("Connect the source before starting a recording")
+                if self.preparation_required and self._descriptor is None:
+                    raise ValueError("Read the source descriptor before starting a recording")
+                metadata = {key: payload.get(key) for key in (
+                    "session_id", "subject_id", "paradigm", "continuation_of",
+                )}
+                metadata.update(generation=self.generation, config_revision=self.config_revision,
+                                source_id=self.source_id,
+                                signal_info=self._descriptor.to_dict() if self._descriptor is not None else None)
+                data = self._recorder.start(metadata)
+                self._recording = data
+                self._emit_recording_state({**data, "status": "recording"})
+            elif self._recording is not None:
+                if self._recording["session_id"] != session_id:
+                    raise ValueError("Recording session ID does not match")
+                self._require_healthy_stream()
+                data = self._finish_recording(status="completed")
+                if data.get("status") != "completed":
+                    raise RuntimeError("Recording did not complete successfully")
+            elif self._closed_recording is not None and self._closed_recording["session_id"] == session_id:
+                data = self._closed_recording
+                if data.get("status") != "completed":
+                    raise RuntimeError("Recording did not complete successfully")
+            else:
+                raise ValueError("No recording belongs to this session")
+            self._emit_command_result(request, command, ok=True, data=data)
+        except Exception as exc:
+            self._emit_command_result(request, command, ok=False, message=str(exc),
+                                      error_code="RAW_RECORDING_FAILED",
+                                      failure_kind=CommandFailureKind.EXECUTION_FAILED)
+
+    def _flush_recording(self) -> None:
+        if self._recording is not None:
+            try:
+                self._recorder.flush()
+            except Exception as exc:
+                self._fetch_failure = self._fetch_failure or f"Recording flush failed: {exc}"
+                self._emit_recording_state({**self._recording, "status": "failed", "error": self._fetch_failure})
+                raise
+
+    def _finish_recording(self, *, status, error=None):
+        if self._recording is None:
+            return self._closed_recording
+        try:
+            result = self._recorder.finish(status=status, error=error)
+        except Exception as exc:
+            self._fetch_failure = self._fetch_failure or f"Recording finalization failed: {exc}"
+            self._emit_recording_state({**self._recording, "status": "failed", "error": self._fetch_failure})
+            raise
+        self._closed_recording = result
+        self._recording = None
+        self._emit_recording_state(result)
+        return result
+
+    def _emit_recording_state(self, info):
+        if self.event_bus is not None:
+            self.event_bus.put_event(Event(EventType.RawRecordingState, dict(info)))
+
     def _configuration_command(self, command, request) -> None:
         if request is None:
             return
@@ -293,6 +385,7 @@ class AcquisitionRuntime:
                 "Data source remained connected after disconnect",
             )
         self._emit_state()
+        self._finish_recording(status="interrupted", error=self._fetch_failure)
 
     async def _on_start_stream(self, receipt=None) -> None:
         self._require_healthy_stream()
@@ -323,12 +416,14 @@ class AcquisitionRuntime:
     async def _on_stop_stream(self) -> None:
         if not self.data_source.is_streaming:
             await self._cancel_fetch_task()
+            self._flush_recording()
             self._emit_state()
             return
         try:
             await self.data_source.stop_stream()
         finally:
             await self._cancel_fetch_task()
+        self._flush_recording()
         if self.data_source.is_streaming:
             self._emit_state()
             raise AcquisitionCommandRejected(
@@ -432,6 +527,8 @@ class AcquisitionRuntime:
                     sequence_id=self._last_sequence + 1,
                 )
                 # TODO: Consider validating data matrices against the acquisition descriptor in the future.
+                if self._recording is not None:
+                    self._recorder.append(chunk, config_revision=self.config_revision)
                 self.data_manager.put_data(chunk)
                 self._last_sequence = chunk.sequence_id
                 packets_counter += 1
@@ -440,6 +537,8 @@ class AcquisitionRuntime:
         except Exception as exc:
             self._fetch_failure = f"{type(exc).__name__}: {exc}"
             logger.error('Error in fetch task: %s', exc)
+            if self._recording is not None:
+                self._emit_recording_state({**self._recording, "status": "failed", "error": self._fetch_failure})
             await self._finish_stream()
 
     def _require_healthy_stream(self) -> None:
@@ -457,6 +556,10 @@ class AcquisitionRuntime:
         except Exception as exc:
             self._fetch_failure = self._fetch_failure or f"{type(exc).__name__}: {exc}"
             logger.error('stop_stream during fetch teardown failed: %s', exc)
+        try:
+            self._flush_recording()
+        except Exception:
+            logger.exception("Raw recording could not be flushed")
         self._emit_state()
 
     def _emit_state(self) -> None:

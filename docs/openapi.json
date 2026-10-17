@@ -6615,6 +6615,19 @@
             ],
             "title": "Paradigm",
             "description": "Paradigm name; defaults to config value"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id",
+            "description": "Optional external subject identifier"
           }
         },
         "type": "object",
@@ -8312,6 +8325,29 @@
             ],
             "title": "Signal Plan"
           },
+          "subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "recording": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recording"
+          },
           "trials": {
             "items": {
               "$ref": "#/components/schemas/TrialResponse"
@@ -8479,6 +8515,29 @@
               }
             ],
             "title": "Signal Plan"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "recording": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recording"
           }
         },
         "type": "object",
@@ -8818,6 +8877,19 @@
             ],
             "title": "Paradigm",
             "description": "Paradigm name for the session; defaults to config value"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id",
+            "description": "Optional external subject identifier"
           }
         },
         "type": "object",

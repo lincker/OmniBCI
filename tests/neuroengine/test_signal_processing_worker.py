@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import omnibci.conf as conf_module
-import omnibci.infrastructure.neuroengine.signal_processing.worker as worker_module
+import omnibci.infrastructure.signal_processing.worker as worker_module
 from omnibci.application.events import CommandRequest
 from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
 from omnibci.domain.channel_mapping import ProcessingInput, compile_processing_plan
@@ -16,14 +16,14 @@ from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter, Predi
 from omnibci.domain.signal import SignalChunk
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.infrastructure.ipc.data_manager import DataManager
-from omnibci.infrastructure.neuroengine.signal_processing import signal_configuration
-from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessorCommand
-from omnibci.infrastructure.neuroengine.signal_processing.worker import (
+from omnibci.infrastructure.signal_processing import signal_configuration
+from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
+from omnibci.infrastructure.signal_processing.worker import (
     SignalProcessingWorker,
 )
 from omnibci.infrastructure.plugins.algorithms.epoch.detector import DefaultEpochDetector
 from omnibci.infrastructure.plugins.loader import PluginLoader
-from omnibci.infrastructure.neuroengine.signal_processing.pipeline_configuration import load_filters
+from omnibci.infrastructure.signal_processing.pipeline_configuration import load_filters
 from omnibci.sdk import PluginContext
 from omnibci.infrastructure.process_lifecycle import StartupReporter
 from omnibci.shared.events import EventType
@@ -72,7 +72,7 @@ class TestAlgorithmLoading:
     def test_prepared_pipeline_uses_observed_sample_rate_without_global_reads(self, monkeypatch):
         from omnibci.application.plugin_profiles import ProfileBinding
         from omnibci.domain.channel_mapping import ChannelDescriptor, ProcessingInput, SignalInfo, compile_processing_plan
-        from omnibci.infrastructure.neuroengine.signal_processing.signal_configuration import load_signal_pipeline
+        from omnibci.infrastructure.signal_processing.signal_configuration import load_signal_pipeline
         from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
         snapshot = {"ACQUISITION.sample_rate": 1000, "CONFIG.revision": "test-revision"}
         bindings = []

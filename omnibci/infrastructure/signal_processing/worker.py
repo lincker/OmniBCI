@@ -10,7 +10,7 @@ from copy import deepcopy
 from typing import Optional
 
 from omnibci.application.processing_source import processing_input
-from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessor
+from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessor
 from omnibci.infrastructure.process_lifecycle import StartupReporter
 
 logger = logging.getLogger(__name__)

@@ -12,6 +12,9 @@ from omnibci.application.queries.session_queries import SessionStateDTO
 
 class CreateSessionRequest(BaseModel):
     paradigm: Optional[str] = Field(None, description="Paradigm name; defaults to config value")
+    subject_id: Optional[str] = Field(
+        None, strict=True, pattern=r"\S", description="Optional external subject identifier",
+    )
 
 
 class TrialResponse(BaseModel):
@@ -35,6 +38,8 @@ class SessionResponse(BaseModel):
     config_revision: Optional[str] = None
     interruption_reason: Optional[str] = None
     signal_plan: Optional[dict] = None
+    subject_id: Optional[str] = None
+    recording: Optional[dict] = None
 
 
 class SessionDetailResponse(SessionResponse):

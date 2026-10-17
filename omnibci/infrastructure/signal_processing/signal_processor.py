@@ -395,14 +395,19 @@ class SignalProcessor:
             # Retrying a confirmed identity must not reset its trials or events.
             return all(
                 field not in payload or payload[field] == getattr(self.session, field)
-                for field in ("paradigm", "continuation_of", "config_revision")
+                for field in ("paradigm", "continuation_of", "config_revision", "subject_id")
             )
-        candidate = BCISession(
-            session_id=session_id,
-            paradigm=payload.get("paradigm"),
-            continuation_of=payload.get("continuation_of"),
-            config_revision=payload.get("config_revision", self.config_revision),
-        )
+        try:
+            candidate = BCISession(
+                session_id=session_id,
+                paradigm=payload.get("paradigm"),
+                continuation_of=payload.get("continuation_of"),
+                config_revision=payload.get("config_revision", self.config_revision),
+                subject_id=payload.get("subject_id"),
+            )
+        except ValueError as exc:
+            logger.error("start_session: %s", exc)
+            return False
         # Single-active-session invariant: a new start ends the previous one.
         self._end_current_session()
         self.session = candidate

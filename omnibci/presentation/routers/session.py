@@ -88,7 +88,9 @@ def create_session(
     svc: SessionAppService = Depends(get_session_service),
 ):
     try:
-        session_id = svc.handle_create_session(CreateSessionCommand(paradigm=body.paradigm))
+        session_id = svc.handle_create_session(CreateSessionCommand(
+            paradigm=body.paradigm, subject_id=body.subject_id,
+        ))
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as exc:
         raise command_error_to_api_error(exc)
     except ProfileRevisionConflict:
@@ -113,6 +115,8 @@ def create_session(
             config_revision=dto.config_revision,
             interruption_reason=dto.interruption_reason,
             signal_plan=dto.signal_plan,
+            subject_id=dto.subject_id,
+            recording=dto.recording,
         ),
     )
 
@@ -136,6 +140,8 @@ def list_sessions(svc: SessionAppService = Depends(get_session_service)):
             config_revision=d.config_revision,
             interruption_reason=d.interruption_reason,
             signal_plan=d.signal_plan,
+            subject_id=d.subject_id,
+            recording=d.recording,
         )
         for d in dtos
     ]
@@ -164,6 +170,8 @@ def get_active_session(svc: SessionAppService = Depends(get_session_service)):
             config_revision=dto.config_revision,
             interruption_reason=dto.interruption_reason,
             signal_plan=dto.signal_plan,
+            subject_id=dto.subject_id,
+            recording=dto.recording,
         )
     )
 
@@ -200,8 +208,9 @@ def export_sessions(
     writer.writeheader()
     for session in sessions:
         metadata = session.model_dump(mode="json", exclude={"trials"})
-        if metadata.get("signal_plan") is not None:
-            metadata["signal_plan"] = json.dumps(metadata["signal_plan"], ensure_ascii=False, allow_nan=False)
+        for field in ("signal_plan", "recording"):
+            if metadata.get(field) is not None:
+                metadata[field] = json.dumps(metadata[field], ensure_ascii=False, allow_nan=False)
         metadata["session_config_revision"] = metadata.pop("config_revision")
         for trial in session.trials or [None]:
             row = {"format_version": 1, "exported_at": snapshot.exported_at.isoformat(),
@@ -242,6 +251,8 @@ def get_session(
             config_revision=dto.config_revision,
             interruption_reason=dto.interruption_reason,
             signal_plan=dto.signal_plan,
+            subject_id=dto.subject_id,
+            recording=dto.recording,
         )
     )
 

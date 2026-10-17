@@ -37,6 +37,16 @@ OpenAPI. Configure these check names as required in branch protection.
 
 ## What these checks establish
 
+The local raw-session recording and format-boundary update on 2026-10-17 passed
+all 2,976 headless backend tests. The complete integration suite passed 26 tests
+with one skip. Coverage includes real-worker recording, session switching,
+failure recovery, alternative writer injection, writer construction under spawn,
+legacy file compatibility, and rejection of unsupported formats and versions.
+All seven architecture contracts passed. The preceding API update also passed
+all 152 frontend tests, TypeScript checking, and generated REST contract checks.
+These checks use synthetic signals and file replay on macOS, not live hardware
+or other operating systems.
+
 The Signal Processing refactor on 2026-10-17 passed the complete headless backend
 suite on macOS with Python 3.14: 2,768 passed, one skipped, and two dependency
 deprecation warnings. All six architecture contracts passed. Coverage includes
@@ -202,7 +212,7 @@ message, not queue depth, total pending signal duration, or acquisition-to-outpu
 latency. It does not depend on acquisition timestamps or `Queue.qsize()`.
 
 DEBUG logging for
-`omnibci.infrastructure.neuroengine.signal_processing.processing_state` reports
+`omnibci.infrastructure.signal_processing.processing_state` reports
 chunk processing duration with sequence ID, sample count, and configuration
 revision at entry. This includes boundary detection, epoch buffering and
 decoding, trial completion, and pre-trigger history updates, including failed
@@ -220,6 +230,78 @@ queue. The current file reader's fixed delay is not consumer-feedback pacing.
 Until such a controller is configured and implemented, the queue remains
 unbounded and operators must use the existing stop/drain controls when measured
 latency exceeds their deployment budget.
+
+## Local raw session recordings
+
+Connect the acquisition source before creating a session. The normal session
+creation path prepares the source and Signal Processing binding, then opens a
+local raw recording for that session before samples flow. `POST /api/v1/recording/start`
+combines this with starting the stream. Both this endpoint and `POST /api/v1/sessions`
+accept an optional `subject_id`; omit it or pass `null` when no subject is known.
+It is an opaque external reference, not an identity-management feature. Empty or
+whitespace-only values and non-string values are rejected. A continuation creates
+a new session and recording while retaining the subject reference.
+
+Recordings use the platform application-data directory for `OmniBCI`, under
+`recordings/`. Set `OMNIBCI_RECORDING_DIR` to an absolute path to select another
+root. Each recording has a generated UUID directory; subject and session labels
+are stored in metadata and are never used as directory names. Session queries
+and JSON/CSV exports expose the local recording receipt in the optional
+`recording` field. Existing records without recording metadata return `null`.
+
+Each directory contains:
+
+- `metadata.json`: format identifier/version, session/subject identifiers, continuation,
+  source descriptor, runtime/configuration context, status, and final counts.
+- `chunks.npy`: consecutive NumPy arrays containing each plugin-produced raw
+  matrix, including every source signal channel and the final trigger row,
+  before Signal Processing channel mapping, filtering, epoching, or decoding.
+- `chunks.jsonl`: one index entry per successfully written chunk, with its byte
+  offset, sample count, sequence ID, acquisition timestamp, and configuration
+  revision. Built-in acquisition timestamps are host Unix nanoseconds, not
+  hardware sample timestamps.
+
+Pausing the stream flushes the data and index while retaining the same open
+recording. Ending a session stops and drains acquisition before finalizing its
+recording. Creating a session while another is active drains and ends the old
+session first, opens a separate recording, and restores a previously running
+stream. An unfinished epoch is discarded at this boundary, while its original
+samples remain in the old raw file. A shutdown or write failure leaves an interrupted or failed status;
+an abrupt process exit can leave `recording` status and partial trailing data.
+Only a successfully finalized recording reports `completed`. Flushed files
+survive restart, but the current session list remains an in-memory projection
+and is not rebuilt from the recording directories.
+
+Read indexed chunks lazily through the infrastructure reader:
+
+```python
+from omnibci.infrastructure.acquisition.recording import iter_recorded_chunks
+
+for chunk in iter_recorded_chunks("/absolute/path/to/recording-uuid"):
+    raw = chunk.raw_data  # Original dtype and trigger row are preserved.
+```
+
+The reader follows the chunk index; a single `numpy.load` call does not read an
+entire multi-chunk file. Inspect `metadata.json` before using an unfinished
+recording, and retain the index with the arrays. The local format is not a
+dataset catalog or an automatic recovery/import service.
+
+Storage implementations follow `omnibci.domain.ports.recording.SignalRecorder`:
+`start`, `append`, `flush`, and `finish`. AcquisitionRuntime receives this port;
+AcquisitionWorker chooses the implementation through `recorder_factory` and
+constructs it inside the worker process. Factories must be importable and
+serializable under multiprocessing spawn; do not pass open writers or file
+handles across processes. The default remains `LocalSignalRecorder`, which
+implements the NumPy/JSON format. To add a format, implement this contract and
+wire its factory at worker construction; Session and processing logic remain
+independent of encoding and filenames.
+
+Receipts and metadata now identify `format="omnibci.numpy-chunks"` and
+`format_version=1`. A new implementation must use a distinct format identifier,
+and incompatible layout changes must increment its version. The current reader
+accepts original v1 manifests without a format identifier and rejects unknown
+formats/versions before reading data. Add the corresponding reader when adding
+a storage implementation; changing the default writer does not migrate old files.
 
 ## Local commands
 

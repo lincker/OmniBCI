@@ -10,12 +10,12 @@ from omnibci.domain.classification import Classification
 from omnibci.domain.epoch import Epoch
 from omnibci.domain.events import SessionStarted, TrialCompleted
 from omnibci.domain.signal import SignalChunk
-from omnibci.infrastructure.neuroengine.signal_processing.processing_state import (
+from omnibci.infrastructure.signal_processing.processing_state import (
     AssemblingEpochState,
     AwaitingEpochState,
     ProcessingState,
 )
-from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessor
+from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessor
 
 
 def _chunk(samples: int = 6, *, start=None, end=None) -> SignalChunk:

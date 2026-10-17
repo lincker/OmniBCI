@@ -28,7 +28,7 @@ if _root not in sys.path:
 
 from omnibci.domain.ports.algorithm import Decoder
 from omnibci.domain.signal import SignalChunk
-from omnibci.infrastructure.neuroengine.signal_processing.epoch.epoch_processor import EpochProcessor
+from omnibci.infrastructure.signal_processing.epoch.epoch_processor import EpochProcessor
 
 
 class WaitingDecoder(Decoder):

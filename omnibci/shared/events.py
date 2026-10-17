@@ -14,6 +14,8 @@ class EventType(IntEnum):
     RestoreSourceCheckpoint = 106
     UpdateAcquisitionRevision = 107
     GetSourceMetadata = 108
+    BeginRawRecording = 109
+    EndRawRecording = 110
     StartStream = 111
     StopStream = 112
     StopAndDrain = 113  # acquisition stop followed by an ordered processing barrier
@@ -23,6 +25,7 @@ class EventType(IntEnum):
     PrepareSignalProcessing = 214
     AcquisitionState = 121  # worker -> API: authoritative device-state snapshot
                             # payload: application.events.AcquisitionSnapshot
+    RawRecordingState = 122  # worker -> API: local recording identity and status
     CommandResult = 601      # command consumer -> API: application.events.CommandResult
     PeerHello = 701          # external peer -> engine: pinned runtime identity
     PeerAccepted = 702       # engine -> external peer: matching identity accepted

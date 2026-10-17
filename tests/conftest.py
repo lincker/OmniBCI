@@ -20,6 +20,12 @@ def isolated_module_config_directory(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def isolated_recording_directory(monkeypatch, tmp_path):
+    """Keep raw recordings in temporary storage inherited by engine workers."""
+    monkeypatch.setenv("OMNIBCI_RECORDING_DIR", str(tmp_path / "recordings"))
+
+
+@pytest.fixture(autouse=True)
 def isolated_backend_log_directory(monkeypatch, tmp_path):
     """Keep API lifespan logs out of the real platform user log directory."""
     from omnibci.infrastructure import backend_logging

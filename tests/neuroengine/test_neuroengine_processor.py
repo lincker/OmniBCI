@@ -6,7 +6,7 @@ import time
 from unittest.mock import AsyncMock, MagicMock
 
 from omnibci.infrastructure.ipc.data_manager import DataManager
-from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import (
+from omnibci.infrastructure.signal_processing.signal_processor import (
     SignalProcessor,
     SignalProcessorCommand,
 )

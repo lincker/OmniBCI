@@ -1,6 +1,6 @@
 """Unit tests for the AcquisitionWorker process boundary orchestration."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -50,6 +50,7 @@ def test_run_constructs_runtime_with_explicit_context(processing_input):
         preparation_required=True,
         generation="generation",
         config_revision="revision",
+        recorder=ANY,
     )
     runtime_class.return_value.run.assert_called_once_with()
     assert worker.runtime is runtime_class.return_value
@@ -94,7 +95,23 @@ def test_global_settings_are_pinned_once_for_source_and_runtime():
         data_source=load_source.return_value, command_queue=worker.command_queue,
         data_manager=None, event_bus=None, source_id="global-source", preparation_required=True,
         generation="global-generation", config_revision="global-revision",
+        recorder=ANY,
     )
+
+
+def test_recorder_factory_is_called_inside_worker_run_only():
+    recorder = MagicMock()
+    factory = MagicMock(return_value=recorder)
+    worker = AcquisitionWorker(command_queue=MagicMock(), settings_snapshot={}, recorder_factory=factory)
+    worker.data_source = MagicMock(spec=SignalSource)
+    factory.assert_not_called()
+
+    with patch("omnibci.infrastructure.acquisition.worker.AcquisitionRuntime") as runtime_class:
+        worker._run()
+
+    factory.assert_called_once_with()
+    assert runtime_class.call_args.kwargs["recorder"] is recorder
+    runtime_class.return_value.run.assert_called_once_with()
 
 
 def test_historical_decoder_projection_requires_preparation():

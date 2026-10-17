@@ -9,7 +9,7 @@ import pytest
 from omnibci.application.plugin_profiles import ProfileBinding
 from omnibci.domain.channel_mapping import ChannelDescriptor, ProcessingInput, SignalInfo, compile_processing_plan
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-from omnibci.infrastructure.neuroengine.signal_processing import pipeline_configuration as configuration
+from omnibci.infrastructure.signal_processing import pipeline_configuration as configuration
 
 
 def selected_snapshot(revision="old"):

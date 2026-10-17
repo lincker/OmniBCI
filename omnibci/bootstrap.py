@@ -135,6 +135,8 @@ def assemble(
         command_results=command_results,
         admission=admission,
     )
+    session_service.set_recording_controller(acquisition_service)
+    acquisition_service.set_recording_validator(session_service.validate_recording_before_stream)
 
     process_manager = stimulation_process_manager or StimulationProcessManager(auto_spawn=auto_spawn)
 
@@ -324,6 +326,7 @@ def register_engine_listeners(
         (EventType.TrialCompleted, container.session_service.on_trial_completed),
         (EventType.SessionEnded, container.session_service.on_session_ended),
         (EventType.AcquisitionState, container.acquisition_service.on_acquisition_state),
+        (EventType.RawRecordingState, container.session_service.on_raw_recording_state),
         *extra_subscriptions,
     ]
     for event_type, handler in subscriptions:

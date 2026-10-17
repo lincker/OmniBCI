@@ -64,6 +64,9 @@ class _FakeSessionService:
     def on_session_ended(self, event):  # pragma: no cover - identity only
         pass
 
+    def on_raw_recording_state(self, event):  # pragma: no cover - identity only
+        pass
+
 
 def _container(engine, session_service=None) -> AppContainer:
     from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
@@ -101,6 +104,9 @@ class TestAssemble:
         c = assemble(FakeEngine(), repo)
         assert c.session_repository is repo
         assert c.session_service._repo is repo
+        assert c.session_service._acquisition is c.acquisition_service
+        assert c.session_service._signal_lock is c.acquisition_service.lifecycle_lock
+        assert c.acquisition_service._validate_recording == c.session_service.validate_recording_before_stream
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +127,7 @@ class TestRegisterListeners:
         extra = [(EventType.SessionStarted, broadcaster_handler)]
         count = register_engine_listeners(container, extra)
 
-        assert count == 6
+        assert count == 7
         registered_types = [t for t, _ in engine.subscriptions]
         assert registered_types == [
             EventType.CommandResult,
@@ -129,6 +135,7 @@ class TestRegisterListeners:
             EventType.TrialCompleted,
             EventType.SessionEnded,
             EventType.AcquisitionState,
+            EventType.RawRecordingState,
             EventType.SessionStarted,
         ]
         # read-model handlers come from the session / acquisition services
@@ -136,13 +143,14 @@ class TestRegisterListeners:
         assert engine.subscriptions[2][1] == sess.on_trial_completed
         assert engine.subscriptions[3][1] == sess.on_session_ended
         assert engine.subscriptions[4][1] == container.acquisition_service.on_acquisition_state
+        assert engine.subscriptions[5][1] == sess.on_raw_recording_state
         # extra handler preserved
-        assert engine.subscriptions[5][1] is broadcaster_handler
+        assert engine.subscriptions[6][1] is broadcaster_handler
 
     def test_default_subscriptions_without_extra(self):
         engine = FakeEngine(initialized=True, ready=False)
         count = register_engine_listeners(_container(engine))
-        assert count == 5
+        assert count == 6
 
     def test_noop_when_engine_not_initialized(self):
         engine = FakeEngine(initialized=False)

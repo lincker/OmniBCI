@@ -29,7 +29,7 @@ from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime, AcquisitionCommand
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
-from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessor, SignalProcessorCommand
+from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessor, SignalProcessorCommand
 from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 from omnibci.shared.events import Event, EventType
 

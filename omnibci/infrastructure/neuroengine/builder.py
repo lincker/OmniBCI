@@ -7,7 +7,7 @@ from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
-from omnibci.infrastructure.neuroengine.signal_processing.worker import SignalProcessingWorker
+from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
 from omnibci.infrastructure.neuroengine.gateway import PeerGateway
 from omnibci.infrastructure.neuroengine.gateway.peers import (
     stimulation_peer_config,
