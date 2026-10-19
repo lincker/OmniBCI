@@ -70,9 +70,17 @@ nor a manually duplicated sample rate is required.
 
 The default source selection is File Reader, so it must be changed for this run.
 Acquisition/decoding does not require launching visual stimulation. If stimulation
-is also needed, the bundled Scan45 parallel trigger is Windows-only; select a
-suitable installed trigger or run stimulation on a compatible Windows host.
+is also needed, the bundled Scan45 and CURRY 8 parallel triggers are Windows-only; select
+**None (no trigger output)** for a preview without hardware markers, a suitable
+installed trigger, or run stimulation on a compatible Windows host.
 Synthetic signal tests do not validate physical trigger timing or device settings.
+
+The CURRY 8 trigger tests use a simulated InpOut DLL to verify process-bitness
+selection, byte/output mode, event codes, the send/clear sequence (including
+repeated codes and a zero-code free run), and error propagation. Catalog tests
+verify separate reader/trigger selection and platform restrictions. No DLL is
+loaded during discovery. Real Windows port output, voltage, cable wiring,
+marker capture and display-to-marker timing still require hardware verification.
 
 The simulated TCP test is executable with:
 

@@ -22,6 +22,7 @@ CAPABILITIES = [
     ("acquisition", "neuroscan_scan45_reader", SignalSource),
     ("acquisition", "neuroscan_curry8_reader", SignalSource),
     ("trigger", "neuroscan_scan45_trigger", TriggerEmitter),
+    ("trigger", "neuroscan_curry8_trigger", TriggerEmitter),
     ("decoder", "THUBCI_SSVEP_classic40CCA", Decoder),
     ("decoder", "THUBCI_SSVEP_classic40FBCCA", Decoder),
     ("epoch_detector", "DEFAULT_EPOCH_DETECTOR", EpochDetector),
@@ -42,6 +43,7 @@ def catalog():
 def test_builtin_exact_selection_loads_its_domain_port(catalog, monkeypatch, kind, alias, port):
     descriptor = catalog.resolve_legacy(kind, alias)
     assert descriptor.package.manifest_version == 2
+    assert descriptor in catalog.list_contributions(kind)
     assert catalog.resolve_selection(kind, descriptor.selection) == descriptor
     if kind == "trigger":
         # Loading a class requires no Windows device connection.
@@ -49,9 +51,10 @@ def test_builtin_exact_selection_loads_its_domain_port(catalog, monkeypatch, kin
     assert issubclass(PluginLoader.load_entrypoint(descriptor, port), port)
 
 
-def test_trigger_platform_is_independent_from_acquisition(catalog, monkeypatch):
-    trigger = catalog.resolve_legacy("trigger", "neuroscan_scan45_trigger")
-    reader = catalog.resolve_legacy("acquisition", "neuroscan_scan45_reader")
+@pytest.mark.parametrize("device", ["scan45", "curry8"])
+def test_trigger_platform_is_independent_from_acquisition(catalog, monkeypatch, device):
+    trigger = catalog.resolve_legacy("trigger", f"neuroscan_{device}_trigger")
+    reader = catalog.resolve_legacy("acquisition", f"neuroscan_{device}_reader")
     assert trigger.package == reader.package
     assert trigger.supports_platform("win32")
     for host in ("darwin", "linux"):

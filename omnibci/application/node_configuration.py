@@ -19,7 +19,7 @@ _ROLE_KINDS = {
 }
 _REQUIRED_SLOTS = {
     "engine": frozenset({"acquisition.source", "processing.decoder", "processing.epoch_detector"}),
-    "stimulation": frozenset({"stimulation.paradigm", "stimulation.trigger"}),
+    "stimulation": frozenset({"stimulation.paradigm"}),
     "actuation": frozenset({"actuation.effector"}),
 }
 _CONTEXT_KEYS = frozenset({

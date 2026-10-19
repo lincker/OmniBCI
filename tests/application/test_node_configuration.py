@@ -105,6 +105,26 @@ def test_node_needs_only_owned_plugins(runtime, role, kinds, alias):
         assert "NEUROENGINE.message_server_ip" not in result
 
 
+def test_stimulation_node_preserves_an_explicit_absent_trigger(runtime):
+    runtime["PLUGINS.bindings"] = [item for item in runtime["PLUGINS.bindings"] if item["kind"] != "trigger"]
+    runtime["ACQUISITION.trigger"] = "stale-hardware-alias"
+    catalog = LocalCatalog({"paradigm"})
+    dto = project_node_configuration(runtime, "stimulation")
+    result = materialize_node_configuration(NodeConfiguration.from_dict(dto.to_dict()), catalog)
+    assert {kind for kind, _ in catalog.calls} == {"paradigm"}
+    assert {item["slot"] for item in result["PLUGINS.bindings"]} == {"stimulation.paradigm"}
+    assert "ACQUISITION.trigger" not in result
+    assert result["CONFIG.revision"] == runtime["CONFIG.revision"]
+    assert result["CONFIG.generation"] == runtime["CONFIG.generation"]
+
+
+def test_stimulation_node_rejects_an_explicit_unavailable_trigger(runtime):
+    catalog = LocalCatalog({"paradigm", "trigger"})
+    catalog.definitions["trigger"] = replace(catalog.definitions["trigger"], available=False)
+    with pytest.raises(PluginSchemaError, match="stimulation.trigger: unavailable"):
+        materialize_node_configuration(project_node_configuration(runtime, "stimulation"), catalog)
+
+
 def test_node_derives_historical_identity_input_without_changing_authoritative_binding(runtime):
     from omnibci.application.processing_source import requires_signal_preparation
     from omnibci.domain.decoder_input import DecoderChannelRequirements

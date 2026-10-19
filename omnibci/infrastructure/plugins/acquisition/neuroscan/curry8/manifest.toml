@@ -19,3 +19,16 @@ description = "Neuroscan CURRY 8 NetStreaming EEG acquisition driver."
 [contributions.configuration]
 schema = "default.schema.json"
 schema_version = 1
+
+[[contributions]]
+id = "trigger"
+kind = "trigger"
+plugin_type = "neuroscan_curry8_trigger"
+entrypoint = "trigger:Curry8Trigger"
+display_name = "Neuroscan CURRY 8 Parallel Trigger"
+description = "Parallel-port TTL event output for CURRY 8. Requires Windows and compatible Neuroscan trigger hardware."
+platforms = ["win32"]
+
+[contributions.configuration]
+schema = "trigger.schema.json"
+schema_version = 1

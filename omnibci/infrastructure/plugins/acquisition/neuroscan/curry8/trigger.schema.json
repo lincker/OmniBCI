@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "parallel_port_address": {
+      "type": "string",
+      "title": "Parallel port address",
+      "description": "Hexadecimal Windows LPT base address connected to the Neuroscan TTL trigger input.",
+      "default": "0x3100",
+      "x-scope": "machine",
+      "x-apply": "module",
+      "minLength": 3
+    }
+  },
+  "required": [
+    "parallel_port_address"
+  ]
+}

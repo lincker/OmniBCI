@@ -21,6 +21,8 @@ const unsavedPlugin = selection("example.new-source");
 const bandpass = selection("example.bandpass");
 const notch = selection("example.notch");
 const decoder = selection("example.decoder");
+const trigger = selection("example.trigger");
+const paradigm = selection("example.paradigm");
 const channelRequirements = { description: "Select the configured motor channels.", signal_type: "eeg", min_count: 2,
   required_names: ["C3"], default_names: ["C4", "C3"] };
 const channelIds = { C3: "sample-0", C4: "sample-1", P3: "sample-2", P4: "sample-3" };
@@ -47,6 +49,8 @@ function fixture() {
     profile("notch-a", "filter", notch, "Notch A", 8),
     { ...profile("decoder-a", "decoder", decoder, "Decoder A", 1), processing_input: decoderInput(["C3", "C4"]) },
     { ...profile("decoder-b", "decoder", decoder, "Decoder B", 2), processing_input: decoderInput(["P3", "P4"]) },
+    profile("trigger-a", "trigger", trigger, "Hardware trigger", 1),
+    profile("paradigm-a", "paradigm", paradigm, "Visual stimulation", 1),
   ];
   const bind = (slot, id) => {
     const saved = profiles.find((item) => item.profile_id === id);
@@ -57,6 +61,7 @@ function fixture() {
     definition("acquisition", replay, "Replay"), definition("acquisition", unsavedPlugin, "New source"),
     definition("filter", bandpass, "Bandpass"), definition("filter", notch, "Notch"),
     definition("filter", emptyFilter, "New filter"), { ...definition("decoder", decoder, "Decoder"), channel_requirements: clone(channelRequirements) },
+    definition("trigger", trigger, "Hardware trigger"), definition("paradigm", paradigm, "Visual stimulation"),
   ], activation: { revision: "accepted-revision", bindings: [bind("acquisition.source", "lab-a"),
     bind("processing.filter.first", "band-a"), bind("processing.filter.second", "notch-a"), bind("processing.decoder", "decoder-a")] } };
 }
@@ -555,6 +560,77 @@ test("plugin changes require an explicit discard when the edited profile is dirt
     assert.equal(control(harness, "Name", "input").props.value, "Version 2 lab");
     assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
   });
+});
+
+test("selecting no trigger reviews only trigger removal and preserves an inline acquisition source", async () => {
+  await withProfiles("stimulation", async (harness, calls, data) => {
+    const accepted = clone(data.activation);
+    await click(harness, "Trigger");
+    assert.deepEqual(options(control(harness, "Plugin and version"))[0], { value: "", label: "None (no trigger output)" });
+    await change(harness, "Plugin and version", "");
+    assert.equal(form(harness), undefined);
+    assert.equal(elements(harness.tree).some((item) => item.type === "button" && text(item) === "Save profile"), false);
+    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
+    assert.deepEqual(data.activation, accepted, "Browsing None must not change the accepted trigger");
+    await click(harness, "Review and apply profile");
+    assert.deepEqual(calls.review, [{
+      bindings: accepted.bindings.filter((item) => item.slot !== "stimulation.trigger").map((item) => item.profile_id
+        ? { slot: item.slot, profile_id: item.profile_id }
+        : { slot: item.slot, selection: item.selection, parameters: item.parameters }),
+      expected_revision: accepted.revision, refresh_slots: [], include_host_settings: false,
+    }]);
+    assert.equal(calls.create.length, 0); assert.equal(calls.update.length, 0); assert.equal(calls.apply.length, 0);
+    assert.deepEqual(data.activation, accepted, "Review still requires explicit application");
+  }, { configure: (data) => {
+    for (const [slot, profileId] of [["stimulation.trigger", "trigger-a"], ["stimulation.paradigm", "paradigm-a"]]) {
+      const saved = data.profiles.find((item) => item.profile_id === profileId);
+      data.activation.bindings.push({ ...clone(saved), slot, profile_revision: saved.revision });
+    }
+    const source = data.activation.bindings.find((item) => item.slot === "acquisition.source");
+    source.profile_id = null; source.profile_revision = null;
+    source.parameters = { gain: 8, calibration: [5, 6] };
+  } });
+});
+
+test("an unbound trigger opens as None and can browse a saved hardware profile", async () => {
+  await withProfiles("stimulation", async (harness, calls) => {
+    await click(harness, "Trigger");
+    assert.equal(control(harness, "Plugin and version").props.value, "");
+    assert.equal(form(harness), undefined);
+    await change(harness, "Plugin and version", selectionKey(trigger));
+    assert.equal(control(harness, "Profile").props.value, "trigger-a");
+    assert.equal(control(harness, "Name", "input").props.value, "Hardware trigger");
+    await change(harness, "Plugin and version", "");
+    assert.equal(control(harness, "Plugin and version").props.value, "");
+    assert.equal(form(harness), undefined);
+    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
+  });
+});
+
+test("selecting no trigger asks before discarding an edited hardware profile", async () => {
+  await withProfiles("stimulation", async (harness, calls) => {
+    await click(harness, "Trigger");
+    await change(harness, "Plugin and version", selectionKey(trigger));
+    await change(harness, "Name", "Unsaved trigger name", "input");
+    await change(harness, "Plugin and version", "");
+    assert.ok(dialog(harness));
+    assert.equal(control(harness, "Plugin and version").props.value, selectionKey(trigger));
+    dialog(harness).props.onCancel(); await harness.settle();
+    assert.equal(control(harness, "Name", "input").props.value, "Unsaved trigger name");
+    await change(harness, "Plugin and version", "");
+    dialog(harness).props.onConfirm(""); await harness.settle();
+    assert.equal(control(harness, "Plugin and version").props.value, "");
+    assert.equal(form(harness), undefined);
+    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
+  });
+});
+
+test("required plugin slots do not offer the no-trigger option", async () => {
+  for (const module of ["acquisition", "processing", "stimulation"]) {
+    await withProfiles(module, async (harness) => {
+      assert.equal(options(control(harness, "Plugin and version")).some((item) => item.value === ""), false);
+    });
+  }
 });
 
 test("saving changed parameters keeps the old activation until an explicit review", async () => {

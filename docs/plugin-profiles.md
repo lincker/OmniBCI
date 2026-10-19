@@ -33,6 +33,39 @@ Signal Processing separates Decoder, Epoch boundary detector, and the ordered Fi
 filter instance selects its own plugin and profile. Browsing or saving another
 profile preserves pending filter order; applying the chain is a separate action.
 
+In **Stimulation → Trigger**, choose **None (no trigger output)** and review/apply
+to run stimulation without hardware event output. This removes the trigger binding
+without deleting its saved Profile; no new Profile is needed. Selecting None alone
+does not change the active configuration. Stimulation still presents trials, but
+does not send markers to an acquisition device or insert events into recorded data.
+Selecting a hardware trigger again retains its platform and device checks.
+
+For CURRY 8 with parallel TTL, select **Neuroscan CURRY 8 Parallel Trigger**,
+create/save a Profile, then **Review and apply profile**. Set
+`parallel_port_address` to the hexadecimal I/O base address reported by Windows
+Device Manager; `0x3100` is a default, not automatic device detection. The
+stimulation host needs a physical parallel port, a compatible Neuroscan trigger
+cable connected to the amplifier, and an installed InpOut kernel driver and DLL
+matching the Python process (`inpoutx64.dll` for 64-bit, `inpout32.dll` for 32-bit).
+Make the DLL available to the Windows DLL loader, for example alongside the
+Python executable. See the [InpOut installation instructions](https://www.highrez.co.uk/downloads/inpout32/).
+
+The output uses eight stimulus bits: codes 1–255, with 0 reserved for the idle
+baseline. The paradigm calls `clear()` before each event and at its end;
+`send()` holds the code until cleared. Clearing retains Scan45's 20 ms low
+interval. There is no automatic pulse timer or amplifier acknowledgement.
+The amplifier's accepted codes, bit mask, polarity and sampling rate still apply.
+In CURRY's **Amplifier Control → Trigger Settings**, use the matching third-party
+TTL mode (**Other** in newer CURRY 8 versions, previously **Neuroscan Stim2/STIM2**)
+and check incoming stimulus bits before recording. See the
+[CURRY 8 manual, Appendix A](https://www.sci.utah.edu/~wolters/LiteraturZurVorlesung/Vorlesungen/Tutorial/Curry8/Curry8UserGuide.pdf#page=912)
+and [CURRY 8 release notes](https://www.compumedicsneuroscan.com/Uploads/Curry806ReleaseNotes.pdf#page=36).
+
+This trigger is Windows-only; the CURRY NetStreaming acquisition plugin remains
+cross-platform. On macOS, select **None (no trigger output)** for a visual preview
+or run stimulation on a Windows host. Selecting a CURRY reader does not
+automatically select its trigger.
+
 For Scan45, `channel_number` is the total number of channels in each incoming
 sample, including the final event channel. The default is 10 (9 EEG + 1 event),
 and any integer of at least 2 is accepted. For 32 EEG channels and one event

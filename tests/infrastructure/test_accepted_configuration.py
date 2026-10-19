@@ -77,9 +77,12 @@ def test_disabled_actuation_does_not_start(profiles):
         accepted_runtime_settings(profiles=profiles, active_kinds={"effector"})
 
 
-def test_stimulation_requires_an_accepted_trigger(profiles):
-    with pytest.raises(RuntimeError, match="trigger selection"):
-        accepted_runtime_settings(profiles=profiles, active_kinds={"paradigm", "trigger"})
+def test_stimulation_accepts_an_explicit_configuration_without_trigger(profiles):
+    accepted = profiles.repository.get_activation()
+    snapshot = accepted_runtime_settings(profiles=profiles, active_kinds={"paradigm", "trigger"})
+    assert snapshot == profiles.materialize(accepted)
+    assert not any(binding["slot"] == "stimulation.trigger" for binding in snapshot["PLUGINS.bindings"])
+    assert profiles.repository.get_activation() == accepted
 
 
 def test_missing_selected_version_cannot_use_legacy_alias(profiles):

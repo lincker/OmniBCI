@@ -204,7 +204,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
         <p><Dot on={stimulation.data?.process_alive} label={t("run.processRunning")} />
           <Dot on={stimulation.data?.engine_connected} label={t("run.engineConnected")} /></p>
         {stimulation.error && <p className="error" role="alert">{stimulation.error.message}</p>}
-        <p className="meta">{paradigmName}</p>
+        <p className="meta">{paradigmName}<br />{t("profiles.slotTrigger")}: {selectedName("stimulation.trigger")}</p>
         <div className="actions"><button disabled={controlsBlocked || !engineAvailable || !running || !stimulationAvailable || !trialControlsReady
             || (stimulation.data?.active && (stimulation.data.process_alive || stimulation.data.engine_connected))}
           onClick={() => void launch.run()}>{launch.pending ? t("run.launching") : t("run.launchStimulation")}</button>

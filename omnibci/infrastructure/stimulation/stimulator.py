@@ -45,6 +45,16 @@ def _create_renderer(name: str):
 # Stimulator
 # ---------------------------------------------------------------------------
 
+class _NoTrigger(TriggerEmitter):
+    """Honor an explicit configuration without trigger output."""
+
+    def send(self, event_id: int) -> bool:
+        return True
+
+    def clear(self) -> None:
+        pass
+
+
 class Stimulator:
     def __init__(self, *, settings_snapshot: dict | None = None) -> None:
         self._snapshot = deepcopy(settings_snapshot) if settings_snapshot is not None else settings.snapshot()
@@ -55,7 +65,9 @@ class Stimulator:
     # ── Internal loaders ───────────────────────────────────────────────────
 
     def _load_trigger(self) -> TriggerEmitter:
-        from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
+        from omnibci.infrastructure.plugins.runtime_configuration import configured_bindings, load_configured_plugin
+        if not any(binding.slot == "stimulation.trigger" for binding in configured_bindings(self._snapshot)):
+            return _NoTrigger()
         return load_configured_plugin(
             self._snapshot, "stimulation.trigger", "trigger", TriggerEmitter,
         )
