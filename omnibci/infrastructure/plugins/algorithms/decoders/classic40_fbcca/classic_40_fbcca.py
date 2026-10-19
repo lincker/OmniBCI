@@ -143,48 +143,49 @@ class Classic40FBCCA(Decoder):
             :,
             self.OFFSET_LENGTH:int(self.SAMPLE_COUNT + self.OFFSET_LENGTH),
         ]
-        predict_index, _, _ = self.classify(calc_data, self.FREQUENCY_SET)
+        result = self.classify(calc_data, self.FREQUENCY_SET)
+        if result is None:
+            return None
+        predict_index, _, _ = result
         return Prediction(target_id=int(predict_index))
 
     def classify(self, eeg_data, freq_list):
-        """
-        执行 FBCCA 分类
-        :param eeg_data: 输入脑电数据, Shape (n_channels, n_samples)
-        :param freq_list: 候选频率列表
-        :return: 预测的频率索引, 预测频率值, 各频率的得分
-        """
+        """Return the target, frequency and scores, or None when filtering needs more samples."""
         n_samples = eeg_data.shape[1]
         filters = self.get_filter_bank()
 
-        # 存储每个频率的最终得分
+        # Store the final score for each frequency.
         scores = np.zeros(len(freq_list))
 
-        # 1. 对 EEG 数据进行滤波器组分解
+        # Split EEG into filter-bank bands.
         filtered_data = []
         for b, a in filters:
-            # filtfilt 防止相位偏移
-            filtered_data.append(filtfilt(b, a, eeg_data, axis=1))
+            padlen = 3 * max(len(a), len(b))
+            if n_samples <= padlen:
+                return None
+            # Zero-phase filtering keeps the signal aligned with its references.
+            filtered_data.append(filtfilt(b, a, eeg_data, axis=1, padlen=padlen))
 
-        # 2. 遍历每一个目标频率
+        # Evaluate each target frequency.
         for freq_idx, freq in enumerate(freq_list):
-            # 生成该频率的参考信号
+            # Generate the reference signals for this frequency.
             Y = self.get_reference_signals(n_samples, freq)
 
             rho_sum = 0
 
-            # 3. 遍历每一个子带
+            # Accumulate the weighted correlation from each band.
             for band_idx in range(len(filters)):
                 X_sb = filtered_data[band_idx]
 
-                # 计算 CCA 相关系数
+                # Calculate the canonical correlation coefficient.
                 rho = self.cca_coef(X_sb, Y)
 
-                # 加权求和: sum(w_n * rho_n^2)
+                # Weighted sum: sum(w_n * rho_n^2).
                 rho_sum += self.weights[band_idx] * (rho ** 2)
 
             scores[freq_idx] = rho_sum
 
-        # 找到最大得分对应的索引
+        # Select the highest-scoring frequency.
         result = np.argmax(scores)
         pred_idx = result + 1
         return pred_idx, freq_list[result], scores

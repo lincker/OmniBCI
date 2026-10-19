@@ -33,37 +33,40 @@ def test_matching_expectations_include_the_native_event_row(provenance):
 
 
 @pytest.mark.parametrize("parameters", [{}, {"sample_rate": 500}, {"channel_number": 3}])
-def test_missing_experiment_baseline_is_unconfirmed(parameters):
+def test_unspecified_expectations_use_observed_values_without_changing_the_profile(parameters):
     binding = source_binding(**parameters)
+    original = deepcopy(binding)
     comparison = compare_source_expectations(binding, source_info())
     assert comparison["status"] == "unconfirmed"
-    with pytest.raises(ValueError, match="unconfirmed.*save and apply"):
-        validate_source_expectations({"PLUGINS.bindings": [binding]}, source_info())
+    validate_source_expectations({"PLUGINS.bindings": [binding]}, source_info())
+    assert binding == original
 
 
-def test_flat_settings_and_other_plugins_cannot_establish_the_source_baseline():
+def test_flat_settings_and_other_plugins_do_not_override_observed_source_values():
     snapshot = {
-        "ACQUISITION.sample_rate": 500, "ACQUISITION.channel_number": 3,
+        "ACQUISITION.sample_rate": 1000, "ACQUISITION.channel_number": 65,
         "PLUGINS.bindings": [{"slot": "processing.decoder", "parameters": {
             "sample_rate": 500, "channel_number": 3,
         }}],
     }
     assert compare_source_expectations(None, source_info())["status"] == "unconfirmed"
-    with pytest.raises(ValueError, match="unconfirmed"):
-        validate_source_expectations(snapshot, source_info())
+    validate_source_expectations(snapshot, source_info())
 
 
 @pytest.mark.parametrize(("parameters", "difference"), [
     ({"sample_rate": 250, "channel_number": 3}, "sample rate \\(Hz\\): expected 250, observed 500"),
     ({"sample_rate": 500, "channel_number": 2}, "output rows \\(including event row\\): expected 2, observed 3"),
+    ({"sample_rate": 250}, "sample rate \\(Hz\\): expected 250, observed 500"),
+    ({"channel_number": 2}, "output rows \\(including event row\\): expected 2, observed 3"),
 ])
 def test_mismatch_reports_expected_and_observed_values_without_modifying_them(parameters, difference):
     binding = source_binding(**parameters)
     info = source_info()
     original = deepcopy(binding)
     assert compare_source_expectations(binding, info)["status"] == "mismatched"
-    with pytest.raises(ValueError, match=difference + ".*Adjust the source.*save and apply"):
+    with pytest.raises(ValueError, match=difference + ".*Adjust the source.*save and apply") as error:
         validate_source_expectations({"PLUGINS.bindings": [binding]}, info)
+    assert "expected None" not in str(error.value)
     assert binding == original
     assert info.sample_rate == 500 and info.output_row_count == 3
 

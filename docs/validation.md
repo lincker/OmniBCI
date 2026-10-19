@@ -40,6 +40,74 @@ OpenAPI. Configure these check names as required in branch protection.
 The dated results below describe the corresponding implementation checkpoints.
 They do not certify every subsequent change or hardware/storage deployment.
 
+### Curry 8 signal path and runtime checks
+
+The Curry 8 path is TCP NetStreaming → source adapter → `SignalChunk` → raw
+recording and IPC queue → processing channel mapping → epoch collection →
+ordered filters → decoder → session Trial results. Raw recording happens before
+mapping and filtering, so it retains auxiliary channels and the native event row.
+
+| Boundary | Processing and checks | Runtime implication |
+| --- | --- | --- |
+| Connection | Negotiate protocol 802 or 803; read a 20-byte header and bounded body. | Unsupported versions, unknown packet identifiers and oversized packets fail with a protocol error. |
+| Device metadata | Read sample rate, row count, sample size and 144-byte channel records; exclude the final event row from signal-channel descriptors. | Actual device dimensions feed processing. Labels are retained; missing labels receive generated names. Curry channel types remain `unknown`. |
+| Experiment expectations | Compare only explicitly configured sample rate and output-row count with observed metadata. | Missing expectations use the device values. A provided mismatch still blocks preparation, even when the other field is absent. Profiles are not rewritten. |
+| Processing preparation | Resolve channel IDs, ordering, aliases and declared types; check the decoder's channel requirements and acknowledge the plan for the current connection/configuration. | CCA/FBCCA require EEG inputs. Select actual EEG channels and declare `eeg` in processing input when Curry reports no types. Coordinates and a montage are not required. Stale plans and unavailable channels remain errors. |
+| EEG packets | Decode supported int16/float32 payloads into channels × samples; preserve the native final trigger row. Ignore separate event-list and impedance packets. | Truncated/misaligned EEG bodies fail. Compressed streaming is currently unsupported and must be disabled on the server. No amplitude threshold, resampling or unit conversion is applied here. |
+| Raw storage | Add host acquisition time and increasing chunk sequence; append the full original matrix before sending it downstream. | Numeric dtype, row count, finite timestamp, sequence order and active writer/session ownership are checked. These protect recording integrity; absent experiment expectations do not prevent recording. |
+| Mapping and epochs | Select/reorder signal rows while preserving trigger values; detect boundaries and collect post-trigger samples plus separate pre-trigger history. | The default detector treats each nonzero trigger sample as a new start. No trigger means no decoded Trial, while raw acquisition can continue. |
+| Filters and decoding | Apply configured filters in order to the accumulated window, then call the decoder. Baseline data is supplied separately to filters. | Baseline collection alone does not apply baseline correction. Closing boundaries can force a decode before the normal duration gate. A decoder may decline an unusable window with `None`. |
+| Results and stopping | Validate decoder output, record a Trial in the running session, publish result events; stop joins acquisition, flushes storage and drains processing before closing the session. | No classification is invented for a declined epoch. A failed write or incomplete drain retains failure/recovery evidence. |
+
+For a minimal Curry run, select **Neuroscan CURRY 8**, set its host and TCP port
+(default `4455`), start the engine and connect, then read metadata. Keep the
+connection-only binding to use observed dimensions, or save and apply the
+observed values to establish an experiment baseline. In the decoder
+Profile, select the EEG channels used by the experiment and declare their type
+as `eeg`; preview, save and apply that mapping before starting a recording.
+The prepared decoder uses the observed sample rate. Neither electrode positions
+nor a manually duplicated sample rate is required.
+
+The default source selection is File Reader, so it must be changed for this run.
+Acquisition/decoding does not require launching visual stimulation. If stimulation
+is also needed, the bundled Scan45 parallel trigger is Windows-only; select a
+suitable installed trigger or run stimulation on a compatible Windows host.
+Synthetic signal tests do not validate physical trigger timing or device settings.
+
+The simulated TCP test is executable with:
+
+```sh
+python -m pytest tests/infrastructure/test_curry8_runtime_integration.py
+python -m pytest tests/infrastructure/test_classic40_short_epochs.py
+```
+
+The TCP test uses 500 Hz and 700 float32 samples across five signal channels and
+one event row. It loads the configured Curry plugin, acknowledges preparation
+without expected source dimensions, records all rows exactly, selects O2/O1/Oz
+as EEG, and produces target 1 for a simulated 8 Hz input through the real CCA
+and default epoch detector. It exercises the runtimes in one process; the CNT
+mapping integration test separately covers spawned workers and application-level
+session/recording creation without source expectations.
+The simulator follows the current driver's protocol contract; it does not prove
+vendor conformance. Acquisition start/stop control packets invalidate cached
+Curry metadata. Restarting the amplifier during a run still requires recovery
+and fresh preparation; automatic recovery and real-device control-packet order
+have not been established by these tests.
+
+Short-epoch regressions cover adjacent equal or different events within and
+across packets. CCA declines fewer than two post-offset samples; FBCCA declines
+windows no longer than its filter padding. Both continue processing the next
+valid epoch. These checks retain forced decoding of usable partial windows.
+
+Local verification on 2026-10-18 used macOS and Python 3.14. The full headless
+run passed 3,157 tests; its other 32 tests failed solely because the sandbox
+denied loopback socket binding, and all 32 passed when rerun with socket access.
+The 17 new short-epoch cases were verified separately as part of 112 passing
+decoder/processing regressions. All 27 integration tests passed with socket
+access, with one skip. The frontend's 152 tests, TypeScript check and production
+build passed, as did all eight architecture contracts. No hardware or other-OS
+run was performed.
+
 The local raw-session recording and format-boundary update on 2026-10-17 passed
 all 2,976 headless backend tests. The complete integration suite passed 26 tests
 with one skip. Coverage includes real-worker recording, session switching,

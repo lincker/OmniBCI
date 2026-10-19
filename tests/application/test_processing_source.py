@@ -144,10 +144,9 @@ def test_selected_decoder_without_input_still_requires_source_preparation(snapsh
 
 
 @pytest.mark.parametrize("provenance", ["device-reported", "file-reported"])
-def test_plan_requires_confirmed_source_expectations(snapshot, source, provenance):
+def test_plan_uses_observed_source_values_for_unspecified_expectations(snapshot, source, provenance):
     source = replace(source, provenance=provenance)
     plan = compile_processing_plan(source, processing_input(snapshot))
     validate_plan_binding(snapshot, plan)
     binding_for(snapshot, "acquisition.source")["parameters"].pop("sample_rate")
-    with pytest.raises(ValueError, match="unconfirmed"):
-        validate_plan_binding(snapshot, plan)
+    validate_plan_binding(snapshot, plan)

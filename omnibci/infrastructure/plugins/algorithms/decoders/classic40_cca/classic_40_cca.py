@@ -86,6 +86,8 @@ class Classic40CCA(Decoder):
             :,
             self.OFFSET_LENGTH:int(self.SAMPLE_COUNT + self.OFFSET_LENGTH),
         ]
+        if calc_data.shape[1] < 2:
+            return None
         return Prediction(target_id=int(self.predict(calc_data)))
 
     def predict(self, data):

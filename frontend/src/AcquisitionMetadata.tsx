@@ -26,7 +26,7 @@ export function AcquisitionMetadata({ value, busy, canRead, readHint, onRead, ca
   ];
   const channels = descriptor?.channels ?? [];
   const comparison = value?.comparison;
-  const mismatched = comparison?.status === "mismatched" || comparison?.status === "unconfirmed";
+  const mismatched = comparison?.status === "mismatched";
 
   return <div className="setting-group acquisition-metadata"><h2>{t("metadata.heading")}</h2>
     <div className="actions"><button disabled={busy || !canRead} onClick={onRead}>{t("metadata.read")}</button></div>
@@ -41,7 +41,7 @@ export function AcquisitionMetadata({ value, busy, canRead, readHint, onRead, ca
           <thead><tr><th>{t("metadata.parameter")}</th><th>{t("metadata.expected")}</th>
             <th>{t(comparison.status === "unverified" ? "metadata.declared" : "metadata.observed")}</th></tr></thead>
           <tbody>{([["sample_rate", "metadata.sampleRate"], ["channel_number", "metadata.outputRows"]] as const).map(([key, label]) =>
-            <tr key={key} className={mismatched && comparison[key].expected !== comparison[key].actual ? "source-mismatch" : undefined}><th scope="row">{t(label)}</th>
+            <tr key={key} className={mismatched && comparison[key].expected != null && comparison[key].expected !== comparison[key].actual ? "source-mismatch" : undefined}><th scope="row">{t(label)}</th>
               <td>{comparison[key].expected ?? t("metadata.notConfirmed")}</td><td>{comparison[key].actual}</td></tr>)}</tbody>
         </table>
         {comparison.status !== "unverified" && (onUseObserved || onSaveObservedProfile) && <>
