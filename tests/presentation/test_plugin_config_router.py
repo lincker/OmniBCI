@@ -389,7 +389,7 @@ def test_plan_and_direct_selection_use_the_same_candidate(client, include_host_s
 @pytest.mark.parametrize("method, path", [("put", "activation"), ("post", "apply-plan")])
 @pytest.mark.parametrize("key, value", [
     ("NEUROENGINE.command_timeout_s", 20),
-    ("PERSISTENCE.session_repository", "sqlite"),
+    ("PERSISTENCE.session_repository", "in_memory"),
     ("PLUGINS.user_dir", "/different/plugin-directory"),
     ("LOGGING.level", "DEBUG"),
     ("LOGGING.file_path", "changed.log"),

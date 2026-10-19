@@ -19,7 +19,7 @@ from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.shared.events import EventType, Event
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
-from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessorCommand
+from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +74,12 @@ _COMMAND_ROUTES = [
      {"generation": "run", "expected_revision": "old", "checkpoint": {}}),
     (EventType.UpdateAcquisitionRevision, "acquisition_command_queue", AcquisitionCommand.update_revision,
      {"generation": "run", "expected_revision": "old", "target_revision": "new"}),
+    (EventType.BeginRawRecording, "acquisition_command_queue", AcquisitionCommand.begin_recording,
+     {"session_id": "session-1", "subject_id": "subject-1"}),
+    (EventType.EndRawRecording, "acquisition_command_queue", AcquisitionCommand.end_recording,
+     {"session_id": "session-1"}),
+    (EventType.AbortRawRecording, "acquisition_command_queue", AcquisitionCommand.abort_recording,
+     {"session_id": "session-1"}),
     (
         EventType.StageProcessingConfiguration,
         "processor_command_queue",

@@ -293,6 +293,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{session_id}/abort": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Abort an incomplete session */
+        post: operations["abort_session_api_v1_sessions__session_id__abort_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions": {
         parameters: {
             query?: never;
@@ -358,6 +375,26 @@ export interface paths {
         post?: never;
         /** End a session */
         delete: operations["end_session_api_v1_sessions__session_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{session_id}/configurations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get archived configurations and application receipts for a session
+         * @description Select revisions linked to this session. Each revision includes its global application history across sessions and engine generations, identified by session_id, generation and context.
+         */
+        get: operations["get_configurations_api_v1_sessions__session_id__configurations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -820,6 +857,14 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AbortSessionRequest */
+        AbortSessionRequest: {
+            /**
+             * Reason
+             * @description Why the incomplete session must be stopped
+             */
+            reason: string;
+        };
         /** AcceptActivationRequest */
         AcceptActivationRequest: {
             /** Bindings */
@@ -997,6 +1042,23 @@ export interface components {
             message: string;
             /** Data */
             data?: components["schemas"]["TrialResponse"][] | null;
+        };
+        /** ApiResponse[List[dict]] */
+        ApiResponse_List_dict__: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            /** Data */
+            data?: {
+                [key: string]: unknown;
+            }[] | null;
         };
         /** ApiResponse[NodeConfigurationPublicationResponse] */
         ApiResponse_NodeConfigurationPublicationResponse_: {
@@ -1404,6 +1466,11 @@ export interface components {
              * @description Paradigm name; defaults to config value
              */
             paradigm?: string | null;
+            /**
+             * Subject Id
+             * @description Optional external subject identifier
+             */
+            subject_id?: string | null;
         };
         /** CreateVersionProfileRequest */
         CreateVersionProfileRequest: {
@@ -2007,6 +2074,12 @@ export interface components {
             signal_plan?: {
                 [key: string]: unknown;
             } | null;
+            /** Subject Id */
+            subject_id?: string | null;
+            /** Recording */
+            recording?: {
+                [key: string]: unknown;
+            } | null;
             /**
              * Trials
              * @default []
@@ -2059,6 +2132,12 @@ export interface components {
             interruption_reason?: string | null;
             /** Signal Plan */
             signal_plan?: {
+                [key: string]: unknown;
+            } | null;
+            /** Subject Id */
+            subject_id?: string | null;
+            /** Recording */
+            recording?: {
                 [key: string]: unknown;
             } | null;
         };
@@ -2166,6 +2245,11 @@ export interface components {
              * @description Paradigm name for the session; defaults to config value
              */
             paradigm?: string | null;
+            /**
+             * Subject Id
+             * @description Optional external subject identifier
+             */
+            subject_id?: string | null;
         };
         /** StartStimulationRequest */
         StartStimulationRequest: {
@@ -3754,6 +3838,95 @@ export interface operations {
             };
         };
     };
+    abort_session_api_v1_sessions__session_id__abort_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AbortSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_sessions_api_v1_sessions_get: {
         parameters: {
             query?: never;
@@ -4273,6 +4446,91 @@ export interface operations {
             };
             /** @description Command execution timeout */
             504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_configurations_api_v1_sessions__session_id__configurations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_List_dict__"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

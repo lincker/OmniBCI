@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Callable, List, Optional
 
+from omnibci.domain.session import validate_subject_id
+
 
 # ---------------------------------------------------------------------------
 # Persisted entity — the storable form of a BCI session visible to the API.
@@ -60,6 +62,11 @@ class SessionRecord:
     config_revision: Optional[str] = None
     interruption_reason: Optional[str] = None
     signal_plan: Optional[dict] = None
+    subject_id: Optional[str] = None
+    recording: Optional[dict] = None
+
+    def __post_init__(self) -> None:
+        validate_subject_id(self.subject_id)
 
     # ------------------------------------------------------------------
     # Mutations (guarded by invariants)

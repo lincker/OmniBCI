@@ -27,7 +27,7 @@ BACKEND_STARTUP_DEFAULTS = {
     "LOGGING.level": "INFO",
     "LOGGING.file_path": "omnibci.log",
     "NEUROENGINE.command_timeout_s": 10.0,
-    "PERSISTENCE.session_repository": "in_memory",
+    "PERSISTENCE.session_repository": "sqlite",
     "PLUGINS.user_dir": "",
 }
 

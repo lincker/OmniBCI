@@ -242,7 +242,7 @@ by that runtime. Startup-only and deployment inputs must not trigger a runtime
 rebuild or be reported as applied when their consumers have not been recreated.
 
 Code evidence: [engine configuration](../omnibci/infrastructure/neuroengine/builder.py),
-[processing context](../omnibci/infrastructure/neuroengine/signal_processing/pipeline_configuration.py),
+[processing context](../omnibci/infrastructure/signal_processing/pipeline_configuration.py),
 [backend assembly](../omnibci/bootstrap.py),
 [renderer selection](../omnibci/infrastructure/stimulation/stimulator.py), and
 [Actuation setup](../omnibci/infrastructure/actuation/application.py).
@@ -331,10 +331,13 @@ Source Profiles retain `sample_rate` and `channel_number`; provided values must
 be positive integers. Curry8 and File Reader can connect without expectations
 using an unsaved source binding. Get Metadata fills those values into new drafts;
 Save and Apply establishes a named experiment baseline. Existing Profiles keep
-their saved values and show missing or different parameters in red. The comparison uses the pinned
+their saved values and show conflicting provided parameters in red. Missing
+expectations use the observed source values. The comparison uses the pinned
 source binding, never old host copies or saved edits that have not been applied.
-An unconfirmed or mismatched comparison blocks preparation and streaming, but
-does not hide source metadata. Observed values can be saved as a separately named
+A mismatched comparison blocks preparation and streaming, including when only
+one expectation is provided. An unconfirmed comparison is informational;
+preparation uses actual source dimensions without changing the Profile.
+Neither status hides source metadata. Observed values can be saved as a separately named
 Profile with the current connection parameters, preserving the original Profile
 and applied configuration until explicit application. Adoption into the current
 draft remains available; Save and Apply publishes a new revision. Scan45 retains its required configuration and

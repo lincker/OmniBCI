@@ -16,7 +16,7 @@ import pytest
 
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineConfig
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
-from omnibci.infrastructure.neuroengine.signal_processing.worker import SignalProcessingWorker
+from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
 
 
 # ---------------------------------------------------------------------------

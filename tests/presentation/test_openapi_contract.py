@@ -55,6 +55,8 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/sessions/export", "get"),
     ("/api/v1/sessions/{session_id}", "get"),
     ("/api/v1/sessions/{session_id}", "delete"),
+    ("/api/v1/sessions/{session_id}/abort", "post"),
+    ("/api/v1/sessions/{session_id}/configurations", "get"),
     ("/api/v1/sessions/{session_id}/trials", "get"),
     ("/api/v1/sessions/{session_id}/trials/last", "get"),
     # recording (session + stream orchestration)
@@ -176,7 +178,23 @@ class TestResponseDtos:
         assert set(props) == {
             "session_id", "paradigm", "state", "trial_count", "started_at", "ended_at",
             "continuation_of", "config_revision", "interruption_reason", "signal_plan",
+            "subject_id", "recording",
         }
+
+    @pytest.mark.parametrize("name", ["CreateSessionRequest", "StartRecordingRequest"])
+    def test_subject_id_is_an_optional_nonblank_string(self, spec, name):
+        schema = _schema(spec, name)
+        subject = schema["properties"]["subject_id"]
+        assert subject["anyOf"] == [{"type": "string", "pattern": r"\S"}, {"type": "null"}]
+        assert "subject_id" not in schema.get("required", [])
+
+    def test_recording_metadata_is_optional_on_session_queries_and_exports(self, spec):
+        for name in ("SessionResponse", "SessionDetailResponse"):
+            schema = _schema(spec, name)
+            assert schema["properties"]["recording"]["anyOf"] == [
+                {"additionalProperties": True, "type": "object"}, {"type": "null"},
+            ]
+            assert "recording" not in schema.get("required", [])
 
     def test_trial_response_fields(self, spec):
         props = _schema(spec, "TrialResponse")["properties"]

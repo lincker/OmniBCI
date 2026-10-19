@@ -12,9 +12,10 @@ The profile selector and sidebar show only profiles for that exact contribution
 and version. Installed managed packages must be enabled in Extensions before
 they appear; bundled plugins are available directly.
 
-Acquisition first offers **Use saved profile** or **New profile**. A saved profile
-retains its experiment baseline; Get Metadata shows missing or different source
-parameters in red. A new profile starts as an unsaved draft: choose its plugin,
+Acquisition shows **Plugin and version** first, followed by that plugin's
+**Profile** selector and **New profile** action. A saved profile retains its
+experiment baseline; Get Metadata shows conflicting provided source parameters
+in red. A new profile starts as an unsaved draft for the selected plugin:
 enter the address/port or recording path, and Connect. For Curry8 and File Reader,
 Get Metadata automatically fills the observed sample rate and total output rows
 into that draft. **Save profile** persists it; Connect then applies the saved

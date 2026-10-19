@@ -98,10 +98,14 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         assert metadata["descriptor"]["channels"][8]["channel_id"] == "channel-8"
         assert metadata["comparison"]["status"] == "unconfirmed"
         assert profiles.repository.list_profiles("acquisition") == []
-        with pytest.raises(ValueError, match="unconfirmed"):
-            await asyncio.to_thread(container.recording_service.start)
+        observed_session = await asyncio.to_thread(container.recording_service.start)
+        observed_plan = container.session_repository.find_by_id(observed_session).signal_plan
+        assert observed_plan["source"]["sample_rate"] == metadata["descriptor"]["sample_rate"]
+        assert observed_plan["source"]["output_row_count"] == metadata["descriptor"]["output_row_count"]
+        assert await asyncio.to_thread(container.recording_service.stop) == observed_session
+        assert profiles.repository.list_profiles("acquisition") == []
 
-        # Save only after inspecting the observed dimensions, then apply the experiment baseline.
+        # Optionally pin observed dimensions as expectations for subsequent sessions.
         source = profiles.repository.get_activation().bindings[0]
         assert source.profile_id is None
         saved_source = profiles.create("acquisition", source.selection, "Observed CNT experiment", {

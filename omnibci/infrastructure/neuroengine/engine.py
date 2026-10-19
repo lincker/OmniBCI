@@ -11,8 +11,8 @@ from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.shared.events import Event, EventType
-from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessorCommand
-from omnibci.infrastructure.neuroengine.signal_processing.worker import SignalProcessingWorker
+from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
+from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
 from omnibci.infrastructure.neuroengine.gateway import PeerGateway
 from omnibci.infrastructure.neuroengine.stimulation_feedback import StimulationFeedbackHandler
 from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
@@ -426,6 +426,9 @@ class NeuroEngine:
             EventType.DisconnectDataProvider:         (acq, AcquisitionCommand.disconnect, True),
             EventType.StartStream:                    (acq, AcquisitionCommand.start_stream, True),
             EventType.GetSourceMetadata:              (acq, AcquisitionCommand.get_metadata, True),
+            EventType.BeginRawRecording:              (acq, AcquisitionCommand.begin_recording, True),
+            EventType.EndRawRecording:                (acq, AcquisitionCommand.end_recording, True),
+            EventType.AbortRawRecording:              (acq, AcquisitionCommand.abort_recording, True),
             EventType.StopStream:                     (acq, AcquisitionCommand.stop_stream, True),
             EventType.StopAndDrain:                   (acq, AcquisitionCommand.stop_and_drain, True),
             EventType.GetSourceCheckpoint:            (acq, AcquisitionCommand.get_checkpoint, True),

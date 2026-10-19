@@ -32,14 +32,14 @@ data-matrix validation is reserved for future consideration.
 
 ## Acquisition workflow
 
-First choose **Use saved profile** or **New profile**. Select an existing Profile,
-or choose a source plugin and fill its address and port or file path, then Connect.
+First choose **Plugin and version**, then select one of that plugin's Profiles
+or click **New profile**. Fill its address and port or file path, then Connect.
 New connection drafts can be applied without creating a Profile. Get Metadata
 reads the connected source and displays `SignalInfo` alongside the source text on
 the same page. For a new Curry8/File draft, it automatically fills the observed
 sample rate and total output rows; the user then chooses **Save profile**. For a
 saved Profile, it preserves and compares the applied experiment expectations,
-showing missing or different parameters in red. The response is:
+showing conflicting provided parameters in red. The response is:
 
 ```json
 {
@@ -120,9 +120,9 @@ explicit action. Existing saved values are preserved.
 
 Get Metadata returns `comparison` with expected and actual values and one status:
 
-- `unconfirmed`: at least one expected value is missing.
+- `unconfirmed`: at least one expected value is missing and every provided value matches.
 - `matched`: both expected values match independently observed values.
-- `mismatched`: all expectations are present and at least one differs.
+- `mismatched`: at least one provided expectation differs, even if another is missing.
 - `unverified`: the source cannot independently report these values, as with
   Scan45's unchanged `user-declared` output information.
 
@@ -130,9 +130,11 @@ A missing or invalid `SignalInfo` produces no comparison. Metadata reads never
 save or overwrite Profiles. New drafts display the source information without a
 comparison to an absent baseline. Their unsaved connection binding omits the
 expected dimensions; saving and applying the filled Profile establishes that
-baseline. For independently observed sources, unconfirmed or
-mismatched expectations prevent preparation and streaming while keeping the
-source information visible. The user can adjust the device/file and read again,
+baseline. For independently observed sources, omitted expectations use the
+current device/file values and do not block preparation or streaming. The
+prepared plan records those actual values without changing the saved Profile.
+Only mismatched provided expectations block preparation while keeping source
+information visible. The user can adjust the device/file and read again,
 or choose **Save observed values as new profile**, name it, and save the current
 connection parameters with the observed dimensions. This creates a separate
 Profile and preserves the original Profile and applied configuration. Connect

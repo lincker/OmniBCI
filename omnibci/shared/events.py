@@ -2,10 +2,11 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-04-21 10:16
-from enum import IntEnum
+from enum import IntEnum, unique
 from typing import Any, Optional
 
 
+@unique
 class EventType(IntEnum):
     # acquisition
     ConnectDataProvider = 101
@@ -14,6 +15,9 @@ class EventType(IntEnum):
     RestoreSourceCheckpoint = 106
     UpdateAcquisitionRevision = 107
     GetSourceMetadata = 108
+    BeginRawRecording = 109
+    EndRawRecording = 110
+    AbortRawRecording = 114
     StartStream = 111
     StopStream = 112
     StopAndDrain = 113  # acquisition stop followed by an ordered processing barrier
@@ -23,6 +27,7 @@ class EventType(IntEnum):
     PrepareSignalProcessing = 214
     AcquisitionState = 121  # worker -> API: authoritative device-state snapshot
                             # payload: application.events.AcquisitionSnapshot
+    RawRecordingState = 122  # worker -> API: local recording identity and status
     CommandResult = 601      # command consumer -> API: application.events.CommandResult
     PeerHello = 701          # external peer -> engine: pinned runtime identity
     PeerAccepted = 702       # engine -> external peer: matching identity accepted

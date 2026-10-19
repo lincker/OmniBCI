@@ -114,6 +114,18 @@ source_modules = ["omnibci.infrastructure"]
 forbidden_modules = ["omnibci.presentation"]
 
 [[tool.importlinter.contracts]]
+name = "Signal Processing must not depend on NeuroEngine"
+type = "forbidden"
+source_modules = ["omnibci.infrastructure.signal_processing"]
+forbidden_modules = ["omnibci.infrastructure.neuroengine"]
+
+[[tool.importlinter.contracts]]
+name = "SignalProcessor must not own the session aggregate"
+type = "forbidden"
+source_modules = ["omnibci.infrastructure.signal_processing.signal_processor"]
+forbidden_modules = ["omnibci.domain.session", "omnibci.application.session_runtime"]
+
+[[tool.importlinter.contracts]]
 name = "shared 保持零内部依赖（纯共享内核）"
 type = "forbidden"
 source_modules = ["omnibci.shared"]

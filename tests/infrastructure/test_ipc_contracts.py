@@ -36,6 +36,14 @@ from omnibci.shared.events import Event, EventType
 
 
 class TestWireShape:
+    def test_start_stream_and_abort_recording_have_distinct_wire_commands(self):
+        assert int(EventType.StartStream) == 111
+        assert int(EventType.AbortRawRecording) == 114
+        for name in ("StartStream", "AbortRawRecording"):
+            original = Event(EventType[name], {"session_id": "session"})
+            restored = body_to_event(event_to_body(original).encode(), PROTOCOL_VERSION)
+            assert restored.type.name == name
+
     def test_event_to_body_shape(self):
         body = event_to_body(Event(EventType.TrialCompleted, data={"x": 1}))
         payload = json.loads(body)

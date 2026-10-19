@@ -3,6 +3,14 @@
 > 依据 `frontend-separation.md` §五.4 / §五.5 / §六阶段 2。本文档只定方案,不含实现。
 > 原则延续:契约先行;后端先定锁与鉴权契约,前端一次接齐。
 
+> Historical design scope: this document describes the original Stage 2 proposal.
+> Session persistence has since been implemented. SQLite is now the default;
+> backend restart ends interrupted sessions without automatically resuming them.
+> Raw signals are recorded by Acquisition, while the application SessionRuntime
+> owns BCISession in the existing processing child. Current persistence, abort,
+> recovery, configuration-history, and replay behavior is documented in
+> [validation.md](validation.md#session-persistence-and-ownership).
+
 ---
 
 ## 一、目标与非目标
@@ -16,7 +24,9 @@
 
 **非目标**(留给阶段 3+)
 
-- SQLite 会话仓储、WS 心跳、多用户/角色体系、强占锁的管理员特权、配置读写端点
+- Historically deferred: SQLite session persistence, WebSocket heartbeat,
+  multiple users/roles, privileged lock takeover, and configuration endpoints.
+  This list records the original phase boundary, not the current implementation backlog.
 
 ---
 

@@ -7,13 +7,14 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from tests.processing_helpers import make_processor
 from omnibci.application.events import CommandFailureKind, CommandRequest
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter, Prediction
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.ipc.data_manager import DataManager
-from omnibci.infrastructure.neuroengine.signal_processing import configuration_transactions as transactions_module
-from omnibci.infrastructure.neuroengine.signal_processing import signal_processor as module
-from omnibci.infrastructure.neuroengine.signal_processing.pipeline_configuration import ConfiguredPipeline
+from omnibci.infrastructure.signal_processing import configuration_transactions as transactions_module
+from omnibci.infrastructure.signal_processing import signal_processor as module
+from omnibci.infrastructure.signal_processing.pipeline_configuration import ConfiguredPipeline
 from omnibci.shared.events import EventType
 
 
@@ -60,7 +61,7 @@ def _chunk(markers, sequence=1):
 def configured(monkeypatch):
     events = []
     current = {"CONFIG.revision": "old", "CONFIG.generation": "run"}
-    processor = module.SignalProcessor(
+    processor = make_processor(
         detector=Markers(), decoder=ValueDecoder(), filters=[Add(1)],
         command_queue=Queue(), data_manager=DataManager(buffer=Queue()),
         event_bus=SimpleNamespace(put_event=events.append),
@@ -342,7 +343,7 @@ async def test_stop_or_session_end_returns_cancelled_receipt_for_pending_update(
     processor, events, _, _ = configured
     await _feed(processor, [7, 0, 0])
     _stage(processor)
-    processor._execute((command, processor.session.session_id))
+    processor._execute((command, processor.session_runtime.session.session_id))
     result, = _results(events)
     assert not result.ok
     assert result.data["status"] == "cancelled"

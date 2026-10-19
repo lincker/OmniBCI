@@ -15,8 +15,8 @@ from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.channel_mapping import ProcessingInput, compile_processing_plan
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
-from omnibci.infrastructure.neuroengine.signal_processing.worker import SignalProcessingWorker
-from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessorCommand
+from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
+from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.infrastructure.process_lifecycle import StartupReporter, wait_for_startup_report
 from omnibci.shared.events import EventType

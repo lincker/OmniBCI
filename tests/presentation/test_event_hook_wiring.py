@@ -86,8 +86,9 @@ def test_lifespan_registers_engine_listeners(monkeypatch):
 
     registered_types = [t for t, _ in engine.subscriptions]
 
-    # command-result rendezvous + 4 read-model + 4 broadcaster = 9
-    assert len(engine.subscriptions) == 9
+    # Command-result rendezvous + 5 read-model + 4 broadcaster = 10.
+    assert len(engine.subscriptions) == 10
+    assert EventType.RawRecordingState in registered_types
     assert EventType.CommandResult in registered_types
     assert EventType.AcquisitionState in registered_types
     # read-model sync

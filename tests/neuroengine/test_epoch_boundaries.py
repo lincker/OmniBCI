@@ -7,13 +7,14 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from tests.processing_helpers import make_processor
 from omnibci.application.events import CommandRequest
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter, Prediction
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.ipc.data_manager import DataManager
-from omnibci.infrastructure.neuroengine.signal_processing import configuration_transactions as transactions_module
-from omnibci.infrastructure.neuroengine.signal_processing.pipeline_configuration import ConfiguredPipeline
-from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessor, SignalProcessorCommand
+from omnibci.infrastructure.signal_processing import configuration_transactions as transactions_module
+from omnibci.infrastructure.signal_processing.pipeline_configuration import ConfiguredPipeline
+from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
 from omnibci.shared.events import EventType
 
 
@@ -58,7 +59,7 @@ class RecordingDecoder(Decoder):
 ])
 async def test_all_markers_form_the_same_epochs_for_any_chunk_size(markers, expected, chunk_size):
     instances = []
-    processor = SignalProcessor(
+    processor = make_processor(
         detector=Markers(), decoder=RecordingDecoder(instances), command_queue=Queue(),
         data_manager=DataManager(buffer=Queue()), event_bus=SimpleNamespace(put_event=lambda event: None),
         sample_rate=1000,
@@ -69,7 +70,7 @@ async def test_all_markers_form_the_same_epochs_for_any_chunk_size(markers, expe
         processor.data_manager.put_data(SignalChunk(1.0, offset, raw[:, offset:offset + chunk_size]))
         await processor._current_state.run()
 
-    assert [trial.classification.event_id for trial in processor.session.trials] == [item[0] for item in expected]
+    assert [trial.classification.event_id for trial in processor.session_runtime.session.trials] == [item[0] for item in expected]
     assert len(instances) == len(expected)
     for decoder, (_, samples) in zip(instances, expected, strict=True):
         assert len(decoder.windows) == 1
@@ -96,7 +97,7 @@ class CaptureBaseline(Filter):
 ])
 async def test_reopened_epoch_baselines_are_independent_of_chunk_size(markers, expected, chunk_size):
     baseline = CaptureBaseline()
-    processor = SignalProcessor(
+    processor = make_processor(
         detector=Markers(), decoder=RecordingDecoder([]), command_queue=Queue(),
         data_manager=DataManager(buffer=Queue()), event_bus=SimpleNamespace(put_event=lambda event: None),
         sample_rate=1000, baseline_duration=0.003, filters=[baseline],
@@ -114,7 +115,7 @@ async def test_reopened_epoch_baselines_are_independent_of_chunk_size(markers, e
 @pytest.mark.asyncio
 async def test_staged_configuration_applies_between_multiple_epochs_in_one_chunk(monkeypatch):
     events, original_instances, replacement_instances = [], [], []
-    processor = SignalProcessor(
+    processor = make_processor(
         detector=Markers(), decoder=RecordingDecoder(original_instances), command_queue=Queue(),
         data_manager=DataManager(buffer=Queue()), event_bus=SimpleNamespace(put_event=events.append),
         sample_rate=1000, generation="run", config_revision="old", settings_snapshot={"CONFIG.revision": "old"},
@@ -130,8 +131,8 @@ async def test_staged_configuration_applies_between_multiple_epochs_in_one_chunk
     processor.data_manager.put_data(SignalChunk(2.0, 1, np.array([[3, 4, 5, 6, 7], [255, 9, 255, 10, 255]])))
     await processor._current_state.run()
 
-    assert [trial.classification.event_id for trial in processor.session.trials] == [7, 9, 10]
-    assert [trial.config_revision for trial in processor.session.trials] == ["old", "new", "new"]
+    assert [trial.classification.event_id for trial in processor.session_runtime.session.trials] == [7, 9, 10]
+    assert [trial.config_revision for trial in processor.session_runtime.session.trials] == ["old", "new", "new"]
     ordered = [event for event in events if event.type in (EventType.TrialCompleted, EventType.CommandResult)]
     assert [event.type for event in ordered] == [EventType.TrialCompleted, EventType.CommandResult,
                                                 EventType.TrialCompleted, EventType.TrialCompleted]
@@ -152,7 +153,7 @@ async def test_simultaneous_end_and_start_closes_previous_epoch_before_reopening
             return (int(positions[0]), 255) if positions.size else (-1, 0)
 
     instances = []
-    processor = SignalProcessor(
+    processor = make_processor(
         detector=SimultaneousMarkers(), decoder=RecordingDecoder(instances), command_queue=Queue(),
         data_manager=DataManager(buffer=Queue()), event_bus=SimpleNamespace(put_event=lambda event: None),
         sample_rate=1000,
@@ -160,7 +161,7 @@ async def test_simultaneous_end_and_start_closes_previous_epoch_before_reopening
     processor.data_manager.put_data(SignalChunk(1.0, 0, np.array([[1, 2, 3, 4, 5], [7, 0, 9, 0, 255]])))
     await processor._current_state.run()
 
-    assert [trial.classification.event_id for trial in processor.session.trials] == [7, 9]
+    assert [trial.classification.event_id for trial in processor.session_runtime.session.trials] == [7, 9]
     np.testing.assert_array_equal(instances[0].windows[0], [[1, 2]])
     np.testing.assert_array_equal(instances[1].windows[0], [[3, 4]])
     assert processor.current_epoch is None
@@ -173,7 +174,7 @@ async def test_detector_boundary_outside_chunk_is_rejected(method):
     detector.detect_start.return_value = (-1, 0)
     detector.detect_end.return_value = (-1, 0)
     getattr(detector, method).return_value = (3, 7)
-    processor = SignalProcessor(
+    processor = make_processor(
         detector=detector, decoder=RecordingDecoder([]), command_queue=Queue(),
         data_manager=DataManager(buffer=Queue()), event_bus=SimpleNamespace(put_event=lambda event: None),
     )
@@ -183,4 +184,34 @@ async def test_detector_boundary_outside_chunk_is_rejected(method):
         await processor._current_state.run()
 
     assert processor.current_epoch is None
-    assert processor.session.trial_count == 0
+    assert processor.session_runtime.session.trial_count == 0
+
+
+@pytest.mark.asyncio
+async def test_first_trial_remains_published_when_later_epoch_in_chunk_fails():
+    class FailingSecondDecoder(Decoder):
+        def should_decode(self, window):
+            return False
+
+        def decode(self, window, latest_samples):
+            if window[0, 0] == 3:
+                raise RuntimeError("second epoch failed")
+            return Prediction(1)
+
+    events = []
+    processor = make_processor(
+        detector=Markers(), decoder=FailingSecondDecoder(), command_queue=Queue(),
+        data_manager=DataManager(buffer=Queue()), event_bus=SimpleNamespace(put_event=events.append),
+        sample_rate=1000,
+    )
+    processor.data_manager.put_data(SignalChunk(1.0, 0, np.array([[1, 2, 3, 4], [7, 255, 9, 255]])))
+
+    with pytest.raises(RuntimeError, match="second epoch failed"):
+        await processor._current_state.run()
+
+    trials = processor.session_runtime.session.trials
+    assert [trial.classification.event_id for trial in trials] == [7]
+    published = [event.data for event in events if event.type is EventType.TrialCompleted]
+    assert len(published) == 1
+    assert published[0].trial_number == 1
+    assert published[0].classification.event_id == 7

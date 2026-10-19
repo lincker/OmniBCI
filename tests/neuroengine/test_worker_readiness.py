@@ -15,8 +15,8 @@ from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
-from omnibci.infrastructure.neuroengine.signal_processing.worker import SignalProcessingWorker
-from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessorCommand
+from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
+from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessStartupError, ChildProcessStartupTimeout, StartupChannel,
     StartupReport, StartupReporter, wait_for_startup_report,
@@ -25,7 +25,7 @@ from omnibci.infrastructure.process_lifecycle import (
 
 @pytest.mark.parametrize("worker_type,service_path,run_name", [
     (AcquisitionWorker, "omnibci.infrastructure.acquisition.worker.AcquisitionRuntime", "_run"),
-    (SignalProcessingWorker, "omnibci.infrastructure.neuroengine.signal_processing.worker.SignalProcessor", "_run_processor"),
+    (SignalProcessingWorker, "omnibci.infrastructure.signal_processing.worker.SignalProcessor", "_run_processor"),
 ])
 def test_worker_reports_ready_after_construction_before_loop(worker_type, service_path, run_name):
     reporter = MagicMock(spec=StartupReporter)
@@ -61,7 +61,7 @@ def test_worker_reports_all_startup_failures_and_closes(worker_type, loader, sta
 
 @pytest.mark.parametrize("worker_type,loader,service_path,stage", [
     (AcquisitionWorker, "_load_data_source", "omnibci.infrastructure.acquisition.worker.AcquisitionRuntime", "acquisition"),
-    (SignalProcessingWorker, "_snapshot", "omnibci.infrastructure.neuroengine.signal_processing.worker.SignalProcessor", "processor"),
+    (SignalProcessingWorker, "_snapshot", "omnibci.infrastructure.signal_processing.worker.SignalProcessor", "processor"),
 ])
 def test_service_constructor_failure_never_reports_ready(worker_type, loader, service_path, stage):
     reporter = MagicMock(spec=StartupReporter)

@@ -98,6 +98,12 @@ class NeuroEngineService(EnginePort):
         self._lifecycle_lock = asyncio.Lock()
         self._configuration_lock = RLock()
         self._transitioning = False
+        self._configuration_archive = None
+        self._configuration_attempt = None
+
+    def set_configuration_archive(self, archive):
+        """Archive candidates before worker creation and receipts after readiness."""
+        self._configuration_archive = archive
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -156,7 +162,14 @@ class NeuroEngineService(EnginePort):
                     raise ValueError("settings_snapshot must be a configuration dictionary")
                 snapshot = deepcopy(snapshot)
                 snapshot["CONFIG.generation"] = str(uuid4())
-                self._engine = self._engine_factory(deepcopy(snapshot))
+                if self._configuration_archive is not None:
+                    self._configuration_attempt = self._configuration_archive.stage(snapshot, context="engine_start")
+                try:
+                    self._engine = self._engine_factory(deepcopy(snapshot))
+                except Exception as exc:
+                    if self._configuration_archive is not None and self._configuration_attempt is not None:
+                        self._configuration_archive.fail(self._configuration_attempt, str(exc))
+                    raise
                 self._graph_snapshot = snapshot
             for event_type, handler in self._subscriptions:
                 self._engine.event_bus.register_event_listener(event_type, handler)
@@ -178,7 +191,7 @@ class NeuroEngineService(EnginePort):
                 self._engine.wait_until_started,
                 self._STARTUP_TIMEOUT_S,
             )
-        except BaseException:
+        except BaseException as exc:
             self._engine.should_stop = True
             await asyncio.to_thread(
                 self._engine_thread.join,
@@ -189,6 +202,8 @@ class NeuroEngineService(EnginePort):
             if not self._engine_thread.is_alive():
                 if self._engine_shutdown_complete():
                     self._needs_rebuild = True
+                    if self._configuration_archive is not None and self._configuration_attempt is not None:
+                        self._configuration_archive.fail(self._configuration_attempt, str(exc))
                 else:
                     self._restart_blocked = True
                 self._engine_thread = None
@@ -210,8 +225,19 @@ class NeuroEngineService(EnginePort):
                         self._actuation_manager.start,
                         settings_snapshot=deepcopy(self._graph_snapshot),
                     )
-            except BaseException:
+            except BaseException as exc:
                 logger.exception("Actuation process failed to start; stopping engine")
+                await self._stop_engine_locked(StopEngineCommand())
+                if self._configuration_archive is not None and self._configuration_attempt is not None:
+                    self._configuration_archive.fail(self._configuration_attempt, str(exc))
+                raise
+        if self._configuration_archive is not None and self._configuration_attempt is not None:
+            try:
+                self._configuration_archive.confirm(
+                    self._configuration_attempt, self._graph_snapshot, receipt={"engine_ready": True},
+                )
+            except Exception:
+                self._admission.quarantine("Engine started but its configuration receipt could not be archived")
                 await self._stop_engine_locked(StopEngineCommand())
                 raise
         with self._configuration_lock:

@@ -5,6 +5,7 @@ POST   /sessions              Create + start a new session
 GET    /sessions              List all sessions
 GET    /sessions/active       Get the currently active session
 GET    /sessions/{id}         Get session metadata
+GET    /sessions/{id}/configurations  Archived runtime inputs and application receipts
 DELETE /sessions/{id}         End a session
 GET    /sessions/{id}/trials  Full trial history
 GET    /sessions/{id}/trials/last  Most recent classification result
@@ -28,6 +29,7 @@ from omnibci.presentation.errors import (
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.session import (
     CreateSessionRequest,
+    AbortSessionRequest,
     SessionDetailResponse,
     SessionListResponse,
     SessionResponse,
@@ -37,6 +39,7 @@ from omnibci.presentation.schemas.session import (
 from omnibci.application.commands.session_commands import (
     CreateSessionCommand,
     EndSessionCommand,
+    AbortSessionCommand,
 )
 from omnibci.application.queries.session_queries import (
     GetLastClassificationQuery,
@@ -54,6 +57,20 @@ from omnibci.application.services.command_result_service import (
 )
 
 router = APIRouter(prefix="/sessions", tags=["Session"])
+
+
+@router.post("/{session_id}/abort", response_model=ApiResponse, summary="Abort an incomplete session")
+async def abort_session(session_id: str, body: AbortSessionRequest,
+                        svc: SessionAppService = Depends(get_session_service)):
+    try:
+        await svc.handle_abort_session(AbortSessionCommand(session_id, body.reason))
+    except KeyError:
+        raise ApiError(status.HTTP_404_NOT_FOUND, ErrorCode.SESSION_NOT_FOUND, f"Session '{session_id}' not found")
+    except ProfileRevisionConflict:
+        raise
+    except RuntimeError as exc:
+        raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(exc))
+    return ApiResponse(message="Session aborted")
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +105,9 @@ def create_session(
     svc: SessionAppService = Depends(get_session_service),
 ):
     try:
-        session_id = svc.handle_create_session(CreateSessionCommand(paradigm=body.paradigm))
+        session_id = svc.handle_create_session(CreateSessionCommand(
+            paradigm=body.paradigm, subject_id=body.subject_id,
+        ))
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as exc:
         raise command_error_to_api_error(exc)
     except ProfileRevisionConflict:
@@ -113,6 +132,8 @@ def create_session(
             config_revision=dto.config_revision,
             interruption_reason=dto.interruption_reason,
             signal_plan=dto.signal_plan,
+            subject_id=dto.subject_id,
+            recording=dto.recording,
         ),
     )
 
@@ -136,6 +157,8 @@ def list_sessions(svc: SessionAppService = Depends(get_session_service)):
             config_revision=d.config_revision,
             interruption_reason=d.interruption_reason,
             signal_plan=d.signal_plan,
+            subject_id=d.subject_id,
+            recording=d.recording,
         )
         for d in dtos
     ]
@@ -164,6 +187,8 @@ def get_active_session(svc: SessionAppService = Depends(get_session_service)):
             config_revision=dto.config_revision,
             interruption_reason=dto.interruption_reason,
             signal_plan=dto.signal_plan,
+            subject_id=dto.subject_id,
+            recording=dto.recording,
         )
     )
 
@@ -200,8 +225,9 @@ def export_sessions(
     writer.writeheader()
     for session in sessions:
         metadata = session.model_dump(mode="json", exclude={"trials"})
-        if metadata.get("signal_plan") is not None:
-            metadata["signal_plan"] = json.dumps(metadata["signal_plan"], ensure_ascii=False, allow_nan=False)
+        for field in ("signal_plan", "recording"):
+            if metadata.get(field) is not None:
+                metadata[field] = json.dumps(metadata[field], ensure_ascii=False, allow_nan=False)
         metadata["session_config_revision"] = metadata.pop("config_revision")
         for trial in session.trials or [None]:
             row = {"format_version": 1, "exported_at": snapshot.exported_at.isoformat(),
@@ -242,6 +268,8 @@ def get_session(
             config_revision=dto.config_revision,
             interruption_reason=dto.interruption_reason,
             signal_plan=dto.signal_plan,
+            subject_id=dto.subject_id,
+            recording=dto.recording,
         )
     )
 
@@ -271,6 +299,20 @@ def end_session(
             str(exc),
         )
     return ApiResponse(message="Session ended")
+
+
+@router.get(
+    "/{session_id}/configurations",
+    response_model=ApiResponse[List[dict]],
+    summary="Get archived configurations and application receipts for a session",
+    description=("Select revisions linked to this session. Each revision includes its global application "
+                 "history across sessions and engine generations, identified by session_id, generation and context."),
+)
+def get_configurations(session_id: str, svc: SessionAppService = Depends(get_session_service)):
+    try:
+        return ApiResponse(data=svc.handle_get_configurations(session_id))
+    except KeyError:
+        raise ApiError(status.HTTP_404_NOT_FOUND, ErrorCode.SESSION_NOT_FOUND, f"Session '{session_id}' not found")
 
 
 @router.get(

@@ -39,7 +39,7 @@ class TestStartRecording:
             "message": "Recording started",
             "data": {"session_id": "session-123"},
         }
-        recording_service.start.assert_called_once_with(paradigm="classic40SSVEP")
+        recording_service.start.assert_called_once_with(paradigm="classic40SSVEP", subject_id=None)
 
     def test_start_without_body_uses_default_paradigm(
         self,
@@ -51,7 +51,7 @@ class TestStartRecording:
         response = api_client.post("/api/v1/recording/start")
 
         assert response.status_code == 201
-        recording_service.start.assert_called_once_with(paradigm=None)
+        recording_service.start.assert_called_once_with(paradigm=None, subject_id=None)
 
     def test_start_reports_active_recording_conflict(
         self,

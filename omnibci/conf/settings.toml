@@ -62,8 +62,8 @@ effector = ''
 
 [PERSISTENCE]
 # Session repository implementation (composition-root switch).
-# "in_memory" (default; lost on restart) — SQLite adapter planned for stage 3.
-session_repository = "in_memory"
+# "sqlite" persists sessions and trials; "in_memory" is available for tests.
+session_repository = "sqlite"
 
 [STIMULATION]
 paradigm    = 'STIMULATION_THUBCI_SSVEP_classic40'

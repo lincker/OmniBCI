@@ -10,7 +10,7 @@ The aggregate root is intentionally decoupled from persistence, transport,
 and infrastructure.  It holds a list of pending domain events that the
 infrastructure layer must drain and publish after each operation.
 
-Usage (inside SignalProcessor or an application service):
+Usage (inside SessionRuntime or an application service):
     session = BCISession(session_id="abc", paradigm="classic40SSVEP")
     session.start()
     ...
@@ -66,6 +66,11 @@ class Trial:
 # Aggregate root
 # ---------------------------------------------------------------------------
 
+def validate_subject_id(subject_id: Optional[str]) -> None:
+    if subject_id is not None and (not isinstance(subject_id, str) or not subject_id.strip()):
+        raise ValueError("subject_id must be a non-blank string or None")
+
+
 class BCISession:
     """
     Aggregate root for a BCI session.
@@ -87,13 +92,16 @@ class BCISession:
         *,
         continuation_of: Optional[str] = None,
         config_revision: Optional[str] = None,
+        subject_id: Optional[str] = None,
     ) -> None:
+        validate_subject_id(subject_id)
         self._session_id: str = session_id or str(uuid.uuid4())
         if continuation_of == self._session_id:
             raise ValueError("A continuation must have a new session ID")
         self._paradigm: Optional[str] = paradigm
         self._continuation_of = continuation_of
         self._config_revision = config_revision
+        self._subject_id = subject_id
         self._interruption_reason: Optional[str] = None
         self._state: SessionState = SessionState.IDLE
         self._trials: List[Trial] = []
@@ -110,6 +118,10 @@ class BCISession:
     @property
     def paradigm(self) -> Optional[str]:
         return self._paradigm
+
+    @property
+    def subject_id(self) -> Optional[str]:
+        return self._subject_id
 
     @property
     def continuation_of(self) -> Optional[str]:
@@ -156,15 +168,16 @@ class BCISession:
                 paradigm=self._paradigm,
                 continuation_of=self._continuation_of,
                 config_revision=self._config_revision,
+                subject_id=self._subject_id,
             )
         )
 
     def record_trial(
-        self, epoch: Epoch, classification: Classification,
+        self, epoch: Epoch | EpochInfo, classification: Classification,
         *, config_revision: Optional[str] = None,
     ) -> TrialCompleted:
         """
-        Record a completed trial and emit TrialCompleted.
+        Record a completed trial from an Epoch or its metadata and emit TrialCompleted.
 
         Business rules:
           - Session must be RUNNING.
@@ -189,7 +202,7 @@ class BCISession:
         trial = Trial(
             trial_number=trial_number,
             # Trial history keeps only metadata, never the signal matrix.
-            epoch_info=EpochInfo.from_epoch(epoch),
+            epoch_info=epoch if isinstance(epoch, EpochInfo) else EpochInfo.from_epoch(epoch),
             classification=classification,
             config_revision=revision,
         )

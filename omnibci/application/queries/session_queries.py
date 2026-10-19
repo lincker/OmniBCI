@@ -63,3 +63,5 @@ class SessionDTO:
     config_revision: Optional[str] = None
     interruption_reason: Optional[str] = None
     signal_plan: Optional[dict] = None
+    subject_id: Optional[str] = None
+    recording: Optional[dict] = None

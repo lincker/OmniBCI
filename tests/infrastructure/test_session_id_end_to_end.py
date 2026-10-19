@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -132,7 +133,7 @@ def test_file_reader_session_id_matches_websocket_and_rest(
                 created = _assert_success(
                     client.post(
                         "/api/v1/sessions",
-                        json={"paradigm": "classic40SSVEP"},
+                        json={"paradigm": "classic40SSVEP", "subject_id": "subject-e2e"},
                     ),
                     expected_status=201,
                 )
@@ -165,6 +166,10 @@ def test_file_reader_session_id_matches_websocket_and_rest(
                     client.get(f"/api/v1/sessions/{session_id}/trials")
                 )
                 assert session["session_id"] == session_id
+                assert session["subject_id"] == "subject-e2e"
+                assert session["recording"]["status"] == "recording"
+                assert session["recording"]["format"] == "omnibci.numpy-chunks"
+                assert session["recording"]["format_version"] == 1
                 assert session["signal_plan"]["processing_input"]["outputs"] == []
                 assert "setup" not in session["signal_plan"]
                 assert session["trial_count"] >= 1
@@ -172,8 +177,7 @@ def test_file_reader_session_id_matches_websocket_and_rest(
                 assert trials[0]["trial_number"] == trial_message["trial_number"]
                 assert trials[0]["event_id"] == trial_message["event_id"]
 
-                _assert_success(client.post("/api/v1/engine/stop"))
-                engine_started = False
+                _assert_success(client.delete(f"/api/v1/sessions/{session_id}"))
 
                 assert session_ended.wait(10), "SessionEnded was not received"
                 assert not receiver_errors
@@ -193,6 +197,22 @@ def test_file_reader_session_id_matches_websocket_and_rest(
                 assert final_session["state"] == "ended"
                 assert final_session["trial_count"] == len(final_trials)
                 assert ended["total_trials"] == len(final_trials)
+                assert final_session["recording"]["status"] == "completed"
+                recording_path = Path(final_session["recording"]["path"])
+                metadata = json.loads((recording_path / "metadata.json").read_text())
+                assert metadata["session_id"] == session_id
+                assert metadata["subject_id"] == "subject-e2e"
+                assert metadata["status"] == "completed"
+                from omnibci.infrastructure.acquisition.recording import iter_recorded_chunks
+                chunks = list(iter_recorded_chunks(recording_path))
+                assert len(chunks) == metadata["chunk_count"] > 0
+                assert sum(chunk.raw_data.shape[1] for chunk in chunks) == metadata["sample_count"]
+                assert all(chunk.raw_data.shape[0] == metadata["signal_info"]["signal_channel_count"] + 1
+                           for chunk in chunks)
+
+                _assert_success(client.post("/api/v1/engine/stop"))
+                engine_started = False
+                assert (recording_path / "chunks.npy").is_file()
 
                 receiver.join(timeout=5)
                 assert not receiver.is_alive()

@@ -122,16 +122,17 @@ const comparison = (status, expected = null) => ({ status,
   channel_number: { expected: expected?.channel_number ?? null, actual: 3 },
 });
 
-test("source comparison presents unknown expectations and requires an explicit adoption action", () => {
+test("source comparison treats unspecified expectations as optional and keeps adoption explicit", () => {
   let adoptions = 0;
   const value = { ...source("Device information"), comparison: comparison("unconfirmed") };
   const tree = render({ value, canUseObserved: true, onUseObserved: () => { adoptions += 1; } });
   assert.equal(adoptions, 0);
   const table = elements(tree).find((element) => element.type === "table" && element.props["aria-label"] === "Experiment parameter comparison");
   assert.match(text(table), /Expected \(applied profile\)Observed \(data source\)/);
-  assert.match(text(table), /Not confirmed500/);
-  assert.match(text(table), /Not confirmed3/);
-  assert.match(text(tree), /no complete confirmed baseline/);
+  assert.match(text(table), /Use source value500/);
+  assert.match(text(table), /Use source value3/);
+  assert.match(text(tree), /Unspecified expectations use the observed source values/);
+  assert.equal(elements(tree).some((element) => element.props.role === "alert"), false);
   const adopt = elements(tree).find((element) => element.type === "button" && text(element) === "Use observed values");
   assert.equal(adopt.props.disabled, false);
   adopt.props.onClick();
@@ -201,10 +202,10 @@ test("new drafts show the source observation without comparing an absent saved b
   assert.equal(elements(tree).some((element) => element.props.role === "alert"), false);
 });
 
-test("saved profiles warn in red for missing or different parameters but not matching rows", () => {
-  for (const status of ["mismatched", "unconfirmed"]) {
-    const value = { ...source("Device information"), comparison: comparison(status, {
-      sample_rate: status === "unconfirmed" ? null : 1000, channel_number: 3,
+test("saved profiles warn in red only for explicitly configured mismatches", () => {
+  for (const channel_number of [null, 3]) {
+    const value = { ...source("Device information"), comparison: comparison("mismatched", {
+      sample_rate: 1000, channel_number,
     }) };
     const tree = render({ value });
     const warning = elements(tree).find((element) => element.props.role === "alert");
@@ -214,8 +215,10 @@ test("saved profiles warn in red for missing or different parameters but not mat
     const matching = elements(tree).find((element) => element.type === "tr" && element.key === "channel_number");
     assert.equal(matching.props.className, undefined);
   }
-  for (const status of ["matched", "unverified"]) {
-    const tree = render({ value: { ...source("Device information"), comparison: comparison(status, { sample_rate: 500, channel_number: 3 }) } });
+  for (const status of ["matched", "unverified", "unconfirmed"]) {
+    const tree = render({ value: { ...source("Device information"), comparison: comparison(status, {
+      sample_rate: status === "unconfirmed" ? null : 500, channel_number: 3,
+    }) } });
     assert.equal(elements(tree).some((element) => element.props.role === "alert"), false);
     assert.equal(elements(tree).some((element) => element.props.className?.includes("source-mismatch")), false);
   }

@@ -1,0 +1,143 @@
+{
+  "platform": "macOS-14.8.3-x86_64-i386-64bit-Mach-O",
+  "python": "3.14.2",
+  "numpy": "2.4.4",
+  "channels_excluding_trigger": 128,
+  "sample_rate": 2048,
+  "chunk_samples": 64,
+  "requested_seconds": 1800.0,
+  "elapsed_seconds": 1799.9824466170103,
+  "verified_chunks": 57600,
+  "verified_samples_per_channel": 3686400,
+  "status": "completed",
+  "payload_bytes": 3804364800,
+  "chunk_budget_ms": 31.25,
+  "write_including_checkpoint_p99_ms": 3.498866130248644,
+  "write_including_checkpoint_max_ms": 129.03005801490508,
+  "scheduling_lateness_max_ms": 125.66068299929611,
+  "writes_over_chunk_budget": 12,
+  "traced_current_bytes": 1100233,
+  "traced_peak_bytes": 3245768,
+  "memory_samples": [
+    {
+      "seconds": 0.0,
+      "current_bytes": 66774
+    },
+    {
+      "seconds": 60.0,
+      "current_bytes": 250775
+    },
+    {
+      "seconds": 120.03,
+      "current_bytes": 263334
+    },
+    {
+      "seconds": 180.03,
+      "current_bytes": 266753
+    },
+    {
+      "seconds": 240.04,
+      "current_bytes": 268698
+    },
+    {
+      "seconds": 300.07,
+      "current_bytes": 272543
+    },
+    {
+      "seconds": 360.07,
+      "current_bytes": 278885
+    },
+    {
+      "seconds": 420.1,
+      "current_bytes": 280559
+    },
+    {
+      "seconds": 480.13,
+      "current_bytes": 281889
+    },
+    {
+      "seconds": 540.13,
+      "current_bytes": 281803
+    },
+    {
+      "seconds": 600.16,
+      "current_bytes": 433376
+    },
+    {
+      "seconds": 660.16,
+      "current_bytes": 596187
+    },
+    {
+      "seconds": 720.19,
+      "current_bytes": 754758
+    },
+    {
+      "seconds": 780.2,
+      "current_bytes": 916031
+    },
+    {
+      "seconds": 840.22,
+      "current_bytes": 1077304
+    },
+    {
+      "seconds": 900.23,
+      "current_bytes": 1235846
+    },
+    {
+      "seconds": 960.26,
+      "current_bytes": 1397119
+    },
+    {
+      "seconds": 1020.29,
+      "current_bytes": 1558344
+    },
+    {
+      "seconds": 1080.32,
+      "current_bytes": 1716998
+    },
+    {
+      "seconds": 1140.32,
+      "current_bytes": 1878271
+    },
+    {
+      "seconds": 1200.34,
+      "current_bytes": 2036813
+    },
+    {
+      "seconds": 1260.35,
+      "current_bytes": 2195355
+    },
+    {
+      "seconds": 1320.35,
+      "current_bytes": 2356628
+    },
+    {
+      "seconds": 1380.38,
+      "current_bytes": 2515170
+    },
+    {
+      "seconds": 1440.42,
+      "current_bytes": 2676443
+    },
+    {
+      "seconds": 1500.44,
+      "current_bytes": 2837780
+    },
+    {
+      "seconds": 1560.44,
+      "current_bytes": 2996322
+    },
+    {
+      "seconds": 1620.44,
+      "current_bytes": 701161
+    },
+    {
+      "seconds": 1680.48,
+      "current_bytes": 831976
+    },
+    {
+      "seconds": 1740.5,
+      "current_bytes": 965863
+    }
+  ]
+}

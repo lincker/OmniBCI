@@ -17,7 +17,7 @@ Ordering rules (see docs/frontend-separation.md / session discussion):
 
 This keeps the two primitives (POST /sessions, /acquisition/stream/*) available
 for advanced flows (calibration without recording, several sessions within one
-continuous stream); RecordingService is the convenience path for the common
+source connection); RecordingService is the convenience path for the common
 "one stream = one recording" case.
 """
 
@@ -67,11 +67,11 @@ class RecordingService:
         self._acquisition = acquisition_service
 
     @admitted
-    def start(self, paradigm: Optional[str] = None) -> str:
+    def start(self, paradigm: Optional[str] = None, *, subject_id: Optional[str] = None) -> str:
         with getattr(self._acquisition, "lifecycle_lock", nullcontext()):
-            return self._start(paradigm)
+            return self._start(paradigm, subject_id=subject_id)
 
-    def _start(self, paradigm: Optional[str] = None) -> str:
+    def _start(self, paradigm: Optional[str] = None, *, subject_id: Optional[str] = None) -> str:
         """
         Begin a recording: create + start a session, then start the stream.
 
@@ -87,7 +87,7 @@ class RecordingService:
 
         # 1. Session first — must be RUNNING before data flows.
         session_id = self._sessions.handle_create_session(
-            CreateSessionCommand(paradigm=paradigm)
+            CreateSessionCommand(paradigm=paradigm, subject_id=subject_id)
         )
 
         # 2. Stream second; on failure roll the session back to avoid an orphan.
@@ -121,9 +121,18 @@ class RecordingService:
 
         Returns the ended session_id. Raises NoActiveRecordingError if none.
         """
+        with getattr(self._acquisition, "lifecycle_lock", nullcontext()):
+            return self._stop()
+
+    def _stop(self) -> str:
         session_id = self._sessions.active_session_id
         if session_id is None:
             raise NoActiveRecordingError("No active recording to stop.")
+
+        if self._sessions.manages_recording_lifecycle is True:
+            self._sessions.handle_end_session(EndSessionCommand(session_id=session_id))
+            logger.info("Recording stopped: session=%s", session_id)
+            return session_id
 
         receipt = self._acquisition.handle_stop_and_drain(session_id=session_id)
         if receipt.session_id != session_id:

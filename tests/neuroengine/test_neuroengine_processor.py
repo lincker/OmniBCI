@@ -5,9 +5,9 @@ import queue
 import time
 from unittest.mock import AsyncMock, MagicMock
 
+from tests.processing_helpers import make_processor
 from omnibci.infrastructure.ipc.data_manager import DataManager
-from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import (
-    SignalProcessor,
+from omnibci.infrastructure.signal_processing.signal_processor import (
     SignalProcessorCommand,
 )
 
@@ -29,7 +29,7 @@ class TestNextChunkEventDriven:
     def test_chunk_delivered_promptly(self):
         """数据到达后 next_chunk 立即返回（无轮询粒度延迟）。"""
         dm = DataManager(buffer=queue.Queue())
-        sp = SignalProcessor(detector=MagicMock(), decoder=MagicMock(),
+        sp = make_processor(detector=MagicMock(), decoder=MagicMock(),
                              command_queue=MagicMock(), data_manager=dm,
                              event_bus=MagicMock(), auto_start_session=False)
 
@@ -48,7 +48,7 @@ class TestNextChunkEventDriven:
 
     def test_returns_none_when_no_data_within_window(self):
         dm = DataManager(buffer=queue.Queue())
-        sp = SignalProcessor(detector=MagicMock(), decoder=MagicMock(),
+        sp = make_processor(detector=MagicMock(), decoder=MagicMock(),
                              command_queue=MagicMock(), data_manager=dm,
                              event_bus=MagicMock(), auto_start_session=False)
         assert asyncio.run(sp.next_chunk(timeout=0.05)) is None
@@ -58,7 +58,7 @@ def test_stop_command_does_not_depend_on_queue_empty_probe():
     command_queue = queue.Queue()
     command_queue.put_nowait(SignalProcessorCommand.should_stop)
     command_queue.empty = MagicMock(return_value=True)
-    processor = SignalProcessor(
+    processor = make_processor(
         detector=MagicMock(), decoder=MagicMock(), command_queue=command_queue,
         data_manager=MagicMock(), event_bus=MagicMock(), auto_start_session=False,
     )

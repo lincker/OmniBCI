@@ -13,10 +13,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from tests.processing_helpers import make_processor
 from omnibci.domain.epoch import Epoch
 from omnibci.domain.ports.algorithm import Decoder, Prediction
-from omnibci.infrastructure.neuroengine.signal_processing.epoch.epoch_processor import EpochProcessor
-from omnibci.infrastructure.neuroengine.signal_processing.epoch.pretrigger_buffer import PreTriggerBuffer
+from omnibci.infrastructure.signal_processing.epoch.epoch_processor import EpochProcessor
+from omnibci.infrastructure.signal_processing.epoch.pretrigger_buffer import PreTriggerBuffer
 from omnibci.domain.signal import SignalChunk
 
 
@@ -172,11 +173,10 @@ class TestEpochProcessorPreTriggerData:
 class TestSignalProcessorPreTriggerSamples:
     def _processor(self, baseline_duration, sample_rate=1000):
         from unittest.mock import MagicMock
-        from omnibci.infrastructure.neuroengine.signal_processing.signal_processor import SignalProcessor
         from omnibci.domain.session import BCISession
         sess = BCISession()
         sess.start()
-        return SignalProcessor(
+        return make_processor(
             detector=MagicMock(), decoder=MagicMock(), command_queue=MagicMock(),
             data_manager=MagicMock(), event_bus=MagicMock(), session=sess,
             sample_rate=sample_rate, baseline_duration=baseline_duration,

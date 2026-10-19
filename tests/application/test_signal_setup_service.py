@@ -386,8 +386,8 @@ def test_legacy_selected_input_remains_readable_and_can_preview_a_replacement(si
 
 
 @pytest.mark.parametrize("parameters,error", [
-    ({}, "unconfirmed"),
     ({"sample_rate": 1000, "channel_number": 3}, "differs from the experiment profile"),
+    ({"sample_rate": 1000}, "differs from the experiment profile"),
 ])
 def test_reported_source_expectations_gate_prepare_without_hiding_actual_info(signal_service, parameters, error):
     service, metadata, _, calls = signal_service
@@ -400,6 +400,20 @@ def test_reported_source_expectations_gate_prepare_without_hiding_actual_info(si
     with pytest.raises(ConfigProfileValidationError, match=error):
         service.prepare()
     assert not calls
+
+
+@pytest.mark.parametrize("provenance", ["device-reported", "file-reported"])
+@pytest.mark.parametrize("parameters", [{}, {"sample_rate": 500}, {"channel_number": 3}])
+def test_prepare_uses_observed_metadata_when_expectations_are_optional(signal_service, provenance, parameters):
+    service, metadata, _, calls = signal_service
+    source = replace(metadata, provenance=provenance)
+    service.acquisition.cached_descriptor = source.to_dict()
+    service.engine.applied_snapshot["PLUGINS.bindings"].append({
+        "slot": "acquisition.source", "parameters": parameters,
+    })
+    service.prepare()
+    assert calls[0][1]["plan"]["source"] == source.to_dict()
+    assert service.read()["readiness"]["ready"]
 
 
 def test_no_explicit_mapping_still_prepares_using_observed_signal(signal_service):
