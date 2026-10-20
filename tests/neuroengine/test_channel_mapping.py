@@ -239,6 +239,44 @@ async def test_data_and_session_start_are_rejected_before_preparation():
 
 
 @pytest.mark.asyncio
+async def test_source_only_standby_drains_raw_data_and_can_prepare_later(monkeypatch):
+    plan = _plan()
+    processor = _processor(plan)
+    processor._settings_snapshot["PLUGINS.bindings"] = []
+    raw = SignalChunk(10, 3, np.array([[10, 11], [30, 31], [2, 2], [0, 1]]))
+    later = SignalChunk(20, 4, np.array([[12, 13], [32, 33], [2, 2], [0, 0]]))
+    processor.data_manager.get_data.side_effect = [
+        raw, StreamBarrier("drain", "generation-one", "revision-one", 3), later,
+    ]
+
+    await processor._current_state.run()
+    assert processor._last_sequence == 3
+    assert processor.current_epoch is None
+    await processor._current_state.run()
+    result = processor.event_bus.put_event.call_args.args[0].data
+    assert result.ok
+    assert result.data["last_sequence"] == 3
+
+    processor._install_configuration(_snapshot(plan))
+    _, detector, _, _ = _prepare(monkeypatch, processor, plan)
+    await processor._current_state.run()
+    assert processor._last_sequence == 4
+    assert len(detector.seen) == 1
+    np.testing.assert_array_equal(detector.seen[0].data, [[32, 33], [12, 13]])
+
+
+def test_source_only_standby_rejects_session_start():
+    processor = _processor(_plan())
+    processor._settings_snapshot["PLUGINS.bindings"] = []
+    processor._execute((SignalProcessorCommand.start_session, CommandRequest(
+        "start", {"session_id": "test-session"})))
+
+    result = processor.event_bus.put_event.call_args.args[0].data
+    assert not result.ok
+    assert "not been prepared" in result.message
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mapping", ["implicit", "explicit", "renamed", "typed"])
 @pytest.mark.parametrize("dtype", [np.int16, np.float32])
 async def test_matching_physical_channels_reuse_chunk_with_effective_input_context(monkeypatch, mapping, dtype):

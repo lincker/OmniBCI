@@ -1,12 +1,17 @@
 """Unit tests for the AcquisitionWorker process boundary orchestration."""
 
+from queue import Queue
+from pathlib import Path
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
 from omnibci.domain.channel_mapping import ProcessingInput
+from omnibci.application.events import CommandRequest
 from omnibci.domain.ports.acquisition import SignalSource
+from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
+from omnibci.shared.events import EventType
 
 
 def test_run_loads_source_before_running_runtime():
@@ -19,6 +24,74 @@ def test_run_loads_source_before_running_runtime():
         worker.run()
 
     assert calls == ["load", "run"]
+
+
+@pytest.mark.parametrize("bindings", [
+    [],
+    [{"slot": "processing.decoder", "processing_input": {"schema_version": 1, "outputs": ["C3"]}}],
+    [{"slot": "processing.decoder", "processing_input": {"schema_version": 2, "outputs": "invalid"}}],
+])
+def test_connect_does_not_require_decoder_configuration(bindings):
+    commands = Queue()
+    commands.put((AcquisitionCommand.connect, CommandRequest("connect")))
+    commands.put(AcquisitionCommand.stop_acquisition)
+    events = MagicMock()
+    source = MagicMock(spec=SignalSource)
+    source.is_connected = source.is_streaming = False
+    source.connect.side_effect = lambda: setattr(source, "is_connected", True) or True
+    source.disconnect.side_effect = lambda: setattr(source, "is_connected", False) or True
+    worker = AcquisitionWorker(commands, MagicMock(), events, settings_snapshot={
+        "ACQUISITION.signal_source": "test-source", "PLUGINS.bindings": bindings,
+    }, recorder_factory=MagicMock)
+    worker.data_source = source
+    worker._run()
+
+    source.connect.assert_awaited_once_with()
+    result = next(call.args[0].data for call in events.put_event.call_args_list
+                  if call.args[0].type is EventType.CommandResult)
+    assert result.ok
+    source.get_metadata.assert_not_called()
+    assert worker.runtime.preparation_required is bool(bindings)
+
+
+@pytest.mark.parametrize("decoder", [
+    None,
+    {"slot": "processing.decoder", "kind": "decoder", "parameters": {},
+     "selection": {"package_id": "missing.decoder", "contribution_id": "default"},
+     "configuration_version": 1, "profile_revision": 0,
+     "processing_input": {"schema_version": 1, "outputs": ["O1"]}},
+    {"slot": "processing.decoder", "kind": "decoder", "parameters": {},
+     "selection": {"package_id": "missing.decoder", "contribution_id": "default"},
+     "configuration_version": 1, "profile_revision": 0,
+     "processing_input": {"schema_version": 2, "outputs": "invalid"}},
+])
+def test_file_source_worker_connects_with_unconfigured_processing(decoder):
+    from omnibci.application.plugin_profiles import ProfileBinding
+    from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+
+    descriptor = PluginCatalog().resolve("acquisition", "file_reader")
+    source = ProfileBinding("acquisition.source", "acquisition", None, descriptor.selection, {
+        "data_file_path": str(Path(__file__).parents[1] / "fixture" / "train.cnt"),
+    }).to_dict()
+    commands = Queue()
+    commands.put((AcquisitionCommand.connect, CommandRequest("connect")))
+    commands.put((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
+    commands.put(AcquisitionCommand.stop_acquisition)
+    events = MagicMock()
+    worker = AcquisitionWorker(commands, MagicMock(), events, settings_snapshot={
+        "ACQUISITION.signal_source": "file_reader",
+        "PLUGINS.bindings": [source] + ([decoder] if decoder else []),
+    }, recorder_factory=MagicMock)
+    with patch("omnibci.conf.settings.use_snapshot"):
+        worker.run()
+
+    results = {call.args[0].data.command_id: call.args[0].data
+               for call in events.put_event.call_args_list if call.args[0].type is EventType.CommandResult}
+    assert results["connect"].ok, results["connect"].message
+    assert results["metadata"].ok, results["metadata"].message
+    assert results["metadata"].data["metadata"]
+    assert results["metadata"].data["descriptor"]["sample_rate"] > 0
+    assert not worker.data_source.is_connected
 
 
 @pytest.mark.parametrize("processing_input", [None, ProcessingInput().to_dict()])

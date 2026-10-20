@@ -41,6 +41,26 @@ def test_duplicate_slots_are_rejected():
         configured_bindings({"PLUGINS.bindings": [binding, binding]})
 
 
+def test_source_loading_does_not_parse_dormant_decoder_input():
+    binding = replace(source_binding(), parameters={"data_file_path": "selected.cnt"})
+    malformed_decoder = {
+        "slot": "processing.decoder", "kind": "decoder",
+        "selection": {"package_id": "missing.decoder", "contribution_id": "default"},
+        "parameters": {}, "configuration_version": 1, "profile_revision": 0,
+        "processing_input": {"schema_version": 2, "outputs": "invalid"},
+    }
+    source = load_configured_plugin({"PLUGINS.bindings": [binding.to_dict(), malformed_decoder]},
+                                    "acquisition.source", "acquisition", SignalSource)
+    assert source.file_path.endswith("selected.cnt")
+
+
+def test_loading_one_slot_still_rejects_duplicate_slot_identities():
+    binding = replace(source_binding(), parameters={"data_file_path": "selected.cnt"}).to_dict()
+    with pytest.raises(PluginLoadError, match="Duplicate"):
+        load_configured_plugin({"PLUGINS.bindings": [binding, binding]},
+                               "acquisition.source", "acquisition", SignalSource)
+
+
 def test_legacy_alias_without_pinned_bindings_is_rejected_before_loading():
     class RejectLoader:
         @staticmethod

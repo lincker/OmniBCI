@@ -178,12 +178,16 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
   data.metadata = { source_id: "scan45", connection_id: "connection-a",
     metadata: "Source device\nProtocol: 1.2\nExtensions: events", descriptor: null };
   data.events = [];
+  data.profileKinds = [];
   configure?.(data);
   const runtimeStatus = { running: engineRunning, accepted_revision: data.activation.revision,
     applied_revision: engineRunning ? data.activation.revision : null, generation: engineRunning ? "generation-a" : null };
   const calls = { create: [], update: [], apply: [], review: [] };
   api.catalog = async (kind) => clone(data.definitions.filter((item) => item.kind === kind));
-  api.profiles = async () => clone(data.profiles);
+  api.profiles = async (kind) => {
+    data.profileKinds.push(kind);
+    return clone(data.profiles.filter((item) => kind === undefined || item.kind === kind));
+  };
   api.activation = async () => clone(data.activation);
   api.create = async (kind, choice, name, parameters, processing_input) => {
     const input = processing_input === undefined ? {} : { processing_input: clone(processing_input) };
@@ -211,12 +215,13 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
       data.events.push("apply");
       calls.apply.push(clone(body));
       if (!applySucceeds) return false;
-      data.activation.bindings = body.bindings.map((item) => {
+      const retained = body.module ? data.activation.bindings.filter((item) => !item.slot.startsWith(`${body.module}.`)) : [];
+      data.activation.bindings = [...retained, ...body.bindings.map((item) => {
         if (!item.profile_id) return { slot: item.slot, kind: "acquisition", selection: clone(item.selection),
           parameters: clone(item.parameters), profile_id: null, profile_revision: null };
         const profile = data.profiles.find((profile) => profile.profile_id === item.profile_id);
         return { ...clone(profile), slot: item.slot, profile_revision: profile.revision };
-      });
+      })];
       return true;
     },
     refresh: async () => {},
@@ -423,13 +428,16 @@ for (const [label, sourceChange] of [
 
 test("Connect saves current parameters, applies the source and starts it before explicit metadata", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
+    const otherBindings = clone(data.activation.bindings.filter((item) => item.kind !== "acquisition"));
     assert.equal(metadata(harness).props.canRead, false);
     form(harness).props.onChange({ gain: 9, calibration: [3, 4] }); await harness.settle();
     await click(harness, "Connect");
     assert.equal(calls.update[0].parameters.gain, 9);
     assert.deepEqual(data.events, ["apply", "start", "connect"]);
     assert.deepEqual(calls.apply[0].refresh_slots, ["acquisition.source"]);
-    assert.equal(calls.apply[0].bindings.length, 4, "Preserve the other selected modules");
+    assert.equal(calls.apply[0].module, "acquisition");
+    assert.equal(calls.apply[0].bindings.length, 1, "Only send the acquisition selection");
+    assert.deepEqual(data.activation.bindings.filter((item) => item.kind !== "acquisition"), otherBindings);
     assert.equal(metadata(harness).props.canRead, true);
     assert.equal(metadata(harness).props.value, null, "Connecting must not implicitly fetch metadata");
     metadata(harness).props.onRead(); await harness.settle();
@@ -439,6 +447,23 @@ test("Connect saves current parameters, applies the source and starts it before 
     await click(harness, "Disconnect");
     assert.equal(metadata(harness).props.canRead, false);
   });
+});
+
+test("Acquisition connects without loading or submitting unrelated processing profiles", async () => {
+  await withProfiles("acquisition", async (harness, calls, data) => {
+    const otherBindings = clone(data.activation.bindings.filter((item) => item.kind !== "acquisition"));
+    await click(harness, "Connect");
+    assert.deepEqual(data.events, ["apply", "start", "connect"]);
+    assert.equal(calls.apply[0].module, "acquisition");
+    assert.deepEqual(calls.apply[0].bindings, [{ slot: "acquisition.source", profile_id: "lab-a" }]);
+    assert.ok(data.profileKinds.every((kind) => kind === "acquisition"));
+    assert.deepEqual(data.activation.bindings.filter((item) => item.kind !== "acquisition"), otherBindings);
+  }, { configure: (data) => {
+    const decoder = data.activation.bindings.find((item) => item.slot === "processing.decoder");
+    decoder.profile_id = null;
+    decoder.processing_input = null;
+    decoder.processing_input_requires_review = true;
+  } });
 });
 
 test("Connect uses a new profile draft without saving it", async () => {
@@ -574,10 +599,9 @@ test("selecting no trigger reviews only trigger removal and preserves an inline 
     assert.deepEqual(data.activation, accepted, "Browsing None must not change the accepted trigger");
     await click(harness, "Review and apply profile");
     assert.deepEqual(calls.review, [{
-      bindings: accepted.bindings.filter((item) => item.slot !== "stimulation.trigger").map((item) => item.profile_id
-        ? { slot: item.slot, profile_id: item.profile_id }
-        : { slot: item.slot, selection: item.selection, parameters: item.parameters }),
-      expected_revision: accepted.revision, refresh_slots: [], include_host_settings: false,
+      bindings: accepted.bindings.filter((item) => item.slot === "stimulation.paradigm")
+        .map((item) => ({ slot: item.slot, profile_id: item.profile_id })),
+      module: "stimulation", expected_revision: accepted.revision, refresh_slots: [], include_host_settings: false,
     }]);
     assert.equal(calls.create.length, 0); assert.equal(calls.update.length, 0); assert.equal(calls.apply.length, 0);
     assert.deepEqual(data.activation, accepted, "Review still requires explicit application");
@@ -679,7 +703,6 @@ for (const target of ["decoder", "filter chain"]) {
   test(`reviewing a ${target} preserves an active inline acquisition source`, async () => {
     await withProfiles("processing", async (harness, calls, data) => {
       const accepted = clone(data.activation);
-      const source = accepted.bindings.find((item) => item.slot === "acquisition.source");
       if (target === "decoder") {
         await change(harness, "Profile", "decoder-b");
         await click(harness, "Review and apply profile");
@@ -689,14 +712,13 @@ for (const target of ["decoder", "filter chain"]) {
         await click(harness, "Review and apply filter chain");
       }
       assert.equal(calls.review.length, 1);
-      assert.deepEqual(calls.review[0].bindings.find((item) => item.slot === "acquisition.source"), {
-        slot: source.slot, selection: source.selection, parameters: source.parameters,
-      });
+      assert.equal(calls.review[0].module, "processing");
+      assert.ok(calls.review[0].bindings.every((item) => item.slot.startsWith("processing.")));
       const changedSlot = target === "decoder" ? "processing.decoder" : "processing.filter.first";
       assert.deepEqual(calls.review[0].bindings.find((item) => item.slot === changedSlot), {
         slot: changedSlot, profile_id: target === "decoder" ? "decoder-b" : "band-b",
       });
-      assert.equal(calls.review[0].bindings.length, accepted.bindings.length);
+      assert.equal(calls.review[0].bindings.length, accepted.bindings.filter((item) => item.slot.startsWith("processing.")).length);
       assert.deepEqual(data.activation, accepted, "Review does not save or apply the inline source");
       assert.equal(calls.create.length, 0);
       assert.equal(calls.update.length, 0);

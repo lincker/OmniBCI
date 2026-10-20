@@ -30,6 +30,12 @@ class PluginProfileStorageError(OSError):
 PLUGIN_KINDS = frozenset({
     "acquisition", "decoder", "epoch_detector", "filter", "paradigm", "trigger", "effector",
 })
+MODULE_KINDS = {
+    "acquisition": frozenset({"acquisition"}),
+    "processing": frozenset({"decoder", "epoch_detector", "filter"}),
+    "stimulation": frozenset({"paradigm", "trigger"}),
+    "actuation": frozenset({"effector"}),
+}
 _SLOTS = {
     "acquisition.source": "acquisition",
     "processing.decoder": "decoder",

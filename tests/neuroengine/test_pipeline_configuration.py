@@ -92,6 +92,23 @@ def test_unprepared_update_validates_settings_and_defers_plugin_construction(mon
         configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2)
 
 
+def test_filter_can_be_applied_before_selecting_a_decoder(monkeypatch):
+    before = selected_snapshot()
+    before["PLUGINS.bindings"] = [before["PLUGINS.bindings"][0]]
+    after = deepcopy(before)
+    after["CONFIG.revision"] = "new"
+    selection = PluginCatalog().resolve_legacy("filter", "BASELINE_CORRECTION").selection
+    after["PLUGINS.bindings"].append(ProfileBinding(
+        f"processing.filter.{uuid4()}", "filter", None, selection, {},
+    ).to_dict())
+    monkeypatch.setattr(configuration, "load_configured_plugin", lambda *a, **kw: pytest.fail("premature construction"))
+
+    bundle = configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2)
+
+    assert bundle.decoder is None and bundle.filters == ()
+    assert bundle.settings_snapshot == after
+
+
 @pytest.mark.parametrize("key,value", [
     ("ACQUISITION.sample_rate", 500), ("ACQUISITION.channel_names", ["Cz"]),
     ("ALGORITHM.baseline_duration", 0.3), ("CONFIG.generation", "another-run"),

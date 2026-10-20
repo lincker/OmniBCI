@@ -69,11 +69,8 @@ class NeuroEngineService(EnginePort):
         self._snapshot_provider = snapshot_provider
         self._graph_snapshot: dict | None = None
         self._applied_snapshot: dict | None = None
-        # Actuation has no user command (stimulation spawns on
-        # handle_start_stimulation); its natural lifecycle hook is the
-        # engine's. Injected by the composition root; None / auto_spawn=False
-        # make both hooks no-ops. Duck-typed like StimulationAppService's
-        # process manager — no infrastructure import at runtime.
+        # Managed Actuation starts when a session is prepared. Acquisition
+        # startup does not require output plugins or device configuration.
         self._actuation_manager = actuation_process_manager
         self._stimulation_manager = stimulation_process_manager
         self._engine: Optional[EngineHandle] = None
@@ -182,8 +179,7 @@ class NeuroEngineService(EnginePort):
         # NeuroEngine.run() calls asyncio.run() internally, so we spin it in a
         # thread.  Starting the OS thread is not readiness: wait for the engine's
         # explicit barrier so parent-loop IPC/listener bind failures reach this
-        # caller.  The managed Actuation child has its own READY/FAILED barrier
-        # below because plugin/device setup happens in that subprocess.
+        # caller. Output modules acknowledge their own readiness when used.
         self._engine_thread = Thread(target=self._run_engine, daemon=True, name="neuro-engine")
         self._engine_thread.start()
         try:
@@ -213,24 +209,6 @@ class NeuroEngineService(EnginePort):
             raise
 
         self._running = True
-        if self._actuation_manager is not None:
-            try:
-                # Listening sockets are now bound.  Managed mode returns only
-                # after the child has connected and its Effector setup succeeds;
-                # external/disabled mode remains an immediate no-op.
-                if self._graph_snapshot is None:
-                    await asyncio.to_thread(self._actuation_manager.start)
-                else:
-                    await asyncio.to_thread(
-                        self._actuation_manager.start,
-                        settings_snapshot=deepcopy(self._graph_snapshot),
-                    )
-            except BaseException as exc:
-                logger.exception("Actuation process failed to start; stopping engine")
-                await self._stop_engine_locked(StopEngineCommand())
-                if self._configuration_archive is not None and self._configuration_attempt is not None:
-                    self._configuration_archive.fail(self._configuration_attempt, str(exc))
-                raise
         if self._configuration_archive is not None and self._configuration_attempt is not None:
             try:
                 self._configuration_archive.confirm(
@@ -244,6 +222,18 @@ class NeuroEngineService(EnginePort):
             self._applied_snapshot = deepcopy(self._graph_snapshot)
             self._accepting_commands = True
         logger.info("NeuroEngine started")
+
+    @admitted
+    def prepare_actuation(self) -> None:
+        """Require managed output readiness only before creating an experiment session."""
+        snapshot = self.applied_snapshot or {}
+        if not snapshot.get("ACTUATION.enabled", False) or not snapshot.get("ACTUATION.auto_spawn", True):
+            return
+        if not self.is_engine_ready:
+            raise RuntimeError("Start the engine before preparing Actuation")
+        if self._actuation_manager is None:
+            raise RuntimeError("No managed Actuation process is available")
+        self._actuation_manager.start(settings_snapshot=snapshot)
 
     @admitted(recovery=True)
     async def handle_stop_engine(self, cmd: StopEngineCommand) -> None:
@@ -453,6 +443,11 @@ class NeuroEngineService(EnginePort):
         except ValueError:
             # Worker cleanup can close handles before the engine thread exits.
             return False
+
+    @property
+    def actuation_process_alive(self) -> bool:
+        """Expose managed output ownership independently of the acquisition graph."""
+        return bool(self._actuation_manager is not None and self._actuation_manager.is_alive)
 
     @property
     def applied_snapshot(self) -> dict | None:

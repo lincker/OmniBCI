@@ -110,6 +110,6 @@ def accept_activation(body: AcceptActivationRequest,
     with _configuration_errors():
         snapshot = svc.propose([item.model_dump() for item in body.bindings],
                                include_host_settings=body.include_host_settings,
-                               refresh_slots=body.refresh_slots)
-        accepted = svc.accept(snapshot, expected_revision=body.expected_revision)
+                               refresh_slots=body.refresh_slots, module=body.module)
+        accepted = svc.accept(snapshot, expected_revision=body.expected_revision, module=body.module)
         return ApiResponse(message="Configuration selected for the next start", data=accepted.to_dict())

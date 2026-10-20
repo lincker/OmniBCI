@@ -30,6 +30,7 @@ def _snapshot(revision="revision-1"):
         "ACQUISITION.sample_rate": 250,
         "STIMULATION.paradigm": "selected-paradigm",
         "ACTUATION.effector": "selected-effector",
+        "ACTUATION.enabled": True,
         "PLUGINS.bindings": [{"parameters": {"window_duration": 3.0}}],
     }
 
@@ -53,6 +54,8 @@ async def test_graph_and_late_stimulation_ignore_saved_edits(thread_factory):
     manager = Mock(auto_spawn=True)
     stimulation = StimulationAppService(service, manager)
     stimulation.handle_start_stimulation(StartStimulationCommand())
+    actuation.start.assert_not_called()
+    service.prepare_actuation()
 
     provider.assert_called_once_with()
     assert factory.call_args.args == (pinned,)

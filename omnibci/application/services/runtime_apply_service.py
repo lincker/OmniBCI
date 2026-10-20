@@ -27,6 +27,7 @@ class _RestoreState:
     stimulation: bool
     session_id: str | None
     checkpoint: dict | None = None
+    actuation: bool = False
 
 
 class RuntimeApplyCoordinator:
@@ -46,7 +47,8 @@ class RuntimeApplyCoordinator:
     def active_kinds(self, snapshot):
         kinds = {"acquisition", "decoder", "epoch_detector", "filter"}
         owned = self.engine.runtime_package_snapshots
-        if any(settings.get("ACTUATION.enabled", False) and settings.get("ACTUATION.auto_spawn", True)
+        if self._actuation_active() and any(
+               settings.get("ACTUATION.enabled", False) and settings.get("ACTUATION.auto_spawn", True)
                for settings in (snapshot.settings, *owned)):
             kinds.add("effector")
         if ((self.stimulation.is_active or self.stimulation.process_alive)
@@ -54,6 +56,12 @@ class RuntimeApplyCoordinator:
                         for settings in (snapshot.settings, *owned))):
             kinds.update(("paradigm", "trigger"))
         return kinds
+
+    def _actuation_active(self):
+        peer_connected = getattr(self.engine, "is_peer_connected", None)
+        return (self.sessions.active_session_id is not None
+                or getattr(self.engine, "actuation_process_alive", False) is True
+                or callable(peer_connected) and peer_connected("actuation") is True)
 
     async def execute(self, stored, progress):
         plan, candidate = stored.plan, stored.snapshot
@@ -68,21 +76,26 @@ class RuntimeApplyCoordinator:
                 raise ProfileRevisionConflict(
                     "The previous engine still owns resources; stop it before selecting configuration"
                 )
-            self.profiles.validate_activation(candidate, active_kinds=self.active_kinds(candidate))
+            self.profiles.validate_activation(candidate, active_kinds=self.active_kinds(candidate),
+                                              module=plan.module)
             if plan.strategy not in self.supported_strategies:
                 raise ValueError("The planned update boundary is unavailable")
+            if plan.strategy == "select_on_start":
+                progress("persisting")
+                self.profiles.repository.save_activation(candidate, expected_revision=plan.expected_revision)
+                return {"outcome": "selected"}
             target = self.profiles.materialize(candidate) if self.archive is not None else None
             if target is not None and plan.running and plan.strategy != "rebuild":
                 target["CONFIG.generation"] = plan.generation
             attempt = self._archive_stage(target, context=plan.strategy)
             try:
-                if plan.strategy in ("select_on_start", "no_change"):
+                if plan.strategy == "no_change":
                     progress("persisting")
                     self.profiles.repository.save_activation(candidate, expected_revision=plan.expected_revision)
                     if plan.running:
                         self._archive_confirm(attempt, self.engine.applied_snapshot,
                                               {"already_applied": True})
-                    return {"outcome": "selected" if not plan.running else "applied"}
+                    return {"outcome": "applied"}
                 if plan.strategy == "trial_boundary":
                     return await self._apply_pipeline(stored, previous, progress, attempt=attempt)
                 if plan.strategy == "module":
@@ -201,7 +214,8 @@ class RuntimeApplyCoordinator:
         return data
 
     async def _start_outputs(self, snapshot, state):
-        await self.engine.restart_actuation_for_configuration(snapshot)
+        if state.actuation:
+            await self.engine.restart_actuation_for_configuration(snapshot)
         if state.stimulation:
             await asyncio.to_thread(self.stimulation.handle_start_stimulation, StartStimulationCommand(),
                                      settings_snapshot=snapshot)
@@ -220,7 +234,7 @@ class RuntimeApplyCoordinator:
         source = self.acquisition.handle_get_status(GetAcquisitionStatusQuery())
         state = _RestoreState(source.connected, source.streaming,
                               self.stimulation.is_active or self.stimulation.process_alive,
-                              self.sessions.active_session_id)
+                              self.sessions.active_session_id, actuation=self._actuation_active())
         outputs_replaced = False
         processing_revision = acquisition_revision = before["CONFIG.revision"]
         resumed = persisted = False
@@ -260,7 +274,7 @@ class RuntimeApplyCoordinator:
                 if selected is None or selected.revision != expected:
                     raise RuntimeError("Selected configuration was changed by another writer")
                 rollback = self._archive_stage(before, context="module_rollback")
-                if target.get("ACTUATION.enabled", False):
+                if state.actuation and target.get("ACTUATION.enabled", False):
                     data = await self._request(EventType.SettleActuation)
                     self._receipt(data, target, "paused", "execution_complete", "outputs_settled")
                 if self.stimulation.is_active or self.stimulation.process_alive:
@@ -315,7 +329,7 @@ class RuntimeApplyCoordinator:
             trials = self.sessions.handle_get_trials(GetSessionTrialsQuery(state.session_id))
             if [trial.trial_number for trial in trials] != list(range(1, receipt.completed_trials + 1)):
                 raise RuntimeError("Completed trials have not all been persisted; session remains open")
-        if before.get("ACTUATION.enabled", False):
+        if state.actuation and before.get("ACTUATION.enabled", False):
             progress("settling_actuation")
             data = await self._request(EventType.SettleActuation)
             self._receipt(data, before, "paused", "execution_complete", "outputs_settled")
@@ -371,7 +385,7 @@ class RuntimeApplyCoordinator:
                                                {**self._identity(running), "checkpoint": selected})
                     self._receipt(data, running, "restored")
                     resumed_checkpoint = True
-        if state.connected and self.signal_preparer is not None:
+        if (state.streaming or previous_session_id is not None) and self.signal_preparer is not None:
             await asyncio.to_thread(self.signal_preparer)
         session_id = None
         if previous_session_id is not None:
@@ -392,7 +406,7 @@ class RuntimeApplyCoordinator:
         source = self.acquisition.handle_get_status(GetAcquisitionStatusQuery())
         state = _RestoreState(source.connected, source.streaming,
                               self.stimulation.is_active or self.stimulation.process_alive,
-                              self.sessions.active_session_id)
+                              self.sessions.active_session_id, actuation=self._actuation_active())
         stopped = False
         resumed = False
         persisted = False
@@ -442,7 +456,7 @@ class RuntimeApplyCoordinator:
                 ) from exc
             progress("rolling_back")
             try:
-                if target.get("ACTUATION.enabled", False):
+                if state.actuation and target.get("ACTUATION.enabled", False):
                     if not self.engine.is_engine_ready:
                         raise RuntimeError("Candidate actuator startup outcome is unknown; cannot recreate an output driver")
                     running = self.engine.applied_snapshot

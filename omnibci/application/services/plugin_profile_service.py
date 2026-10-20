@@ -11,7 +11,7 @@ from omnibci.application.activation_settings import (
 )
 from omnibci.application.plugin_profiles import (
     ActivationSnapshot, PluginProfile, PluginSelection, ProfileBinding,
-    ProfileRevisionConflict,
+    MODULE_KINDS, ProfileRevisionConflict,
 )
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfigurationCatalog
@@ -82,7 +82,7 @@ class PluginProfileService:
                 channel_input = ProcessingInput()
             return self.repository.save_profile(
                 replace(previous, name=name, parameters=values, processing_input=channel_input,
-                        legacy=previous.legacy if processing_input is _UNSET and previous.processing_input_requires_review else {}),
+                        legacy=previous.legacy if processing_input is _UNSET and "processing_input" in previous.legacy else {}),
                 expected_revision=expected_revision,
             )
 
@@ -96,8 +96,16 @@ class PluginProfileService:
             self.repository.delete_profile(profile_id, expected_revision=expected_revision)
 
     def propose(self, selections: list[dict], *, include_host_settings: bool = False,
-                refresh_slots: list[str] | None = None) -> ActivationSnapshot:
-        """Pin saved profiles or an unsaved acquisition connection configuration."""
+                refresh_slots: list[str] | None = None, module: str | None = None) -> ActivationSnapshot:
+        """Replace owned selections while retaining other modules' pinned values."""
+        if module is not None:
+            if module not in MODULE_KINDS:
+                raise PluginSchemaError("Unsupported configuration module")
+            if include_host_settings:
+                raise PluginSchemaError("Module configuration cannot change host settings")
+            if any(not isinstance(item, dict) or not isinstance(item.get("slot"), str)
+                   or not item["slot"].startswith(f"{module}.") for item in selections):
+                raise PluginSchemaError("Selections must belong to the requested module")
         current = self.repository.get_activation()
         base = self.settings_source() if current is None or include_host_settings else current.settings
         if include_host_settings:
@@ -144,11 +152,22 @@ class PluginProfileService:
                 configuration_version=profile.configuration_version,
                 profile_revision=profile.revision,
                 processing_input=profile.processing_input,
-                legacy={"processing_input": profile.legacy["processing_input"]} if profile.processing_input_requires_review else {},
+                legacy={"processing_input": profile.legacy["processing_input"]} if "processing_input" in profile.legacy else {},
             ))
-        if any(binding.kind == "decoder" and binding.processing_input is not None for binding in bindings):
-            base.pop("SIGNAL.setup", None)
-            base.pop("ACQUISITION.channel_names", None)
+        if module is not None:
+            # Keep insertion order for untouched modules and ordered filter chains.
+            merged = []
+            inserted = False
+            for binding in previous.values():
+                if binding.slot.startswith(f"{module}."):
+                    if not inserted:
+                        merged.extend(bindings)
+                        inserted = True
+                else:
+                    merged.append(binding)
+            if not inserted:
+                merged.extend(bindings)
+            bindings = merged
         return ActivationSnapshot(bindings=tuple(bindings), settings=base)
 
     def _validate_host_changes(self, settings: dict, current: ActivationSnapshot | None) -> None:
@@ -179,47 +198,33 @@ class PluginProfileService:
                     + "; use a Plugin Profile or declare their host ownership first"
                 )
 
-    @staticmethod
-    def _validate_mapping(snapshot):
-        decoder = next((binding for binding in snapshot.bindings if binding.kind == "decoder"), None)
-        if decoder is not None and (decoder.processing_input_requires_review
-                or "SIGNAL.setup" in snapshot.settings and decoder.processing_input is None):
-            raise PluginSchemaError("Legacy montage configuration must be replaced with a channel mapping in the decoder profile")
-
     def validate_activation(self, snapshot: ActivationSnapshot, *,
-                            active_kinds: set[str] | None = None) -> None:
-        """Require a complete configuration and available capabilities used here.
-
-        Stimulation is started separately; its platform-specific selections may
-        remain dormant. Callers include currently active outputs when applying.
-        """
-        self._validate_mapping(snapshot)
-        slots = {binding.slot for binding in snapshot.bindings}
-        required = {"acquisition.source", "processing.decoder", "processing.epoch_detector",
-                    "stimulation.paradigm"}
-        missing = required - slots
-        if missing:
-            raise PluginSchemaError("Missing required selections: " + ", ".join(sorted(missing)))
-        kinds = {"acquisition", "decoder", "epoch_detector", "filter"} | (active_kinds or set())
-        if snapshot.settings.get("ACTUATION.enabled", False):
-            if "actuation.effector" not in slots:
-                raise PluginSchemaError("Actuation is enabled without an effector selection")
-            if snapshot.settings.get("ACTUATION.auto_spawn", True):
-                kinds.add("effector")
+                            active_kinds: set[str] | None = None,
+                            module: str | None = None) -> None:
+        """Validate owned selections; completeness belongs to module startup."""
+        if module is not None and module not in MODULE_KINDS:
+            raise PluginSchemaError("Unsupported configuration module")
+        owned = MODULE_KINDS[module] if module is not None else active_kinds
+        available = active_kinds if active_kinds is not None else MODULE_KINDS["acquisition"] | MODULE_KINDS["processing"]
         for binding in snapshot.bindings:
+            if owned is not None and binding.kind not in owned:
+                continue
+            if binding.processing_input_requires_review:
+                raise PluginSchemaError("Configure the decoder channel mapping in Signal Processing")
             _validate_source_parameters(binding)
             definition, parameters = self._parameters(
                 binding.kind, binding.selection, binding.parameters, binding.configuration_version,
             )
             if parameters != binding.parameters:
                 raise PluginSchemaError(f"{binding.slot}: snapshot must include resolved defaults")
-            if binding.kind in kinds and not definition.available:
+            if binding.kind in available and not definition.available:
                 raise PluginSchemaError(f"{binding.slot}: unavailable on this platform")
 
-    def accept(self, snapshot: ActivationSnapshot, *, expected_revision: str | None):
+    def accept(self, snapshot: ActivationSnapshot, *, expected_revision: str | None,
+               module: str | None = None):
         """Initially idle-only; the runtime coordinator later commits after ACK."""
         with self.change_guard(True):
-            self.validate_activation(snapshot)
+            self.validate_activation(snapshot, module=module)
             return self.repository.save_activation(snapshot, expected_revision=expected_revision)
 
     def resolve_settings(self) -> dict:
@@ -229,37 +234,16 @@ class PluginProfileService:
         return self.materialize(snapshot)
 
     def materialize(self, snapshot: ActivationSnapshot) -> dict:
-        """Project compatibility keys while retaining exact pinned inputs."""
-        # Keep host configuration and plugin inputs together through spawn.
-        self._validate_mapping(snapshot)
+        """Publish pinned inputs; only Acquisition supplies shared source facts."""
         result = activation_host_settings(snapshot.settings)
-        aliases = {
-            "acquisition.source": "ACQUISITION.signal_source",
-            "processing.decoder": "ALGORITHM.decoder",
-            "processing.epoch_detector": "ALGORITHM.epoch_detector",
-            "stimulation.paradigm": "STIMULATION.paradigm",
-            "stimulation.trigger": "ACQUISITION.trigger",
-            "actuation.effector": "ACTUATION.effector",
-        }
-        filters = []
         bindings = []
         for binding in snapshot.bindings:
-            _validate_source_parameters(binding)
-            definition = self.catalog.get(binding.kind, binding.selection)
             bindings.append(materialize_processing_binding(binding))
-            if binding.slot in aliases:
-                result[aliases[binding.slot]] = definition.plugin_type
             if binding.kind == "acquisition":
+                _validate_source_parameters(binding)
+                definition = self.catalog.get(binding.kind, binding.selection)
+                result["ACQUISITION.signal_source"] = definition.plugin_type
                 result.update({f"ACQUISITION.{key}": value for key, value in binding.parameters.items()})
-            elif binding.kind == "filter":
-                filters.append(definition.plugin_type)
-        result["ALGORITHM.filters"] = filters
-        decoder = next((binding for binding in snapshot.bindings if binding.kind == "decoder"), None)
-        if decoder is not None and decoder.processing_input is not None:
-            source_id = result.get("ACQUISITION.signal_source")
-            if source_id is None:
-                raise PluginSchemaError("Decoder processing input requires an acquisition source")
-            result.pop("SIGNAL.setup", None)
         result["CONFIG.revision"] = snapshot.revision
         result["PLUGINS.bindings"] = bindings
         return result

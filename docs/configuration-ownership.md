@@ -1,19 +1,35 @@
 # Configuration ownership and consolidation
 
-Status: steps 1 through 6 and the backend logging batch are committed.
-Activation routes share candidate construction and
+Status: module configuration is independent. Activation routes share candidate construction and
 reject host changes that the current runtime cannot apply. New activations
 separate host settings from plugin inputs, and runtime projections use pinned
 bindings. Settings has one host editor; the old named Application Profile editor
 and file overlay are removed.
 Playback speed and the reviewed unused settings are also removed. Real-time
-worker logging remains deferred. The current instruction authorizes completing
-and committing the remaining steps after validation.
+worker logging remains deferred.
 
-The inventory covers all 38 leaf keys currently declared in
+The historical inventory below covers the original 38 leaf keys declared in
 [`settings.toml`](../omnibci/conf/settings.toml), all ten bundled plugin schemas,
 and the additional configuration inputs identified below. Key names in the
 tables are existing names, not a proposal to rename every setting.
+
+Each module page loads its own profiles and submits only its owned bindings with
+`module: acquisition | processing | stimulation | actuation`. The backend retains
+other modules' pinned values without resolving their profiles, loading their
+plugins, or validating their parameters. A partial configuration can be selected;
+it does not need a complete experiment. Host settings remain a separate operation.
+
+Acquisition Connect validates and loads the acquisition source. Signal Processing
+starts in standby without interpreting the decoder input. Preparing processing
+validates its channel mapping and loads Decoder, Epoch Detector and Filters using
+the observed source descriptor. Starting a session requires a complete processing
+selection and starts managed Actuation. An unrelated missing or invalid decoder
+or effector cannot block Acquisition configuration or connection.
+
+Fresh installations have no selected plugins. Profiles and selections are created
+explicitly in their module pages; the global settings initializer and alias-to-profile
+mapper have been removed. Packaged settings contain host controls only. Idle Apply
+saves the selected module; runtime archival begins when the configuration is used.
 
 ## Ownership rules
 
@@ -68,11 +84,11 @@ does not alter a running experiment. Review and Apply pins the mapping;
 channel changes require a stopped-stream rebuild and new preparation.
 
 Historical montage fields remain inert raw storage only to preserve old hashes.
-Version 1 processing inputs and legacy `SIGNAL.setup` require explicit replacement
-with a version 2 mapping before engine start. They are never executed or silently
-converted. Management remains available for configuration repair. A historical
-profile with no input or legacy setup can use a transient identity mapping
-without rewriting its stored profile or activation.
+`SIGNAL.setup` is retired and never participates in module validation or execution.
+Version 1 decoder inputs remain readable for replacement in Signal Processing;
+there is no automatic migration or special conversion for old defaults. They do
+not prevent another module from being configured or Acquisition from connecting.
+Stored profiles and activation files are not rewritten during reads or startup.
 
 `GET /api/v1/config/signal` reports `source_binding`, `source_revision`,
 `acquisition_descriptor`, and the pinned `processing_input`, `accepted_input`,
@@ -289,10 +305,8 @@ candidate. Configuration apply and host persistence remain mutually exclusive.
 
 `OmniBCISettings` now reads the settings file or an installed worker snapshot;
 it never reads the old `conf/profiles/` directory. Existing accepted values and
-revisions are preserved. Fresh initialization uses the flat defaults still
-present in `settings.toml`. Step 3 removes those inputs from new activation host
-settings; refining host candidate merging remains step 4. Retired files are not
-deleted or migrated.
+revisions are preserved. Fresh installations require explicit module selections.
+Retired configuration files are not deleted or migrated.
 The former Review incorrectly listed `CONFIG.initialization_warnings` as a
 changed host field alongside a real edit. Step 4 keeps these accepted diagnostics
 read-only and excludes them from runtime materialization.
@@ -343,21 +357,14 @@ and applied configuration until explicit application. Adoption into the current
 draft remains available; Save and Apply publishes a new revision. Scan45 retains its required configuration and
 is marked unverified because it cannot query independent device dimensions.
 
-The raw `settings.toml` plugin entries remain explicit first-initialization
-inputs for this step; they are not live controls. Their existing values are
-copied into initial Plugin Profiles before filtering the activation host
-settings. Bundled source sample-rate and row-count placeholders are omitted so
-a fresh File Reader Profile starts without an invented experimental baseline.
-Explicit legacy values are preserved. This does not select another
-plugin, or rewrite actual configuration files. Retiring this initialization
-source requires a separate explicit first-initialization policy. Step 6 removes
-standalone runtime fallback; this explicit initializer remains. The
-startup-only/diagnostic change rules are covered by step 4.
+The old initialization path and packaged flat plugin defaults have been removed.
+Plugin schemas supply defaults when users create a profile in the owning module.
+Existing user settings files are not rewritten; their retired plugin entries
+cannot select plugins or supply runtime parameters.
 
 The plugin exclusion set covers the 19 reviewed flat keys, not arbitrary
-third-party legacy prefixes. Unknown legacy seed fields can still remain in
-host settings until that initialization path is retired; step 4 rejects changes
-to such unclassified fields. Plugin Profile parameters themselves remain
+third-party legacy prefixes. Step 4 rejects changes to unclassified host fields.
+Plugin Profile parameters themselves remain
 governed by each plugin's full schema, without a fixed parameter list.
 
 ### Step 4: one candidate construction policy
@@ -397,11 +404,9 @@ Generated fields, diagnostics, retired settings, old plugin copies, and old
 startup copies are inert in candidate construction. Existing accepted copies
 retain their exact values; new host input cannot edit them or force a different
 revision. Runtime materialization excludes them and generates revision/binding
-fields afresh. The initializer still stores its own generated warnings as
-read-only metadata, so diagnostics remain available after restart.
+fields afresh. Previously stored initialization diagnostics remain inert metadata.
 
-First initialization may retain unknown fields from its explicit settings seed;
-existing accepted unknown values are also preserved. Adding, changing, or
+Existing accepted unknown values are preserved. Adding, changing, or
 removing an unknown field through a later host refresh is rejected rather than
 silently ignored or reported as applied. Such a field needs a reviewed host
 owner or must become a Plugin Profile parameter. This does not restrict the
@@ -482,8 +487,8 @@ fallback. Ordered filters come from their binding slots. File Reader, Scan45,
 Curry8, and Scan45 Trigger require explicit parameters; CCA and FBCCA also
 require sampling context. Their constructors no longer read global settings.
 Stateless constructor API 1 contributions can still be loaded through an exact
-binding; configurable contributions require constructor API 2. The explicit
-first-initialization alias mapper remains separate from runtime loading.
+binding; configurable contributions require constructor API 2. Loading one slot
+does not parse another module's plugin parameters or decoder input.
 
 ### Independent nodes: role-scoped startup and reconnect
 
@@ -500,7 +505,8 @@ revision, engine generation, necessary host/context settings, and owned bindings
 
 | Role | Locally validated and loaded contributions |
 | --- | --- |
-| Engine | Acquisition, Decoder, Epoch boundary detector, Filters |
+| Engine startup | Acquisition; Signal Processing waits in standby |
+| Signal preparation | Decoder, Epoch boundary detector, Filters |
 | Stimulation | Paradigm, Trigger |
 | Actuation | Effector |
 
@@ -527,9 +533,10 @@ finished or been cancelled before releasing the device. Setup, quiescence,
 trigger-clear, and teardown failures stop the script. An explicit normal
 application stop does not restart it. No cloud, account, plugin installation,
 or cross-node live-apply protocol is added. Revision-changing Apply operations,
-including decoder-only changes, are rejected while external roles are configured
-on a running engine. Stop, apply, and start the engine to let waiting nodes fetch
-the new generation automatically. The API backend and IPC addresses must be
+including decoder-only changes, require a stop while an external peer is connected
+or an experiment is using it. Disconnected external roles do not block module
+configuration; Apply rebuilds their gateway identity so waiting nodes can fetch
+the new generation. The API backend and IPC addresses must be
 reachable; use explicit backend LAN addresses, not wildcard listener addresses,
 for cross-machine IPC.
 

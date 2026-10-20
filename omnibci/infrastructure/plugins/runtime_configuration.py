@@ -7,17 +7,19 @@ from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.sdk import PluginContext
 
 
-def configured_bindings(snapshot: dict) -> tuple[ProfileBinding, ...]:
+def configured_bindings(snapshot: dict, *, slot: str | None = None) -> tuple[ProfileBinding, ...]:
     """Require explicit selections, including an intentional empty list."""
     if "PLUGINS.bindings" not in snapshot:
         raise PluginLoadError("Runtime configuration requires pinned PLUGINS.bindings")
     raw = snapshot["PLUGINS.bindings"]
     if not isinstance(raw, list):
         raise PluginLoadError("PLUGINS.bindings must be a list")
-    bindings = tuple(ProfileBinding.from_dict(value) for value in raw)
-    if len({binding.slot for binding in bindings}) != len(bindings):
+    if any(not isinstance(value, dict) or not isinstance(value.get("slot"), str) for value in raw):
+        raise PluginLoadError("Each plugin binding must name a slot")
+    if len({value["slot"] for value in raw}) != len(raw):
         raise PluginLoadError("Duplicate plugin slot")
-    return bindings
+    return tuple(ProfileBinding.from_dict(value) for value in raw
+                 if slot is None or value["slot"] == slot)
 
 
 def plugin_context(snapshot: dict) -> PluginContext:
@@ -32,7 +34,7 @@ def load_configured_plugin(snapshot: dict, slot: str, kind: str, expected_base,
                            *, context: PluginContext | None = None,
                            catalog: PluginCatalog | None = None, loader=PluginLoader):
     """Use exact accepted selections; never substitute aliases or versions."""
-    bindings = configured_bindings(snapshot)
+    bindings = configured_bindings(snapshot, slot=slot)
     binding = next((binding for binding in bindings if binding.slot == slot), None)
     if binding is None or binding.kind != kind:
         raise PluginLoadError(f"No {kind} selected for {slot}")

@@ -8,6 +8,7 @@ from omnibci.presentation.schemas.signal_setup import ProcessingInputModel
 
 
 PluginKind = Literal["acquisition", "decoder", "epoch_detector", "filter", "paradigm", "trigger", "effector"]
+ConfigurationModule = Literal["acquisition", "processing", "stimulation", "actuation"]
 
 
 class DecoderChannelRequirementsResponse(BaseModel):
@@ -112,3 +113,4 @@ class AcceptActivationRequest(BaseModel):
     expected_revision: str | None = None
     refresh_slots: list[str] | None = None
     include_host_settings: bool = False
+    module: ConfigurationModule | None = None

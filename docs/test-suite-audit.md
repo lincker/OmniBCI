@@ -33,7 +33,7 @@ Removed test functions:
 
 **Trim.** Keep active configuration composition and restart tests; delete three families whose only special premise is a removed and unread legacy file format.
 
-build_container only reads current plugin profiles/activation through SettingsPluginConfigInitializer and accepted_runtime_settings. No production reader remains for active.toml or the named application profile overlay. Fresh initialization is already covered by test_settings_only_initialization_preserves_nondefault_values; retained accepted inputs across restart by test_existing_activation_keeps_its_revision_and_pinned_inputs; status source selection by test_status_reads_applied_values_while_engine_running. The three legacy-file families create unrelated valid/missing/corrupt files and duplicate those observable assertions.
+build_container reads current plugin profiles/activation through accepted_runtime_settings. Automatic whole-system initialization has been removed: fresh startup leaves modules unconfigured, covered by test_fresh_installation_does_not_select_plugins and test_bootstrap_ignores_retired_plugin_settings. No production reader remains for active.toml or the named application profile overlay. Retained accepted inputs across restart are covered by test_existing_activation_keeps_its_revision_and_pinned_inputs; status source selection by test_status_reads_applied_values_while_engine_running. The three legacy-file families create unrelated valid/missing/corrupt files and duplicate those observable assertions.
 
 Removed test functions:
 
@@ -277,10 +277,10 @@ Test counts below are baseline function counts, before parameter expansion. `Kee
 | [tests/application/test_engine_port.py](../tests/application/test_engine_port.py) | Trim | 9 | Keep observable port-boundary behavior; remove two historical private-field-name assertions. |
 | [tests/application/test_engine_restart.py](../tests/application/test_engine_restart.py) | Keep | 5 | Fresh process graphs and subscription replay remain required after stop. |
 | [tests/application/test_engine_service.py](../tests/application/test_engine_service.py) | Trim | 22 | Keep readiness, startup/stop exclusion, ownership, and failure tests; remove obsolete symbol-absence marker. |
-| [tests/application/test_legacy_plugin_config.py](../tests/application/test_legacy_plugin_config.py) | Keep | 10 | The legacy-named mapper is still a live first-initialization dependency, not an obsolete migration-only module. |
+| `tests/application/test_legacy_plugin_config.py` | Removed | 10 | Removed with the obsolete host-settings-to-plugin parameter mapper. |
 | [tests/application/test_node_configuration.py](../tests/application/test_node_configuration.py) | Keep | 13 | Role-scoped projection and validation are the newly accepted standalone-node contract. |
 | [tests/application/test_node_configuration_service.py](../tests/application/test_node_configuration_service.py) | Keep | 4 | Node publication must follow actual runtime ownership and reject unsettled transitions. |
-| [tests/application/test_plugin_config_initialization.py](../tests/application/test_plugin_config_initialization.py) | Keep | 13 | Explicit first-initialization remains current and requires idempotent durable writes. |
+| `tests/application/test_plugin_config_initialization.py` | Removed | 13 | Removed with automatic whole-system profile initialization; module selections are explicit. |
 | [tests/application/test_plugin_lifecycle_admission.py](../tests/application/test_plugin_lifecycle_admission.py) | Keep | 4 | Package operations must not race profile validation and publication. |
 | [tests/application/test_plugin_package_composition.py](../tests/application/test_plugin_package_composition.py) | Keep | 6 | Keep actual bootstrap/lifespan package and market integration tests. |
 | [tests/application/test_plugin_package_service.py](../tests/application/test_plugin_package_service.py) | Keep | 10 | Reference-aware removal and explicit version migration are still active package lifecycle behavior. |

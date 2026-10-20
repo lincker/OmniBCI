@@ -5646,6 +5646,23 @@
             "type": "boolean",
             "title": "Include Host Settings",
             "default": false
+          },
+          "module": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "acquisition",
+                  "processing",
+                  "stimulation",
+                  "actuation"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Module"
           }
         },
         "additionalProperties": false,
@@ -8350,6 +8367,23 @@
             "type": "boolean",
             "title": "Include Host Settings",
             "default": false
+          },
+          "module": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "acquisition",
+                  "processing",
+                  "stimulation",
+                  "actuation"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Module"
           }
         },
         "additionalProperties": false,
@@ -8456,6 +8490,23 @@
               }
             ],
             "title": "Signal Summary"
+          },
+          "module": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "acquisition",
+                  "processing",
+                  "stimulation",
+                  "actuation"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Module"
           }
         },
         "type": "object",

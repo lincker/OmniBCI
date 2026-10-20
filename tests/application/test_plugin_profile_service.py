@@ -189,9 +189,10 @@ def test_legacy_decoder_input_is_preserved_but_blocked_until_explicitly_configur
                              expected_revision=legacy.revision)
     assert renamed.processing_input is None
     assert renamed.legacy["processing_input"] == old_input
-    with pytest.raises(PluginSchemaError, match="Legacy montage"):
-        service.resolve_settings()
-    with pytest.raises(PluginSchemaError, match="Legacy montage"):
+    assert "SIGNAL.setup" not in service.resolve_settings()
+    with pytest.raises(ValueError, match="processing input"):
+        processing_input(service.resolve_settings())
+    with pytest.raises(PluginSchemaError, match="Configure the decoder"):
         service.accept(service.propose(selections), expected_revision=accepted.revision)
     assert path.read_bytes() == before
 
@@ -199,7 +200,7 @@ def test_legacy_decoder_input_is_preserved_but_blocked_until_explicitly_configur
                                 expected_revision=renamed.revision, processing_input=ProcessingInput())
     assert configured.legacy == {}
     selected = service.accept(service.propose(selections), expected_revision=accepted.revision)
-    assert "SIGNAL.setup" not in selected.settings
+    assert selected.settings["SIGNAL.setup"] == accepted.settings["SIGNAL.setup"]
     assert processing_input(service.resolve_settings()) == ProcessingInput()
 
 
@@ -211,6 +212,70 @@ def test_new_decoder_profile_has_explicit_input_and_ignores_global_legacy_setup(
     assert decoder.processing_input == ProcessingInput()
     assert processing_input(service.resolve_settings()) == ProcessingInput()
     assert "SIGNAL.setup" not in service.resolve_settings()
+
+
+@pytest.mark.parametrize("setup", [
+    {},
+    {"source_id": "neuroscan_scan45_reader", "schema_version": 1, "assignments": [],
+     "outputs": [], "reference": {"mode": "original", "channels": []}, "excluded_channels": []},
+])
+def test_legacy_defaults_are_inert_until_processing_is_configured(service, setup):
+    selections = complete_selections(service)
+    candidate = service.propose(selections)
+    old_input = {"schema_version": 1, "outputs": [],
+                 "reference": {"mode": "original", "channels": []}, "excluded_channels": []}
+    decoder = next(binding for binding in candidate.bindings if binding.kind == "decoder")
+    profile = service.repository.get_profile(decoder.profile_id)
+    profile = service.repository.save_profile(
+        replace(profile, processing_input=None, legacy={"processing_input": old_input}),
+        expected_revision=profile.revision,
+    )
+    legacy = ActivationSnapshot({**candidate.settings, "SIGNAL.setup": setup}, tuple(
+        replace(binding, processing_input=None, legacy={"processing_input": old_input})
+        if binding.kind == "decoder" else binding for binding in candidate.bindings))
+    service.repository.save_activation(legacy, expected_revision=None)
+    path = service.repository.root / "activation.toml"
+    before = path.read_bytes()
+
+    service.validate_activation(legacy, module="acquisition")
+    with pytest.raises(PluginSchemaError, match="Configure the decoder"):
+        service.validate_activation(legacy, module="processing")
+    runtime = service.resolve_settings()
+
+    assert next(b for b in runtime["PLUGINS.bindings"] if b["kind"] == "decoder")["processing_input"] == old_input
+    assert "SIGNAL.setup" not in runtime
+    assert runtime["CONFIG.revision"] == legacy.revision
+    assert path.read_bytes() == before
+    assert service.repository.get_activation().to_dict() == legacy.to_dict()
+    renamed = service.update(profile.profile_id, name="Renamed default", parameters=profile.parameters,
+                             expected_revision=profile.revision)
+    assert renamed.to_dict()["processing_input"] == old_input
+    refreshed = service.propose(selections, refresh_slots=["processing.decoder"])
+    assert next(binding for binding in refreshed.bindings
+                if binding.kind == "decoder").to_dict()["processing_input"] == old_input
+    assert next(b for b in service.materialize(refreshed)["PLUGINS.bindings"]
+                if b["kind"] == "decoder")["processing_input"] == old_input
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("setup", [
+    {"outputs": ["O1"]},
+    {"excluded_channels": ["M1"]},
+    {"reference": {"mode": "single", "channels": ["M1"]}},
+    {"assignments": [{"source_index": 0, "electrode": "Oz", "expected_name": "CH1"}]},
+    {"manual_metadata": {}},
+    {"schema_version": 2},
+    {"schema_version": True},
+    {"unknown": []},
+])
+def test_retired_global_signal_setup_is_not_a_runtime_configuration_input(service, setup):
+    candidate = service.propose(complete_selections(service))
+    legacy = ActivationSnapshot({**candidate.settings, "SIGNAL.setup": setup}, tuple(
+        replace(binding, processing_input=None) if binding.kind == "decoder" else binding
+        for binding in candidate.bindings))
+    service.validate_activation(legacy)
+    assert "SIGNAL.setup" not in service.materialize(legacy)
+    assert legacy.settings["SIGNAL.setup"] == setup
 
 
 def test_processing_input_cannot_be_saved_to_an_acquisition_profile(service):
@@ -264,7 +329,9 @@ def test_repeated_filter_instances_keep_order_and_unique_slots(service):
     snapshot = service.propose(selections)
     assert [binding.slot for binding in snapshot.bindings] == [item["slot"] for item in selections]
     assert snapshot.revision != service.propose(list(reversed(selections))).revision
-    assert service.materialize(snapshot)["ALGORITHM.filters"] == ["BASELINE_CORRECTION"] * 2
+    assert [b["slot"] for b in service.materialize(snapshot)["PLUGINS.bindings"]] == [
+        item["slot"] for item in selections
+    ]
 
 
 def test_profile_parameters_are_validated_by_the_selected_package(service):
@@ -375,8 +442,8 @@ def test_materialization_uses_bindings_instead_of_old_plugin_setting_copies(serv
     assert runtime["ACQUISITION.sample_rate"] == 256
     assert runtime["ACQUISITION.channel_number"] == 5
     assert runtime["ACQUISITION.signal_source"] == "file_reader"
-    assert runtime["ALGORITHM.decoder"] == "THUBCI_SSVEP_classic40CCA"
-    assert runtime["ALGORITHM.filters"] == []
+    assert "ALGORITHM.decoder" not in runtime
+    assert "ALGORITHM.filters" not in runtime
     assert runtime["CONFIG.revision"] == previous.revision
     assert runtime["ALGORITHM.baseline_duration"] == host["ALGORITHM.baseline_duration"]
     assert "ACQUISITION.channel_names" not in runtime
@@ -771,27 +838,23 @@ def test_delete_requires_replacing_selected_binding(service):
 
 
 @pytest.mark.parametrize("missing_slot", [None, *(item[0] for item in REQUIRED_SELECTIONS)])
-def test_incomplete_activation_is_rejected_without_replacing_selected_values(service, missing_slot):
+def test_modules_can_be_configured_without_a_complete_experiment(service, missing_slot):
     before = service.propose(complete_selections(service))
     service.accept(before, expected_revision=None)
     bindings = tuple(binding for binding in before.bindings if missing_slot and binding.slot != missing_slot)
     candidate = ActivationSnapshot(before.settings, bindings)
 
-    with pytest.raises(PluginSchemaError, match="Missing required selections"):
-        service.accept(candidate, expected_revision=before.revision)
-
-    assert service.repository.get_activation() == before
+    service.accept(candidate, expected_revision=before.revision)
+    assert service.repository.get_activation() == candidate
 
 
-def test_enabled_actuation_requires_an_effector_without_replacing_selected_values(service):
+def test_enabled_actuation_can_be_configured_before_selecting_its_effector(service):
     before = service.propose(complete_selections(service))
     service.accept(before, expected_revision=None)
     candidate = ActivationSnapshot({**before.settings, "ACTUATION.enabled": True}, before.bindings)
 
-    with pytest.raises(PluginSchemaError, match="effector"):
-        service.accept(candidate, expected_revision=before.revision)
-
-    assert service.repository.get_activation() == before
+    service.accept(candidate, expected_revision=before.revision)
+    assert service.repository.get_activation() == candidate
 
 
 @pytest.mark.parametrize("slot,kind,alias", [
@@ -826,9 +889,7 @@ def test_unavailable_outputs_remain_portable_until_their_kind_is_active(service,
     with pytest.raises(PluginSchemaError, match="unavailable on this platform"):
         service.validate_activation(candidate, active_kinds={kind})
     if kind == "effector":
-        with pytest.raises(PluginSchemaError, match="unavailable on this platform"):
-            service.accept(ActivationSnapshot({"ACTUATION.enabled": True}, candidate.bindings),
-                           expected_revision=candidate.revision)
+        service.validate_activation(ActivationSnapshot({"ACTUATION.enabled": True}, candidate.bindings))
         service.validate_activation(ActivationSnapshot(
             {"ACTUATION.enabled": True, "ACTUATION.auto_spawn": False}, candidate.bindings))
     assert service.repository.get_activation() == candidate
@@ -854,8 +915,7 @@ def test_unavailable_source_can_be_saved_but_not_accepted(service, monkeypatch):
 
     with pytest.raises(PluginSchemaError, match="unavailable on this platform"):
         service.accept(candidate, expected_revision=before.revision)
-    with pytest.raises(PluginSchemaError, match="unavailable on this platform"):
-        service.validate_activation(candidate, active_kinds={"paradigm"})
+    service.validate_activation(candidate, active_kinds={"paradigm"})
     assert service.repository.get_activation() == before
     service.delete(saved.profile_id, expected_revision=saved.revision)
     assert all(item.profile_id != saved.profile_id for item in service.repository.list_profiles())

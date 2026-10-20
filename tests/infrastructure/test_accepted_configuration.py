@@ -6,11 +6,11 @@ from unittest.mock import Mock
 import pytest
 
 from omnibci.application.plugin_profiles import ActivationSnapshot, ProfileBinding
-from omnibci.application.services.plugin_config_initialization import SettingsPluginConfigInitializer
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from tests.plugin_configuration_helpers import accept_profiles
 
 
 @pytest.fixture
@@ -27,7 +27,13 @@ def profiles(tmp_path, monkeypatch):
     }
     service = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
                                    CatalogConfigurationAdapter(), settings_source=lambda: seed)
-    SettingsPluginConfigInitializer(service).initialize(seed)
+    accept_profiles(service, (
+        ("acquisition.source", "acquisition", "file_reader", {"sample_rate": 500, "channel_number": 10}),
+        ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA", {}),
+        ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
+        ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40", {}),
+        ("actuation.effector", "effector", "logger", {}),
+    ))
     return service
 
 

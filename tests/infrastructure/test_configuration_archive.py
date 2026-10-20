@@ -10,6 +10,7 @@ from omnibci.application.services.configuration_archive_service import (
 )
 from omnibci.infrastructure.repositories.sqlite_configuration_archive import SQLiteConfigurationArchive
 from omnibci.infrastructure.repositories.sqlite_session_repository import SQLiteSessionRepository
+from omnibci.domain.channel_mapping import ProcessingInput
 
 
 def _settings(revision="revision-1", generation="generation-1"):
@@ -45,7 +46,7 @@ def test_snapshot_preserves_order_versions_parameters_and_excludes_host_state():
     assert snapshot == {
         "schema_version": 1,
         "settings": {"ALGORITHM.baseline_duration": 0.25,
-                     "ALGORITHM.filters": ["high_pass", "low_pass"], "ACQUISITION.sample_rate": 250},
+                     "ACQUISITION.sample_rate": 250},
         "bindings": settings["PLUGINS.bindings"],
     }
     settings["PLUGINS.bindings"][0]["parameters"]["cutoff"] = 7
@@ -74,6 +75,124 @@ def test_schema_declared_secrets_are_redacted_in_bindings_and_source_mirrors():
     assert snapshot["settings"]["ACQUISITION.data_file_path"] == "[redacted]"
     assert "private-token" not in repr(snapshot)
     assert "credential-bearing-path" not in repr(snapshot)
+
+
+@pytest.mark.parametrize("missing_schema", [False, True])
+def test_missing_dormant_plugin_does_not_block_archiving_and_redacts_unknown_parameters(archive, missing_schema):
+    settings = _settings()
+    settings["PLUGINS.bindings"][0]["parameters"] = {"credential": "private-token"}
+    original = deepcopy(settings)
+
+    def definition(kind, selection):
+        if selection.package_id == "test.high_pass":
+            if missing_schema:
+                return SimpleNamespace(schema=None)
+            raise ValueError("Plugin is not installed")
+        return SimpleNamespace(schema={"properties": {"cutoff": {"type": "number"}}})
+
+    archive.catalog = SimpleNamespace(get=definition)
+
+    attempt = archive.stage(settings, context="engine_start")
+    archive.confirm(attempt, settings, receipt={"engine_ready": True})
+
+    stored = archive.get(settings["CONFIG.revision"])
+    first, second = stored["snapshot"]["bindings"]
+    assert first["selection"] == settings["PLUGINS.bindings"][0]["selection"]
+    assert first["parameters"] == "[redacted]"
+    assert first["redacted_parameters"] == ["$"]
+    assert second["parameters"] == {"cutoff": 40.0}
+    assert stored["applications"][0]["status"] == "applied"
+    assert "private-token" not in repr(stored)
+    assert settings == original
+
+
+def test_removing_duplicate_aliases_keeps_existing_archive_immutable(archive):
+    settings = _settings()
+    previous = configuration_snapshot(settings)
+    previous["settings"].update({
+        "ALGORITHM.filters": ["high_pass", "low_pass"],
+        "ALGORITHM.decoder": "decoder",
+        "STIMULATION.paradigm": "paradigm",
+    })
+    archive.repository.stage(settings["CONFIG.revision"], previous, generation="generation-1",
+                             context="startup", session_id=None)
+    row = archive.repository._connection.execute(
+        "SELECT snapshot FROM configuration_snapshots").fetchone()[0]
+    settings.pop("ALGORITHM.filters")
+
+    attempt = archive.stage(settings, context="engine_start")
+    archive.confirm(attempt, settings, receipt={"engine_ready": True})
+
+    assert archive.get(settings["CONFIG.revision"])["snapshot"] == previous
+    assert archive.repository._connection.execute(
+        "SELECT snapshot FROM configuration_snapshots").fetchone()[0] == row
+    changed = deepcopy(settings)
+    changed["ALGORITHM.baseline_duration"] = 1.0
+    with pytest.raises(ValueError, match="immutable"):
+        archive.stage(changed, context="engine_start")
+
+
+def test_missing_plugin_reuses_recorded_redactions_without_changing_archive(archive):
+    settings = _settings()
+    settings["PLUGINS.bindings"][0]["parameters"] = {
+        "cutoff": 1.0, "accounts": [{"name": "lab", "credential": "private-token"}],
+    }
+    schema = {"properties": {"accounts": {"items": {"properties": {
+        "credential": {"x-scope": "secret"},
+    }}}}}
+    archive.catalog = SimpleNamespace(get=lambda *args: SimpleNamespace(schema=schema))
+    first = archive.stage(settings, context="engine_start")
+    archive.confirm(first, settings, receipt={"engine_ready": True})
+    previous = archive.get(settings["CONFIG.revision"])["snapshot"]
+
+    def missing(*args):
+        raise ValueError("Plugin is not installed")
+
+    archive.catalog = SimpleNamespace(get=missing)
+    settings["CONFIG.generation"] = "generation-2"
+    attempt = archive.stage(settings, context="engine_start")
+    archive.confirm(attempt, settings, receipt={"engine_ready": True})
+
+    assert archive.get(settings["CONFIG.revision"])["snapshot"] == previous
+    assert "private-token" not in repr(previous)
+    changed = deepcopy(settings)
+    changed["PLUGINS.bindings"][0]["parameters"]["cutoff"] = 2.0
+    with pytest.raises(ValueError, match="immutable"):
+        archive.stage(changed, context="engine_start")
+    with pytest.raises(ValueError, match="differs from the archived"):
+        archive.confirm(attempt, changed, receipt={"engine_ready": True})
+
+
+def test_old_implicit_decoder_input_keeps_archive_and_runtime_inputs_unchanged(archive):
+    settings = _settings()
+    settings["PLUGINS.bindings"] = [{
+        "slot": "processing.decoder", "kind": "decoder",
+        "selection": {"package_id": "test.decoder", "contribution_id": "default", "version": "1"},
+        "parameters": {},
+    }]
+    original = deepcopy(settings)
+    previous = configuration_snapshot(settings)
+    previous["bindings"][0]["processing_input"] = ProcessingInput().to_dict()
+    archive.repository.stage(settings["CONFIG.revision"], previous, generation="generation-1",
+                             context="startup", session_id=None)
+    row = archive.repository._connection.execute(
+        "SELECT snapshot FROM configuration_snapshots").fetchone()[0]
+
+    attempt = archive.stage(settings, context="engine_start")
+    archive.confirm(attempt, settings, receipt={"engine_ready": True})
+
+    assert settings == original
+    assert "processing_input" not in configuration_snapshot(settings)["bindings"][0]
+    assert archive.repository._connection.execute(
+        "SELECT snapshot FROM configuration_snapshots").fetchone()[0] == row
+    changed = deepcopy(settings)
+    changed["PLUGINS.bindings"][0]["processing_input"] = {
+        "schema_version": 2, "outputs": [{"name": "O1", "source_channel_id": "O1"}],
+    }
+    with pytest.raises(ValueError, match="immutable"):
+        archive.stage(changed, context="engine_start")
+    with pytest.raises(ValueError, match="differs from the archived"):
+        archive.confirm(attempt, changed, receipt={"engine_ready": True})
 
 
 def test_snapshot_is_detached_and_survives_same_database_reopen(tmp_path):

@@ -18,7 +18,6 @@ from omnibci.application.services.recording_service import RecordingService
 from omnibci.application.services.command_result_service import CommandResultBroker
 from omnibci.application.services.config_service import ConfigService
 from omnibci.application.services.plugin_profile_service import PluginProfileService
-from omnibci.application.services.plugin_config_initialization import SettingsPluginConfigInitializer
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.configuration_archive_service import ConfigurationArchiveService
@@ -275,16 +274,6 @@ async def _build_container_services(host_settings, repository, allow_process_ter
     archive = (ConfigurationArchiveService(archive_repository, catalog=plugin_profiles.catalog)
                if archive_repository is not None else None)
     engine_service.set_configuration_archive(archive)
-    try:
-        initializer = SettingsPluginConfigInitializer(plugin_profiles)
-        if initializer.existing() is None:
-            result = initializer.initialize(host_settings)
-            for warning in result.warnings:
-                logger.warning("Plugin configuration initialization: %s", warning)
-    except (ValueError, KeyError, RuntimeError, OSError):
-        # Keep configuration management available so invalid saved data can be
-        # repaired. Starting workers still requires a valid accepted snapshot.
-        logger.exception("Plugin configuration initialization requires attention")
     await engine_service.startup()
     container = assemble(engine_service, repository,
                          settings=host_settings, acquisition_settings=_RuntimeSettings(engine_service, plugin_profiles),
@@ -303,8 +292,14 @@ async def _build_container_services(host_settings, repository, allow_process_ter
         container.command_results,
     )
     container.acquisition_service.set_signal_preparer(container.signal_setup_service.prepare)
+
+    def prepare_session():
+        plan = container.signal_setup_service.prepare_session()
+        engine_service.prepare_actuation()
+        return plan
+
     container.session_service.set_signal_preparer(
-        container.signal_setup_service.prepare_session, container.acquisition_service.lifecycle_lock,
+        prepare_session, container.acquisition_service.lifecycle_lock,
     )
     container.node_configuration = NodeConfigurationService(engine_service, plugin_profiles)
     container.runtime_configuration = RuntimeConfigurationService(

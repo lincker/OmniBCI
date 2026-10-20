@@ -110,10 +110,13 @@ class TomlPluginProfileRepository:
         except (ValueError, TypeError) as exc:
             raise PluginProfileValidationError(f"Invalid TOML in {path.name}: {exc}") from exc
 
-    def _read_profile(self, path: Path) -> PluginProfile:
+    def _read_profile(self, path: Path, *, kind: str | None = None) -> PluginProfile | None:
         if not path.exists():
             raise PluginProfileNotFoundError(path.stem)
-        profile = PluginProfile.from_dict(self._read(path))
+        data = self._read(path)
+        if kind is not None and data.get("kind") != kind:
+            return None
+        profile = PluginProfile.from_dict(data)
         if path.stem != profile.profile_id:
             raise PluginProfileValidationError(f"Profile identity does not match {path.name}")
         if profile.revision < 1:
@@ -142,8 +145,8 @@ class TomlPluginProfileRepository:
             raise PluginProfileValidationError("Unsupported plugin kind")
         with self._access():
             directory = self._safe(self.root / "plugin-profiles")
-            profiles = [self._read_profile(path) for path in sorted(directory.glob("*.toml"))]
-            return sorted((item for item in profiles if kind is None or item.kind == kind),
+            profiles = [self._read_profile(path, kind=kind) for path in sorted(directory.glob("*.toml"))]
+            return sorted((item for item in profiles if item is not None),
                           key=lambda item: (item.name.casefold(), item.profile_id))
 
     def get_profile(self, profile_id: str) -> PluginProfile:

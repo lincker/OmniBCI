@@ -9,7 +9,6 @@ import multiprocessing as mp
 from copy import deepcopy
 from typing import Optional
 
-from omnibci.application.processing_source import processing_input
 from omnibci.application.session_runtime import SessionRuntime
 from omnibci.infrastructure.event_translator import DomainEventPublisher
 from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessor
@@ -47,8 +46,6 @@ class SignalProcessingWorker(mp.Process):
             if self.settings_snapshot is not None:
                 from omnibci.conf import settings
                 settings.use_snapshot(self.settings_snapshot)
-            self._startup_stage = "plugins"
-            processing_input(self._snapshot())
             self._startup_stage = "processor"
             self._run_processor()
         except BaseException as exc:

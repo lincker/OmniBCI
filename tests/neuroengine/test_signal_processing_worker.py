@@ -105,6 +105,25 @@ class TestAlgorithmLoading:
 
 
 class TestProcessorWiring:
+    @pytest.mark.parametrize("bindings", [
+        [],
+        [{"slot": "processing.decoder", "processing_input": {"schema_version": 1, "outputs": ["C3"]}}],
+        [{"slot": "processing.decoder", "processing_input": {"schema_version": 2, "outputs": "invalid"}}],
+    ])
+    def test_standby_readiness_does_not_require_decoder_configuration(self, bindings, monkeypatch):
+        reporter = MagicMock(spec=StartupReporter)
+        commands = Queue()
+        commands.put(SignalProcessorCommand.should_stop)
+        worker = _worker(command_queue=commands, startup_reporter=reporter,
+                         settings_snapshot={"PLUGINS.bindings": bindings})
+        monkeypatch.setattr(conf_module.settings, "use_snapshot", lambda snapshot: None)
+        with patch.object(PluginLoader, "load_entrypoint") as load:
+            worker.run()
+        reporter.ready.assert_called_once_with()
+        reporter.failed.assert_not_called()
+        load.assert_not_called()
+        assert worker.signal_processor._signal_receipt is None
+
     def test_invalid_prediction_after_ready_propagates_from_real_processor(self, monkeypatch):
         reporter = MagicMock(spec=StartupReporter)
 

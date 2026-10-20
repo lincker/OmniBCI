@@ -26,6 +26,7 @@ class ConfigurationPlan:
     session_effect: str
     errors: tuple[str, ...]
     signal_summary: str | None = None
+    module: str | None = None
 
     def to_dict(self):
         return asdict(self)
@@ -68,21 +69,23 @@ class RuntimeConfigurationService:
 
     def plan(self, bindings: list[dict], *, expected_revision: str | None,
              refresh_slots: list[str] | None = None,
-             include_host_settings: bool = False) -> ConfigurationPlan:
+             include_host_settings: bool = False,
+             module: str | None = None) -> ConfigurationPlan:
         current = self.profiles.repository.get_activation()
         actual_revision = current.revision if current else None
         if expected_revision != actual_revision:
             raise ProfileRevisionConflict("The selected configuration changed; reload before planning")
         snapshot = self.profiles.propose(
             bindings, refresh_slots=refresh_slots,
-            include_host_settings=include_host_settings,
+            include_host_settings=include_host_settings, module=module,
         )
         running = self.engine.is_engine_ready
         errors = []
         materialized = {}
         try:
-            self._validate_runtime(snapshot)
-            materialized = self.profiles.materialize(snapshot)
+            self._validate_runtime(snapshot, module=module)
+            # Configuration pages do not need another module's runtime projection.
+            materialized = {"PLUGINS.bindings": [binding.to_dict() for binding in snapshot.bindings]}
         except (ValueError, KeyError) as exc:
             errors.append(str(exc))
         old = {binding.slot: binding for binding in current.bindings} if current else {}
@@ -114,19 +117,28 @@ class RuntimeConfigurationService:
             # External identities are fixed for one graph generation. Until a
             # coordinated update protocol exists, even decoder-only edits must
             # wait for a stop/start so every node receives the same revision.
-            for module in ("STIMULATION", "ACTUATION"):
-                enabled = module != "ACTUATION" or before.get("ACTUATION.enabled", False)
-                target_enabled = module != "ACTUATION" or snapshot.settings.get("ACTUATION.enabled", False)
-                if ((enabled and not before.get(f"{module}.auto_spawn", True)) or
-                        (target_enabled and not snapshot.settings.get(f"{module}.auto_spawn", True))):
-                    errors.append(f"{module.title()} is externally managed; stop the engine before changing configuration")
+            for role in ("STIMULATION", "ACTUATION"):
+                enabled = role != "ACTUATION" or before.get("ACTUATION.enabled", False)
+                target_enabled = role != "ACTUATION" or snapshot.settings.get("ACTUATION.enabled", False)
+                if ((enabled and not before.get(f"{role}.auto_spawn", True)) or
+                        (target_enabled and not snapshot.settings.get(f"{role}.auto_spawn", True))):
+                    peer_connected = getattr(self.engine, "is_peer_connected", None)
+                    sessions = getattr(self.executor, "sessions", None)
+                    in_use = (callable(peer_connected) and peer_connected(role.lower()) is True
+                              or getattr(sessions, "active_session_id", None) is not None)
+                    if in_use:
+                        errors.append(f"{role.title()} is externally managed; stop the engine before changing configuration")
+                    else:
+                        # A fresh gateway publishes the new identity to waiting external nodes.
+                        strategy = "rebuild"
         plan = ConfigurationPlan(
             str(uuid4()), actual_revision, snapshot.revision,
             self.engine.applied_revision if running else None,
             self.engine.generation if running else None, running, strategy,
             tuple(slots), settings,
             "continuation" if running and strategy == "rebuild" else "preserve",
-            tuple(errors), self._signal_summary(materialized),
+            tuple(errors), self._signal_summary(materialized) if module in (None, "processing") else None,
+            module,
         )
         with self._lock:
             self._plans[plan.plan_id] = PlannedConfiguration(plan, snapshot, monotonic())
@@ -166,10 +178,10 @@ class RuntimeConfigurationService:
                                  or self.engine.applied_revision != plan.applied_revision))):
             raise ProfileRevisionConflict("Runtime or selected configuration changed; create a new plan")
         # Recheck availability; installed packages may have changed since review.
-        self._validate_runtime(stored.snapshot)
+        self._validate_runtime(stored.snapshot, module=plan.module)
         return stored
 
-    def _validate_runtime(self, snapshot):
+    def _validate_runtime(self, snapshot, *, module=None):
         if not self.engine.is_engine_ready and (
                 getattr(self.engine, "restart_blocked", False)
                 or getattr(self.engine, "runtime_package_snapshots", ())):
@@ -177,7 +189,11 @@ class RuntimeConfigurationService:
                 "The previous engine still owns resources; stop it before selecting configuration"
             )
         usage = getattr(self.executor, "active_kinds", None)
-        self.profiles.validate_activation(snapshot, active_kinds=usage(snapshot) if callable(usage) else None)
+        self.profiles.validate_activation(
+            snapshot, active_kinds=usage(snapshot) if callable(usage) else None, module=module,
+        )
+        if self.engine.is_engine_ready and not any(b.slot == "acquisition.source" for b in snapshot.bindings):
+            raise PluginSchemaError("The running engine requires acquisition.source")
 
     def operation(self, operation_id: str):
         with self._lock:

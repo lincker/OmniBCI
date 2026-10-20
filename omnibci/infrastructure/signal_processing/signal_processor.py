@@ -271,10 +271,13 @@ class SignalProcessor:
             # End the session cleanly so SessionEnded domain event is emitted
             self._end_current_session()
         elif command == SignalProcessorCommand.start_session:
-            ok = (not requires_signal_preparation(self._settings_snapshot or {})
-                  or self._signal_receipt is not None) and self._start_session(payload)
+            prepared = (self.detector is not None and self._decoder is not None
+                        and (not requires_signal_preparation(self._settings_snapshot or {})
+                             or self._signal_receipt is not None))
+            ok = prepared and self._start_session(payload)
             if not ok:
-                message = "StartSession payload must contain a non-empty session_id"
+                message = ("StartSession payload must contain a non-empty session_id" if prepared
+                           else "Signal processing has not been prepared")
                 error_code = "INVALID_SESSION_COMMAND"
         elif command == SignalProcessorCommand.end_session:
             ok = self._end_session(payload)

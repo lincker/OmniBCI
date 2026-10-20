@@ -6,32 +6,10 @@ level = "INFO"
 # Relative to the platform user log directory; the filename includes the backend PID.
 file_path = "omnibci.log"
 
-[ACQUISITION]
-signal_source = "file_reader"
-trigger = 'neuroscan_scan45_trigger'
-# Hexadecimal parallel-port I/O base address for trigger output.
-parallel_port_address = "0x3100"
-
-file_reader_chunk_size = 100
-# Select a recording on the backend machine before starting acquisition.
-data_file_path = ""
-
-DATA_PROVIDER_IP = '192.168.0.3'
-DATA_PROVIDER_PORT = 4000
-
 [ALGORITHM]
-#decoder = 'THUBCI_SSVEP_classic40CCA'
-decoder = "THUBCI_SSVEP_classic40CCA"
-epoch_detector = 'DEFAULT_EPOCH_DETECTOR'
-window_duration = 3
-offset_time = 0.14
 # Seconds of continuous pre-trigger data retained per epoch (0 = none).
 # These samples are available for baseline correction; capture does not enable it.
 baseline_duration = 0.0
-# Ordered preprocessing filters applied to the window before decoding.
-# Plugin_type ids, applied in order. Empty = none.
-# e.g. filters = ['BASELINE_CORRECTION']
-filters = []
 
 [NEUROENGINE]
 # Max items in each mp.Queue between engine and workers.
@@ -44,7 +22,7 @@ message_server_port = 8765   # must differ from uvicorn HTTP port (8000)
 [ACTUATION]
 # Actuation (external-device control) subsystem. The engine listens on
 # server_ip:server_port; the actuation controller dials in (same topology as
-# stimulation) and loads the Effector plugin named below to carry out commands.
+# stimulation) and loads the selected Effector profile to carry out commands.
 enabled = false
 server_ip = '127.0.0.1'
 server_port = 8001
@@ -53,12 +31,9 @@ watchdog_timeout_s = 1.0
 # (default). Requires engine/device clocks roughly in sync (LAN + NTP is
 # plenty); leave 0 if clocks are not trustworthy.
 max_command_age_s = 0.0
-# Spawn the actuation subprocess automatically when the engine starts
+# Spawn the actuation subprocess automatically when a session is prepared
 # (single-machine). false = start it manually: python scripts/run_actuation.py
 auto_spawn = true
-# plugin_type of the Effector plugin the actuation subsystem loads (read by the
-# actuation-subsystem loader; empty = none). Parallel to STIMULATION.paradigm.
-effector = ''
 
 [PERSISTENCE]
 # Session repository implementation (composition-root switch).
@@ -66,14 +41,9 @@ effector = ''
 session_repository = "sqlite"
 
 [STIMULATION]
-paradigm    = 'STIMULATION_THUBCI_SSVEP_classic40'
 renderer    = "moderngl"
 auto_spawn  = true   # false → multi-machine: start run_stimulation.py manually
 
-[ssvep]
-sample_rate = 1000
-duration = 3
-offset_time = 0.14
 [PLUGINS]
 # User plugin directory. Leave empty to use the platform default:
 #   macOS   : ~/Library/Application Support/OmniBCI/plugins
@@ -81,6 +51,3 @@ offset_time = 0.14
 #   Windows : %APPDATA%\OmniBCI\OmniBCI\plugins
 # Override with the OMNIBCI_PLUGIN_DIR env var or set an absolute path here.
 user_dir = ""
-
-[PROFILES]
-active = "1"

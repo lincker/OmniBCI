@@ -14,6 +14,7 @@ from omnibci import bootstrap
 from omnibci.application.plugin_profiles import ActivationSnapshot
 from omnibci.conf import OmniBCISettings
 from omnibci.presentation.main import create_app
+from tests.plugin_configuration_helpers import accept_profiles
 
 
 class MemoryEngine:
@@ -95,9 +96,24 @@ def _data(client, path):
     return response.json()["data"]
 
 
+def _select_profiles(client):
+    return accept_profiles(client.app.state.container.plugin_profile_service, [
+        ("acquisition.source", "acquisition", "file_reader", {
+            "data_file_path": "recordings/startup.cnt", "sample_rate": 256,
+            "channel_number": 5, "file_reader_chunk_size": 17,
+        }),
+        ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40FBCCA", {
+            "window_duration": 4.25, "offset_time": 0.15,
+        }),
+        ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
+        ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40", {}),
+    ])
+
+
 @pytest.mark.parametrize("desktop", [False, True])
 def test_process_stop_policy_is_injected_into_all_desktop_modules(startup_environment, desktop):
     with TestClient(create_app(desktop=desktop)) as client:
+        _select_profiles(client)
         container = client.app.state.container
         assert container.stimulation_process_manager._allow_process_termination is (not desktop)
         assert container.actuation_process_manager._allow_process_termination is (not desktop)
@@ -112,19 +128,15 @@ def _assert_management_available(client):
         _data(client, path)
 
 
-def test_fresh_lifespan_initializes_configuration_without_starting_engine(startup_environment):
+def test_fresh_lifespan_leaves_module_configuration_unselected(startup_environment):
     environment = startup_environment
     settings_bytes = environment.settings._config_path.read_bytes()
 
     with TestClient(create_app()) as client:
         _assert_management_available(client)
-        accepted = _data(client, "/config/activation")
-        assert accepted is not None
-        source = next(binding for binding in accepted["bindings"] if binding["slot"] == "acquisition.source")
-        assert source["parameters"]["data_file_path"] == "recordings/startup.cnt"
-        assert source["parameters"]["sample_rate"] == 256
-        assert source["parameters"]["channel_number"] == 5
-        assert _data(client, "/config/runtime")["accepted_revision"] == accepted["revision"]
+        assert _data(client, "/config/activation") is None
+        assert _data(client, "/config/plugin-profiles") == []
+        assert _data(client, "/config/runtime")["accepted_revision"] is None
         environment.builder.assert_not_called()
 
     assert environment.settings._config_path.read_bytes() == settings_bytes
@@ -239,27 +251,42 @@ def _assert_invalid_activation(client, environment, snapshot, operation, *, plan
     environment.builder.assert_not_called()
 
 
-@pytest.mark.parametrize("operation", ["accept", "start"])
 @pytest.mark.parametrize("missing_slot", [
     None, "acquisition.source", "processing.decoder", "processing.epoch_detector",
     "stimulation.paradigm", "actuation.effector",
 ], ids=["empty", "acquisition", "decoder", "epoch", "paradigm", "enabled-effector"])
-def test_required_selections_are_checked_before_accept_or_start(startup_environment, operation, missing_slot):
+def test_engine_start_requires_only_acquisition_selection(startup_environment, missing_slot):
     environment = startup_environment
     with TestClient(create_app()) as client:
-        previous = client.app.state.container.plugin_profile_service.repository.get_activation()
+        previous = _select_profiles(client)
         if missing_slot == "actuation.effector":
             environment.settings.set("ACTUATION.enabled", True)
             environment.settings.save()
         bindings = tuple(binding for binding in previous.bindings
                          if missing_slot is not None and binding.slot != missing_slot)
         snapshot = ActivationSnapshot(environment.settings.snapshot(), bindings)
-        _assert_invalid_activation(client, environment, snapshot, operation)
+        request = {"bindings": _references(snapshot), "expected_revision": previous.revision,
+                   "include_host_settings": True}
+        plan = client.post("/api/v1/config/apply-plan", json=request)
+        assert plan.status_code == 200, plan.text
+        assert plan.json()["data"]["errors"] == []
+        accepted = client.put("/api/v1/config/activation", json=request)
+        assert accepted.status_code == 200, accepted.text
+        started = client.post("/api/v1/engine/start")
+        if missing_slot in (None, "acquisition.source"):
+            assert started.status_code == 409, started.text
+            assert "acquisition.source" in started.json()["message"]
+            environment.builder.assert_not_called()
+        else:
+            assert started.status_code == 200, started.text
+            environment.builder.assert_called_once()
+            assert client.post("/api/v1/engine/stop").status_code == 200
 
 
 @pytest.mark.parametrize("operation", ["accept", "start"])
 def test_unavailable_source_profiles_can_be_saved_but_not_activated(startup_environment, monkeypatch, operation):
     with TestClient(create_app()) as client:
+        _select_profiles(client)
         service = client.app.state.container.plugin_profile_service
         previous = service.repository.get_activation()
         source = next(binding for binding in previous.bindings if binding.kind == "acquisition")
@@ -292,6 +319,7 @@ def test_unavailable_source_profiles_can_be_saved_but_not_activated(startup_envi
 @pytest.mark.parametrize("invalid", ["parameters", "schema_version"])
 def test_invalid_profile_parameters_or_schema_block_accept_and_start(startup_environment, operation, invalid):
     with TestClient(create_app()) as client:
+        _select_profiles(client)
         service = client.app.state.container.plugin_profile_service
         previous = service.repository.get_activation()
         source = next(binding for binding in previous.bindings if binding.kind == "acquisition")
@@ -308,6 +336,7 @@ def test_invalid_profile_parameters_or_schema_block_accept_and_start(startup_env
 
 def test_inactive_output_plugins_can_retain_portable_selections(startup_environment, monkeypatch):
     with TestClient(create_app()) as client:
+        _select_profiles(client)
         service = client.app.state.container.plugin_profile_service
         previous = service.repository.get_activation()
         bindings = _references(previous)
@@ -435,6 +464,7 @@ def test_saved_logging_edit_during_startup_still_requires_backend_restart(
     app = create_app()
     with TestClient(app) as client:
         assert app.state.backend_logging.file_path == loaded["path"]
+        _select_profiles(client)
         accepted = _data(client, "/config/activation")
         response = client.post("/api/v1/config/apply-plan", json={
             "bindings": [{"slot": binding["slot"], "profile_id": binding["profile_id"]}

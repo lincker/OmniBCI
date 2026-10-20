@@ -159,7 +159,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   const reload = useCallback(async (profileId?: string, plugin?: string) => {
     const generation = ++loadGeneration.current;
     const [nextDefinitions, nextProfiles, nextActivation] = await Promise.all([
-      api.catalog(slot.kind), api.profiles(), api.activation(),
+      api.catalog(slot.kind), api.profiles(slot.kind), api.activation(),
     ]);
     if (generation !== loadGeneration.current) return;
     setDefinitions(nextDefinitions); setProfiles(nextProfiles); setActivation(nextActivation);
@@ -205,7 +205,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     resetEditor(editorFor(undefined, definitions, plugin));
   });
   const bindingSelections = (): RuntimePlanRequest["bindings"] => {
-    return activation?.bindings.map((item) => {
+    return activation?.bindings.filter((item) => item.slot.startsWith(`${module}.`)).map((item) => {
       if (item.profile_id) return { slot: item.slot, profile_id: item.profile_id };
       if (item.slot === "acquisition.source") return { slot: "acquisition.source" as const, selection: item.selection, parameters: item.parameters };
       throw new Error(t("profiles.saveEveryProfile"));
@@ -213,7 +213,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   };
   const reviewSelection = async (makeBindings: () => RuntimePlanRequest["bindings"], refreshSlots: string[]) => {
     setBusy(true); setError(""); setNotice(null);
-    try { await runtime.review({ bindings: makeBindings(), expected_revision: activation?.revision ?? null,
+    try { await runtime.review({ module, bindings: makeBindings(), expected_revision: activation?.revision ?? null,
       refresh_slots: refreshSlots, include_host_settings: false }); }
     catch (cause) { setError(String(cause)); }
     finally { setBusy(false); }
@@ -246,15 +246,11 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
         setProfiles((previous) => [...previous.filter((item) => item.profile_id !== saved.profile_id), saved]);
       }
       const selected = await api.activation();
-      const bindings = (selected?.bindings ?? []).filter((item) => item.slot !== "acquisition.source").map((item) => {
-        if (!item.profile_id) throw new Error(t("profiles.saveEveryProfile"));
-        return { slot: item.slot, profile_id: item.profile_id };
-      });
       const sourceSelection = saved?.selection ?? definition.selection;
       const parameters = saved?.parameters ?? sourceParameters;
       const sourceBinding = saved ? { slot: "acquisition.source", profile_id: saved.profile_id }
         : { slot: "acquisition.source" as const, selection: sourceSelection, parameters };
-      const applied = await runtime.applySelection({ bindings: [...bindings, sourceBinding],
+      const applied = await runtime.applySelection({ module: "acquisition", bindings: [sourceBinding],
         expected_revision: selected?.revision ?? null, refresh_slots: ["acquisition.source"], include_host_settings: false });
       if (!applied) throw new Error(t("profiles.connectApplyFailed"));
       if (!(await runtimeConfigApi.status()).running) await controlApi.engineStart();

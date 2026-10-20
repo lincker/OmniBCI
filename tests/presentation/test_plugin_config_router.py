@@ -117,6 +117,66 @@ def test_runtime_plan_accepts_source_draft_without_creating_profile(client):
     assert service.repository.list_profiles() == saved
 
 
+@pytest.mark.parametrize("method, path", [("put", "activation"), ("post", "apply-plan")])
+def test_acquisition_configuration_does_not_require_processing(client, method, path):
+    http, service, _ = client
+    source = create(client)
+    response = getattr(http, method)(f"{PREFIX}/{path}", json={
+        "module": "acquisition",
+        "bindings": [{"slot": "acquisition.source", "profile_id": source["profile_id"]}],
+        "refresh_slots": ["acquisition.source"],
+    })
+    assert response.status_code == 200, response.text
+    result = response.json()["data"]
+    if path == "activation":
+        assert [item["slot"] for item in result["bindings"]] == ["acquisition.source"]
+    else:
+        assert result["module"] == "acquisition"
+        assert result["errors"] == []
+        assert result["changed_slots"] == ["acquisition.source"]
+        assert service.repository.get_activation() is None
+
+
+@pytest.mark.parametrize("method, path", [("put", "activation"), ("post", "apply-plan")])
+def test_acquisition_configuration_preserves_unconfigured_processing(client, method, path):
+    from omnibci.application.plugin_profiles import ActivationSnapshot
+
+    http, service, _ = client
+    accepted = accept(http, complete_profiles(client)).json()["data"]
+    current = service.repository.get_activation()
+    legacy = ActivationSnapshot(current.settings, tuple(
+        replace(binding, processing_input=None, legacy={"processing_input": {
+            "schema_version": 1, "outputs": ["O1"],
+            "reference": {"mode": "single", "channels": ["M1"]},
+        }}) if binding.kind == "decoder" else binding for binding in current.bindings))
+    service.repository.save_activation(legacy, expected_revision=accepted["revision"])
+    other_bindings = [item.to_dict() for item in legacy.bindings if item.kind != "acquisition"]
+    source = create(client, name="Replacement source")
+    response = getattr(http, method)(f"{PREFIX}/{path}", json={
+        "module": "acquisition", "expected_revision": legacy.revision,
+        "bindings": [{"slot": "acquisition.source", "profile_id": source["profile_id"]}],
+        "refresh_slots": ["acquisition.source"],
+    })
+    assert response.status_code == 200, response.text
+    if path == "apply-plan":
+        assert response.json()["data"]["errors"] == []
+        assert service.repository.get_activation() == legacy
+    else:
+        selected = service.repository.get_activation()
+        assert [item.to_dict() for item in selected.bindings if item.kind != "acquisition"] == other_bindings
+
+
+@pytest.mark.parametrize("method, path", [("put", "activation"), ("post", "apply-plan")])
+def test_module_configuration_rejects_another_modules_binding(client, method, path):
+    http, _, _ = client
+    decoder = create(client, "decoder", "THUBCI_SSVEP_classic40CCA")
+    response = getattr(http, method)(f"{PREFIX}/{path}", json={
+        "module": "acquisition",
+        "bindings": [{"slot": "processing.decoder", "profile_id": decoder["profile_id"]}],
+    })
+    assert response.status_code == 422, response.text
+
+
 def test_catalog_exposes_exact_identity_and_plugin_owned_schema(client):
     http, _, _ = client
     response = http.get(f"{PREFIX}/plugin-catalog/acquisition")
@@ -211,6 +271,47 @@ def test_decoder_profile_saves_and_pins_processing_input(client):
     assert service.resolve_settings() == runtime
 
 
+@pytest.mark.parametrize("old_input", [
+    {},
+    {"schema_version": 1, "outputs": [], "reference": {"mode": "original", "channels": []},
+     "excluded_channels": []},
+])
+def test_default_legacy_decoder_input_requires_explicit_configuration(client, old_input):
+    from omnibci.application.plugin_profiles import ActivationSnapshot
+
+    http, service, _ = client
+    profiles = complete_profiles(client)
+    accepted = accept(http, profiles).json()["data"]
+    decoder_id = next(profile["profile_id"] for slot, profile in profiles if slot == "processing.decoder")
+    decoder = service.repository.get_profile(decoder_id)
+    legacy_profile = service.repository.save_profile(
+        replace(decoder, processing_input=None, legacy={"processing_input": old_input}),
+        expected_revision=decoder.revision,
+    )
+    current = service.repository.get_activation()
+    legacy = ActivationSnapshot(current.settings, tuple(
+        replace(binding, processing_input=None, profile_revision=legacy_profile.revision,
+                legacy={"processing_input": old_input}) if binding.kind == "decoder" else binding
+        for binding in current.bindings))
+    service.repository.save_activation(legacy, expected_revision=accepted["revision"])
+    original_hashes = {path: sha256(path.read_bytes()).hexdigest()
+                       for path in service.repository.root.rglob("*.toml")}
+
+    visible = http.get(f"{PREFIX}/plugin-profiles/{decoder_id}").json()["data"]
+    assert visible["processing_input"] is None
+    assert visible["processing_input_requires_review"] is True
+    assert visible["revision"] == legacy_profile.revision
+    assert http.get(f"{PREFIX}/plugin-profiles?kind=decoder").json()["data"] == [visible]
+    selected = http.get(f"{PREFIX}/activation").json()["data"]
+    assert selected["revision"] == legacy.revision
+    binding = next(item for item in selected["bindings"] if item["kind"] == "decoder")
+    assert binding.get("processing_input") is None
+    assert binding["processing_input_requires_review"] is True
+    assert {path: sha256(path.read_bytes()).hexdigest() for path in original_hashes} == original_hashes
+    assert service.repository.get_profile(decoder_id).to_dict() == legacy_profile.to_dict()
+    assert service.repository.get_activation().to_dict() == legacy.to_dict()
+
+
 def test_legacy_decoder_input_is_visible_as_review_required_until_explicit_mapping_save(client):
     from omnibci.application.plugin_profiles import ActivationSnapshot
 
@@ -257,7 +358,7 @@ def test_legacy_decoder_input_is_visible_as_review_required_until_explicit_mappi
     assert service.repository.get_profile(decoder_id).legacy["processing_input"] == old_input
     rejected = accept(http, profiles, expected_revision=legacy.revision)
     assert rejected.status_code == 422
-    assert "Legacy montage" in rejected.json()["message"]
+    assert "Configure the decoder channel mapping" in rejected.json()["message"]
     assert service.repository.get_activation() == legacy
 
     mapping = {"schema_version": 2, "outputs": [
@@ -272,7 +373,8 @@ def test_legacy_decoder_input_is_visible_as_review_required_until_explicit_mappi
     assert service.repository.get_activation() == legacy
     selected = accept(http, profiles, expected_revision=legacy.revision)
     assert selected.status_code == 200, selected.text
-    assert "SIGNAL.setup" not in selected.json()["data"]["settings"]
+    assert selected.json()["data"]["settings"]["SIGNAL.setup"] == legacy.settings["SIGNAL.setup"]
+    assert "SIGNAL.setup" not in service.resolve_settings()
     assert next(binding for binding in service.resolve_settings()["PLUGINS.bindings"]
                 if binding["kind"] == "decoder")["processing_input"] == mapping
 
@@ -434,17 +536,17 @@ def test_filter_instances_have_stable_slots_and_order(client):
     assert accept(http, required + [(first, profile), (first, profile)], reordered.json()["data"]["revision"]).status_code == 422
 
 
-def test_empty_activation_returns_422_without_replacing_the_current_selection(client):
+def test_incomplete_activation_can_be_selected_before_module_startup(client):
     http, _, _ = client
     response = accept(http, complete_profiles(client))
     assert response.status_code == 200, response.text
     before = response.json()["data"]
 
-    rejected = accept(http, [], before["revision"])
+    selected = accept(http, [], before["revision"])
 
-    assert rejected.status_code == 422
-    assert rejected.json()["code"] == "VALIDATION_ERROR"
-    assert http.get(f"{PREFIX}/activation").json()["data"] == before
+    assert selected.status_code == 200
+    assert selected.json()["data"]["bindings"] == []
+    assert http.get(f"{PREFIX}/activation").json()["data"] == selected.json()["data"]
 
 
 @pytest.mark.parametrize("parameters", [{"sample_rate": True}, {"sample_rate": 0}, {"unknown": 1}])
@@ -475,3 +577,7 @@ def test_openapi_publishes_typed_profile_and_snapshot_contracts(client):
     for name in ("AcceptActivationRequest", "RuntimePlanRequest"):
         assert schemas[name]["properties"]["include_host_settings"]["default"] is False
         assert "include_host_settings" not in schemas[name]["required"]
+        assert schemas[name]["properties"]["module"]["anyOf"][0]["enum"] == [
+            "acquisition", "processing", "stimulation", "actuation",
+        ]
+        assert "module" not in schemas[name]["required"]

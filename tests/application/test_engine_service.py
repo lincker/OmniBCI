@@ -28,6 +28,12 @@ class TestNeuroEngineServiceStatus:
 
 
 class TestNeuroEngineServicePortState:
+    @pytest.mark.parametrize("alive", [None, False, True])
+    def test_actuation_process_liveness_is_independent_of_engine_readiness(self, engine_service, alive):
+        engine_service._actuation_manager = None if alive is None else MagicMock(is_alive=alive)
+        assert engine_service.actuation_process_alive is (alive is True)
+        assert not engine_service.is_engine_ready
+
     def test_uninitialised_service_has_neither_lifecycle_capability(self):
         svc = NeuroEngineService(engine_factory=MagicMock())
 
@@ -301,27 +307,44 @@ class TestNeuroEngineServiceStart:
             await engine_service.handle_start_engine(StartEngineCommand())
 
     @pytest.mark.asyncio
-    async def test_actuation_readiness_failure_rolls_back_engine_before_admission(
+    async def test_actuation_failure_does_not_block_acquisition_or_create_a_session(
         self, engine_service
     ):
+        from omnibci.application.commands.session_commands import CreateSessionCommand
+        from omnibci.application.services.session_service import SessionAppService
+        from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
+
         manager = MagicMock()
         manager.start.side_effect = RuntimeError("effector unavailable")
         engine_service._actuation_manager = manager
+        engine_service._graph_snapshot = {"ACTUATION.enabled": True, "ACTUATION.auto_spawn": True}
         thread = MagicMock()
-        thread.is_alive.return_value = False
+        thread.is_alive.return_value = True
 
         with patch(
             "omnibci.application.services.engine_service.Thread",
             return_value=thread,
         ):
-            with pytest.raises(RuntimeError, match="effector unavailable"):
-                await engine_service.handle_start_engine(StartEngineCommand())
+            await engine_service.handle_start_engine(StartEngineCommand())
 
-        manager.start.assert_called_once_with()
-        manager.stop.assert_called_once_with()
-        assert engine_service._running is False
-        assert engine_service._accepting_commands is False
-        assert engine_service.is_engine_ready is False
+        manager.start.assert_not_called()
+        repository = InMemorySessionRepository()
+        sessions = SessionAppService(repository)
+        sessions.set_signal_preparer(engine_service.prepare_actuation, threading.RLock())
+        with pytest.raises(RuntimeError, match="effector unavailable"):
+            sessions.handle_create_session(CreateSessionCommand())
+        manager.start.assert_called_once_with(settings_snapshot=engine_service.applied_snapshot)
+        manager.stop.assert_not_called()
+        assert engine_service.is_engine_ready
+        assert repository.find_all() == []
+
+    @pytest.mark.parametrize("settings", [{}, {"ACTUATION.enabled": False},
+                                          {"ACTUATION.enabled": True, "ACTUATION.auto_spawn": False}])
+    def test_session_preparation_does_not_start_disabled_or_external_actuation(self, engine_service, settings):
+        engine_service._actuation_manager = MagicMock()
+        engine_service._applied_snapshot = settings
+        engine_service.prepare_actuation()
+        engine_service._actuation_manager.start.assert_not_called()
 
 
 class TestNeuroEngineServiceStop:

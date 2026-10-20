@@ -6,14 +6,10 @@ from omnibci.application.source_expectations import validate_source_expectations
 
 
 def materialize_processing_binding(binding):
-    """Prepare historical all-source decoder input without changing its profile."""
-    if binding.processing_input_requires_review:
-        raise ValueError("Legacy processing input is unsupported; reconfigure the decoder channel mapping")
+    """Carry pinned module inputs without validating or migrating another module."""
     value = binding.to_dict()
     value.pop("manual_montage", None)
     value.pop("acquisition_montage", None)
-    if binding.slot == "processing.decoder" and binding.processing_input is None:
-        value["processing_input"] = ProcessingInput().to_dict()
     return value
 
 
@@ -26,13 +22,11 @@ def processing_input(snapshot):
     decoder = binding_for(snapshot, "processing.decoder")
     if decoder is not None and decoder.get("processing_input") is not None:
         return ProcessingInput.from_dict(decoder["processing_input"])
-    if snapshot.get("SIGNAL.setup") is not None:
-        raise ValueError("Legacy signal setup is unsupported; reconfigure the decoder channel mapping")
     return ProcessingInput() if decoder is not None else None
 
 
 def requires_signal_preparation(snapshot):
-    return processing_input(snapshot) is not None
+    return binding_for(snapshot, "processing.decoder") is not None
 
 
 def acquisition_binding_key(binding):

@@ -115,6 +115,57 @@ def test_source_draft_is_pinned_without_saving_or_changing_profiles(runtime):
     ]
 
 
+@pytest.mark.parametrize("saved_source", [False, True], ids=["draft", "saved"])
+def test_scan45_connect_plan_does_not_use_legacy_decoder_input(runtime, saved_source):
+    service, selections, before = runtime
+    profiles = service.profiles
+    old_input = {"schema_version": 1, "outputs": [],
+                 "reference": {"mode": "original", "channels": []}, "excluded_channels": []}
+    decoder = profiles.repository.get_profile(selections[1]["profile_id"])
+    legacy_profile = profiles.repository.save_profile(
+        replace(decoder, processing_input=None, legacy={"processing_input": old_input}),
+        expected_revision=decoder.revision,
+    )
+    legacy = ActivationSnapshot(
+        {**before.settings, "SIGNAL.setup": {
+            **old_input, "source_id": "file_reader", "assignments": [],
+        }},
+        tuple(replace(binding, processing_input=None, profile_revision=legacy_profile.revision,
+                      legacy={"processing_input": old_input})
+              if binding.kind == "decoder" else binding for binding in before.bindings),
+    )
+    profiles.repository.save_activation(legacy, expected_revision=before.revision)
+    activation_path = profiles.repository.root / "activation.toml"
+    stored_activation = activation_path.read_bytes()
+    service.engine.is_engine_ready = False
+    definition = profiles.catalog.legacy("acquisition", "neuroscan_scan45_reader")
+    parameters = {"DATA_PROVIDER_IP": "192.168.1.10", "DATA_PROVIDER_PORT": 4000,
+                  "sample_rate": 1000, "channel_number": 65}
+    if saved_source:
+        source = profiles.create("acquisition", definition.selection, "Scan45", parameters)
+        requested_source = {"slot": "acquisition.source", "profile_id": source.profile_id}
+    else:
+        requested_source = {"slot": "acquisition.source",
+                            "selection": definition.selection.to_dict(), "parameters": parameters}
+
+    plan = service.plan([requested_source], expected_revision=legacy.revision,
+                        refresh_slots=["acquisition.source"], module="acquisition")
+
+    assert not plan.errors
+    assert plan.strategy == "select_on_start"
+    assert plan.changed_slots == ("acquisition.source",)
+    candidate = service.resolve_plan(plan.plan_id).snapshot
+    assert next(binding for binding in candidate.bindings if binding.kind == "decoder") == legacy.bindings[1]
+    materialized = profiles.materialize(candidate)
+    assert materialized["ACQUISITION.signal_source"] == "neuroscan_scan45_reader"
+    assert next(b for b in materialized["PLUGINS.bindings"]
+                if b["kind"] == "decoder")["processing_input"] == old_input
+    assert "SIGNAL.setup" not in materialized
+    assert profiles.repository.get_profile(decoder.profile_id) == legacy_profile
+    assert profiles.repository.get_activation() == legacy
+    assert activation_path.read_bytes() == stored_activation
+
+
 def test_retired_manual_source_montage_is_not_applied(runtime):
     service, selections, before = runtime
     profile = service.profiles.repository.get_profile(selections[0]["profile_id"])
@@ -400,7 +451,8 @@ def test_actuation_topology_changes_remain_runtime_rebuilds(runtime, enabled):
 
 @pytest.mark.parametrize("module", ["STIMULATION", "ACTUATION"])
 @pytest.mark.parametrize("external_before", [False, True])
-def test_external_mode_transitions_check_both_current_and_target(runtime, module, external_before):
+@pytest.mark.parametrize("connected", [False, True])
+def test_external_mode_transitions_check_both_current_and_target(runtime, module, external_before, connected):
     service, selections, before = runtime
     if module == "ACTUATION":
         profile = service.profiles.create(
@@ -414,6 +466,7 @@ def test_external_mode_transitions_check_both_current_and_target(runtime, module
     service.profiles.accept(accepted, expected_revision=before.revision)
     service.engine.applied_revision = accepted.revision
     service.engine.applied_snapshot = service.profiles.materialize(accepted)
+    service.engine.is_peer_connected = lambda role: connected and role == module.lower()
     service.profiles.settings_source = lambda: {**host, f"{module}.auto_spawn": external_before}
 
     plan = service.plan(selections, expected_revision=accepted.revision,
@@ -421,8 +474,12 @@ def test_external_mode_transitions_check_both_current_and_target(runtime, module
 
     assert plan.strategy == "rebuild"
     assert plan.changed_settings == (f"{module}.auto_spawn",)
-    assert any(f"{module.title()} is externally managed" in error for error in plan.errors)
-    with pytest.raises(PluginSchemaError):
+    if connected:
+        assert any(f"{module.title()} is externally managed" in error for error in plan.errors)
+        with pytest.raises(PluginSchemaError):
+            service.resolve_plan(plan.plan_id)
+    else:
+        assert not plan.errors
         service.resolve_plan(plan.plan_id)
     assert service.profiles.repository.get_activation() == accepted
 
@@ -590,7 +647,8 @@ def test_stripped_legacy_fields_preserve_output_module_application(runtime):
     assert not plan.errors
     candidate = service.profiles.materialize(service.resolve_plan(plan.plan_id).snapshot)
     updated = validate_output_context(service.engine.applied_snapshot, candidate)
-    assert updated["ACTUATION.effector"] == "logger"
+    assert next(b for b in updated["PLUGINS.bindings"]
+                if b["slot"] == "actuation.effector")["selection"] == effector.selection.to_dict()
     assert "ACQUISITION.parallel_port_address" not in updated
     assert updated["ACQUISITION.sample_rate"] == service.engine.applied_snapshot["ACQUISITION.sample_rate"]
 
@@ -627,6 +685,7 @@ def test_missing_required_slot_is_reviewable_error(runtime):
 def test_external_peer_rejected_before_revision_change(runtime, slot, parameters, strategy):
     service, selections, before = runtime
     service.engine.applied_snapshot["STIMULATION.auto_spawn"] = False
+    service.engine.is_peer_connected = lambda role: role == "stimulation"
     edit(runtime, slot, parameters)
     plan = service.plan(selections, expected_revision=before.revision)
     assert plan.strategy == strategy

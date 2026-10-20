@@ -43,14 +43,21 @@ def test_explicit_mapping_replaces_retired_global_setup(snapshot):
     assert requires_signal_preparation(snapshot)
 
 
-@pytest.mark.parametrize("value", [None, {"schema_version": 1, "outputs": ["C3"]}])
-def test_retired_input_cannot_execute_or_fall_back(snapshot, value):
-    binding_for(snapshot, "processing.decoder")["processing_input"] = value
+def test_retired_input_is_deferred_until_processing_is_used(snapshot):
+    binding_for(snapshot, "processing.decoder")["processing_input"] = {"schema_version": 1, "outputs": ["C3"]}
     snapshot["SIGNAL.setup"] = {"source_id": "file_reader"}
     with pytest.raises(ValueError):
         processing_input(snapshot)
-    with pytest.raises(ValueError):
-        requires_signal_preparation(snapshot)
+    assert requires_signal_preparation(snapshot)
+
+
+def test_retired_global_setup_does_not_configure_decoder_input(snapshot):
+    binding_for(snapshot, "processing.decoder").pop("processing_input")
+    snapshot["SIGNAL.setup"] = {"source_id": "file_reader", "outputs": ["C3"]}
+    assert processing_input(snapshot) == ProcessingInput()
+    snapshot["PLUGINS.bindings"].clear()
+    assert processing_input(snapshot) is None
+    assert not requires_signal_preparation(snapshot)
 
 
 def test_processing_binding_survives_profile_revision_and_decoder_parameter_changes(snapshot):
@@ -128,13 +135,22 @@ def test_unconfigured_snapshots_do_not_prepare():
     assert not requires_signal_preparation({})
 
 
-def test_missing_input_is_identity_for_every_selected_decoder():
+def test_binding_projection_does_not_create_processing_configuration():
     from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
     binding = ProfileBinding("processing.decoder", "decoder", None,
                              PluginSelection("test.decoder", "default", "1"), {})
     result = materialize_processing_binding(binding)
-    assert result.get("processing_input") == ProcessingInput().to_dict()
+    assert "processing_input" not in result
     assert binding.processing_input is None
+
+
+def test_binding_projection_keeps_unsupported_decoder_input_inert():
+    from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
+    value = {"schema_version": 1, "outputs": ["C3"], "reference": {"mode": "average"}}
+    binding = ProfileBinding("processing.decoder", "decoder", None,
+                             PluginSelection("test.decoder", "default", "1"), {},
+                             legacy={"processing_input": value})
+    assert materialize_processing_binding(binding)["processing_input"] == value
 
 
 def test_selected_decoder_without_input_still_requires_source_preparation(snapshot):

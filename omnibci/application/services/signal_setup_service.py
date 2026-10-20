@@ -43,20 +43,22 @@ class SignalSetupService:
             accepted_settings = self.profiles.materialize(accepted) if accepted else {}
         except ValueError as exc:
             source_error = str(exc)
-            bindings = []
-            for binding in accepted.bindings:
-                value = binding.to_dict()
-                value.pop("processing_input", None)
-                if binding.processing_input is not None:
-                    value["processing_input"] = binding.processing_input.to_dict()
-                bindings.append(value)
-            accepted_settings = {"PLUGINS.bindings": bindings}
+            accepted_settings = {"PLUGINS.bindings": [binding.to_dict() for binding in accepted.bindings]}
             source_binding = next((item for item in accepted.bindings if item.kind == "acquisition"), None)
             if source_binding is not None:
                 accepted_settings["ACQUISITION.signal_source"] = self.profiles.catalog.get(
                     "acquisition", source_binding.selection).plugin_type
         active = self.engine.applied_snapshot if self.engine.is_engine_ready else None
         selected = accepted_settings or active or {}
+        inputs = []
+        for snapshot in (accepted_settings, active or {}):
+            try:
+                inputs.append(_input_value(snapshot))
+            except (ValueError, TypeError) as exc:
+                inputs.append(None)
+                source_error = source_error or str(exc)
+        accepted_input, active_input = inputs
+        selected_input = accepted_input if accepted_settings else active_input
         decoder = binding_for(selected, "processing.decoder") or {}
         source_binding = binding_for(selected, "acquisition.source")
         metadata = self.acquisition.cached_descriptor_for(source_binding) if active else None
@@ -67,7 +69,7 @@ class SignalSetupService:
                 metadata = None
         receipt = deepcopy(self._receipt)
         # A coordinated narrow Apply may update the revision without changing the input.
-        if (active and receipt and self._plan
+        if (not source_error and active and receipt and self._plan
                 and receipt["generation"] == active.get("CONFIG.generation")
                 and self._bound_key == processing_binding_key(active)):
             receipt["config_revision"] = active.get("CONFIG.revision")
@@ -95,14 +97,14 @@ class SignalSetupService:
             "source_id": source_id, "binding": acquisition_binding_key(source_binding),
             "metadata": metadata, "generation": active.get("CONFIG.generation") if active and metadata else None,
         }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        return {"processing_input": decoder.get("processing_input") if source_error else _input_value(selected),
+        return {"processing_input": selected_input,
                 "revision": revision,
                 "selected_source_id": source_id, "selected_decoder_profile_id": decoder.get("profile_id"),
                 "selected_decoder_selection": decoder.get("selection"),
                 "source_binding": source_context, "source_revision": source_revision,
                 "acquisition_descriptor": metadata, "source_error": source_error,
-                "accepted_input": (decoder.get("processing_input") if source_error else _input_value(accepted_settings)),
-                "active_input": _input_value(active or {}),
+                "accepted_input": accepted_input,
+                "active_input": active_input,
                 "readiness": {"ready": ready, "receipt": receipt if ready else None}}
 
     def _profile(self, binding):
@@ -148,7 +150,10 @@ class SignalSetupService:
     def prepare(self):
         with self.acquisition.lifecycle_lock:
             snapshot = self.engine.applied_snapshot
-            value = processing_input(snapshot or {})
+            try:
+                value = processing_input(snapshot or {})
+            except (ValueError, TypeError) as exc:
+                raise ConfigProfileValidationError(str(exc)) from exc
             if value is None:
                 return None
             if not self.engine.is_engine_ready:
@@ -184,5 +189,11 @@ class SignalSetupService:
             return deepcopy(receipt)
 
     def prepare_session(self):
+        snapshot = self.engine.applied_snapshot or {}
+        missing = [slot for slot in ("processing.decoder", "processing.epoch_detector")
+                   if binding_for(snapshot, slot) is None]
+        if missing:
+            raise ConfigProfileValidationError(
+                "Configure Signal Processing before starting a session: " + ", ".join(missing))
         receipt = self.prepare()
         return self._plan.to_dict() if receipt is not None else None

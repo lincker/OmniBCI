@@ -99,7 +99,7 @@ class AwaitingEpochState(ProcessingState):
 
     async def run(self) -> None:
         chunk = await self.context.next_chunk()
-        if chunk is not None:
+        if chunk is not None and self.context.detector is not None:
             self._process_chunk(chunk, collecting=False)
 
 

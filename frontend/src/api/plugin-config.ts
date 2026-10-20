@@ -32,7 +32,7 @@ export { request as configRequest };
 
 export const pluginConfigApi = {
   catalog: (kind: PluginKind) => request<PluginDefinition[]>(`/plugin-catalog/${kind}`),
-  profiles: () => request<PluginProfile[]>("/plugin-profiles"),
+  profiles: (kind?: PluginKind) => request<PluginProfile[]>(`/plugin-profiles${kind ? `?kind=${kind}` : ""}`),
   activation: () => request<Activation | null>("/activation"),
   create: (kind: PluginKind, selection: PluginSelection, name: string, parameters: Record<string, unknown>, processing_input?: ProcessingInput) =>
     request<PluginProfile>("/plugin-profiles", "POST", { kind, selection, name, parameters,

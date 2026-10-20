@@ -4,7 +4,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from omnibci.presentation.schemas.plugin_config import (
-    AcceptActivationRequest, ProfileBindingResponse, SelectProfileBindingRequest,
+    AcceptActivationRequest, ConfigurationModule, ProfileBindingResponse, SelectProfileBindingRequest,
 )
 from omnibci.presentation.schemas.plugin_selection import PluginSelectionResponse
 
@@ -33,6 +33,7 @@ class RuntimePlanResponse(BaseModel):
     session_effect: Literal["preserve", "continuation"]
     errors: list[str]
     signal_summary: str | None = None
+    module: ConfigurationModule | None = None
 
 
 class RuntimeOperationResponse(BaseModel):

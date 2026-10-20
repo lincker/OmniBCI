@@ -4,6 +4,7 @@ from dataclasses import replace
 from uuid import uuid4
 
 import pytest
+import tomlkit
 
 from omnibci.application.plugin_profiles import (
     ActivationSnapshot, PluginProfile, PluginProfileNotFoundError,
@@ -53,6 +54,23 @@ def test_round_trip_and_optimistic_rename_preserve_identity(repository, profile)
     assert list((repository.root / "plugin-profiles").glob("*.toml")) == [
         repository.root / "plugin-profiles" / f"{profile.profile_id}.toml",
     ]
+
+
+def test_listing_acquisition_does_not_validate_decoder_input(repository, profile):
+    source = repository.save_profile(profile)
+    decoder = repository.save_profile(PluginProfile(
+        str(uuid4()), "Decoder", "decoder", PluginSelection("acme.decoder", "main", None), {},
+    ))
+    path = repository.root / "plugin-profiles" / f"{decoder.profile_id}.toml"
+    path.write_text(tomlkit.dumps({**decoder.to_dict(), "processing_input": {
+        "schema_version": 2, "outputs": "invalid",
+    }}), encoding="utf-8")
+    original = path.read_bytes()
+
+    assert repository.list_profiles("acquisition") == [source]
+    with pytest.raises(PluginProfileValidationError):
+        repository.list_profiles("decoder")
+    assert path.read_bytes() == original
 
 
 def test_historical_acquisition_fields_persist_as_raw_data_without_changing_activation(repository, profile):

@@ -75,20 +75,16 @@ def archived_engine(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stage_precedes_factory_and_confirmation_waits_for_all_readiness(archived_engine):
+async def test_stage_precedes_factory_and_confirmation_requires_only_engine_readiness(archived_engine):
     h = archived_engine
     manager = Mock()
 
-    def output_ready(**kwargs):
-        assert h.application()["status"] == "pending"
-        assert not h.service.is_engine_ready
-        h.trace.append("output_ready")
-
-    manager.start.side_effect = output_ready
+    manager.start.side_effect = RuntimeError("Output is not configured")
     h.service._actuation_manager = manager
     await h.service.startup()
     await h.service.handle_start_engine(StartEngineCommand())
-    assert h.trace == ["stage", "factory", "thread_start", "ready", "output_ready", "confirm"]
+    manager.start.assert_not_called()
+    assert h.trace == ["stage", "factory", "thread_start", "ready", "confirm"]
     application = h.application()
     assert application["status"] == "applied"
     assert application["context"] == "engine_start"
@@ -166,18 +162,18 @@ async def test_uncertain_startup_cleanup_retains_pending_attempt(archived_engine
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("uncertain", [False, True])
-async def test_output_start_failure_is_failed_only_when_engine_stop_is_confirmed(archived_engine, uncertain):
+async def test_later_output_failure_keeps_confirmed_engine_available(archived_engine):
     h = archived_engine
     h.service._actuation_manager = Mock()
     h.service._actuation_manager.start.side_effect = RuntimeError("output setup failed")
-    h.keep_thread_alive = uncertain
+    h.snapshot["ACTUATION.enabled"] = True
     await h.service.startup()
-    with pytest.raises(RuntimeError, match="did not stop" if uncertain else "output setup failed"):
-        await h.service.handle_start_engine(StartEngineCommand())
-    assert h.application()["status"] == ("pending" if uncertain else "failed")
-    assert "confirm" not in h.trace
-    assert not h.service.is_engine_ready
+    await h.service.handle_start_engine(StartEngineCommand())
+    with pytest.raises(RuntimeError, match="output setup failed"):
+        h.service.prepare_actuation()
+    assert h.application()["status"] == "applied"
+    assert h.service.is_engine_ready
+    assert not h.engine.should_stop
 
 
 @pytest.mark.asyncio

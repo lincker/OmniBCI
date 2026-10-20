@@ -32,7 +32,9 @@ def signal_service(tmp_path):
                 "CONFIG.generation": "generation", "ACQUISITION.sample_rate": 500,
                 "ACQUISITION.signal_source": "source", "PLUGINS.bindings": [
                     {"slot": "processing.decoder", "processing_input": setup,
-                     "selection": {"package_id": "test.decoder", "contribution_id": "default", "version": "1"}}]}
+                     "selection": {"package_id": "test.decoder", "contribution_id": "default", "version": "1"}},
+                    {"slot": "processing.epoch_detector", "selection": {
+                        "package_id": "test.detector", "contribution_id": "default", "version": "1"}}]}
     engine = SimpleNamespace(admission=None, is_engine_ready=True, applied_snapshot=snapshot,
                              configuration_change=lambda idle: nullcontext())
     profiles = SimpleNamespace(repository=SimpleNamespace(get_activation=lambda: ActivationSnapshot({}, ())),
@@ -123,11 +125,14 @@ def test_session_freezes_plan_and_failure_creates_no_record(signal_service):
     assert len(repo.find_all()) == 1
 
 
-def test_legacy_configuration_requires_no_metadata_or_preparation(signal_service):
+@pytest.mark.parametrize("missing_slot", ["processing.decoder", "processing.epoch_detector"])
+def test_session_requires_processing_selection_without_affecting_source_metadata(signal_service, missing_slot):
     service, _, _, calls = signal_service
-    service.engine.applied_snapshot["PLUGINS.bindings"].clear()
-    service.acquisition.get_descriptor = lambda **kwargs: pytest.fail("Legacy metadata read")
-    assert service.prepare_session() is None
+    service.engine.applied_snapshot["PLUGINS.bindings"] = [
+        binding for binding in service.engine.applied_snapshot["PLUGINS.bindings"] if binding["slot"] != missing_slot]
+    service.acquisition.get_descriptor = lambda **kwargs: pytest.fail("Unconfigured processing read metadata")
+    with pytest.raises(ConfigProfileValidationError, match="Configure Signal Processing"):
+        service.prepare_session()
     assert not calls
 
 
@@ -193,7 +198,9 @@ def modern_binding(service, metadata, *, profile_id="source-a", outputs=("O1",))
     snapshot = {**service.engine.applied_snapshot,
                 "PLUGINS.bindings": [source, {"slot": "processing.decoder",
                     "selection": {"package_id": "test.decoder", "contribution_id": "default", "version": "1"},
-                    "processing_input": ProcessingInput(outputs=tuple(ChannelBinding(name, {"O1": "channel-0", "M1": "channel-1"}[name]) for name in outputs)).to_dict()}]}
+                    "processing_input": ProcessingInput(outputs=tuple(ChannelBinding(name, {"O1": "channel-0", "M1": "channel-1"}[name]) for name in outputs)).to_dict()},
+                    {"slot": "processing.epoch_detector", "selection": {
+                        "package_id": "test.detector", "contribution_id": "default", "version": "1"}}]}
     snapshot.pop("SIGNAL.setup", None)
     service.profiles.repository.get_profile = lambda profile_id: None
     service.engine.applied_snapshot = deepcopy(snapshot)
@@ -380,6 +387,30 @@ def test_legacy_selected_input_remains_readable_and_can_preview_a_replacement(si
     assert context["source_error"] == "Reconfigure legacy mapping"
     assert context["acquisition_descriptor"] == metadata.to_dict()
     assert not context["readiness"]["ready"]
+    preview = service.preview_input({"outputs": [{"source_channel_id": "channel-0", "name": "Oz"}]})
+    assert preview["plan"]["source_indices"] == [0]
+    assert not calls
+
+
+@pytest.mark.parametrize("value", [
+    {"schema_version": 1, "outputs": ["O1"]},
+    {"schema_version": 2, "outputs": "invalid"},
+])
+def test_invalid_decoder_input_does_not_hide_connected_source(signal_service, value):
+    service, metadata, _, calls = signal_service
+    service.engine.applied_snapshot["PLUGINS.bindings"][0]["processing_input"] = value
+    service.profiles.materialize = lambda _: deepcopy(service.engine.applied_snapshot)
+
+    context = service.read()
+    assert context["selected_source_id"] == "source"
+    assert context["acquisition_descriptor"] == metadata.to_dict()
+    assert context["processing_input"] is None
+    assert context["accepted_input"] is None
+    assert context["active_input"] is None
+    assert context["source_error"]
+    assert not context["readiness"]["ready"]
+    with pytest.raises(ConfigProfileValidationError):
+        service.prepare()
     preview = service.preview_input({"outputs": [{"source_channel_id": "channel-0", "name": "Oz"}]})
     assert preview["plan"]["source_indices"] == [0]
     assert not calls

@@ -878,6 +878,8 @@ export interface components {
              * @default false
              */
             include_host_settings: boolean;
+            /** Module */
+            module?: ("acquisition" | "processing" | "stimulation" | "actuation") | null;
         };
         /** AcquisitionMetadataResponse */
         AcquisitionMetadataResponse: {
@@ -2007,6 +2009,8 @@ export interface components {
              * @default false
              */
             include_host_settings: boolean;
+            /** Module */
+            module?: ("acquisition" | "processing" | "stimulation" | "actuation") | null;
         };
         /** RuntimePlanResponse */
         RuntimePlanResponse: {
@@ -2040,6 +2044,8 @@ export interface components {
             errors: string[];
             /** Signal Summary */
             signal_summary?: string | null;
+            /** Module */
+            module?: ("acquisition" | "processing" | "stimulation" | "actuation") | null;
         };
         /** SelectProfileBindingRequest */
         SelectProfileBindingRequest: {

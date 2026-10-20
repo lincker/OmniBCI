@@ -21,6 +21,7 @@ from omnibci.infrastructure.repositories.session_repository import (
 )
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.signal_setup_service import SignalSetupService
+from tests.plugin_configuration_helpers import accept_profiles
 
 
 _ROOT = Path(__file__).parents[2]
@@ -56,7 +57,6 @@ def test_file_reader_session_id_matches_websocket_and_rest(
         actuation_enabled=False,
     )
 
-    from omnibci.application.services.plugin_config_initialization import SettingsPluginConfigInitializer
     from omnibci.application.services.plugin_profile_service import PluginProfileService
     from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
     from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
@@ -65,7 +65,14 @@ def test_file_reader_session_id_matches_websocket_and_rest(
             "ACQUISITION.channel_number": 10}
     profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
                                     CatalogConfigurationAdapter(), settings_source=lambda: seed)
-    accepted = SettingsPluginConfigInitializer(profiles).initialize(seed).snapshot
+    accepted = accept_profiles(profiles, (
+        ("acquisition.source", "acquisition", "file_reader", {
+            "data_file_path": str(_CNT_FIXTURE), "sample_rate": 1000, "channel_number": 10,
+        }),
+        ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA", {}),
+        ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
+        ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40", {}),
+    ))
     snapshot = profiles.materialize(accepted)
 
     async def build_acceptance_container(**kwargs):

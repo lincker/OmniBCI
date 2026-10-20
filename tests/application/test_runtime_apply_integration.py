@@ -121,7 +121,13 @@ def wire_signal_preparation(profiles, engine, container):
         container.acquisition_service, container.command_results,
     )
     container.acquisition_service.set_signal_preparer(service.prepare)
-    container.session_service.set_signal_preparer(service.prepare_session, container.acquisition_service.lifecycle_lock)
+
+    def prepare_session():
+        plan = service.prepare_session()
+        engine.prepare_actuation()
+        return plan
+
+    container.session_service.set_signal_preparer(prepare_session, container.acquisition_service.lifecycle_lock)
     return service
 
 

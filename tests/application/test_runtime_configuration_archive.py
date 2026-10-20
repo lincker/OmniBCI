@@ -155,4 +155,5 @@ async def test_equivalent_profile_selection_preserves_snapshot_identity(rebuild_
     operation = await apply(h)
     assert operation["status"] == "succeeded", operation
     applications = h.archive.get(h.previous.revision)["applications"]
-    assert applications[-1]["status"] == ("applied" if running else "pending")
+    assert applications[-1]["status"] == "applied"
+    assert len(applications) == (2 if running else 1)

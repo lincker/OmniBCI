@@ -4,7 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 
 from omnibci.application.plugin_schema import validate_parameters
-from omnibci.application.processing_source import processing_input, requires_signal_preparation, validate_plan_binding
+from omnibci.application.processing_source import processing_input, validate_plan_binding
 from omnibci.domain.ports.algorithm import Decoder, Filter
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.runtime_configuration import (
@@ -121,15 +121,11 @@ def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int | 
         before = validate_parameters(definition.schema, old.parameters)
         _require_trial_changes(definition.schema, before, after)
 
-    if signal_plan is None and requires_signal_preparation(snapshot):
+    if signal_plan is None:
         return ConfiguredPipeline(None, (), snapshot)
 
-    context = PluginContext(sample_rate=sample_rate,
-                            channel_names=tuple(snapshot.get("ACQUISITION.channel_names", ())),
-                            config_revision=revision)
-    if signal_plan is not None:
-        from .signal_configuration import signal_context
-        context = signal_context(snapshot, signal_plan)
+    from .signal_configuration import signal_context
+    context = signal_context(snapshot, signal_plan)
     decoder = load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder, context=context)
     filters = load_filters(snapshot, context)
     return ConfiguredPipeline(decoder, tuple(filters), snapshot)

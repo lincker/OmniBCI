@@ -21,6 +21,7 @@ from omnibci.infrastructure.repositories.sqlite_configuration_archive import SQL
 from omnibci.infrastructure.repositories.sqlite_session_repository import SQLiteSessionRepository
 from omnibci.infrastructure.storage_lock import StorageLease
 from omnibci.shared.events import Event, EventType
+from tests.plugin_configuration_helpers import accept_profiles
 
 
 @pytest.fixture
@@ -78,6 +79,14 @@ def fake_graphs(monkeypatch):
 
 def _database_path(repository):
     return Path(repository._connection.execute("PRAGMA database_list").fetchone()[2])
+
+
+def _select_source(container):
+    accept_profiles(container.plugin_profile_service, [
+        ("acquisition.source", "acquisition", "file_reader", {
+            "data_file_path": "unused-in-mocked-workers.cnt", "file_reader_chunk_size": 10,
+        }),
+    ])
 
 
 @pytest.mark.asyncio
@@ -170,6 +179,7 @@ class _RecordingController:
 @pytest.mark.asyncio
 async def test_engine_session_archive_survives_backend_restart(configured_backend, fake_graphs, tmp_path):
     container = await bootstrap.build_container()
+    _select_source(container)
     archive = container.configuration_archive
     fake_graphs.archive = archive
     engine = container.engine_service
@@ -278,6 +288,7 @@ def test_stale_explicit_revision_cannot_prepare_or_dispatch_a_session(tmp_path):
 @pytest.mark.asyncio
 async def test_archive_failure_prevents_graph_creation(configured_backend, fake_graphs, monkeypatch):
     container = await bootstrap.build_container()
+    _select_source(container)
 
     def fail(*args, **kwargs):
         raise OSError("Cannot persist candidate")
@@ -295,6 +306,7 @@ async def test_archive_failure_prevents_graph_creation(configured_backend, fake_
 @pytest.mark.asyncio
 async def test_archive_receipt_failure_stops_graph_and_retains_pending(configured_backend, fake_graphs, monkeypatch):
     container = await bootstrap.build_container()
+    _select_source(container)
     fake_graphs.archive = container.configuration_archive
 
     def fail(*args, **kwargs):
