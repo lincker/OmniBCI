@@ -21,6 +21,15 @@ from omnibci.infrastructure.stimulation.process_manager import (
 )
 
 
+def _paradigm_snapshot():
+    return {"PLUGINS.bindings": [{
+        "slot": "stimulation.paradigm", "kind": "paradigm", "profile_id": None,
+        "selection": {"package_id": "OmniBCI.classic40SSVEP",
+                      "contribution_id": "default", "version": "0.1.0"},
+        "parameters": {}, "configuration_version": 1, "profile_revision": 0,
+    }]}
+
+
 def _mock_process(*, exits_after_join=None, alive=True, pid=4321):
     process = MagicMock()
     state = {"alive": alive, "join_count": 0}
@@ -100,6 +109,52 @@ def test_same_paradigm_start_is_idempotent(
     assert mock_process_cls.call_count == 1
     assert mock_event_cls.call_count == 1
     assert startup_pipe.factory.call_count == 1
+
+
+@pytest.mark.parametrize("legacy_alias", [None, "stale-paradigm"])
+@patch("omnibci.infrastructure.stimulation.process_manager.mp.Event")
+@patch("omnibci.infrastructure.stimulation.process_manager.mp.Process")
+def test_ready_status_reports_paradigm_from_pinned_binding(
+    mock_process_cls, mock_event_cls, legacy_alias, api_client, stimulation_service,
+):
+    process, _ = _mock_process(exits_after_join=1)
+    mock_process_cls.return_value = process
+    manager = StimulationProcessManager()
+    snapshot = _paradigm_snapshot()
+    if legacy_alias is not None:
+        snapshot["STIMULATION.paradigm"] = legacy_alias
+    # A dormant processing profile must not participate in stimulation startup.
+    snapshot["PLUGINS.bindings"].append({"slot": "processing.decoder", "processing_input": "invalid"})
+    stimulation_service._process_manager = manager
+    stimulation_service._active = True
+
+    manager.start(settings_snapshot=snapshot)
+
+    paradigm = "STIMULATION_THUBCI_SSVEP_classic40"
+    assert manager.current_paradigm == paradigm
+    assert mock_process_cls.call_args.kwargs["args"][0] == paradigm
+    status = api_client.get("/api/v1/stimulation/status").json()["data"]
+    assert status["active"] is True and status["process_alive"] is True
+    assert status["paradigm"] == paradigm
+    manager.stop()
+    assert manager.current_paradigm is None
+
+
+@patch("omnibci.infrastructure.stimulation.process_manager.mp.Process")
+def test_managed_start_requires_a_pinned_paradigm(mock_process_cls):
+    manager = StimulationProcessManager()
+    with pytest.raises(RuntimeError, match="No paradigm selected"):
+        manager.start(settings_snapshot={"PLUGINS.bindings": []})
+    mock_process_cls.assert_not_called()
+
+
+@patch("omnibci.infrastructure.stimulation.process_manager.mp.Process")
+def test_external_mode_does_not_resolve_local_paradigm(mock_process_cls):
+    manager = StimulationProcessManager()
+    manager.start(settings_snapshot={"STIMULATION.auto_spawn": False})
+    assert manager.auto_spawn is False
+    assert manager.current_paradigm is None
+    mock_process_cls.assert_not_called()
 
 
 @patch("omnibci.infrastructure.stimulation.process_manager.mp.Event")
@@ -255,8 +310,10 @@ def test_ready_state_detects_child_that_dies_later(
 def test_child_entrypoint_forwards_stop_event(mock_stimulation_cls, monkeypatch):
     monkeypatch.setattr("omnibci.conf.settings.use_snapshot", lambda _: None)
     stop_event = object()
+    snapshot = _paradigm_snapshot()
 
-    _run_stimulation(paradigm=None, stop_event=stop_event, settings_snapshot={})
+    _run_stimulation(paradigm="STIMULATION_THUBCI_SSVEP_classic40", stop_event=stop_event,
+                     settings_snapshot=snapshot)
 
-    mock_stimulation_cls.assert_called_once_with(stop_event=stop_event, settings_snapshot={})
+    mock_stimulation_cls.assert_called_once_with(stop_event=stop_event, settings_snapshot=snapshot)
     mock_stimulation_cls.return_value.run.assert_called_once_with()

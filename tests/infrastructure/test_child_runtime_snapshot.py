@@ -25,7 +25,7 @@ MANAGERS = (
 
 
 def _snapshot(key, revision="revision-1"):
-    return {
+    snapshot = {
         key: "selected-plugin",
         "CONFIG.revision": revision,
         "CONFIG.generation": "graph-1",
@@ -34,6 +34,15 @@ def _snapshot(key, revision="revision-1"):
         "ACTUATION.auto_spawn": True,
         "PLUGINS.bindings": [{"parameters": {"level": 1}}],
     }
+    if key == "STIMULATION.paradigm":
+        snapshot.pop(key)
+        snapshot["PLUGINS.bindings"][0].update({
+            "slot": "stimulation.paradigm", "kind": "paradigm",
+            "selection": {"package_id": "OmniBCI.classic40SSVEP",
+                          "contribution_id": "default", "version": "0.1.0"},
+            "configuration_version": 1, "profile_revision": 0,
+        })
+    return snapshot
 
 
 def _mock_spawning(monkeypatch, module, component):
@@ -69,7 +78,8 @@ def test_snapshot_transport_and_revision_restart(monkeypatch, module, manager_cl
     manager.start(settings_snapshot=deepcopy(saved))
     assert factory.call_count == 1
     spawned = factory.call_args.kwargs
-    assert spawned["args"][0] == "selected-plugin"
+    expected = "STIMULATION_THUBCI_SSVEP_classic40" if component == "Stimulation" else "selected-plugin"
+    assert spawned["args"][0] == expected
     assert pickle.loads(pickle.dumps(spawned["kwargs"])) == {"settings_snapshot": original}
 
     saved["CONFIG.revision"] = "revision-2"

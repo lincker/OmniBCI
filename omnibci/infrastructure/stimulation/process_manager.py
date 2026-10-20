@@ -40,6 +40,17 @@ logger = logging.getLogger(__name__)
 mp = multiprocessing.get_context("spawn")
 
 
+def _configured_paradigm(snapshot: dict) -> str:
+    from omnibci.infrastructure.plugins.runtime_configuration import configured_bindings
+    from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+    from omnibci.infrastructure.plugins.loader import PluginLoadError
+
+    bindings = configured_bindings(snapshot, slot="stimulation.paradigm")
+    if not bindings:
+        raise PluginLoadError("No paradigm selected for stimulation.paradigm")
+    return PluginCatalog().resolve_selection("paradigm", bindings[0].selection).plugin_type
+
+
 def _run_stimulation(
     paradigm: str | None = None,
     stop_event: Any = None,
@@ -64,10 +75,10 @@ def _run_stimulation(
         if settings_snapshot is None:
             raise RuntimeError("Stimulation requires a pinned settings snapshot")
         from omnibci.conf import settings
-        selected = settings_snapshot.get("STIMULATION.paradigm")
+        settings.use_snapshot(settings_snapshot)
+        selected = _configured_paradigm(settings_snapshot)
         if paradigm is not None and paradigm != selected:
             raise RuntimeError("Apply the paradigm configuration before starting Stimulation")
-        settings.use_snapshot(settings_snapshot)
         from omnibci.infrastructure.stimulation.application import Stimulation
         kwargs = {"stop_event": stop_event, "settings_snapshot": settings_snapshot}
         if reporter is not None:
@@ -112,7 +123,7 @@ class StimulationProcessManager:
         self._process: mp.Process | None = None
         self._stop_event: Any = None
         self._startup_receiver: Any = None
-        # Paradigm the *running* subprocess was spawned with (None = config default).
+        # Paradigm resolved from the running subprocess's pinned selection.
         self._paradigm: str | None = None
         self._state = ChildProcessState.STOPPED
         # Synchronous API routes may run concurrently in a thread pool.  The
@@ -133,10 +144,6 @@ class StimulationProcessManager:
         with self._lifecycle_lock:
             snapshot = deepcopy(settings_snapshot)
             if snapshot is not None:
-                selected = snapshot.get("STIMULATION.paradigm")
-                if paradigm is not None and paradigm != selected:
-                    raise RuntimeError("Apply the paradigm configuration before starting Stimulation")
-                paradigm = selected
                 auto_spawn = bool(snapshot.get("STIMULATION.auto_spawn", self._default_auto_spawn))
             else:
                 auto_spawn = self._default_auto_spawn
@@ -147,6 +154,11 @@ class StimulationProcessManager:
                     "auto_spawn=False — Stimulation process must be started manually"
                 )
                 return
+            if snapshot is not None:
+                selected = _configured_paradigm(snapshot)
+                if paradigm is not None and paradigm != selected:
+                    raise RuntimeError("Apply the paradigm configuration before starting Stimulation")
+                paradigm = selected
             self._auto_spawn = True
             self._refresh_state_locked()
             if self._process is not None:
@@ -388,7 +400,7 @@ class StimulationProcessManager:
 
     @property
     def current_paradigm(self) -> str | None:
-        """Paradigm the running subprocess was spawned with (None if stopped or config default)."""
+        """Paradigm the running subprocess was spawned with (None if not ready)."""
         with self._lifecycle_lock:
             self._refresh_state_locked()
             return (
