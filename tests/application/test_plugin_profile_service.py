@@ -219,7 +219,7 @@ def test_new_decoder_profile_has_explicit_input_and_ignores_global_legacy_setup(
     {"source_id": "neuroscan_scan45_reader", "schema_version": 1, "assignments": [],
      "outputs": [], "reference": {"mode": "original", "channels": []}, "excluded_channels": []},
 ])
-def test_legacy_defaults_are_inert_until_processing_is_configured(service, setup):
+def test_legacy_defaults_can_run_without_rewriting_saved_configuration(service, setup):
     selections = complete_selections(service)
     candidate = service.propose(selections)
     old_input = {"schema_version": 1, "outputs": [],
@@ -238,10 +238,12 @@ def test_legacy_defaults_are_inert_until_processing_is_configured(service, setup
     before = path.read_bytes()
 
     service.validate_activation(legacy, module="acquisition")
-    with pytest.raises(PluginSchemaError, match="Configure the decoder"):
-        service.validate_activation(legacy, module="processing")
+    service.validate_activation(legacy, module="processing")
     runtime = service.resolve_settings()
 
+    assert processing_input(runtime) == ProcessingInput()
+    assert not profile.processing_input_requires_review
+    assert not next(b for b in legacy.bindings if b.kind == "decoder").processing_input_requires_review
     assert next(b for b in runtime["PLUGINS.bindings"] if b["kind"] == "decoder")["processing_input"] == old_input
     assert "SIGNAL.setup" not in runtime
     assert runtime["CONFIG.revision"] == legacy.revision

@@ -453,3 +453,96 @@ def test_no_explicit_mapping_still_prepares_using_observed_signal(signal_service
     service.prepare()
     assert calls[0][1]["plan"]["source_indices"] == [0, 1]
     assert calls[0][1]["plan"]["source"]["sample_rate"] == metadata.sample_rate
+
+
+def test_recording_starts_with_legacy_default_input_without_changing_signal_or_snapshot(signal_service):
+    import numpy as np
+    from omnibci.application.processing_source import validate_plan_binding
+    from omnibci.application.services.recording_service import RecordingService
+    from omnibci.domain.channel_mapping import ResolvedSignalPlan
+    from omnibci.domain.signal import SignalChunk
+
+    service, metadata, _, calls = signal_service
+    service.engine.applied_snapshot["PLUGINS.bindings"][0]["processing_input"] = {
+        "schema_version": 1, "outputs": [], "excluded_channels": [],
+        "reference": {"mode": "original", "channels": []},
+    }
+    original = deepcopy(service.engine.applied_snapshot)
+    repo = InMemorySessionRepository()
+    sessions = SessionAppService(repo)
+    sessions.set_signal_preparer(service.prepare_session, service.acquisition.lifecycle_lock)
+    started = []
+
+    def start_stream(command):
+        assert calls[0][0] is EventType.PrepareSignalProcessing
+        assert repo.find_active().signal_plan == calls[0][1]["plan"]
+        started.append(command)
+
+    service.acquisition.handle_start_stream = start_stream
+    session_id = RecordingService(sessions, service.acquisition).start()
+
+    assert sessions.active_session_id == session_id
+    assert len(started) == 1
+    assert len(repo.find_all()) == 1
+    plan = ResolvedSignalPlan.from_dict(repo.find_by_id(session_id).signal_plan)
+    assert plan.source == metadata
+    assert plan.source_indices == (0, 1)
+    assert plan.processing_input == ProcessingInput()
+    assert plan.is_identity
+    validate_plan_binding(original, plan)
+    chunk = SignalChunk(timestamp=123, sequence_id=7,
+                        raw_data=np.array([[1.0, -2.0, 3.0], [4.0, 5.0, -6.0], [0.0, 8.0, 0.0]]))
+    mapped = plan.apply(chunk)
+    np.testing.assert_array_equal(mapped.raw_data, chunk.raw_data)
+    assert (mapped.timestamp, mapped.sequence_id) == (chunk.timestamp, chunk.sequence_id)
+    assert service.engine.applied_snapshot == original
+
+
+@pytest.mark.parametrize("setting", [
+    {"outputs": ["O1"]},
+    {"excluded_channels": ["M1"]},
+    {"reference": {"mode": "single", "channels": ["M1"]}},
+])
+def test_recording_rejects_meaningful_legacy_input_before_session_or_stream(signal_service, setting):
+    from omnibci.application.services.recording_service import RecordingService
+
+    service, _, _, calls = signal_service
+    service.engine.applied_snapshot["PLUGINS.bindings"][0]["processing_input"] = {
+        "schema_version": 1, "outputs": [], "excluded_channels": [],
+        "reference": {"mode": "original", "channels": []}, **setting,
+    }
+    original = deepcopy(service.engine.applied_snapshot)
+    repo = InMemorySessionRepository()
+    sessions = SessionAppService(repo)
+    sessions.set_signal_preparer(service.prepare_session, service.acquisition.lifecycle_lock)
+    service.acquisition.handle_start_stream = lambda _: pytest.fail("Invalid processing input started the stream")
+
+    with pytest.raises(ConfigProfileValidationError):
+        RecordingService(sessions, service.acquisition).start()
+
+    assert not repo.find_all()
+    assert sessions.active_session_id is None
+    assert not calls
+    assert service.engine.applied_snapshot == original
+
+
+@pytest.mark.parametrize("active_legacy", [True, False])
+def test_legacy_default_selected_input_matches_equivalent_running_input(signal_service, active_legacy):
+    service, metadata, _, _ = signal_service
+    selected = modern_binding(service, metadata, outputs=())
+    selected["PLUGINS.bindings"][1]["processing_input"] = {
+        "schema_version": 1, "outputs": [], "excluded_channels": [],
+        "reference": {"mode": "original", "channels": []},
+    }
+    original = deepcopy(selected)
+    if active_legacy:
+        service.engine.applied_snapshot = deepcopy(selected)
+
+    service.prepare()
+    context = service.read()
+
+    assert context["accepted_input"] == ProcessingInput().to_dict()
+    assert context["active_input"] == context["accepted_input"]
+    assert context["source_error"] is None
+    assert context["readiness"]["ready"]
+    assert selected == original

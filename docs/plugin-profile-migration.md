@@ -34,7 +34,11 @@ Source channel metadata belongs to Acquisition. Decoder channel mapping and
 reference configuration belong to Signal Processing. Retired global
 `SIGNAL.setup` settings are not executable configuration and cannot block an
 Acquisition connection. Old profile payloads remain readable for explicit repair;
-they are not silently migrated into channel mappings.
+saved files and activation revisions are preserved. A version 1 Decoder input
+with no selected or excluded channels and the original reference resolves to the
+current all-channel mapping when read by the runtime or UI. These defaults do not
+require reconfiguration. Non-default legacy inputs still require an explicit
+channel mapping; new API requests accept only the current format.
 
 ## Failure and recovery
 

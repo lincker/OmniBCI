@@ -92,6 +92,22 @@ def _processing_input(value, kind: str) -> ProcessingInput | None:
     return value
 
 
+def is_default_legacy_processing_input(value) -> bool:
+    """Recognize only stored v1 defaults that preserve every source sample."""
+    if (not isinstance(value, dict)
+            or type(value.get("schema_version", 1)) is not int
+            or value.get("schema_version", 1) != 1
+            or set(value) - {"schema_version", "outputs", "excluded_channels", "reference"}
+            or value.get("outputs", []) != []
+            or value.get("excluded_channels", []) != []):
+        return False
+    reference = value.get("reference", {})
+    return (isinstance(reference, dict)
+            and not set(reference) - {"mode", "channels"}
+            and reference.get("mode", "original") == "original"
+            and reference.get("channels", []) == [])
+
+
 def _legacy_fields(value, kind: str, processing_input) -> dict:
     data = _object_data(value, "legacy fields")
     allowed = {"acquisition_montage", "manual_montage"} if kind == "acquisition" else {"processing_input"} if kind == "decoder" else set()
@@ -159,7 +175,7 @@ class PluginProfile:
     revision: int = 0
     format_version: int = 2
     processing_input: ProcessingInput | None = None
-    # Inert raw fields preserve old files and revision hashes until explicit replacement.
+    # Raw legacy fields preserve stored files and revision hashes until explicit replacement.
     legacy: dict = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
@@ -182,7 +198,8 @@ class PluginProfile:
 
     @property
     def processing_input_requires_review(self) -> bool:
-        return "processing_input" in self.legacy
+        return ("processing_input" in self.legacy
+                and not is_default_legacy_processing_input(self.legacy["processing_input"]))
 
     def to_dict(self) -> dict:
         data = {
@@ -241,7 +258,8 @@ class ProfileBinding:
 
     @property
     def processing_input_requires_review(self) -> bool:
-        return "processing_input" in self.legacy
+        return ("processing_input" in self.legacy
+                and not is_default_legacy_processing_input(self.legacy["processing_input"]))
 
     def to_dict(self) -> dict:
         data = {

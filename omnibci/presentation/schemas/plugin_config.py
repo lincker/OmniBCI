@@ -3,6 +3,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
+from omnibci.application.plugin_profiles import is_default_legacy_processing_input
+from omnibci.domain.channel_mapping import ProcessingInput
 from omnibci.presentation.schemas.plugin_selection import PluginSelectionResponse
 from omnibci.presentation.schemas.signal_setup import ProcessingInputModel
 
@@ -36,7 +38,10 @@ def _visible_processing_input(value):
     if isinstance(value, dict):
         data = dict(value)
         saved = data.get("processing_input")
-        if isinstance(saved, dict) and saved.get("schema_version", 1) != 2:
+        if is_default_legacy_processing_input(saved):
+            data["processing_input"] = ProcessingInput().to_dict()
+            data["processing_input_requires_review"] = False
+        elif isinstance(saved, dict) and saved.get("schema_version", 1) != 2:
             data["processing_input"] = None
             data["processing_input_requires_review"] = True
         return data

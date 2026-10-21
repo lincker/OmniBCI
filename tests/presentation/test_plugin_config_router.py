@@ -276,7 +276,7 @@ def test_decoder_profile_saves_and_pins_processing_input(client):
     {"schema_version": 1, "outputs": [], "reference": {"mode": "original", "channels": []},
      "excluded_channels": []},
 ])
-def test_default_legacy_decoder_input_requires_explicit_configuration(client, old_input):
+def test_default_legacy_decoder_input_is_visible_as_current_mapping_without_storage_changes(client, old_input):
     from omnibci.application.plugin_profiles import ActivationSnapshot
 
     http, service, _ = client
@@ -298,15 +298,15 @@ def test_default_legacy_decoder_input_requires_explicit_configuration(client, ol
                        for path in service.repository.root.rglob("*.toml")}
 
     visible = http.get(f"{PREFIX}/plugin-profiles/{decoder_id}").json()["data"]
-    assert visible["processing_input"] is None
-    assert visible["processing_input_requires_review"] is True
+    assert visible["processing_input"] == {"schema_version": 2, "outputs": []}
+    assert visible["processing_input_requires_review"] is False
     assert visible["revision"] == legacy_profile.revision
     assert http.get(f"{PREFIX}/plugin-profiles?kind=decoder").json()["data"] == [visible]
     selected = http.get(f"{PREFIX}/activation").json()["data"]
     assert selected["revision"] == legacy.revision
     binding = next(item for item in selected["bindings"] if item["kind"] == "decoder")
-    assert binding.get("processing_input") is None
-    assert binding["processing_input_requires_review"] is True
+    assert binding["processing_input"] == visible["processing_input"]
+    assert binding["processing_input_requires_review"] is False
     assert {path: sha256(path.read_bytes()).hexdigest() for path in original_hashes} == original_hashes
     assert service.repository.get_profile(decoder_id).to_dict() == legacy_profile.to_dict()
     assert service.repository.get_activation().to_dict() == legacy.to_dict()

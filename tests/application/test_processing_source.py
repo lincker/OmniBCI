@@ -51,6 +51,53 @@ def test_retired_input_is_deferred_until_processing_is_used(snapshot):
     assert requires_signal_preparation(snapshot)
 
 
+@pytest.mark.parametrize("value", [
+    {},
+    {"schema_version": 1},
+    {"outputs": [], "excluded_channels": [], "reference": {}},
+    {"schema_version": 1, "outputs": [], "excluded_channels": [],
+     "reference": {"mode": "original"}},
+    {"schema_version": 1, "outputs": [], "excluded_channels": [],
+     "reference": {"mode": "original", "channels": []}},
+])
+def test_default_legacy_input_resolves_without_changing_pinned_snapshot(snapshot, source, value):
+    binding_for(snapshot, "processing.decoder")["processing_input"] = deepcopy(value)
+    original = deepcopy(snapshot)
+
+    resolved = processing_input(snapshot)
+
+    assert resolved == ProcessingInput()
+    plan = compile_processing_plan(source, resolved)
+    assert plan.is_identity
+    validate_plan_binding(snapshot, plan)
+    assert processing_binding_key(snapshot)["input"] == resolved.to_dict()
+    assert snapshot == original
+
+
+@pytest.mark.parametrize("change", [
+    {"outputs": ["C3"]},
+    {"excluded_channels": ["M1"]},
+    {"reference": {"mode": "single", "channels": ["M1"]}},
+    {"reference": {"mode": "average", "channels": ["C3", "C4"]}},
+    {"reference": {"mode": "original", "channels": ["M1"]}},
+    {"reference": {"mode": "original", "unknown": []}},
+    {"outputs": None},
+    {"excluded_channels": ""},
+    {"reference": None},
+    {"schema_version": True},
+    {"schema_version": 2},
+    {"unknown": []},
+])
+def test_legacy_input_compatibility_does_not_discard_changes_or_invalid_fields(snapshot, change):
+    value = {"schema_version": 1, "outputs": [], "excluded_channels": [],
+             "reference": {"mode": "original", "channels": []}, **change}
+    binding_for(snapshot, "processing.decoder")["processing_input"] = value
+    original = deepcopy(snapshot)
+    with pytest.raises(ValueError):
+        processing_input(snapshot)
+    assert snapshot == original
+
+
 def test_retired_global_setup_does_not_configure_decoder_input(snapshot):
     binding_for(snapshot, "processing.decoder").pop("processing_input")
     snapshot["SIGNAL.setup"] = {"source_id": "file_reader", "outputs": ["C3"]}

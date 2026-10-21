@@ -1,6 +1,7 @@
 """Resolve processing input and source ownership from the pinned runtime bindings."""
 from copy import deepcopy
 
+from omnibci.application.plugin_profiles import is_default_legacy_processing_input
 from omnibci.domain.channel_mapping import ProcessingInput
 from omnibci.application.source_expectations import validate_source_expectations
 
@@ -21,7 +22,8 @@ def binding_for(snapshot, slot):
 def processing_input(snapshot):
     decoder = binding_for(snapshot, "processing.decoder")
     if decoder is not None and decoder.get("processing_input") is not None:
-        return ProcessingInput.from_dict(decoder["processing_input"])
+        value = decoder["processing_input"]
+        return ProcessingInput() if is_default_legacy_processing_input(value) else ProcessingInput.from_dict(value)
     return ProcessingInput() if decoder is not None else None
 
 
