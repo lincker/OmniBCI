@@ -62,32 +62,18 @@ class TestApiError:
 # ---------------------------------------------------------------------------
 
 class TestUnifiedErrorThroughApp:
-    def test_404_uses_unified_envelope_with_semantic_code(self, api_client):
-        resp = api_client.get("/api/v1/sessions/does-not-exist")
+    def test_404_uses_unified_envelope(self, api_client):
+        resp = api_client.get("/api/v1/does-not-exist")
         assert resp.status_code == 404
         body = resp.json()
         assert body["success"] is False
-        # Semantic code (ApiError), not the generic NOT_FOUND fallback.
-        assert body["code"] == "SESSION_NOT_FOUND"
+        assert body["code"] == "NOT_FOUND"
         assert isinstance(body["message"], str) and body["message"]
 
-    def test_no_active_session_semantic_code(self, api_client):
-        # Fresh client → no active session → 404 NO_ACTIVE_SESSION.
-        resp = api_client.get("/api/v1/sessions/active")
-        assert resp.status_code == 404
-        body = resp.json()
-        assert body["success"] is False
-        assert body["code"] == "NO_ACTIVE_SESSION"
 
-    def test_no_trials_semantic_code(self, api_client):
-        sid = api_client.post("/api/v1/sessions").json()["data"]["session_id"]
-        resp = api_client.get(f"/api/v1/sessions/{sid}/trials/last")
-        assert resp.status_code == 404
-        assert resp.json()["code"] == "NO_TRIALS"
 
     def test_422_validation_uses_unified_envelope(self, api_client):
-        # paradigm must be a string; an int triggers request validation
-        resp = api_client.post("/api/v1/sessions", json={"paradigm": 123})
+        resp = api_client.patch("/api/v1/config", json={"updates": []})
         assert resp.status_code == 422
         body = resp.json()
         assert body["success"] is False

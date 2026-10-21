@@ -6,9 +6,8 @@ from uuid import uuid4
 
 import pytest
 
-from omnibci.application.commands.acquisition_commands import ConnectDataProviderCommand
+from omnibci.application.commands.acquisition_commands import ConnectDataProviderCommand, StartStreamCommand
 from omnibci.application.commands.engine_commands import StartEngineCommand, StopEngineCommand
-from omnibci.application.runtime_admission import RuntimeAdmission
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
@@ -19,7 +18,6 @@ from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
-from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 
 
 SOURCE = '''
@@ -122,12 +120,6 @@ def wire_signal_preparation(profiles, engine, container):
     )
     container.acquisition_service.set_signal_preparer(service.prepare)
 
-    def prepare_session():
-        plan = service.prepare_session()
-        engine.prepare_actuation()
-        return plan
-
-    container.session_service.set_signal_preparer(prepare_session, container.acquisition_service.lifecycle_lock)
     return service
 
 
@@ -138,17 +130,17 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
                                 snapshot_provider=profiles.resolve_settings)
     await engine.startup()
-    container = assemble(engine, InMemorySessionRepository(), admission=engine.admission)
+    container = assemble(engine, admission=engine.admission)
     signal = wire_signal_preparation(profiles, engine, container)
     register_engine_listeners(container)
     coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
-                                          container.session_service, container.stimulation_service,
+                                          container.stimulation_service,
                                           container.command_results, signal_preparer=signal.prepare)
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
     try:
         await engine.handle_start_engine(StartEngineCommand())
         await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
-        original_session = await asyncio.to_thread(container.recording_service.start)
+        await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
         await asyncio.sleep(.08)
         previous_generation = engine.generation
         source = profiles.repository.get_profile(bindings[0]['profile_id'])
@@ -162,18 +154,16 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         assert result['status'] == 'succeeded', result
         assert result['result']['replay_resumed'] is True
         assert engine.generation != previous_generation
-        continuation = container.session_service.active_session_id
-        assert continuation != original_session
-        assert container.session_repository.find_by_id(continuation).continuation_of == original_session
+        assert container.acquisition_service.is_streaming
         assert profiles.repository.get_activation().revision == engine.applied_revision == plan.target_revision
         checkpoints = [json.loads(line) for line in (tmp_path / 'restored.jsonl').read_text().splitlines()]
         assert checkpoints[0]['cursor'] > 0
 
-        # A changed decoder input prepares a new graph and records its own plan.
+        # A changed decoder input prepares a new graph with the selected mapping.
         decoder = profiles.repository.get_profile(bindings[1]['profile_id'])
         profiles.update(decoder.profile_id, name=decoder.name, parameters=decoder.parameters,
                         processing_input=ProcessingInput(outputs=(ChannelBinding("CH1", "channel-0"),)), expected_revision=decoder.revision)
-        previous_generation, previous_session = engine.generation, continuation
+        previous_generation = engine.generation
         plan = runtime.plan(bindings, expected_revision=engine.applied_revision)
         assert plan.strategy == 'rebuild'
         operation = runtime.submit(plan.plan_id, str(uuid4()))
@@ -181,15 +171,12 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         result = runtime.operation(operation['operation_id'])
         assert result['status'] == 'succeeded', result
         assert engine.generation != previous_generation
-        continuation = container.session_service.active_session_id
-        continued = container.session_repository.find_by_id(continuation)
-        assert continued.continuation_of == previous_session
-        assert continued.signal_plan['processing_input']['outputs'] == [{'source_channel_id': 'channel-0', 'name': 'CH1'}]
-        assert container.session_repository.find_by_id(previous_session).signal_plan['processing_input']['outputs'] == []
+        assert container.acquisition_service.is_streaming
+        assert signal.read()['active_input']['outputs'] == [{'source_channel_id': 'channel-0', 'name': 'CH1'}]
         assert signal.read()['readiness']['ready'] is True
 
         # A dormant output selection still updates the pinned runtime context;
-        # acquisition/processing processes and the recording identity survive.
+        # acquisition and processing processes remain alive.
         generation = engine.generation
         worker_ids = (engine._engine.acquisition_worker.pid, engine._engine.signal_processing_worker.pid)
         effector = profiles.create('effector', profiles.catalog.legacy('effector', 'logger').selection, 'Logger', {})
@@ -200,9 +187,8 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         await runtime.wait_for_idle()
         result = runtime.operation(operation['operation_id'])
         assert result['status'] == 'succeeded', result
-        assert result['result']['session_preserved'] is True
         assert engine.generation == generation
-        assert container.session_service.active_session_id == continuation
+        assert container.acquisition_service.is_streaming
         assert (engine._engine.acquisition_worker.pid, engine._engine.signal_processing_worker.pid) == worker_ids
 
         decoder = profiles.repository.get_profile(bindings[1]['profile_id'])
@@ -216,7 +202,7 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         assert result['status'] == 'succeeded', result
         assert result['result']['boundary'] == 'trial'
         assert engine.generation == generation
-        assert container.session_service.active_session_id == continuation
+        assert container.acquisition_service.is_streaming
         assert (engine._engine.acquisition_worker.pid, engine._engine.signal_processing_worker.pid) == worker_ids
 
         # Candidate plugin constructor fails after old data is safely drained.
@@ -235,7 +221,7 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         assert engine.is_engine_ready
         assert engine.applied_revision == accepted.revision
         assert profiles.repository.get_activation().revision == accepted.revision
-        assert container.session_service.active_session_id not in (continuation, original_session)
+        assert container.acquisition_service.is_streaming
         checkpoints = [json.loads(line) for line in (tmp_path / 'restored.jsonl').read_text().splitlines()]
         assert checkpoints[-1]['cursor'] >= checkpoints[0]['cursor']
     finally:

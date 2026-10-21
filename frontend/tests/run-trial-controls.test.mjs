@@ -28,7 +28,7 @@ function text(tree) {
   return tree == null || typeof tree === "boolean" ? "" : String(tree);
 }
 function render({ stimulation = ready, stimulationError = null, selectedParadigm = paradigm,
-  loadError = null, runtime = {} } = {}) {
+  loadError = null, runtime = {}, acquisition = { connected: false, streaming: false } } = {}) {
   const dispatcher = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
   const previous = dispatcher.current;
   // Seed the two polls, then the accepted selection and loaded trial-control state.
@@ -44,8 +44,8 @@ function render({ stimulation = ready, stimulationError = null, selectedParadigm
   };
   try {
     return RunConsole({ engine: { data: { running: true }, error: null, refresh: noop },
-      acquisition: { data: { connected: false, streaming: false }, error: null, refresh: noop },
-      feed: { session: null, trials: [], acks: [] },
+      acquisition: { data: acquisition, error: null, refresh: noop },
+      feed: { generation: null, trials: [], acks: [] },
       runtime: { status: { accepted_revision: revision, applied_revision: revision }, blocked: false, ...runtime },
       onBusyChange: noop, onEditSetup: noop, onResults: noop });
   } finally { dispatcher.current = previous; }
@@ -82,5 +82,23 @@ for (const [name, overrides] of [
 ]) {
   test(`Trigger trial remains disabled with ${name}`, () => {
     assert.equal(triggerButton(render(overrides)).props.disabled, true);
+  });
+}
+
+for (const [label, method, streaming] of [
+  ["Start reading", "acqStreamStart", false], ["Stop reading", "acqStreamStop", true],
+]) {
+  test(`${label} directly controls the stream without a session`, () => {
+    const original = api[method];
+    let calls = 0;
+    api[method] = async () => { calls += 1; };
+    try {
+      const tree = render({ acquisition: { connected: true, streaming } });
+      const button = elements(tree).find((element) => element.type === "button" && text(element) === label);
+      assert.ok(button);
+      assert.equal(button.props.disabled, false);
+      button.props.onClick();
+      assert.equal(calls, 1);
+    } finally { api[method] = original; }
   });
 }

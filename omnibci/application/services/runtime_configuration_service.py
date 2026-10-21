@@ -23,7 +23,6 @@ class ConfigurationPlan:
     strategy: str
     changed_slots: tuple[str, ...]
     changed_settings: tuple[str, ...]
-    session_effect: str
     errors: tuple[str, ...]
     signal_summary: str | None = None
     module: str | None = None
@@ -123,9 +122,7 @@ class RuntimeConfigurationService:
                 if ((enabled and not before.get(f"{role}.auto_spawn", True)) or
                         (target_enabled and not snapshot.settings.get(f"{role}.auto_spawn", True))):
                     peer_connected = getattr(self.engine, "is_peer_connected", None)
-                    sessions = getattr(self.executor, "sessions", None)
-                    in_use = (callable(peer_connected) and peer_connected(role.lower()) is True
-                              or getattr(sessions, "active_session_id", None) is not None)
+                    in_use = callable(peer_connected) and peer_connected(role.lower()) is True
                     if in_use:
                         errors.append(f"{role.title()} is externally managed; stop the engine before changing configuration")
                     else:
@@ -136,7 +133,6 @@ class RuntimeConfigurationService:
             self.engine.applied_revision if running else None,
             self.engine.generation if running else None, running, strategy,
             tuple(slots), settings,
-            "continuation" if running and strategy == "rebuild" else "preserve",
             tuple(errors), self._signal_summary(materialized) if module in (None, "processing") else None,
             module,
         )

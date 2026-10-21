@@ -127,32 +127,3 @@ class Epoch:
             f"sample_rate={self.sample_rate}Hz, "
             f"duration={self.duration_seconds:.3f}s)"
         )
-
-
-@dataclass(frozen=True)
-class EpochInfo:
-    """Lightweight metadata projection of an Epoch — carries no signal matrix.
-
-    BCISession's trial history stores this instead of the full Epoch, so the
-    aggregate grows by only a few dozen bytes per trial rather than retaining a
-    whole (channels x samples) array.
-    """
-    event_id: int
-    channel_count: int
-    sample_rate: int
-    duration_samples: int
-    trigger_offset: int
-
-    @classmethod
-    def from_epoch(cls, epoch: "Epoch") -> "EpochInfo":
-        return cls(
-            event_id=epoch.event_id,
-            channel_count=epoch.channel_count,
-            sample_rate=epoch.sample_rate,
-            duration_samples=epoch.duration_samples,
-            trigger_offset=epoch.trigger_offset,
-        )
-
-    @property
-    def duration_seconds(self) -> float:
-        return self.duration_samples / self.sample_rate

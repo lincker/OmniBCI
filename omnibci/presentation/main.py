@@ -34,7 +34,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
-from omnibci.presentation.routers import engine, acquisition, stimulation, session, recording, config, plugins
+from omnibci.presentation.routers import engine, acquisition, stimulation, results, config, plugins
 from omnibci.presentation.routers import plugin_config, runtime_config, plugin_packages
 from omnibci.presentation.routers import plugin_package_lifecycle, plugin_market
 from omnibci.presentation.routers import signal_setup
@@ -97,9 +97,6 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
     app.state.acquisition_service = container.acquisition_service
     app.state.stimulation_service = container.stimulation_service
     app.state.stimulation_process_manager = container.stimulation_process_manager
-    app.state.session_repository = container.session_repository
-    app.state.session_service = container.session_service
-    app.state.recording_service = container.recording_service
     app.state.config_service = container.config_service
     app.state.plugin_installation_service = container.plugin_installation_service
     app.state.plugin_package_service = container.plugin_package_service
@@ -109,7 +106,7 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
         stimulation=container.stimulation_service,
         stimulation_process=container.stimulation_process_manager,
         actuation_process=container.actuation_process_manager,
-        recording=container.recording_service,
+        acquisition=container.acquisition_service,
         configuration=container.runtime_configuration,
     )
 
@@ -124,8 +121,6 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
     # import.
     broadcaster_subscriptions = [
         (EventType.TrialCompleted, results_broadcaster.on_trial_completed),
-        (EventType.SessionStarted, results_broadcaster.on_session_started),
-        (EventType.SessionEnded, results_broadcaster.on_session_ended),
         # Relay stimulation acks (from the stim process via the socket) to clients.
         (EventType.StimulationAck, results_broadcaster.on_stimulation_ack),
     ]
@@ -144,7 +139,6 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
         app.state.shutdown_errors = errors
         if errors:
             raise RuntimeError("; ".join(errors))
-        container.close_storage()
         logger.info("OmniBCI API server stopped")
 
 
@@ -183,8 +177,7 @@ def create_app(*, api_token: str | None = None, desktop: bool = False) -> FastAP
     app.include_router(engine.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(acquisition.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(stimulation.router, prefix=prefix, responses=ERROR_RESPONSES)
-    app.include_router(session.router, prefix=prefix, responses=ERROR_RESPONSES)
-    app.include_router(recording.router, prefix=prefix, responses=ERROR_RESPONSES)
+    app.include_router(results.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(config.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(signal_setup.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(plugin_config.router, prefix=prefix, responses=ERROR_RESPONSES)

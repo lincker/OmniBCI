@@ -48,20 +48,8 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/stimulation/start", "post"),
     ("/api/v1/stimulation/stop", "post"),
     ("/api/v1/stimulation/trial/start", "post"),
-    # sessions
-    ("/api/v1/sessions", "post"),
-    ("/api/v1/sessions", "get"),
-    ("/api/v1/sessions/active", "get"),
-    ("/api/v1/sessions/export", "get"),
-    ("/api/v1/sessions/{session_id}", "get"),
-    ("/api/v1/sessions/{session_id}", "delete"),
-    ("/api/v1/sessions/{session_id}/abort", "post"),
-    ("/api/v1/sessions/{session_id}/configurations", "get"),
-    ("/api/v1/sessions/{session_id}/trials", "get"),
-    ("/api/v1/sessions/{session_id}/trials/last", "get"),
-    # recording (session + stream orchestration)
-    ("/api/v1/recording/start", "post"),
-    ("/api/v1/recording/stop", "post"),
+    # Current decoded results
+    ("/api/v1/results", "get"),
     # Host configuration.
     ("/api/v1/config", "get"),
     ("/api/v1/config", "patch"),
@@ -148,15 +136,10 @@ class TestResponseDtos:
         assert not operation.get("parameters")
         assert "503" in operation["responses"]
 
-    def test_desktop_handshake_and_export_contract(self, spec):
+    def test_desktop_handshake_contract(self, spec):
         assert set(_schema(spec, "SystemInfoResponse")["properties"]) == {
             "app_version", "desktop_api_version", "instance_id", "auth_enabled",
         }
-        export = _schema(spec, "SessionExportResponse")
-        assert export["properties"]["format_version"]["const"] == 1
-        assert set(export["properties"]) == {"format_version", "exported_at", "app_version", "sessions"}
-        content = spec["paths"]["/api/v1/sessions/export"]["get"]["responses"]["200"]["content"]
-        assert set(content) == {"application/json", "text/csv"}
 
     def test_host_configuration_has_no_application_profile_contract(self, spec):
         assert not any(path.startswith("/api/v1/config/profiles") for path in spec["paths"])
@@ -173,33 +156,13 @@ class TestResponseDtos:
             "saved", "engine_restart_required", "revision",
         }
 
-    def test_session_response_fields(self, spec):
-        props = _schema(spec, "SessionResponse")["properties"]
-        assert set(props) == {
-            "session_id", "paradigm", "state", "trial_count", "started_at", "ended_at",
-            "continuation_of", "config_revision", "interruption_reason", "signal_plan",
-            "subject_id", "recording",
-        }
 
-    @pytest.mark.parametrize("name", ["CreateSessionRequest", "StartRecordingRequest"])
-    def test_subject_id_is_an_optional_nonblank_string(self, spec, name):
-        schema = _schema(spec, name)
-        subject = schema["properties"]["subject_id"]
-        assert subject["anyOf"] == [{"type": "string", "pattern": r"\S"}, {"type": "null"}]
-        assert "subject_id" not in schema.get("required", [])
 
-    def test_recording_metadata_is_optional_on_session_queries_and_exports(self, spec):
-        for name in ("SessionResponse", "SessionDetailResponse"):
-            schema = _schema(spec, name)
-            assert schema["properties"]["recording"]["anyOf"] == [
-                {"additionalProperties": True, "type": "object"}, {"type": "null"},
-            ]
-            assert "recording" not in schema.get("required", [])
 
     def test_trial_response_fields(self, spec):
         props = _schema(spec, "TrialResponse")["properties"]
         assert set(props) == {
-            "trial_number", "target_id", "event_id", "confidence", "forced", "produced_at",
+            "generation", "trial_number", "target_id", "event_id", "confidence", "forced", "produced_at",
             "config_revision",
         }
 
@@ -256,8 +219,7 @@ class TestErrorContract:
             "VALIDATION_ERROR", "SERVICE_UNAVAILABLE", "GATEWAY_TIMEOUT",
             "INTERNAL_ERROR", "ERROR",
             # domain-specific
-            "ENGINE_NOT_READY", "SESSION_NOT_FOUND", "NO_ACTIVE_SESSION", "NO_TRIALS",
-            "ALREADY_RECORDING", "NO_ACTIVE_RECORDING",
+            "ENGINE_NOT_READY",
             "COMMAND_REJECTED", "COMMAND_EXECUTION_FAILED", "COMMAND_TIMEOUT",
             # Host configuration and Plugin Profiles.
             "CONFIG_KEY_NOT_ALLOWED", "CONFIG_PROFILE_NOT_FOUND",
@@ -265,5 +227,5 @@ class TestErrorContract:
 
     def test_endpoints_document_error_responses(self, spec):
         # A representative endpoint advertises the unified error envelope.
-        responses = spec["paths"]["/api/v1/sessions/{session_id}"]["get"]["responses"]
-        assert "404" in responses
+        responses = spec["paths"]["/api/v1/acquisition/stream/start"]["post"]["responses"]
+        assert "503" in responses

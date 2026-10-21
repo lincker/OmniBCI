@@ -337,8 +337,7 @@ def test_node_transport_and_timing_settings_are_validated(runtime, key, value):
         NodeConfiguration.from_dict(data)
 
 
-def test_legacy_global_setup_cannot_reach_an_engine_node(runtime):
+def test_legacy_global_setup_is_not_projected_to_nodes(runtime):
     runtime["SIGNAL.setup"] = {"source_id": "test-source", "outputs": ["O1"]}
-    with pytest.raises(ValueError, match="reconfigure"):
-        project_node_configuration(runtime, "engine")
+    assert "SIGNAL.setup" not in project_node_configuration(runtime, "engine").settings
     assert "SIGNAL.setup" not in project_node_configuration(runtime, "stimulation").settings

@@ -115,16 +115,16 @@ def test_status_reads_applied_values_while_engine_running():
 
 
 @pytest.mark.asyncio
-async def test_session_prepares_processing_before_actuation(monkeypatch):
+async def test_stream_prepares_processing_before_actuation_and_keeps_receipt(monkeypatch):
     container = await build_container()
     calls = []
     plan = {"schema_version": 2}
-    monkeypatch.setattr(container.signal_setup_service, "prepare_session",
+    monkeypatch.setattr(container.signal_setup_service, "prepare",
                         lambda: calls.append("processing") or plan)
     monkeypatch.setattr(container.engine_service, "prepare_actuation",
                         lambda: calls.append("actuation"), raising=False)
 
-    assert container.session_service._prepare_signal() == plan
+    assert container.acquisition_service._prepare_signal() == plan
     assert calls == ["processing", "actuation"]
 
 
@@ -171,7 +171,6 @@ async def test_host_review_compares_loaded_backend_values_after_restart(bootstra
     assert first.command_results._timeout_s == 10.0
     assert _toml_files(config_root()) == original_files
 
-    first.close_storage()
     restarted = await build_container()
 
     assert restarted.command_results._timeout_s == 15.0
@@ -227,7 +226,6 @@ async def test_existing_activation_keeps_its_revision_and_pinned_inputs(bootstra
     original_files = _toml_files(profiles.repository.root)
     original_settings = bootstrap_settings._config_path.read_bytes()
 
-    first.close_storage()
     restarted = await build_container()
 
     assert restarted.plugin_profile_service.repository.get_activation() == historical
@@ -256,7 +254,6 @@ async def test_bootstrap_does_not_execute_retired_global_mapping(bootstrap_setti
     profiles.repository.save_activation(legacy, expected_revision=current.revision)
     files = _toml_files(profiles.repository.root)
 
-    first.close_storage()
     restarted = await build_container()
 
     assert restarted.plugin_profile_service.repository.get_activation() == legacy
@@ -295,7 +292,6 @@ async def test_broken_activation_keeps_management_available_without_replacement(
     path.write_text('format_version = "unterminated', encoding="utf-8")
     original_files = _toml_files(repository.root)
 
-    first.close_storage()
     container = await build_container()
 
     assert container.config_service.list_entries()[0]
@@ -309,15 +305,10 @@ async def test_broken_activation_keeps_management_available_without_replacement(
 async def test_saved_edit_during_bootstrap_does_not_change_loaded_startup_baseline(
     bootstrap_settings, monkeypatch,
 ):
-    build_repository = bootstrap._build_session_repository
-
-    def edit_saved_settings(kind):
-        bootstrap_settings.set("NEUROENGINE.command_timeout_s", 20.0)
-        bootstrap_settings.save()
-        return build_repository(kind)
-
-    monkeypatch.setattr(bootstrap, "_build_session_repository", edit_saved_settings)
-    container = await build_container()
+    loaded = bootstrap_settings.saved_snapshot()
+    bootstrap_settings.set("NEUROENGINE.command_timeout_s", 20.0)
+    bootstrap_settings.save()
+    container = await build_container(host_settings=loaded)
     service = container.plugin_profile_service
 
     assert container.command_results._timeout_s == 10.0

@@ -27,12 +27,11 @@ BACKEND_STARTUP_DEFAULTS = {
     "LOGGING.level": "INFO",
     "LOGGING.file_path": "omnibci.log",
     "NEUROENGINE.command_timeout_s": 10.0,
-    "PERSISTENCE.session_repository": "sqlite",
     "PLUGINS.user_dir": "",
 }
 
 _RETIRED_SETTING_KEYS = frozenset({
-    "SIGNAL.setup", "ACQUISITION.channel_names", "ACQUISITION.manual_montage",
+    "PERSISTENCE.session_repository", "SIGNAL.setup", "ACQUISITION.channel_names", "ACQUISITION.manual_montage",
     "ACQUISITION.file_reader_play_speed", "project_name", "version",
     "CONSTANT.ASYNC_SLEEP_TIME", "NEUROENGINE.COMMAND_SERVER_IP", "NEUROENGINE.COMMAND_SERVER_PORT",
 })

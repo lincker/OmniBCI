@@ -9,12 +9,6 @@ export interface ConnectionInfo {
 
 export type ConnectionTarget = { kind: "local" } | { kind: "remote"; url: string; token: string };
 export type ResultsEvent = { type: "open" | "message" | "closed" | "error"; data?: string };
-export interface SaveResultsInput {
-  connectionId: string;
-  format: "json" | "csv";
-  sessionIds?: string[];
-}
-
 export interface DesktopApi {
   getConnection(): Promise<ConnectionInfo>;
   connect(target: ConnectionTarget): Promise<ConnectionInfo>;
@@ -22,7 +16,6 @@ export interface DesktopApi {
   onConnectionChanged(listener: (state: ConnectionInfo) => void): () => void;
   subscribeResults(connectionId: string, listener: (event: ResultsEvent) => void): () => void;
   chooseRecordingFile(): Promise<string | null>;
-  saveResults(input: SaveResultsInput): Promise<{ canceled: boolean }>;
   setEditorState(state: { dirty: boolean; busy: boolean }): void;
   setLanguage(language: "en" | "zh"): void;
   openLogs(): Promise<void>;

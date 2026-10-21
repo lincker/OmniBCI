@@ -38,11 +38,6 @@ class SignalSource(ABC):
         return False
 
     @property
-    def recording_provenance(self) -> dict[str, Any] | None:
-        """Identify an original recording when this source replays saved signals."""
-        return None
-
-    @property
     def resume_without_checkpoint_safe(self) -> bool:
         """Whether start after stop/reconnect never replays delivered samples.
 

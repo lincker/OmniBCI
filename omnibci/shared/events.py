@@ -15,9 +15,6 @@ class EventType(IntEnum):
     RestoreSourceCheckpoint = 106
     UpdateAcquisitionRevision = 107
     GetSourceMetadata = 108
-    BeginRawRecording = 109
-    EndRawRecording = 110
-    AbortRawRecording = 114
     StartStream = 111
     StopStream = 112
     StopAndDrain = 113  # acquisition stop followed by an ordered processing barrier
@@ -27,7 +24,6 @@ class EventType(IntEnum):
     PrepareSignalProcessing = 214
     AcquisitionState = 121  # worker -> API: authoritative device-state snapshot
                             # payload: application.events.AcquisitionSnapshot
-    RawRecordingState = 122  # worker -> API: local recording identity and status
     CommandResult = 601      # command consumer -> API: application.events.CommandResult
     PeerHello = 701          # external peer -> engine: pinned runtime identity
     PeerAccepted = 702       # engine -> external peer: matching identity accepted
@@ -47,13 +43,7 @@ class EventType(IntEnum):
     ActuationState = 403    # actuation → engine: device state / sensor feedback
     ActuationFault = 404    # actuation → engine: device fault (triggers safety)
     SettleActuation = 405   # correlated mailbox cancellation and device quiescence
-    # --- domain events (carry rich domain objects as payload) ---------
-    TrialCompleted = 501   # payload: TrialOutcome (session_id + trial_number + Classification)
-    SessionStarted = 502   # payload: session_id str
-    SessionEnded   = 503   # payload: SessionSummary (session_id + total_trials)
-    # --- session lifecycle commands (API → engine → worker) -----------
-    StartSession   = 504   # payload: {"session_id": str, "paradigm": str|None}
-    EndSession     = 505   # payload: session_id str or {session_id, interruption_reason}
+    TrialCompleted = 501   # payload: TrialOutcome (generation + trial_number + Classification)
 
 
 class Event:
@@ -62,10 +52,6 @@ class Event:
     Payload contracts:
 
       TrialCompleted   application.events.TrialOutcome
-      SessionEnded     application.events.SessionSummary
-      SessionStarted   str  (session_id)
-      StartSession     dict {"session_id": str, "paradigm": str|None}
-      EndSession       str  (session_id)
       StartStimulation str|None (paradigm)
       StartStimTrial   dict {"n_trials": int, "trial_params": list|None}
       AcquisitionState application.events.AcquisitionSnapshot

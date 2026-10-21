@@ -9,11 +9,10 @@ from omnibci.domain.classification import Classification
 from omnibci.application.events import (
     CommandRequest,
     CommandResult,
-    SessionSummary,
     TrialOutcome,
 )
 
-__all__ = ["TrialOutcome", "SessionSummary", "event_to_wire",
+__all__ = ["TrialOutcome", "event_to_wire",
            "make_stimulation_ack", "payload_to_jsonable"]
 
 logger = logging.getLogger(__name__)
@@ -45,21 +44,10 @@ def event_to_wire(event: Event) -> Optional[dict]:
             logger.error("event_to_wire: TrialCompleted payload is %s, not TrialOutcome",
                          type(data).__name__)
             return None
-        return {"event": "TrialCompleted", "session_id": data.session_id,
+        return {"event": "TrialCompleted", "generation": data.generation,
                 "trial_number": data.trial_number,
                 **({"config_revision": data.config_revision} if data.config_revision is not None else {}),
                 **_classification_fields(data.classification)}
-
-    if etype == EventType.SessionStarted:
-        return {"event": "SessionStarted", "session_id": str(data)}
-
-    if etype == EventType.SessionEnded:
-        if not isinstance(data, SessionSummary):
-            logger.error("event_to_wire: SessionEnded payload is %s, not SessionSummary",
-                         type(data).__name__)
-            return None
-        return {"event": "SessionEnded", "session_id": data.session_id,
-                "total_trials": data.total_trials}
 
     if etype == EventType.StimulationAck:
         # Payload arrives from the stimulation process as a JSON dict over the
@@ -124,11 +112,9 @@ def payload_to_jsonable(data: Any) -> Any:
     scalars pass through unchanged.
     """
     if isinstance(data, TrialOutcome):
-        return {"session_id": data.session_id, "trial_number": data.trial_number,
+        return {"generation": data.generation, "trial_number": data.trial_number,
                 **({"config_revision": data.config_revision} if data.config_revision is not None else {}),
                 **_classification_fields(data.classification)}
-    if isinstance(data, SessionSummary):
-        return {"session_id": data.session_id, "total_trials": data.total_trials}
     if isinstance(data, CommandRequest):
         return {
             "command_id": data.command_id,

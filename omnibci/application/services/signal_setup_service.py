@@ -187,13 +187,3 @@ class SignalSetupService:
             self._receipt, self._plan = receipt, plan
             self._bound_key, self._source_fingerprint = source_key, metadata.fingerprint
             return deepcopy(receipt)
-
-    def prepare_session(self):
-        snapshot = self.engine.applied_snapshot or {}
-        missing = [slot for slot in ("processing.decoder", "processing.epoch_detector")
-                   if binding_for(snapshot, slot) is None]
-        if missing:
-            raise ConfigProfileValidationError(
-                "Configure Signal Processing before starting a session: " + ", ".join(missing))
-        receipt = self.prepare()
-        return self._plan.to_dict() if receipt is not None else None

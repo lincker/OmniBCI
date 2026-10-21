@@ -24,7 +24,7 @@ lines.on('line', line => {
     emit({ event: 'ready', launch_id: message.launch_id, instance_id: String(descendant?.pid ?? 'fixture'), url: 'http://127.0.0.1:49321' });
   } else if (mode === 'broken') process.stdout.write('invalid control output\\n');
   else {
-    if (mode === 'progress' && message.op === 'prepare_shutdown') emit({ event: 'shutdown_progress', phase: 'draining_recording' });
+    if (mode === 'progress' && message.op === 'prepare_shutdown') emit({ event: 'shutdown_progress', phase: 'draining_acquisition' });
     emit({ event: 'result', id: message.id, ok: true }, () => { if (message.op === 'shutdown') process.exit(0); });
   }
 });
@@ -79,7 +79,7 @@ test("private shutdown progress exposes a readable stage and resets when returni
   try {
     await backend.start("progress", temporary, false, () => {});
     assert.equal((await backend.command("prepare_shutdown")).ok, true);
-    assert.equal(backend.shutdownStage, "Draining recorded results");
+    assert.equal(backend.shutdownStage, "Draining acquisition and processing");
     assert.equal((await backend.command("resume")).ok, true);
     assert.equal(backend.shutdownStage, "Waiting for backend acknowledgement");
   } finally { await backend.force(); }

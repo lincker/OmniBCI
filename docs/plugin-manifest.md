@@ -177,8 +177,8 @@ entrypoints. A missing pinned selection never falls back to a legacy alias.
 
 Automatic module restart or graph rebuild requires a valid checkpoint or the
 explicit live-source guarantee before it can resume an existing stream. An
-unknown source remains paused with its old session open, and requires an explicit
-engine stop before retrying the change. Decoder/filter trial-boundary changes do
+unknown source remains paused and requires an explicit engine stop before
+retrying the change. Decoder/filter trial-boundary changes do
 not stop the source and do not need these resumption capabilities.
 
 Headless tests cover capability receipts, command ordering, replay checkpoints,

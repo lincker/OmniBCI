@@ -43,7 +43,7 @@ function fixture() {
     profile("lab-b", "acquisition", scanV1, "Lab B", 3),
     profile("lab-a", "acquisition", scanV1, "Lab A", 2),
     profile("lab-v2", "acquisition", scanV2, "Version 2 lab", 4),
-    profile("replay", "acquisition", replay, "Recorded session", 5),
+    profile("replay", "acquisition", replay, "Recorded data", 5),
     profile("band-a", "filter", bandpass, "Band A", 6),
     profile("band-b", "filter", bandpass, "Band B", 7),
     profile("notch-a", "filter", notch, "Notch A", 8),

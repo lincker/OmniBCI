@@ -30,7 +30,6 @@ class RuntimePlanResponse(BaseModel):
     strategy: Literal["select_on_start", "no_change", "trial_boundary", "module", "rebuild"]
     changed_slots: list[str]
     changed_settings: list[str]
-    session_effect: Literal["preserve", "continuation"]
     errors: list[str]
     signal_summary: str | None = None
     module: ConfigurationModule | None = None

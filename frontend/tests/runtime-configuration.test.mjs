@@ -17,7 +17,7 @@ globalThis.window = { localStorage: { getItem: () => "en" }, navigator: { langua
 const noop = () => {};
 const status = { running: true, accepted_revision: "selected-previous", applied_revision: "selected-previous", generation: "generation-1", operation: null };
 const plan = { plan_id: "plan-1", expected_revision: status.accepted_revision, target_revision: "selected-next", applied_revision: status.applied_revision,
-  generation: status.generation, running: true, strategy: "trial_boundary", session_effect: "preserve", changed_slots: ["processing.decoder"], changed_settings: [], errors: [] };
+  generation: status.generation, running: true, strategy: "trial_boundary", changed_slots: ["processing.decoder"], changed_settings: [], errors: [] };
 const baseRuntime = { status, plan, operation: null, blocked: false, inProgress: false, recoveryRequired: false, submitting: false,
   uncertain: false, error: null, requestError: null, review: noop, apply: noop, dismissPlan: noop, refresh: noop, retryUnconfirmed: noop };
 const render = (component, props) => renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(component, props)));
@@ -31,15 +31,13 @@ function buttonDisabled(html, label) {
 test("review presents the impact before Apply and blocks invalid plans", () => {
   const html = render(RuntimeConfigurationReview, { runtime: baseRuntime });
   assert.match(html, /Apply after the current trial completes/);
-  assert.match(html, /Preserve the current session/);
   assert.match(html, /processing.decoder/);
   assert.equal(buttonDisabled(html, "Apply configuration"), false);
   const invalid = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan, errors: ["Selected package is unavailable"] } } });
   assert.match(invalid, /Selected package is unavailable/);
   assert.equal(buttonDisabled(invalid, "Apply configuration"), true);
-  const rebuild = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan, strategy: "rebuild", session_effect: "continuation" } } });
+  const rebuild = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan, strategy: "rebuild" } } });
   assert.match(rebuild, /Pause and rebuild the engine/);
-  assert.match(rebuild, /continuation session/);
   const channels = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan,
     signal_summary: "Channels: C4, C3; types: EEG" } } });
   assert.match(channels, /Channels: C4, C3; types: EEG/);
@@ -94,7 +92,7 @@ test("routine configuration states render no status bar or revision details", ()
 test("Run preserves system progress and permits stop controls only after an operation settles", () => {
   const props = { engine: { data: { running: true, acquisition_alive: true, processor_alive: true }, error: null, refresh: noop },
     acquisition: { data: { connected: true, streaming: true, sample_rate: 250, channel_count: 8 }, error: null, refresh: noop },
-    feed: { session: { state: "running", session_id: "session-1" }, trials: [], acks: [] }, onBusyChange: noop, onEditSetup: noop, onResults: noop };
+    feed: { generation: "engine-1", trials: [], acks: [] }, onBusyChange: noop, onEditSetup: noop, onResults: noop };
   const run = (runtime) => renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(RunConsole, { ...props, runtime })));
   const pending = run({ ...baseRuntime, blocked: true, inProgress: true });
   assert.match(pending, /aria-label="System progress"/);
@@ -154,7 +152,7 @@ for (const [name, activeInput, expected] of [
   try {
     tree = RunConsole({ engine: { data: { running: true }, error: null, refresh: noop },
       acquisition: { data: { connected: true, streaming: false }, error: null, refresh: noop },
-      feed: { session: null, trials: [], acks: [] }, runtime: baseRuntime,
+      feed: { generation: null, trials: [], acks: [] }, runtime: baseRuntime,
       onBusyChange: noop, onEditSetup: noop, onResults: noop });
   } finally { dispatcher.current = previous; }
   const html = renderToStaticMarkup(React.createElement(I18nProvider, null, tree));

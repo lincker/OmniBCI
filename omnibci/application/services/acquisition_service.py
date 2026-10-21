@@ -56,16 +56,12 @@ class AcquisitionAppService:
         self._connection_id = None
         self.lifecycle_lock = lifecycle_lock or RLock()
         self._prepare_signal = None
-        self._validate_recording = None
         self._metadata_binding = None
         self._clear_metadata()
 
     def set_signal_preparer(self, callback) -> None:
         """Install the signal preparation application service after composition."""
         self._prepare_signal = callback
-
-    def set_recording_validator(self, callback) -> None:
-        self._validate_recording = callback
 
     def set_metadata_binding(self, binding_provider) -> None:
         """Scope connection metadata to the binding that owns the running source."""
@@ -108,51 +104,32 @@ class AcquisitionAppService:
     @admitted
     def handle_start_stream(self, cmd: StartStreamCommand) -> None:
         with self.lifecycle_lock:
-            if self._validate_recording is not None:
-                self._validate_recording()
+            if not self._streaming:
+                # EOF and disconnect stop the source before processing finishes.
+                self.handle_stop_and_drain()
             receipt = self._prepare_signal() if self._prepare_signal is not None else None
             self._put_event(EventType.StartStream, receipt)
         logger.info("StartStream event dispatched")
 
     @admitted(recovery=True)
     def handle_stop_stream(self, cmd: StopStreamCommand) -> None:
-        with self.lifecycle_lock:
-            self._put_event(EventType.StopStream)
-        logger.info("StopStream event dispatched")
+        self.handle_stop_and_drain()
+        logger.info("Stream stopped and processing drained")
 
     @admitted(recovery=True)
     def handle_stop_and_drain(
-        self, *, session_id: str | None = None, timeout_s: float | None = None,
+        self, *, timeout_s: float | None = None,
     ) -> StreamDrainReceipt:
         """Wait for processing evidence after acquisition joins its producer."""
         with self.lifecycle_lock:
             result = self._command_executor.request(
-                EventType.StopAndDrain, {"session_id": session_id}, timeout_s=timeout_s,
+                EventType.StopAndDrain, timeout_s=timeout_s,
             )
         try:
             receipt = StreamDrainReceipt.from_value(result.data)
         except ValueError as exc:
             raise RuntimeError("Worker did not provide valid stream drain evidence") from exc
-        if session_id is not None and receipt.session_id != session_id:
-            raise RuntimeError("Stream drain receipt belongs to a different session")
         return receipt
-
-    @admitted
-    def begin_raw_recording(self, metadata: dict) -> dict:
-        """Bind raw acquisition output to a session before starting its stream."""
-        with self.lifecycle_lock:
-            result = self._command_executor.request(EventType.BeginRawRecording, deepcopy(metadata))
-            return self._recording_receipt(result.data, metadata.get("session_id"))
-
-    @admitted(recovery=True)
-    def end_raw_recording(self, session_id: str) -> dict:
-        """Confirm that the session's raw recording was durably completed."""
-        with self.lifecycle_lock:
-            result = self._command_executor.request(EventType.EndRawRecording, {"session_id": session_id})
-            receipt = self._recording_receipt(result.data, session_id)
-            if receipt.get("status") != "completed":
-                raise RuntimeError("Raw recording did not complete successfully")
-            return receipt
 
     def reset(self) -> None:
         """Clear the state projection.
@@ -167,16 +144,6 @@ class AcquisitionAppService:
         self._streaming = False
         self._connection_id = None
         self._clear_metadata()
-
-    @admitted(recovery=True)
-    def abort_raw_recording(self, session_id: str) -> dict:
-        """Close an unhealthy recording without claiming successful completion."""
-        with self.lifecycle_lock:
-            result = self._command_executor.request(EventType.AbortRawRecording, {"session_id": session_id})
-            receipt = self._recording_receipt(result.data, session_id)
-            if receipt.get("status") not in {"completed", "failed", "interrupted"}:
-                raise RuntimeError("Raw recording did not report a terminal state")
-            return receipt
 
     # ------------------------------------------------------------------
     # EventBus listeners (registered in bootstrap.register_engine_listeners)
@@ -279,14 +246,6 @@ class AcquisitionAppService:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _recording_receipt(data, session_id) -> dict:
-        if (not isinstance(data, dict) or not isinstance(session_id, str) or not session_id
-                or data.get("session_id") != session_id
-                or any(not isinstance(data.get(key), str) or not data[key] for key in ("id", "path"))):
-            raise RuntimeError("Worker returned invalid raw recording evidence")
-        return deepcopy(data)
 
     def _clear_metadata(self) -> None:
         self._descriptor = None

@@ -6,7 +6,7 @@ import pytest
 from omnibci.application.ports.engine_port import EnginePort
 from omnibci.shared.events import Event, EventType
 from omnibci.application.services.acquisition_service import AcquisitionAppService
-from omnibci.application.events import CommandResult
+from omnibci.application.events import CommandResult, StreamDrainReceipt
 from omnibci.application.services.stimulation_service import StimulationAppService
 from omnibci.application.commands.acquisition_commands import (
     ConnectDataProviderCommand,
@@ -61,6 +61,8 @@ class _PortCommandExecutor:
             command_id="test-command",
             command=event_type.name,
             ok=True,
+            data=StreamDrainReceipt(None, None, -1, 0, False).to_dict()
+                 if event_type is EventType.StopAndDrain else None,
         )
 
 
@@ -100,7 +102,7 @@ class TestAcquisitionUsesPort:
         port = FakeEnginePort()
         svc = _acquisition_service(port)
         svc.handle_start_stream(StartStreamCommand())
-        assert port.dispatched[0].type == EventType.StartStream
+        assert [event.type for event in port.dispatched] == [EventType.StopAndDrain, EventType.StartStream]
 
     def test_propagates_engine_not_ready(self):
         svc = _acquisition_service(RaisingEnginePort())

@@ -13,6 +13,7 @@ from omnibci.infrastructure.plugins.algorithms.decoders.classic40_fbcca.classic_
 from omnibci.infrastructure.plugins.algorithms.epoch.detector import DefaultEpochDetector
 from omnibci.sdk import PluginContext
 from tests.processing_helpers import make_processor
+from omnibci.shared.events import EventType
 
 
 @pytest.mark.parametrize("decoder_class,usable_samples", [
@@ -50,9 +51,10 @@ def test_forced_window_at_numerical_minimum_still_decodes(decoder_class, usable_
 @pytest.mark.parametrize("second_event", [7, 9])
 async def test_early_marker_keeps_processor_running_for_next_valid_epoch(decoder_class, first_chunk_size, second_event):
     decoder = decoder_class(parameters={"window_duration": 1.0}, context=PluginContext(sample_rate=500))
+    events = []
     processor = make_processor(
         detector=DefaultEpochDetector(), decoder=decoder, command_queue=Queue(),
-        data_manager=DataManager(buffer=Queue()), event_bus=SimpleNamespace(put_event=lambda event: None),
+        data_manager=DataManager(buffer=Queue()), event_bus=SimpleNamespace(put_event=events.append),
         sample_rate=500,
     )
     times = np.arange(640) / 500
@@ -64,7 +66,7 @@ async def test_early_marker_keeps_processor_running_for_next_valid_epoch(decoder
         processor.data_manager.put_data(SignalChunk(0, sequence, raw[:, start:end]))
         await processor._current_state.run()
 
-    trials = processor.session_runtime.session.trials
+    trials = [event.data for event in events if event.type is EventType.TrialCompleted]
     assert len(trials) == 1
     assert trials[0].classification.event_id == second_event
     assert trials[0].classification.target_id == 5

@@ -22,14 +22,16 @@ it does not need a complete experiment. Host settings remain a separate operatio
 Acquisition Connect validates and loads the acquisition source. Signal Processing
 starts in standby without interpreting the decoder input. Preparing processing
 validates its channel mapping and loads Decoder, Epoch Detector and Filters using
-the observed source descriptor. Starting a session requires a complete processing
-selection and starts managed Actuation. An unrelated missing or invalid decoder
-or effector cannot block Acquisition configuration or connection.
+the observed source descriptor. Starting the stream prepares configured processing
+and managed Actuation. With no Decoder selected, Acquisition can run on its own.
+An unrelated missing or invalid decoder or effector cannot block Acquisition
+configuration or connection. Decoded results publish directly without a Session.
 
 Fresh installations have no selected plugins. Profiles and selections are created
 explicitly in their module pages; the global settings initializer and alias-to-profile
 mapper have been removed. Packaged settings contain host controls only. Idle Apply
-saves the selected module; runtime archival begins when the configuration is used.
+saves the selected module. Runtime results remain transient; there is no Session
+repository or configuration archive.
 
 ## Ownership rules
 
@@ -146,8 +148,9 @@ and [plugin loading](../omnibci/infrastructure/plugins/runtime_configuration.py)
 Apply boundaries below describe the existing coordinator's conservative
 behavior, not a promise that every `x-apply: module` edit restarts only one
 process. Acquisition changes currently rebuild the engine graph. A running
-rebuild uses a continuation session; decoder/filter trial-boundary changes
-preserve the session. External processes have additional application limits.
+rebuild creates a new engine generation; decoder/filter trial-boundary changes
+preserve the generation and result counter. External processes have additional
+application limits.
 
 | Existing flat key | Owner and Profile parameter | Scope | Runtime boundary |
 | --- | --- | --- | --- |
@@ -243,7 +246,6 @@ Plugin Profile merely because a key starts with a module name.
 | `ACTUATION.enabled` | Actuation subsystem topology | Engine rebuild; the process manager recalculates enabled/managed state from the supplied snapshot |
 | `STIMULATION.auto_spawn`, `ACTUATION.auto_spawn` | Deployment mode: host-managed or external process | Managers read each supplied snapshot; the current plan rejects live rebuilds involving external peers, including relevant deployment-mode transitions |
 | `NEUROENGINE.command_timeout_s` | REST command-result waiting policy | Backend startup; the command broker captures the value |
-| `PERSISTENCE.session_repository` | Backend session repository implementation | Backend startup; do not replace the live repository during configuration application |
 | `PLUGINS.user_dir` | Local plugin discovery/install location | Deployment/startup setting; currently environment override, then raw settings, then platform default |
 
 The console labels `ALGORITHM.baseline_duration` as **Pre-trigger duration (s)**;
@@ -385,7 +387,7 @@ listed in sections 3 and 5, including `ACQUISITION.channel_names` and
 require the current managed-process and external-peer checks.
 
 The backend-startup boundary covers `NEUROENGINE.command_timeout_s`,
-`PERSISTENCE.session_repository`, `PLUGINS.user_dir`, `LOGGING.level`, and
+`PLUGINS.user_dir`, `LOGGING.level`, and
 `LOGGING.file_path`. The service captures the loaded startup values when the
 backend is assembled, using the existing defaults for absent keys. Plugin path
 comparison uses the effective resolved path, including `OMNIBCI_PLUGIN_DIR`

@@ -30,7 +30,6 @@ def isolated_composition(tmp_path, monkeypatch):
     settings.set("STIMULATION.auto_spawn", False)
     settings.set("ACTUATION.auto_spawn", False)
     settings.set("ACTUATION.enabled", False)
-    settings.set("PERSISTENCE.session_repository", "in_memory")
     settings.set("ACQUISITION.signal_source", "file_reader")
     settings.save()
     monkeypatch.setattr(conf, "settings", settings)

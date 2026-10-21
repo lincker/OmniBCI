@@ -5,8 +5,8 @@
 The `tests` workflow configures Python 3.14 jobs on GitHub's Linux, macOS, and
 Windows runners. Each OS runs the headless unit suite and a separate integration
 suite using real subprocesses, local IPC, and checked-in signal fixtures. The
-headless suite includes runtime failure injection for drain, projection,
-checkpoint, startup, persistence, output settlement, and unknown resume outcomes.
+headless suite includes runtime failure injection for drain, result publication,
+checkpoint, startup, configuration persistence, output settlement, and unknown resume outcomes.
 
 Managed stimulation and actuation children explicitly use the `spawn` context so
 each launch inherits the caller's current deployment environment. A regression
@@ -42,10 +42,11 @@ They do not certify every subsequent change or hardware/storage deployment.
 
 ### Curry 8 signal path and runtime checks
 
-The Curry 8 path is TCP NetStreaming → source adapter → `SignalChunk` → raw
-recording and IPC queue → processing channel mapping → epoch collection →
-ordered filters → decoder → session Trial results. Raw recording happens before
-mapping and filtering, so it retains auxiliary channels and the native event row.
+The Curry 8 path is TCP NetStreaming → source adapter → `SignalChunk` → IPC
+queue → processing channel mapping → epoch collection → ordered filters → decoder
+→ `TrialOutcome` → results view and WebSocket. The source adapter preserves
+auxiliary channels and the native event row; processing selects only configured
+signal inputs. No Session lifecycle or storage writer is required.
 
 | Boundary | Processing and checks | Runtime implication |
 | --- | --- | --- |
@@ -54,21 +55,21 @@ mapping and filtering, so it retains auxiliary channels and the native event row
 | Experiment expectations | Compare only explicitly configured sample rate and output-row count with observed metadata. | Missing expectations use the device values. A provided mismatch still blocks preparation, even when the other field is absent. Profiles are not rewritten. |
 | Processing preparation | Resolve channel IDs, ordering, aliases and declared types; check the decoder's channel requirements and acknowledge the plan for the current connection/configuration. | CCA/FBCCA require EEG inputs. Select actual EEG channels and declare `eeg` in processing input when Curry reports no types. Coordinates and a montage are not required. Stale plans and unavailable channels remain errors. |
 | EEG packets | Decode supported int16/float32 payloads into channels × samples; preserve the native final trigger row. Ignore separate event-list and impedance packets. | Truncated/misaligned EEG bodies fail. Compressed streaming is currently unsupported and must be disabled on the server. No amplitude threshold, resampling or unit conversion is applied here. |
-| Raw storage | Add host acquisition time and increasing chunk sequence; append the full original matrix before sending it downstream. | Numeric dtype, row count, finite timestamp, sequence order and active writer/session ownership are checked. These protect recording integrity; absent experiment expectations do not prevent recording. |
+| Acquisition queue | Add host acquisition time and an increasing chunk sequence, then enqueue the original matrix. | The trigger row stays part of each chunk. There is no storage write or writer-ownership gate on this path. |
 | Mapping and epochs | Select/reorder signal rows while preserving trigger values; detect boundaries and collect post-trigger samples plus separate pre-trigger history. | The default detector treats each nonzero trigger sample as a new start. No trigger means no decoded Trial, while raw acquisition can continue. |
 | Filters and decoding | Apply configured filters in order to the accumulated window, then call the decoder. Baseline data is supplied separately to filters. | Baseline collection alone does not apply baseline correction. Closing boundaries can force a decode before the normal duration gate. A decoder may decline an unusable window with `None`. |
-| Results and stopping | Validate decoder output, record a Trial in the running session, publish result events; stop joins acquisition, flushes storage and drains processing before closing the session. | No classification is invented for a declined epoch. A failed write or incomplete drain retains failure/recovery evidence. |
+| Results and stopping | Validate decoder output and publish `TrialOutcome` directly; stop joins acquisition and drains processing. | Results are numbered within the engine generation. No classification is invented for a declined epoch. Publication or drain failures remain visible. |
 
 For a minimal Curry run, select **Neuroscan CURRY 8**, set its host and TCP port
 (default `4455`), start the engine and connect, then read metadata. Keep the
 connection-only binding to use observed dimensions, or save and apply the
 observed values to establish an experiment baseline. In the decoder
 Profile, select the EEG channels used by the experiment and declare their type
-as `eeg`; preview, save and apply that mapping before starting a recording.
+as `eeg`; preview, save and apply that mapping before starting the data stream.
 The prepared decoder uses the observed sample rate. Neither electrode positions
 nor a manually duplicated sample rate is required.
 
-The default source selection is File Reader, so it must be changed for this run.
+Select the hardware source explicitly; a File Reader binding cannot connect to Curry.
 Acquisition/decoding does not require launching visual stimulation. If stimulation
 is also needed, the bundled Scan45 and CURRY 8 parallel triggers are Windows-only; select
 **None (no trigger output)** for a preview without hardware markers, a suitable
@@ -91,11 +92,11 @@ python -m pytest tests/infrastructure/test_classic40_short_epochs.py
 
 The TCP test uses 500 Hz and 700 float32 samples across five signal channels and
 one event row. It loads the configured Curry plugin, acknowledges preparation
-without expected source dimensions, records all rows exactly, selects O2/O1/Oz
+without expected source dimensions, verifies all incoming rows exactly, selects O2/O1/Oz
 as EEG, and produces target 1 for a simulated 8 Hz input through the real CCA
 and default epoch detector. It exercises the runtimes in one process; the CNT
-mapping integration test separately covers spawned workers and application-level
-session/recording creation without source expectations.
+mapping integration test separately covers spawned workers, direct stream control,
+reconnection and channel preparation without source expectations.
 The simulator follows the current driver's protocol contract; it does not prove
 vendor conformance. Acquisition start/stop control packets invalidate cached
 Curry metadata. Restarting the amplifier during a run still requires recovery
@@ -115,16 +116,6 @@ decoder/processing regressions. All 27 integration tests passed with socket
 access, with one skip. The frontend's 152 tests, TypeScript check and production
 build passed, as did all eight architecture contracts. No hardware or other-OS
 run was performed.
-
-The local raw-session recording and format-boundary update on 2026-10-17 passed
-all 2,976 headless backend tests. The complete integration suite passed 26 tests
-with one skip. Coverage includes real-worker recording, session switching,
-failure recovery, alternative writer injection, writer construction under spawn,
-legacy file compatibility, and rejection of unsupported formats and versions.
-All seven architecture contracts passed. The preceding API update also passed
-all 152 frontend tests, TypeScript checking, and generated REST contract checks.
-These checks use synthetic signals and file replay on macOS, not live hardware
-or other operating systems.
 
 The Signal Processing refactor on 2026-10-17 passed the complete headless backend
 suite on macOS with Python 3.14: 2,768 passed, one skipped, and two dependency
@@ -310,232 +301,44 @@ Until such a controller is configured and implemented, the queue remains
 unbounded and operators must use the existing stop/drain controls when measured
 latency exceeds their deployment budget.
 
-## Session persistence and ownership
+## Minimal runtime and result lifetime
 
-The default `PERSISTENCE.session_repository` is `sqlite`. Session metadata,
-subject references, append-only Trial results, prepared signal plans, and raw-file
-receipts are stored in `omnibci.sqlite3` in the platform application-data directory
-for `OmniBCI`. `OMNIBCI_DATABASE_PATH` selects an alternative absolute database
-path. `in_memory` remains available for tests and explicitly transient runs.
-The database does not contain raw signal arrays or filtered epoch matrices.
+`POST /api/v1/acquisition/stream/start` drains any previous read while the source
+is stopped, prepares the selected Signal Processing pipeline against the connected
+source, then starts reading. This clears partial epochs and pre-trigger history
+after file EOF or a disconnect before new samples arrive. With no Decoder
+selected, Acquisition can read on its own and the standby processor consumes the
+queue. Connect does not load unrelated processing or output plugins.
 
-The SQLite adapter uses transactions, WAL, foreign keys, and full synchronous
-writes. Duplicate Trial events with identical content are idempotent; conflicting
-content for the same session/trial number is rejected. A backend holds an OS
-lease beside the database for its lifetime. Starting a second backend against
-the same database fails instead of reconciling another backend's active sessions.
+The processor publishes each decoded `TrialOutcome` directly, without a Session
+start command or a persistent Trial projection. `generation` identifies the
+engine runtime and `trial_number` increases within that generation. Stopping and
+starting a stream keeps the counter; rebuilding the engine creates a new
+generation and a fresh counter. Each result retains its epoch's configuration
+revision.
 
-Before accepting commands after restart, the backend checks ownership of any
-referenced recording writers. Old `running` sessions become `ended` with an
-interruption reason; acquisition and stimulation are not resumed. A continuation
-uses a new session ID and retains `continuation_of` and `subject_id`. Recovery
-can locate a unique recording for an existing session whose start receipt was
-lost. It does not import arbitrary orphan directories as invented sessions.
+`POST /api/v1/acquisition/stream/stop` stops and joins acquisition, then places an
+ordered barrier after the final chunk. Processing publishes all completed results
+before acknowledging that barrier and clears partial epochs and pre-trigger
+history. A drain failure cannot be reported as successful completion. Physical
+output settlement remains a separate concern during runtime reconfiguration.
 
-`omnibci.application.session_runtime.SessionRuntime` owns `BCISession` inside the
-existing Signal Processing child process. `SignalProcessor` delivers decoded
-Trial metadata to that runtime synchronously; the aggregate records and publishes
-the result before the stream-drain acknowledgment. `SessionAppService` in the
-main process coordinates commands, recording lifecycle, and persistent projections.
-Acquisition writes the original signal through the `SignalRecorder` port.
+`GET /api/v1/results` exposes a bounded in-memory view of the latest 200 decoded
+results for the current engine generation. WebSocket results use the same
+`generation` and `trial_number` identity. These results are transient: the minimal
+runtime has no Session API, SQLite trial store, automatic raw recording, result
+export, configuration archive or Recording Replay plugin. Existing files on disk
+are not deleted or migrated by this code removal. File Reader still supports
+external CNT input.
 
-For a failed or uncertain session, use `POST /api/v1/sessions/{id}/abort` with
-`{"reason": "description of the failure"}`. Abort blocks new ordinary operations,
-attempts drain and file closure, stops the old engine generation, and preserves
-failure diagnostics. It closes the session only after worker shutdown and recording
-ownership are confirmed. A timeout retains the recovery requirement; it does not
-authorize another writer or turn a failed recording into `completed`.
-
-## Local raw session recordings
-
-Connect the acquisition source before creating a session. The normal session
-creation path prepares the source and Signal Processing binding, then opens a
-local raw recording for that session before samples flow. `POST /api/v1/recording/start`
-combines this with starting the stream. Both this endpoint and `POST /api/v1/sessions`
-accept an optional `subject_id`; omit it or pass `null` when no subject is known.
-It is an opaque external reference, not an identity-management feature. Empty or
-whitespace-only values and non-string values are rejected. A continuation creates
-a new session and recording while retaining the subject reference.
-
-Recordings use the platform application-data directory for `OmniBCI`, under
-`recordings/`. Set `OMNIBCI_RECORDING_DIR` to an absolute path to select another
-root. Each recording has a generated UUID directory; subject and session labels
-are stored in metadata and are never used as directory names. Session queries
-and JSON/CSV exports expose the local recording receipt in the optional
-`recording` field. Existing records without recording metadata return `null`.
-
-Each directory contains:
-
-- `metadata.json`: format identifier/version, session/subject identifiers, continuation,
-  source descriptor, runtime/configuration context, status, counts, and the last
-  successful durability checkpoint.
-- `chunks.npy`: consecutive NumPy arrays containing each plugin-produced raw
-  matrix, including every source signal channel and the final trigger row,
-  before Signal Processing channel mapping, filtering, epoching, or decoding.
-- `chunks.jsonl`: one index entry per successfully written chunk, with its byte
-  offset, sample count, sequence ID, acquisition timestamp, and configuration
-  revision. Built-in acquisition timestamps are host Unix nanoseconds, not
-  hardware sample timestamps.
-
-Pausing the stream flushes the data and index while retaining the same open
-recording. Ending a session stops and drains acquisition before finalizing its
-recording. Creating a session while another is active drains and ends the old
-session first, opens a separate recording, and restores a previously running
-stream. An unfinished epoch is discarded at this boundary, while its original
-samples remain in the old raw file. A shutdown or write failure leaves an
-interrupted or failed status; an abrupt process exit can leave `recording` status
-and partial trailing data. Only a successfully finalized recording reports
-`completed`. The default database preserves the Session and Trial history across
-restart and reconciles its associated raw-file receipts.
-
-While recording, acquisition requests a flush approximately once per second;
-pause and finish also force flushing. A successful checkpoint requires data
-flush/fsync, index flush/fsync, and an atomic manifest update, in that order.
-This guarantees the successfully checkpointed prefix under the filesystem's
-durability semantics, not a fixed one-second maximum loss after power failure.
-Synchronous disk operations can delay both acquisition and checkpoint scheduling.
-
-Read indexed chunks lazily through the infrastructure reader:
-
-```python
-from omnibci.infrastructure.acquisition.recording import iter_recorded_chunks
-
-for chunk in iter_recorded_chunks("/absolute/path/to/recording-uuid"):
-    raw = chunk.raw_data  # Original dtype and trigger row are preserved.
-```
-
-The strict reader follows the chunk index; a single `numpy.load` call does not
-read an entire multi-chunk file. `inspect_recording(path)` reports the valid
-indexed prefix, checkpoint, and unindexed or invalid trailing bytes.
-`iter_valid_recorded_chunks(path)` explicitly reads that validated prefix of a
-partial recording. `recover_recording(path)` requires the writer's OS lease and
-marks an abandoned active file interrupted without truncating its arrays or index.
-
-Recovery rejects corruption inside the durable prefix. Complete indexed chunks
-beyond the checkpoint can be readable, but were not covered by that checkpoint's
-durability guarantee. Unindexed arrays cannot recover their original timestamps,
-sequence IDs, or configuration revisions, so recovery does not invent those
-values. These checks validate structure and boundaries; they are not bit-level
-integrity checksums. Keep all three original files together.
-
-Storage implementations follow `omnibci.domain.ports.recording.SignalRecorder`:
-`start`, `append`, `flush`, and `finish`. AcquisitionRuntime receives this port;
-AcquisitionWorker chooses the implementation through `recorder_factory` and
-constructs it inside the worker process. Factories must be importable and
-serializable under multiprocessing spawn; do not pass open writers or file
-handles across processes. The default remains `LocalSignalRecorder`, which
-implements the NumPy/JSON format. To add a format, implement this contract and
-wire its factory at worker construction; Session and processing logic remain
-independent of encoding and filenames.
-
-Receipts and metadata now identify `format="omnibci.numpy-chunks"` and
-`format_version=1`. A new implementation must use a distinct format identifier,
-and incompatible layout changes must increment its version. The current reader
-accepts original v1 manifests without a format identifier and rejects unknown
-formats/versions before reading data. Legacy v1 files without checkpoints remain
-readable, but do not acquire a retrospective durability guarantee.
-`RecordedSignalReader` and `open_recording_reader` in
-`omnibci.infrastructure.acquisition.recording_reader` isolate playback from the
-file layout. Add the matching reader and recovery support when adding a storage
-implementation; changing the default writer does not migrate old files.
-
-## Immutable configuration history
-
-`GET /api/v1/sessions/{id}/configurations` returns archived configuration snapshots
-and their application attempts in the standard API response envelope. Snapshots
-contain ordered plugin bindings, exact selected versions, materialized parameters,
-decoder channel mappings, and selected runtime settings. They are keyed by
-`config_revision` and do not depend on mutable Profile files. Trial records retain
-the revision actually used for each result.
-
-Session links select which revisions the endpoint returns. Each snapshot's
-`applications` list is the global history of that revision, including its use in
-other engine runs; it is not a per-session event timeline. Inspect each attempt's
-`generation`, `session_id`, and `context` when interpreting it. Engine-start attempts
-have no session ID because the engine becomes ready before a Session is created.
-
-A candidate is archived before workers may apply it. Each application attempt
-records its own generation, context, timestamps, status, and acknowledged receipts.
-`pending` means the outcome has not been confirmed; a command timeout alone does
-not make it `applied`. Known failures remain `failed`. If a candidate really applied
-and a later step required rollback, history retains that applied candidate and a
-separate rollback attempt. A rebuild associates the new revision with the new
-continuation session, rather than claiming the old session used it.
-
-Profile IDs/revisions and engine generations are excluded from immutable runtime
-content identity. Unrelated host settings are not copied. Parameters declared
-`x-scope="secret"` are redacted, with their paths listed in the archived binding.
-Reading history does not require the original Profile or plugin to remain installed.
-The archive records runtime inputs and receipts; it does not bundle plugin binaries,
-capture filtered waveforms, or promise reproduction across changed core code and
-implicit defaults.
-
-## Replay of local recordings
-
-Select the built-in Acquisition plugin `recording_replay` (display name
-**Recording Replay**). Its `recording_path` accepts an absolute recording directory
-or that directory's `metadata.json`. A completed recording is accepted by default.
-Set `allow_partial=true` only to explicitly replay the validated prefix of an
-inactive `interrupted` or `failed` recording. A file still marked `recording`
-requires recovery first; a live writer prevents opening it for replay.
-
-Replay preserves the stored dtype, all source channels and trigger row, and the
-source sample rate. It paces delivery using that sample rate. Acquisition creates
-new host timestamps for the replay run; these do not replace the original timestamps
-retained in the source index. A replay run creates a new Session and recording,
-with `source_recording` provenance identifying the original recording. Original
-signal files remain unchanged.
-
-The replay source supports stop/join/checkpoint/restore. A checkpoint identifies
-the recording and the next undelivered chunk; changed files invalidate it. Explicit
-checkpoint restoration resumes without repeating delivered chunks. Starting without
-a restored checkpoint begins at the recording's first chunk.
-
-## Raw recording performance validation
-
-Writing currently runs synchronously in the acquisition process. Measure acquisition
-intervals, append/flush latency, memory, and input-versus-file equality for the target
-device and storage. The local soak workload is 128 signal channels plus a trigger
-row at 2,048 Hz for 30 minutes. Synthetic local storage results do not establish
-behavior for other disks or physical devices.
-Inject slow writes and write failures when verifying that errors are reported and
-shutdown remains explicit. A writer thread or queue should be introduced only when
-those measurements justify the additional concurrency.
-
-Run the reproducible writer-only workload with:
-
-```sh
-python scripts/benchmark_recording.py --seconds 1800 --channels 128 --sample-rate 2048 --output recording-benchmark.json
-```
-
-The [2026-10-17 local result](benchmarks/recording-local-2026-10-17.json) used
-macOS 14.8.3, Python 3.14.2 and NumPy 2.4.4. Backend regression tests also ran on
-the machine during this measurement. It verified all 57,600 chunks, 3,686,400
-samples per channel, timestamps, float64 values and trigger rows after completion;
-the original payload total was 3,804,364,800 bytes. Temporary signal files were
-removed after verification.
-
-| Measurement | Result |
-| --- | ---: |
-| Chunk interval / budget | 31.25 ms |
-| Write plus periodic checkpoint, p99 | 3.50 ms |
-| Write plus periodic checkpoint, maximum | 129.03 ms |
-| Writes exceeding the chunk budget | 12 / 57,600 (0.021%) |
-| Maximum scheduling lateness | 125.66 ms |
-| Peak traced allocation | 3.10 MiB |
-
-Timing includes synthetic array construction and synchronous append/checkpoint
-work. Traced allocation is not process RSS. The test checks the writer's complete
-output, not hardware driver buffers, IPC throughput or processing latency.
-
-The default remains synchronous: p99 is below the chunk interval, and this
-measurement does not isolate disk latency from scheduling, allocation and other
-host work. It does expose occasional pauses beyond the interval, so the result
-does not establish a hard real-time bound or lossless physical-device capture.
-Before deploying a source that cannot tolerate such pauses, measure its buffer
-and stop latency and introduce a bounded writer queue with explicit overflow
-failure if needed. Queue capacity and shutdown deadlines require that device's
-budget; an unbounded background writer would only conceal overload.
+The direct-processing regression tests cover publication without lifecycle
+commands, monotonically increasing result numbers across stop/drain/start,
+configuration boundaries, failed publication and ordered drain acknowledgments.
+The Scan45 regression parses nine EEG channels plus the native event word,
+maps CH1–9 to decoder channels 1–9, and verifies real CCA output reaches the
+result view and WebSocket payload. The local Curry TCP simulator, CNT worker,
+and EOF/reconnect restart tests also validate software behavior;
+physical EEG hardware and marker timing still require device testing.
 
 ## Local commands
 

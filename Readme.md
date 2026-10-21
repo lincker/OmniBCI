@@ -210,8 +210,12 @@ Open <http://localhost:5173> and perform these steps:
 1. Select source/decoder plugins and Profiles in Setup, then review and apply.
 2. Start the engine.
 3. Connect the data source.
-4. Start reading.
-5. Stop reading after playback finishes to end the active session.
+4. Start reading. Triggered epochs are decoded and published directly to Run.
+5. Stop reading to drain queued samples, or let file playback reach its end.
+
+Run shows the latest 200 decoded trials for the current engine generation.
+Restarting the engine clears this view. There is no experiment Session,
+automatic raw recording, or result history export in this minimal runtime.
 
 Open **Settings → Logs** to view recent application logs from the connected
 backend. The page refreshes every five seconds while visible and also has a

@@ -10,7 +10,7 @@ process manually on the device machine:
 Single-machine deployment
 --------------------------
 Leave ``ACTUATION.auto_spawn = true``. With ``ACTUATION.enabled = true`` the
-backend spawns the Actuation subprocess when a session is prepared and terminates
+backend spawns the Actuation subprocess when processing is prepared and terminates
 it when the engine stops (see NeuroEngineService).
 
 In both modes the IPC socket architecture (Actuation → NeuroEngine) is

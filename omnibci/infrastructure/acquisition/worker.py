@@ -5,13 +5,10 @@ Plugin loading and source construction remain outside the domain layer.
 """
 import multiprocessing as mp
 from copy import deepcopy
-from collections.abc import Callable
 from typing import Optional
 
 from omnibci.application.processing_source import requires_signal_preparation
 from omnibci.domain.ports.acquisition import SignalSource
-from omnibci.domain.ports.recording import SignalRecorder
-from omnibci.infrastructure.acquisition.recording import LocalSignalRecorder
 from omnibci.infrastructure.process_lifecycle import StartupReporter
 from omnibci.infrastructure.acquisition.acquisition import (
     AcquisitionRuntime,
@@ -37,8 +34,6 @@ class AcquisitionWorker(mp.Process):
         event_bus=None,
         settings_snapshot: dict | None = None,
         startup_reporter: StartupReporter | None = None,
-        *,
-        recorder_factory: Callable[[], SignalRecorder] = LocalSignalRecorder,
     ) -> None:
         super().__init__()
         self.data_source: SignalSource
@@ -49,8 +44,6 @@ class AcquisitionWorker(mp.Process):
         self.event_bus = event_bus
         self.settings_snapshot = deepcopy(settings_snapshot)
         self.startup_reporter = startup_reporter
-        # Use an importable factory: spawn must construct file owners in the child.
-        self._recorder_factory = recorder_factory
         self._startup_stage = "settings"
 
     def run(self) -> None:
@@ -81,7 +74,6 @@ class AcquisitionWorker(mp.Process):
             preparation_required=requires_signal_preparation(snapshot),
             generation=snapshot.get("CONFIG.generation"),
             config_revision=snapshot.get("CONFIG.revision"),
-            recorder=self._recorder_factory(),
         )
         if self.startup_reporter is not None:
             self.startup_reporter.ready()

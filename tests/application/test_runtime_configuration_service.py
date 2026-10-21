@@ -59,7 +59,6 @@ def test_plan_is_pinned_and_does_not_apply_saved_values(runtime):
     edit(runtime, "processing.decoder", {"window_duration": 2.5})
     plan = service.plan(selections, expected_revision=before.revision)
     assert plan.strategy == "trial_boundary"
-    assert plan.session_effect == "preserve"
     assert not plan.errors
     edit(runtime, "processing.decoder", {"window_duration": 1.5})
     pinned = service.resolve_plan(plan.plan_id).snapshot
@@ -68,12 +67,11 @@ def test_plan_is_pinned_and_does_not_apply_saved_values(runtime):
     assert service.status()["applied_revision"] == before.revision
 
 
-def test_source_change_requires_continuation(runtime):
+def test_source_change_requires_rebuild(runtime):
     service, selections, before = runtime
     edit(runtime, "acquisition.source", {"sample_rate": 500})
     plan = service.plan(selections, expected_revision=before.revision)
     assert plan.strategy == "rebuild"
-    assert plan.session_effect == "continuation"
 
 
 def test_source_draft_is_pinned_without_saving_or_changing_profiles(runtime):
@@ -193,7 +191,6 @@ def test_decoder_input_edit_requires_rebuild_and_review_uses_profile_input(runti
     plan = service.plan(selections, expected_revision=before.revision)
 
     assert plan.strategy == "rebuild"
-    assert plan.session_effect == "continuation"
     assert plan.changed_slots == ("processing.decoder",)
     assert plan.changed_settings == ()
     assert plan.signal_summary == "Channels: channel-1 → O2 (eeg), channel-0 → O1"
@@ -300,7 +297,6 @@ def test_runtime_host_changes_still_require_rebuild(runtime):
     ("LOGGING.level", "DEBUG"),
     ("LOGGING.file_path", "changed.log"),
     ("NEUROENGINE.command_timeout_s", 42.0),
-    ("PERSISTENCE.session_repository", "another-repository"),
     ("PLUGINS.user_dir", "/another/plugin-directory"),
 ])
 def test_changed_backend_startup_settings_cannot_produce_an_apply_plan(runtime, running, key, value):

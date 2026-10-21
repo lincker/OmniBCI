@@ -337,13 +337,11 @@ async def test_early_cancellation_preserves_another_pending_update(configured):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("command", [module.SignalProcessorCommand.should_stop,
-                                    module.SignalProcessorCommand.end_session])
-async def test_stop_or_session_end_returns_cancelled_receipt_for_pending_update(configured, command):
+async def test_stop_returns_cancelled_receipt_for_pending_update(configured):
     processor, events, _, _ = configured
     await _feed(processor, [7, 0, 0])
     _stage(processor)
-    processor._execute((command, processor.session_runtime.session.session_id))
+    processor._execute(module.SignalProcessorCommand.should_stop)
     result, = _results(events)
     assert not result.ok
     assert result.data["status"] == "cancelled"

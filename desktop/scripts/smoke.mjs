@@ -106,8 +106,7 @@ try {
   await application.evaluate(({ dialog }) => {
     dialog.showMessageBox = async (_window, options) => ({ response: options.buttons?.includes("Stop and continue")
       ? options.buttons.indexOf("Stop and continue") : options.buttons?.includes("Disconnect")
-        ? options.buttons.indexOf("Disconnect") : options.buttons?.includes("Discard results")
-          ? options.buttons.indexOf("Discard results") : 0, checkboxChecked: false });
+        ? options.buttons.indexOf("Disconnect") : 0, checkboxChecked: false });
   });
   stage = "local connection";
   await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -129,17 +128,6 @@ try {
   assert.equal((await timedFetch(local.url + "/api/v1/system/info")).status, 401);
   await page.waitForFunction(() => document.querySelector(".connection-open"), null, { timeout: 20_000 });
   await page.screenshot({ path: path.join(output, "local-workspace.png") });
-
-  stage = "export";
-  const exportedPath = path.join(directory, "results.json");
-  await application.evaluate(({ dialog }, filePath) => {
-    dialog.showSaveDialog = async () => ({ canceled: false, filePath });
-  }, exportedPath);
-  const saved = await page.evaluate(id => window.omnibciDesktop.saveResults({ connectionId: id, format: "json" }), local.id);
-  assert.equal(saved.canceled, false);
-  const emptyExport = JSON.parse(await readFile(exportedPath, "utf8"));
-  assert.equal(emptyExport.format_version, 1);
-  assert.deepEqual(emptyExport.sessions, []);
 
   stage = "file selection and configuration";
   await page.getByRole("button", { name: "Run", exact: true }).click();
@@ -178,42 +166,19 @@ try {
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.getByRole("button", { name: "Start reading", exact: true }).click();
   const recorded = await pollUntil("First decoded file trial", async () => {
-    const response = await api("/sessions");
-    return { status: response.status, sessions: response.body.data?.sessions };
-  }, current => current.status === 200 && current.sessions?.some(session => session.trial_count > 0), 90_000);
-  assert.ok(recorded.sessions.some(session => session.trial_count > 0));
+    const response = await api("/results");
+    return { status: response.status, trials: response.body.data?.trials };
+  }, current => current.status === 200 && current.trials?.length > 0, 90_000);
+  assert.ok(recorded.trials.length > 0);
   await page.getByRole("button", { name: "Stop reading", exact: true }).click();
   await page.getByRole("button", { name: "Results", exact: true }).click();
   await page.getByRole("heading", { name: "Trial results", exact: true }).waitFor();
   await page.getByRole("table", { name: "Trial results", exact: true }).waitFor();
   await page.screenshot({ path: path.join(output, "replay-results.png") });
-  const finalSessions = (await api("/sessions")).body.data.sessions;
-  assert.ok(finalSessions.length > 0 && finalSessions.every(session => session.state === "ended"));
-  assert.ok(finalSessions.some(session => session.trial_count > 0));
-
-  stage = "cancel and final JSON/CSV export";
-  const exportPanel = page.locator('section[aria-label="Export session results"]');
-  for (const session of finalSessions) {
-    await exportPanel.locator("label.session-export-item").filter({ hasText: session.session_id }).getByRole("checkbox").check();
-  }
-  await application.evaluate(({ dialog }) => { dialog.showSaveDialog = async () => ({ canceled: true }); });
-  await exportPanel.getByRole("button", { name: /^Export \d+ selected$/ }).click();
-  await exportPanel.getByRole("button", { name: /^Export \d+ selected$/ }).waitFor();
-  assert.equal(await exportPanel.getByText("Results saved.", { exact: true }).count(), 0);
-  for (const format of ["json", "csv"]) {
-    const destination = path.join(directory, `final.${format}`);
-    await application.evaluate(({ dialog }, filePath) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath }); }, destination);
-    await exportPanel.getByRole("combobox").selectOption(format);
-    await exportPanel.getByRole("button", { name: /^Export \d+ selected$/ }).click();
-    await exportPanel.getByText("Results saved.", { exact: true }).waitFor();
-    const content = await readFile(destination, "utf8");
-    if (format === "json") {
-      const saved = JSON.parse(content);
-      assert.ok(saved.sessions.some(session => session.trials.length > 0));
-      assert.deepEqual(saved.sessions.map(session => session.session_id).sort(), finalSessions.map(session => session.session_id).sort());
-    }
-    else { assert.match(content, /session_id/); assert.match(content, /config_revision/); assert.ok(content.trim().split("\n").length > 1); }
-  }
+  const currentResults = (await api("/results")).body.data;
+  assert.ok(currentResults.trials.length > 0);
+  assert.ok(currentResults.trials.every(trial => trial.generation === currentResults.generation));
+  assert.equal((await api("/acquisition/status")).body.data.streaming, false);
 
   stage = "local disconnect";
   await bounded(page.evaluate(() => window.omnibciDesktop.disconnect()), "Local disconnect", 90_000);

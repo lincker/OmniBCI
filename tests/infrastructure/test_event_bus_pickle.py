@@ -18,10 +18,12 @@ import threading
 
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.shared.events import EventType
+from omnibci.application.events import TrialOutcome
+from omnibci.domain.classification import Classification
 
 
-class _RepoWithLock:
-    """Stands in for InMemorySessionRepository (owns a threading.Lock)."""
+class _ListenerWithLock:
+    """A parent-side listener whose synchronization lock cannot be pickled."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -33,13 +35,13 @@ class _RepoWithLock:
 class TestEventBusPickle:
     def test_pickles_with_unpicklable_handlers_registered(self):
         bus = EventBus()
-        bus.register_event_listener(EventType.SessionStarted, _RepoWithLock().handler)
+        bus.register_event_listener(EventType.TrialCompleted, _ListenerWithLock().handler)
         data = pickle.dumps(bus)  # raised TypeError before the fix
         assert data
 
     def test_child_side_bus_has_no_handlers_and_is_inactive(self):
         bus = EventBus()
-        bus.register_event_listener(EventType.TrialCompleted, _RepoWithLock().handler)
+        bus.register_event_listener(EventType.TrialCompleted, _ListenerWithLock().handler)
         # Lifecycle locks are process/loop-local just like consumer tasks.
         bus._lifecycle_lock = asyncio.Lock()
         clone = pickle.loads(pickle.dumps(bus))
@@ -50,14 +52,14 @@ class TestEventBusPickle:
 
     def test_parent_bus_untouched_by_pickling(self):
         bus = EventBus()
-        handler = _RepoWithLock().handler
+        handler = _ListenerWithLock().handler
         bus.register_event_listener(EventType.TrialCompleted, handler)
         pickle.dumps(bus)
         assert bus._event_handlers[EventType.TrialCompleted] == [handler]
 
 
 # ---------------------------------------------------------------------------
-# P2-7: 事件化消费循环（阻塞 get 取代 empty()+sleep 轮询）
+# P2-7: Event-driven consumption waits directly for queued events.
 # ---------------------------------------------------------------------------
 
 import asyncio
@@ -72,20 +74,21 @@ from omnibci.shared.events import Event, EventType
 class TestEventDrivenConsumption:
     @pytest.mark.asyncio
     async def test_event_dispatched_promptly(self):
-        """事件放入后应立即派发（无 10ms 轮询粒度延迟）。"""
+        """Queued events dispatch promptly without a fixed polling delay."""
         bus = EventBus()
-        bus.set_event_queue(_queue.Queue())   # 与 mp.Queue 同 get(timeout) 协议
+        bus.set_event_queue(_queue.Queue())   # Uses the same get(timeout) protocol as mp.Queue.
         got = asyncio.get_running_loop().create_future()
         bus.register_event_listener(
-            EventType.SessionStarted, lambda ev: got.set_result(ev.data))
+            EventType.TrialCompleted, lambda ev: got.set_result(ev.data))
         await bus.start()
         try:
             t0 = time.perf_counter()
-            bus.put_event(Event(EventType.SessionStarted, "s1"))
+            outcome = TrialOutcome("run-1", 1, Classification(3, 9))
+            bus.put_event(Event(EventType.TrialCompleted, outcome))
             data = await asyncio.wait_for(got, timeout=1.0)
             elapsed = time.perf_counter() - t0
-            assert data == "s1"
-            assert elapsed < 0.1   # 远小于旧实现的轮询粒度上界
+            assert data is outcome
+            assert elapsed < 0.1   # Delivery remains within the responsiveness budget.
         finally:
             await bus.stop()
 
@@ -105,12 +108,12 @@ class TestEventDrivenConsumption:
         bus.set_event_queue(_queue.Queue())
         got = asyncio.get_running_loop().create_future()
         bus.register_event_listener(
-            EventType.SessionStarted, lambda ev: (_ for _ in ()).throw(RuntimeError("boom")))
+            EventType.TrialCompleted, lambda ev: (_ for _ in ()).throw(RuntimeError("boom")))
         bus.register_event_listener(
-            EventType.SessionStarted, lambda ev: got.set_result(True))
+            EventType.TrialCompleted, lambda ev: got.set_result(True))
         await bus.start()
         try:
-            bus.put_event(Event(EventType.SessionStarted, "x"))
+            bus.put_event(Event(EventType.TrialCompleted, TrialOutcome("run-1", 1, Classification(3, 9))))
             assert await asyncio.wait_for(got, timeout=1.0)
         finally:
             await bus.stop()
@@ -181,11 +184,11 @@ class TestEventBusLifecycle:
 
     @pytest.mark.asyncio
     async def test_item_returned_after_stop_is_not_dispatched(self):
-        event = Event(EventType.SessionStarted, "too-late")
+        event = Event(EventType.TrialCompleted, TrialOutcome("run-1", 1, Classification(3, 9)))
         queue = _BlockingQueue(event)
         bus = EventBus(queue)
         received = []
-        bus.register_event_listener(EventType.SessionStarted, received.append)
+        bus.register_event_listener(EventType.TrialCompleted, received.append)
         await bus.start()
 
         entered = await asyncio.to_thread(queue.get_entered.wait, 1.0)

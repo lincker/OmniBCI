@@ -1,4 +1,4 @@
-"""Failure boundaries use real profile/session storage and observable fake workers."""
+"""Failure boundaries use real profile storage and observable fake workers."""
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
@@ -7,8 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from omnibci.application.commands.session_commands import CreateSessionCommand
-from omnibci.application.events import CommandResult, StreamDrainReceipt, TrialOutcome
+from omnibci.application.events import CommandResult, StreamDrainReceipt
 from omnibci.application.plugin_profiles import ActivationSnapshot, ProfileRevisionConflict
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.queries.acquisition_queries import AcquisitionStatusResult
@@ -17,12 +16,9 @@ from omnibci.application.services.command_result_service import CommandTimeoutEr
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
-from omnibci.application.services.session_service import SessionAppService
-from omnibci.domain.classification import Classification
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
-from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
-from omnibci.shared.events import Event, EventType
+from omnibci.shared.events import EventType
 
 
 class Engine:
@@ -80,11 +76,11 @@ class Acquisition:
     def handle_get_status(self, query):
         return AcquisitionStatusResult(self.connected, self.streaming)
 
-    def handle_stop_and_drain(self, *, session_id):
-        self.log.append(("drain", session_id))
+    def handle_stop_and_drain(self):
+        self.log.append(("drain", self.engine.generation))
         self.streaming = False
         receipt = StreamDrainReceipt(self.engine.generation, self.engine.applied_revision,
-                                     9, session_id, 1, True)
+                                     9, 1, True)
         return replace(receipt, **self.receipt_override)
 
     def reset(self):
@@ -170,13 +166,9 @@ def harness(tmp_path, monkeypatch):
         engine = Engine(profiles.materialize(previous), log)
         acquisition = Acquisition(engine, log)
         commands = Commands(engine, acquisition, log)
-        repository = InMemorySessionRepository()
-        sessions = SessionAppService(repository, admission=engine.admission)
-        original_session = sessions.handle_create_session(CreateSessionCommand(config_revision=previous.revision))
-        sessions.on_trial_completed(Event(EventType.TrialCompleted, TrialOutcome(
-            original_session, 1, Classification(target_id=1, event_id=1), previous.revision,
-        )))
-        executor = RuntimeApplyCoordinator(engine, profiles, acquisition, sessions, Stimulation(), commands)
+        engine.actuation_process_alive = actuation
+        engine.prepare_actuation = lambda: None
+        executor = RuntimeApplyCoordinator(engine, profiles, acquisition, Stimulation(), commands)
         runtime = RuntimeConfigurationService(profiles, engine, executor=executor)
         source = profiles.repository.get_profile(bindings[0]["profile_id"])
         profiles.update(source.profile_id, name=source.name,
@@ -186,8 +178,7 @@ def harness(tmp_path, monkeypatch):
         assert not plan.errors
         assert plan.strategy == "rebuild"
         return SimpleNamespace(engine=engine, profiles=profiles, previous=previous, plan=plan,
-                               acquisition=acquisition, commands=commands, sessions=sessions,
-                               repository=repository, original_session=original_session,
+                               acquisition=acquisition, commands=commands,
                                runtime=runtime, log=log)
 
     return create
@@ -323,13 +314,12 @@ async def test_candidate_actuator_startup_unknown_does_not_recreate_outputs(harn
 
 
 @pytest.mark.asyncio
-async def test_output_settlement_failure_keeps_old_session_open_and_paused(harness):
+async def test_output_settlement_failure_keeps_old_graph_paused(harness):
     h = harness(actuation=True)
     h.commands.settle_failure = h.previous.revision
     operation = await apply(h)
     assert operation["status"] == "recovery_required"
     assert h.engine.starts == []
-    assert h.sessions.active_session_id == h.original_session
     assert not h.acquisition.streaming
     assert not any(item[0] == "stop_graph" for item in h.log)
     assert_quarantined(h)
@@ -338,15 +328,12 @@ async def test_output_settlement_failure_keeps_old_session_open_and_paused(harne
 @pytest.mark.asyncio
 @pytest.mark.parametrize("invalid", [
     {"generation": "wrong-generation"}, {"config_revision": "wrong-revision"},
-    {"completed_trials": 2},
 ])
-async def test_unconfirmed_drain_or_missing_projection_never_closes_session(harness, invalid):
+async def test_unconfirmed_drain_never_rebuilds_the_graph(harness, invalid):
     h = harness()
     h.acquisition.receipt_override = invalid
     operation = await apply(h)
     assert operation["status"] == "recovery_required"
-    assert h.sessions.active_session_id == h.original_session
-    assert h.repository.find_by_id(h.original_session).state == "running"
     assert h.engine.starts == []
     assert h.commands.restores == []
     assert_quarantined(h)
@@ -362,9 +349,6 @@ async def test_candidate_constructor_failure_without_actuation_rolls_back_checkp
     assert h.engine.starts == [h.plan.target_revision, h.previous.revision]
     assert h.acquisition.starts == [(h.previous.revision, 100)]
     assert h.commands.restores == [(h.previous.revision, 100)]
-    assert h.sessions.active_session_id != h.original_session
-    assert h.repository.find_by_id(h.original_session).state == "ended"
-    assert h.repository.find_by_id(h.sessions.active_session_id).continuation_of == h.original_session
     with h.engine.admission.command():
         pass
 
@@ -386,9 +370,6 @@ async def test_save_failure_restores_old_inputs_only_when_still_selected(harness
     assert h.engine.applied_revision == h.profiles.repository.get_activation().revision == h.previous.revision
     assert h.acquisition.starts == [(h.previous.revision, 100)]
     assert h.commands.restores == [(h.plan.target_revision, 100), (h.previous.revision, 100)]
-    sessions = h.repository.find_all()
-    assert len({item.session_id for item in sessions}) == 3
-    assert [item.state for item in sessions] == ["ended", "ended", "running"]
 
 
 @pytest.mark.asyncio

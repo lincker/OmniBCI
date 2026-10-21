@@ -1,4 +1,4 @@
-"""Stop producers and drain recorded results before disposing the engine."""
+"""Stop producers and drain pending results before disposing the engine."""
 import asyncio
 import logging
 
@@ -9,12 +9,12 @@ logger = logging.getLogger(__name__)
 
 class BackendShutdownService:
     def __init__(self, *, engine, stimulation, stimulation_process, actuation_process,
-                 recording, configuration):
+                 acquisition, configuration):
         self.engine = engine
         self.stimulation = stimulation
         self.stimulation_process = stimulation_process
         self.actuation_process = actuation_process
-        self.recording = recording
+        self.acquisition = acquisition
         self.configuration = configuration
         self._lock = asyncio.Lock()
         self._complete = False
@@ -59,10 +59,10 @@ class BackendShutdownService:
                 if manager is not None:
                     report("stopping_" + label.replace(" ", "_"))
                     await attempt(label, manager.stop)
-            if self.recording is not None:
-                report("draining_recording")
-                await attempt("recording drain", lambda: self.recording.stop()
-                              if self.recording.active_session_id is not None else None)
+            if self.acquisition is not None:
+                report("draining_acquisition")
+                await attempt("acquisition drain", lambda: self.acquisition.handle_stop_and_drain()
+                              if self.acquisition.is_streaming else None)
             report("stopping_engine")
             await attempt("engine", self.engine.shutdown, asynchronous=True)
             self._complete = not errors

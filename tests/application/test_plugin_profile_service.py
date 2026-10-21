@@ -468,6 +468,7 @@ def test_flat_plugin_edits_do_not_change_a_clean_activation(service):
 
 
 INERT_HOST_SETTINGS = {
+    "PERSISTENCE.session_repository": "sqlite",
     "CONFIG.initialization_warnings": ["Original warning"],
     "CONFIG.revision": "old-revision-copy",
     "CONFIG.generation": "old-generation-copy",
@@ -507,7 +508,7 @@ def test_new_candidates_do_not_include_retired_diagnostic_or_backend_settings(se
         "NEUROENGINE.queue_size": 64, **INERT_HOST_SETTINGS,
         "LOGGING.level": "INFO", "LOGGING.file_path": "backend.log",
         "NEUROENGINE.command_timeout_s": 20.0,
-        "PERSISTENCE.session_repository": "in_memory", "PLUGINS.user_dir": "/plugins",
+        "PLUGINS.user_dir": "/plugins",
     }
     candidate = service.propose(complete_selections(service))
     assert candidate.settings == {"NEUROENGINE.queue_size": 64}
@@ -623,7 +624,6 @@ def test_historical_decoder_uses_transient_identity_without_rewriting_profiles(s
     ("LOGGING.level", "DEBUG"),
     ("LOGGING.file_path", "new-backend.log"),
     ("NEUROENGINE.command_timeout_s", 20.0),
-    ("PERSISTENCE.session_repository", "other"),
     ("PLUGINS.user_dir", "/other-plugins"),
 ])
 def test_backend_startup_edits_require_backend_restart(service, key, value):

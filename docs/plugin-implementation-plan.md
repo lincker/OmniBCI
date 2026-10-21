@@ -1,7 +1,8 @@
 # Plugin configuration implementation
 
-Each numbered step is verified and committed separately. Steps 1 and 2 were
-reviewed individually. Subsequent steps are authorized for automatic commits.
+The table records the original implementation checkpoints. The current minimal
+runtime retains plugin configuration and source checkpoints while removing
+Session lifecycle and storage.
 Accounts, cloud synchronization, and montage remain outside this implementation.
 
 | Step | Deliverable | Status |
@@ -20,7 +21,7 @@ Accounts, cloud synchronization, and montage remain outside this implementation.
 | 12 | Worker readiness and revision acknowledgement | Complete: `7ad4e8d` |
 | 13 | Schema-driven profile editor | Complete: `1812183` |
 | 14 | Ordered stream draining and safe pause boundaries | Complete: `90fc63b` |
-| 15 | Session continuation and file replay checkpoints | Complete: `c88e405` |
+| 15 | File replay checkpoints | Retained from `c88e405`; Session continuation removed |
 | 16 | Runtime application plan and status API | Complete: `0d388f1` |
 | 17 | Automatic pause, rebuild, restore, and rollback | Complete: `9edb5e2` |
 | 18 | Trial-boundary and module-local configuration updates | Complete: `a453e8d` |
@@ -37,8 +38,9 @@ Accounts, cloud synchronization, and montage remain outside this implementation.
   the last explicitly selected startup snapshot.
 - Runtime application confirms worker readiness before committing activation.
 - An epoch keeps one configuration revision throughout its lifetime.
-- Source/format changes and full graph rebuilds create a continuation session;
-  ended sessions and already emitted physical outputs are never replayed.
+- Source/format changes and full graph rebuilds create a new engine generation.
+  Decoder/filter updates retain the generation and result numbering. Checkpoint
+  restoration must not repeat already delivered samples or physical outputs.
 - Plugin code, user profiles, state, and download cache have separate lifetimes.
 - Installation does not enable or run a plugin. Package versions are immutable.
 - Portable/machine/secret field metadata and storage ports provide the minimal

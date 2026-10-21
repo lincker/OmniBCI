@@ -40,7 +40,6 @@ export function RuntimeConfigurationReview({ runtime }: { runtime: RuntimeConfig
     <h3 id="configuration-review-title">{t("runtime.reviewTitle")}</h3>
     <dl>
       <dt>{t("runtime.applyMethod")}</dt><dd>{Object.prototype.hasOwnProperty.call(strategies, plan.strategy) ? t(strategies[plan.strategy]) : plan.strategy}</dd>
-      <dt>{t("runtime.session")}</dt><dd>{plan.session_effect === "continuation" ? t("runtime.continuationSession") : t("runtime.preserveSession")}</dd>
       <dt>{t("runtime.affectedModules")}</dt><dd>{plan.changed_slots.length ? plan.changed_slots.join(", ") : t("runtime.noPluginChanges")}</dd>
       {plan.changed_settings.length > 0 && <><dt>{t("runtime.hostSettings")}</dt><dd>{plan.changed_settings.join(", ")}</dd></>}
       {plan.signal_summary && <><dt>{t("runtime.channelSetup")}</dt><dd>{plan.signal_summary}</dd></>}

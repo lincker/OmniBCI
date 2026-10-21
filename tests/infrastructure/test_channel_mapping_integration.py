@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from omnibci.application.commands.acquisition_commands import (
-    ConnectDataProviderCommand, DisconnectDataProviderCommand,
+    ConnectDataProviderCommand, DisconnectDataProviderCommand, StartStreamCommand, StopStreamCommand,
 )
 from omnibci.application.commands.engine_commands import StartEngineCommand, StopEngineCommand
 from omnibci.application.services.command_result_service import CommandRejectedError
@@ -23,13 +23,12 @@ from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
-from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 from omnibci.shared.events import EventType
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connection(tmp_path):
+async def test_cnt_mapping_prepares_before_streaming_and_rejects_stale_connection(tmp_path):
     processing_input = ProcessingInput.from_dict({
         "schema_version": 2, "outputs": [{"source_channel_id": "channel-8", "name": "O2"},
                                            {"source_channel_id": "channel-0", "name": "Pz"}],
@@ -65,15 +64,14 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
                                 snapshot_provider=profiles.resolve_settings)
     await engine.startup()
-    container = assemble(engine, InMemorySessionRepository(), settings=host, admission=engine.admission)
+    container = assemble(engine, settings=host, admission=engine.admission)
     container.acquisition_service.set_metadata_binding(lambda: _acquisition_binding(engine))
     signal = SignalSetupService(SimpleNamespace(read_saved=lambda: (host, "saved")), profiles, engine,
                                 container.acquisition_service, container.command_results)
     container.acquisition_service.set_signal_preparer(signal.prepare)
-    container.session_service.set_signal_preparer(signal.prepare_session, container.acquisition_service.lifecycle_lock)
     register_engine_listeners(container)
     coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
-                                          container.session_service, container.stimulation_service,
+                                          container.stimulation_service,
                                           container.command_results, signal_preparer=signal.prepare)
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
     try:
@@ -98,14 +96,14 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         assert metadata["descriptor"]["channels"][8]["channel_id"] == "channel-8"
         assert metadata["comparison"]["status"] == "unconfirmed"
         assert profiles.repository.list_profiles("acquisition") == []
-        observed_session = await asyncio.to_thread(container.recording_service.start)
-        observed_plan = container.session_repository.find_by_id(observed_session).signal_plan
+        await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
+        observed_plan = signal._plan.to_dict()
         assert observed_plan["source"]["sample_rate"] == metadata["descriptor"]["sample_rate"]
         assert observed_plan["source"]["output_row_count"] == metadata["descriptor"]["output_row_count"]
-        assert await asyncio.to_thread(container.recording_service.stop) == observed_session
+        await asyncio.to_thread(container.acquisition_service.handle_stop_stream, StopStreamCommand())
         assert profiles.repository.list_profiles("acquisition") == []
 
-        # Optionally pin observed dimensions as expectations for subsequent sessions.
+        # Optionally pin observed dimensions as expectations for subsequent reads.
         source = profiles.repository.get_activation().bindings[0]
         assert source.profile_id is None
         saved_source = profiles.create("acquisition", source.selection, "Observed CNT experiment", {
@@ -125,12 +123,11 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         assert metadata["comparison"]["status"] == "matched"
         assert profiles.repository.get_profile(saved_source.profile_id) == saved_source
 
-        session_id = await asyncio.to_thread(container.recording_service.start)
+        await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
         readiness = signal.read()["readiness"]
         assert readiness["ready"] is True
         original_receipt = readiness["receipt"]
-        session = container.session_repository.find_by_id(session_id)
-        plan = session.signal_plan
+        plan = signal._plan.to_dict()
         assert plan["processing_input"] == processing_input.to_dict()
         assert "setup" not in plan
         assert [channel["name"] for channel in plan["output_channels"]] == ["O2", "Pz"]
@@ -145,7 +142,7 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         np.testing.assert_array_equal(mapped.triggers, chunk.triggers)
         assert mapped.timestamp == chunk.timestamp and mapped.sequence_id == chunk.sequence_id
         await asyncio.sleep(0.05)
-        assert await asyncio.to_thread(container.recording_service.stop) == session_id
+        await asyncio.to_thread(container.acquisition_service.handle_stop_stream, StopStreamCommand())
 
         # Disconnect clears API readiness, and the worker rejects a receipt from that connection.
         await asyncio.to_thread(container.acquisition_service.handle_disconnect, DisconnectDataProviderCommand())
@@ -157,11 +154,10 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         with pytest.raises(CommandRejectedError) as stale:
             await asyncio.to_thread(container.command_results.request, EventType.StartStream, original_receipt)
         assert stale.value.result.error_code == "SIGNAL_NOT_PREPARED"
-        next_session = await asyncio.to_thread(container.recording_service.start)
-        assert next_session != session_id
+        await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
         assert signal.read()["readiness"]["receipt"]["connection_id"] == reconnected["connection_id"]
-        assert await asyncio.to_thread(container.recording_service.stop) == next_session
-        assert session.signal_plan == plan
+        await asyncio.to_thread(container.acquisition_service.handle_stop_stream, StopStreamCommand())
+        assert plan["source"]["connection_id"] == metadata["connection_id"]
 
         # Restart reads each decoder's persisted input instead of a shared global setup.
         for decoder, outputs in (
@@ -175,13 +171,13 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
             profiles.accept(profiles.propose(selections), expected_revision=previous.revision)
             await engine.handle_start_engine(StartEngineCommand())
             await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
-            current_session = await asyncio.to_thread(container.recording_service.start)
-            current_plan = container.session_repository.find_by_id(current_session).signal_plan
+            await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
+            current_plan = signal._plan.to_dict()
             assert [channel["name"] for channel in current_plan["output_channels"]] == outputs
             assert all(channel.get("reference") is None for channel in current_plan["output_channels"])
             transformed = ResolvedSignalPlan.from_dict(current_plan).apply(chunk)
             np.testing.assert_array_equal(transformed.triggers, chunk.triggers)
-            assert await asyncio.to_thread(container.recording_service.stop) == current_session
+            await asyncio.to_thread(container.acquisition_service.handle_stop_stream, StopStreamCommand())
 
         await engine.handle_stop_engine(StopEngineCommand())
         selections[1] = {"slot": "processing.decoder", "profile_id": missing_decoder.profile_id}
@@ -190,8 +186,8 @@ async def test_cnt_mapping_prepares_before_recording_and_rejects_stale_connectio
         await engine.handle_start_engine(StartEngineCommand())
         await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
         with pytest.raises(ValueError, match="Missing acquisition channel: not-present"):
-            await asyncio.to_thread(container.recording_service.start)
-        assert container.session_service.active_session_id is None
+            await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
+        assert container.acquisition_service.is_streaming is False
         assert signal.read()["readiness"]["ready"] is False
     finally:
         await engine.handle_stop_engine(StopEngineCommand())

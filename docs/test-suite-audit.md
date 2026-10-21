@@ -2,6 +2,12 @@
 
 Date: 2026-09-25. Baseline: `a806aa1` on `feat-module-config`.
 
+This is a historical audit: its counts and validation results describe that
+checkpoint. The 2026-10-21 minimal-runtime update removed Session, persistence,
+raw recording and archive tests with their production features. Their obsolete
+keep decisions are removed below. Current direct-result coverage lives in
+processor, drain, results-service, WebSocket and input-mapping tests.
+
 ## Scope and criteria
 
 Reviewed every tracked file under `tests`: **147 test modules, five Python support files, and one recording fixture**. Each test module was checked against its current production consumer and neighboring coverage. File names, age, use of mocks, and absence of a direct `assert` were not deletion criteria by themselves.
@@ -183,7 +189,7 @@ Removed test functions:
 
 **Trim.** Keep semantic HTTP error codes, error serialization and validation mapping; remove an enum-literal check and duplicate success envelope.
 
-test_openapi_contract checks the complete published error enum; real endpoint tests check the success envelope. Retained session-error tests assert both status and semantic code for every same-path 404 case removed from test_session_router.
+test_openapi_contract checks the complete published error enum; real endpoint tests check the success envelope.
 
 Removed test functions:
 
@@ -199,18 +205,6 @@ The real lifespan registration test observes current listener wiring. Checking t
 Removed test functions:
 
 - `test_no_dangling_unused_hook_on_app_state`
-
-### tests/presentation/test_session_router.py
-
-**Trim.** Keep session and trial CRUD contracts; remove three weaker same-path 404 cases.
-
-test_error_envelope exercises the same missing active session, unknown session and missing last trial paths with additional semantic code and body assertions. Other endpoint-specific missing-resource cases remain.
-
-Removed test functions:
-
-- `TestGetActiveSession::test_404_when_no_active_session`
-- `TestGetLastTrial::test_404_with_no_trials`
-- `TestGetSession::test_404_for_unknown_session`
 
 ### tests/presentation/test_websocket_results.py
 
@@ -288,17 +282,14 @@ Test counts below are baseline function counts, before parameter expansion. `Kee
 | [tests/application/test_plugin_profiles.py](../tests/application/test_plugin_profiles.py) | Keep | 7 | Custom immutable snapshots, semantic hashing, and input validation need direct value-object tests. |
 | [tests/application/test_plugin_schema.py](../tests/application/test_plugin_schema.py) | Keep | 16 | The project implements its own constrained schema validator; its edge-case tests are necessary. |
 | `tests/application/test_queries.py` (deleted) | Delete | 6 | Delete tests that exercise only generated dataclass construction, equality, defaults and assigned fields. |
-| [tests/application/test_recording_service.py](../tests/application/test_recording_service.py) | Keep | 8 | Recording orchestration has independent ordering, rollback, and uncertain-outcome semantics. |
 | [tests/application/test_runtime_admission.py](../tests/application/test_runtime_admission.py) | Keep | 3 | Nested command exclusion and context propagation are concurrency correctness requirements. |
-| [tests/application/test_runtime_apply_failures.py](../tests/application/test_runtime_apply_failures.py) | Keep | 12 | Retain fault-injection coverage for transaction, checkpoint, session and output-safety boundaries. |
+| [tests/application/test_runtime_apply_failures.py](../tests/application/test_runtime_apply_failures.py) | Keep | 12 | Retain fault-injection coverage for transaction, checkpoint, generation and output-safety boundaries. |
 | [tests/application/test_runtime_apply_integration.py](../tests/application/test_runtime_apply_integration.py) | Keep | 1 | Keep real-process evidence for live rebuild, narrow updates and checkpoint rollback. |
 | [tests/application/test_runtime_configuration_service.py](../tests/application/test_runtime_configuration_service.py) | Keep | 28 | Planning and operation lifecycle invariants remain active and nonredundant. |
-| [tests/application/test_runtime_narrow_apply.py](../tests/application/test_runtime_narrow_apply.py) | Keep | 19 | Preserving ongoing acquisition/session while reconciling partial updates requires this coverage. |
+| [tests/application/test_runtime_narrow_apply.py](../tests/application/test_runtime_narrow_apply.py) | Keep | 19 | Preserving ongoing acquisition and processing while reconciling partial updates requires this coverage. |
 | [tests/application/test_runtime_package_ownership.py](../tests/application/test_runtime_package_ownership.py) | Keep | 4 | Historical applied configuration must not be confused with retained runtime resources. |
 | [tests/application/test_runtime_recovery_status.py](../tests/application/test_runtime_recovery_status.py) | Keep | 3 | Current quarantine and historical failed operation records must remain distinct. |
 | [tests/application/test_runtime_snapshot.py](../tests/application/test_runtime_snapshot.py) | Keep | 6 | Late-started managed children and restarts must use one immutable applied snapshot. |
-| [tests/application/test_session_continuation.py](../tests/application/test_session_continuation.py) | Keep | 6 | Continuation links and trial-level configuration provenance are current runtime-apply behavior. |
-| [tests/application/test_session_service.py](../tests/application/test_session_service.py) | Keep | 36 | Session projections, correlated commands, and concurrent event delivery remain required. |
 | [tests/application/test_source_checkpoint.py](../tests/application/test_source_checkpoint.py) | Keep | 6 | Resource identity determines safe restore versus new timeline behavior. |
 | [tests/application/test_stimulation_service.py](../tests/application/test_stimulation_service.py) | Keep | 13 | Stimulation dispatch, subprocess cleanup and external-node uncertainty remain current. |
 
@@ -320,13 +311,12 @@ Test counts below are baseline function counts, before parameter expansion. `Kee
 
 | File | Decision | Baseline tests | Reason |
 | --- | --- | ---: | --- |
-| [tests/domain/test_session.py](../tests/domain/test_session.py) | Keep | 21 | The domain aggregate implements a real state machine, invariants and bounded memory behavior. |
 
 ### tests/fixture
 
 | File | Decision | Baseline tests | Reason |
 | --- | --- | ---: | --- |
-| [tests/fixture/train.cnt](../tests/fixture/train.cnt) | Keep | Fixture | Real EEG recording fixture still used by file-reader and session end-to-end tests and default playback settings. |
+| [tests/fixture/train.cnt](../tests/fixture/train.cnt) | Keep | Fixture | Real EEG recording fixture still used by file-reader and direct-processing end-to-end tests. |
 
 ### tests/infrastructure
 
@@ -348,7 +338,6 @@ Test counts below are baseline function counts, before parameter expansion. `Kee
 | [tests/infrastructure/test_explicit_algorithm_parameters.py](../tests/infrastructure/test_explicit_algorithm_parameters.py) | Keep | 8 | Tests algorithm instances consume supplied parameters and context independently. |
 | [tests/infrastructure/test_file_reader.py](../tests/infrastructure/test_file_reader.py) | Keep | 10 | Baseline replay source lifecycle remains necessary alongside checkpoint tests. |
 | [tests/infrastructure/test_file_reader_checkpoint.py](../tests/infrastructure/test_file_reader_checkpoint.py) | Keep | 8 | Protects exactly-once replay resumption and checkpoint validation. |
-| [tests/infrastructure/test_in_memory_session_repository.py](../tests/infrastructure/test_in_memory_session_repository.py) | Keep | 30 | Current repository contract and concurrent update regressions. |
 | [tests/infrastructure/test_ipc_contracts.py](../tests/infrastructure/test_ipc_contracts.py) | Keep | 17 | Authoritative low-level wire shape and malformed input coverage. |
 | [tests/infrastructure/test_ipc_network.py](../tests/infrastructure/test_ipc_network.py) | Trim | 35 | Retain real socket safety/lifecycle tests; remove two codec assertions duplicated by the contract suite. |
 | [tests/infrastructure/test_live_source_resume.py](../tests/infrastructure/test_live_source_resume.py) | Keep | 4 | Protects live packet framing across cancellation and reconnection. |
@@ -379,9 +368,8 @@ Test counts below are baseline function counts, before parameter expansion. `Kee
 | [tests/infrastructure/test_process_lifecycle.py](../tests/infrastructure/test_process_lifecycle.py) | Keep | 10 | Generic child readiness protocol validation. |
 | [tests/infrastructure/test_runtime_configuration.py](../tests/infrastructure/test_runtime_configuration.py) | Keep | 6 | Current runtime selection must reject alias fallback, duplicates and schema mismatches. |
 | [tests/infrastructure/test_scan45_channels.py](../tests/infrastructure/test_scan45_channels.py) | Keep | 7 | Protects configurable channel count and event decoding across packet widths. |
-| [tests/infrastructure/test_session_id_end_to_end.py](../tests/infrastructure/test_session_id_end_to_end.py) | Keep | 1 | Only full real file-replay path asserting REST/WebSocket/session storage identity. |
 | [tests/infrastructure/test_stimulation_ack.py](../tests/infrastructure/test_stimulation_ack.py) | Keep | 7 | Tests renderer command acknowledgements and correlated failures. |
-| [tests/infrastructure/test_stream_drain.py](../tests/infrastructure/test_stream_drain.py) | Keep | 16 | Protects ordered producer/processor draining and recording completion evidence. |
+| [tests/infrastructure/test_stream_drain.py](../tests/infrastructure/test_stream_drain.py) | Keep | 16 | Protects ordered producer/processor draining and processing completion evidence. |
 | [tests/infrastructure/test_trial_revision_wire.py](../tests/infrastructure/test_trial_revision_wire.py) | Keep | 1 | Unique trial CONFIG.revision propagation across WebSocket schema and peer payload. |
 
 ### tests/neuroengine
@@ -405,8 +393,6 @@ Test counts below are baseline function counts, before parameter expansion. `Kee
 | [tests/neuroengine/test_processing_output_context.py](../tests/neuroengine/test_processing_output_context.py) | Keep | 6 | Keep output-only metadata update contracts distinct from pipeline replacement. |
 | [tests/neuroengine/test_processing_pipeline.py](../tests/neuroengine/test_processing_pipeline.py) | Keep | 4 | Keep the filter/decoder composition contract and FilterContext propagation. |
 | [tests/neuroengine/test_processing_state.py](../tests/neuroengine/test_processing_state.py) | Keep | 14 | Keep granular signal-state transitions and domain-event publication behavior. |
-| [tests/neuroengine/test_session_commands.py](../tests/neuroengine/test_session_commands.py) | Keep | 10 | Keep worker session command and standby contracts. |
-| [tests/neuroengine/test_session_continuation.py](../tests/neuroengine/test_session_continuation.py) | Keep | 3 | Keep continuation and closed-session identity regressions. |
 | [tests/neuroengine/test_signal_processing_worker.py](../tests/neuroengine/test_signal_processing_worker.py) | Keep | 6 | Keep pinned plugin selection, actual construction and processor wiring. |
 | [tests/neuroengine/test_stimulation_feedback.py](../tests/neuroengine/test_stimulation_feedback.py) | Keep | 6 | Keep inbound stimulation outcome accounting and engine ownership coverage. |
 | [tests/neuroengine/test_worker_readiness.py](../tests/neuroengine/test_worker_readiness.py) | Keep | 9 | Keep configured worker startup barriers and real-process rollback coverage. |
@@ -430,10 +416,7 @@ Test counts below are baseline function counts, before parameter expansion. `Kee
 | [tests/presentation/test_plugin_package_lifecycle_router.py](../tests/presentation/test_plugin_package_lifecycle_router.py) | Keep | 4 | Covers package enablement, reference protection, removal and version-copy conflict handling. |
 | [tests/presentation/test_plugin_packages_router.py](../tests/presentation/test_plugin_packages_router.py) | Keep | 6 | Covers bounded ZIP upload, chunk limits, content validation and admission before installation. |
 | [tests/presentation/test_plugins_router.py](../tests/presentation/test_plugins_router.py) | Keep | 3 | Covers all contribution categories, manifest metadata and unknown-category validation. |
-| [tests/presentation/test_recording_router.py](../tests/presentation/test_recording_router.py) | Keep | 8 | Covers recording HTTP commands, defaults, domain errors, command rejection and timeout mapping. |
 | [tests/presentation/test_runtime_config_router.py](../tests/presentation/test_runtime_config_router.py) | Keep | 1 | Covers runtime configuration request and response schemas, conflicts, unavailable state and unknown fields. |
-| [tests/presentation/test_session_continuation_router.py](../tests/presentation/test_session_continuation_router.py) | Keep | 1 | Checks continuation and revision metadata round trips through current session, list and trial APIs. |
-| [tests/presentation/test_session_router.py](../tests/presentation/test_session_router.py) | Trim | 23 | Keep session and trial CRUD contracts; remove three weaker same-path 404 cases. |
 | [tests/presentation/test_stimulation_router.py](../tests/presentation/test_stimulation_router.py) | Keep | 15 | Checks paradigm metadata, stimulation and trial HTTP commands, payload dispatch and renderer failures. |
 | [tests/presentation/test_websocket_results.py](../tests/presentation/test_websocket_results.py) | Trim | 21 | Keep wire validation, heartbeat, broadcast and real WebSocket delivery; remove two weaker duplicates. |
 
@@ -456,7 +439,7 @@ Test counts below are baseline function counts, before parameter expansion. `Kee
 - Legacy plugin aliases and manifest v1 tests: these names still correspond to production-supported initialization and catalog paths.
 - Real-time and distributed-node tests: role validation, identity, reconnection, quiescence, stream draining, readiness and failure cleanup protect current runtime behavior.
 - Package markers and shared fixtures: retain package imports, shared helpers and isolation of user configuration/logging state.
-- `tests/fixture/train.cnt`: still consumed by real file-reader and end-to-end tests and default playback configuration.
+- `tests/fixture/train.cnt`: still consumed by real file-reader and end-to-end tests with explicit playback configuration.
 
 ## Validation
 

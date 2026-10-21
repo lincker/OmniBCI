@@ -436,9 +436,8 @@ class TestChildEntryPoint:
 
 
 class TestEngineLifecycleHook:
-    def test_engine_service_starts_and_stops_manager(self):
-        # NeuroEngineService calls manager.start() after engine start and
-        # manager.stop() after engine stop (duck-typed injection).
+    def test_engine_service_prepares_and_stops_manager(self):
+        # Actuation starts with signal preparation and stops with the engine.
         import asyncio
         from unittest.mock import MagicMock
         from omnibci.application.services.engine_service import NeuroEngineService
@@ -447,10 +446,18 @@ class TestEngineLifecycleHook:
 
         manager = MagicMock()
         engine = MagicMock()
-        svc = NeuroEngineService(engine_factory=lambda: engine,
+        stopped = threading.Event()
+        engine.run.side_effect = stopped.wait
+        svc = NeuroEngineService(engine_factory=lambda snapshot: engine,
+                                 snapshot_provider=lambda: {"ACTUATION.enabled": True},
                                  actuation_process_manager=manager)
         asyncio.run(svc.startup())
         asyncio.run(svc.handle_start_engine(StartEngineCommand()))
-        manager.start.assert_called_once()
-        asyncio.run(svc.handle_stop_engine(StopEngineCommand()))
+        try:
+            manager.start.assert_not_called()
+            svc.prepare_actuation()
+            manager.start.assert_called_once()
+        finally:
+            stopped.set()
+            asyncio.run(svc.handle_stop_engine(StopEngineCommand()))
         manager.stop.assert_called_once()

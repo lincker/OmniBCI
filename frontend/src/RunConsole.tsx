@@ -4,7 +4,7 @@ import { useAction } from "./hooks/useAction";
 import { usePoll } from "./hooks/usePoll";
 import type { ResultsFeed } from "./hooks/useResultsFeed";
 import { translateControlLabel, translatePluginName, useI18n, type TranslationKey, type TranslationParams } from "./i18n";
-import { SessionSummary, TrialResults } from "./TrialResults";
+import { TrialResults } from "./TrialResults";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
 import { pluginConfigApi, selectionKey, type Activation, type PluginProfile, type PluginDefinition } from "./api/plugin-config";
 import { readTrialControls, type TrialControl } from "./plugin-controls";
@@ -44,8 +44,8 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
   const stop = useAction(api.engineStop, refresh);
   const connect = useAction(api.acqConnect, refresh);
   const disconnect = useAction(api.acqDisconnect, refresh);
-  const read = useAction(api.recordingStart, refresh);
-  const stopRead = useAction(api.recordingStop, refresh);
+  const read = useAction(api.acqStreamStart, refresh);
+  const stopRead = useAction(api.acqStreamStop, refresh);
   const launch = useAction(api.stimStart, refresh);
   const stopStim = useAction(api.stimStop, refresh);
   const trigger = useAction(api.trialStart);
@@ -57,7 +57,6 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
   const running = engine.data?.running ?? false;
   const connected = acquisition.data?.connected ?? false;
   const reading = acquisition.data?.streaming ?? false;
-  const recording = feed.session?.state === "running";
   const engineAvailable = engine.data !== null && !engine.error;
   const acquisitionAvailable = engineAvailable && acquisition.data !== null && !acquisition.error;
   const stimulationAvailable = stimulation.data !== null && !stimulation.error;
@@ -193,11 +192,11 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
         <div className="actions actions-grouped">
           <div className="btn-group"><span className="btn-group-title">{t("run.sourceConnection")}</span>
             <button disabled={controlsBlocked || !acquisitionAvailable || !running || connected || missingRecording} onClick={() => void connect.run()}>{t("run.connect")}</button>
-            <button disabled={controlsBlocked || !acquisitionAvailable || !connected || reading || recording} onClick={() => void disconnect.run()}>{t("run.disconnect")}</button></div>
+            <button disabled={controlsBlocked || !acquisitionAvailable || !connected || reading} onClick={() => void disconnect.run()}>{t("run.disconnect")}</button></div>
           <div className="btn-group"><span className="btn-group-title">{t("run.dataReading")}</span>
-            <button className="primary" disabled={controlsBlocked || !acquisitionAvailable || !running || !connected || reading || recording || missingRecording}
+            <button className="primary" disabled={controlsBlocked || !acquisitionAvailable || !running || !connected || reading || missingRecording}
               onClick={() => void read.run()}>{t("run.startReading")}</button>
-            <button disabled={stopBlocked || !acquisitionAvailable || (!reading && !recording)} onClick={() => void stopRead.run()}>{t("run.stopReading")}</button></div>
+            <button disabled={stopBlocked || !acquisitionAvailable || !reading} onClick={() => void stopRead.run()}>{t("run.stopReading")}</button></div>
         </div>
       </section>
       <section className="card"><h2><Icon name="system" />{t("run.stimulation")}</h2>
@@ -227,7 +226,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
     </div>
     {(actionError || trialError) && <p className="inline-message error" role="alert">{trialError === "count" ? t("run.invalidTrialCount") : trialError
       ? t("run.invalidControl", { label: translateControlLabel(trialError.name, trialError.label, t) }) : actionError}</p>}
-    <SessionSummary session={feed.session} trialCount={feed.trials.length} />
+    {feed.error && <p className="error" role="alert">{feed.error}</p>}
     <section className="card"><h2>{t("run.recentResults")} <button className="text-button" disabled={busy} onClick={onResults}>{t("run.viewAllResults")} <Icon name="chevron" /></button></h2>
       <TrialResults trials={feed.trials.slice(-3)} /></section>
     <details className="ack-panel"><summary>{t("run.acknowledgements")} <span className="count">{feed.acks.length}</span></summary>

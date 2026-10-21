@@ -96,7 +96,7 @@ def _processor(plan):
     return make_processor(
         detector=None, decoder=None, command_queue=MagicMock(),
         data_manager=MagicMock(), event_bus=MagicMock(),
-        sample_rate=1000, baseline_duration=0.008, auto_start_session=False,
+        sample_rate=1000, baseline_duration=0.008,
         generation="generation-one", config_revision=plan.config_revision,
         settings_snapshot=_snapshot(plan),
     )
@@ -228,14 +228,12 @@ def test_new_connection_cannot_replace_an_active_epoch(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_data_and_session_start_are_rejected_before_preparation():
+async def test_data_is_rejected_before_preparation():
     plan = _plan()
     processor = _processor(plan)
     processor.data_manager.get_data.return_value = SignalChunk(10, 1, np.zeros((4, 2)))
     with pytest.raises(RuntimeError, match="not been prepared"):
         await processor.next_chunk()
-    processor._execute((SignalProcessorCommand.start_session, CommandRequest("start", {"session_id": "test-session"})))
-    assert not processor.event_bus.put_event.call_args.args[0].data.ok
 
 
 @pytest.mark.asyncio
@@ -263,17 +261,6 @@ async def test_source_only_standby_drains_raw_data_and_can_prepare_later(monkeyp
     assert processor._last_sequence == 4
     assert len(detector.seen) == 1
     np.testing.assert_array_equal(detector.seen[0].data, [[32, 33], [12, 13]])
-
-
-def test_source_only_standby_rejects_session_start():
-    processor = _processor(_plan())
-    processor._settings_snapshot["PLUGINS.bindings"] = []
-    processor._execute((SignalProcessorCommand.start_session, CommandRequest(
-        "start", {"session_id": "test-session"})))
-
-    result = processor.event_bus.put_event.call_args.args[0].data
-    assert not result.ok
-    assert "not been prepared" in result.message
 
 
 @pytest.mark.asyncio

@@ -19,7 +19,7 @@ def _chunk(sequence=17):
 
 
 def _barrier():
-    return StreamBarrier("drain-17", "run", "r1", 17, "session")
+    return StreamBarrier("drain-17", "run", "r1", 17)
 
 
 def _timing_records(caplog):

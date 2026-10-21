@@ -1,8 +1,7 @@
-"""Simulated CURRY TCP data reaches raw recording and the real CCA pipeline."""
+"""Simulated CURRY TCP data reaches the real CCA pipeline without a session."""
 
 import asyncio
 import json
-from pathlib import Path
 from queue import Queue
 import struct
 from types import SimpleNamespace
@@ -17,7 +16,6 @@ from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, comp
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.domain.signal_info import SignalInfo
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand, AcquisitionRuntime
-from omnibci.infrastructure.acquisition.recording import LocalSignalRecorder, iter_recorded_chunks
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
@@ -34,7 +32,7 @@ def _packet(code, request, body, *, start_sample=0):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_simulated_curry_records_all_rows_and_decodes_selected_eeg_without_source_expectations(tmp_path):
+async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(monkeypatch):
     sample_rate = 500
     labels = ("Fz", "O1", "Oz", "O2", "VEOG", "Trigger")
     times = np.arange(700) / sample_rate
@@ -116,13 +114,20 @@ async def test_simulated_curry_records_all_rows_and_decodes_selected_eeg_without
     events = []
     bus = SimpleNamespace(put_event=events.append)
     data = DataManager(Queue())
+    received = []
+    put_data = data.put_data
+
+    def capture(chunk):
+        received.append(chunk)
+        put_data(chunk)
+
+    monkeypatch.setattr(data, "put_data", capture)
     acquisition = AcquisitionRuntime(
         source, Queue(), data, bus, source_id=source.plugin_type, preparation_required=True,
         generation="curry-generation", config_revision="curry-revision",
-        recorder=LocalSignalRecorder(tmp_path),
     )
     processor = make_processor(
-        None, None, Queue(), data, bus, auto_start_session=False,
+        None, None, Queue(), data, bus,
         generation="curry-generation", config_revision="curry-revision", settings_snapshot=snapshot,
     )
 
@@ -158,8 +163,6 @@ async def test_simulated_curry_records_all_rows_and_decodes_selected_eeg_without
         processing_command(SignalProcessorCommand.prepare_signal, "prepare", {
             "plan": plan.to_dict(), "receipt": receipt,
         })
-        processing_command(SignalProcessorCommand.start_session, "session", {"session_id": "curry-session"})
-        await acquisition_command(AcquisitionCommand.begin_recording, "record", {"session_id": "curry-session"})
         await acquisition_command(AcquisitionCommand.start_stream, "stream", receipt)
         async with asyncio.timeout(5):
             while processor._last_sequence < len(blocks) - 1:
@@ -167,28 +170,19 @@ async def test_simulated_curry_records_all_rows_and_decodes_selected_eeg_without
 
         trials = [event.data for event in events if event.type is EventType.TrialCompleted]
         assert len(trials) == 1
-        assert trials[0].session_id == "curry-session"
+        assert trials[0].generation == "curry-generation"
+        assert trials[0].trial_number == 1
         assert trials[0].classification.target_id == 1
         assert trials[0].classification.event_id == 1
         assert processor._signal_plan.source_indices == (3, 1, 2)
         assert [channel.signal_type for channel in processor._signal_plan.output_channels] == ["eeg"] * 3
 
         await acquisition_command(AcquisitionCommand.stop_stream, "stop")
-        completed = await acquisition_command(AcquisitionCommand.end_recording, "finish", {
-            "session_id": "curry-session",
-        })
-        processing_command(SignalProcessorCommand.end_session, "end-session", "curry-session")
-        assert completed["status"] == "completed"
-        assert completed["sample_count"] == raw.shape[1]
-        stored = list(iter_recorded_chunks(Path(completed["path"])))
-        assert [chunk.sequence_id for chunk in stored] == list(range(len(blocks)))
-        for chunk, expected in zip(stored, blocks, strict=True):
+        assert [chunk.sequence_id for chunk in received] == list(range(len(blocks)))
+        for chunk, expected in zip(received, blocks, strict=True):
             np.testing.assert_array_equal(chunk.raw_data, expected)
             np.testing.assert_array_equal(chunk.triggers, expected[-1])
             assert chunk.raw_data.dtype == expected.dtype
-        document = json.loads((Path(completed["path"]) / "metadata.json").read_text())
-        assert document["signal_info"] == descriptor.to_dict()
-        assert document["sample_count"] == raw.shape[1]
         assert data.empty()
         await asyncio.wait_for(server_done, timeout=2)
         assert requests == [1, 6, 3, 8, 9]

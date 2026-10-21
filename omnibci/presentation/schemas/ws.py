@@ -21,7 +21,7 @@ class TrialCompletedMessage(BaseModel):
     not the raw EEG.
     """
     event: Literal["TrialCompleted"] = "TrialCompleted"
-    session_id: str
+    generation: str
     trial_number: int
     config_revision: Optional[str] = None
     target_id: int = Field(..., description="Index of the recognised stimulus target")
@@ -35,19 +35,6 @@ class TrialCompletedMessage(BaseModel):
         description="True when recognition was triggered by an end/reset event"
     )
     produced_at: datetime = Field(..., description="UTC timestamp of classification")
-
-
-class SessionStartedMessage(BaseModel):
-    event: Literal["SessionStarted"] = "SessionStarted"
-    session_id: str
-
-
-class SessionEndedMessage(BaseModel):
-    event: Literal["SessionEnded"] = "SessionEnded"
-    # session_id is not yet propagated through the SessionEnded EventBus payload
-    # (it carries total_trials); kept optional until the ACL is enriched.
-    session_id: Optional[str] = None
-    total_trials: int
 
 
 class StimulationAckMessage(BaseModel):
@@ -79,8 +66,6 @@ class PingMessage(BaseModel):
 # Union type for documentation / client code generation
 WsMessage = Union[
     TrialCompletedMessage,
-    SessionStartedMessage,
-    SessionEndedMessage,
     StimulationAckMessage,
     PingMessage,
 ]

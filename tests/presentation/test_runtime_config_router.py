@@ -14,7 +14,7 @@ def test_status_and_review_plan_contract():
                   generation=None, operation=None)
     plan = dict(plan_id="plan", expected_revision="selected", target_revision="new",
                 applied_revision=None, generation=None, running=False, strategy="select_on_start",
-                changed_slots=["processing.decoder"], changed_settings=[], session_effect="preserve", errors=[], signal_summary=None,
+                changed_slots=["processing.decoder"], changed_settings=[], errors=[], signal_summary=None,
                 module=None)
     requests = []
 

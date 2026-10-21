@@ -31,7 +31,7 @@ class TestNextChunkEventDriven:
         dm = DataManager(buffer=queue.Queue())
         sp = make_processor(detector=MagicMock(), decoder=MagicMock(),
                              command_queue=MagicMock(), data_manager=dm,
-                             event_bus=MagicMock(), auto_start_session=False)
+                             event_bus=MagicMock())
 
         async def scenario():
             async def feeder():
@@ -50,7 +50,7 @@ class TestNextChunkEventDriven:
         dm = DataManager(buffer=queue.Queue())
         sp = make_processor(detector=MagicMock(), decoder=MagicMock(),
                              command_queue=MagicMock(), data_manager=dm,
-                             event_bus=MagicMock(), auto_start_session=False)
+                             event_bus=MagicMock())
         assert asyncio.run(sp.next_chunk(timeout=0.05)) is None
 
 
@@ -60,7 +60,7 @@ def test_stop_command_does_not_depend_on_queue_empty_probe():
     command_queue.empty = MagicMock(return_value=True)
     processor = make_processor(
         detector=MagicMock(), decoder=MagicMock(), command_queue=command_queue,
-        data_manager=MagicMock(), event_bus=MagicMock(), auto_start_session=False,
+        data_manager=MagicMock(), event_bus=MagicMock(),
     )
 
     async def stop_after_data_read():

@@ -18,7 +18,6 @@ from omnibci.infrastructure.plugins.plugin_catalog import (
 
 CAPABILITIES = [
     ("acquisition", "file_reader", SignalSource),
-    ("acquisition", "recording_replay", SignalSource),
     ("acquisition", "neuroscan_scan45_reader", SignalSource),
     ("acquisition", "neuroscan_curry8_reader", SignalSource),
     ("trigger", "neuroscan_scan45_trigger", TriggerEmitter),

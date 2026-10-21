@@ -4,7 +4,7 @@ dials in, like stimulation).
 
 Covers:
   - ActuationCommandTranslator: TrialCompleted (TrialOutcome — the real bus
-    payload emitted by DomainEventPublisher) → ActuationCommand on the bus;
+    payload emitted by SignalProcessor) → ActuationCommand on the bus;
     payload carries target_id/event_id/confidence; bare Classification is
     accepted for back-compat; payloads without target_id emit nothing.
   - ActuationFeedbackHandler: ack/state/fault accounting.
@@ -38,7 +38,7 @@ class TestActuationCommandTranslator:
         bus = _Bus()
         tr = ActuationCommandTranslator(bus)
         outcome = TrialOutcome(
-            session_id="sess-1",
+            generation="run-1",
             trial_number=3,
             classification=Classification(target_id=5, event_id=2, confidence=0.9),
         )

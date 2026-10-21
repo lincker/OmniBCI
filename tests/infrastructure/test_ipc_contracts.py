@@ -33,16 +33,29 @@ from omnibci.infrastructure.ipc.protocol import (
     InvalidFrameHeader,
 )
 from omnibci.shared.events import Event, EventType
+from omnibci.application.events import TrialOutcome
+from omnibci.domain.classification import Classification
 
 
 class TestWireShape:
-    def test_start_stream_and_abort_recording_have_distinct_wire_commands(self):
+    def test_stream_control_commands_have_distinct_wire_values(self):
         assert int(EventType.StartStream) == 111
-        assert int(EventType.AbortRawRecording) == 114
-        for name in ("StartStream", "AbortRawRecording"):
-            original = Event(EventType[name], {"session_id": "session"})
+        assert int(EventType.StopStream) == 112
+        for name in ("StartStream", "StopStream"):
+            original = Event(EventType[name])
             restored = body_to_event(event_to_body(original).encode(), PROTOCOL_VERSION)
             assert restored.type.name == name
+
+    def test_trial_outcome_roundtrip_retains_runtime_identity_and_prediction(self):
+        outcome = TrialOutcome("run-1", 7, Classification(target_id=3, event_id=9), "revision")
+        original = Event(EventType.TrialCompleted, outcome)
+        restored = body_to_event(event_to_body(original).encode(), PROTOCOL_VERSION)
+        assert restored.type is EventType.TrialCompleted
+        assert restored.data["generation"] == "run-1"
+        assert restored.data["trial_number"] == 7
+        assert restored.data["target_id"] == 3
+        assert restored.data["event_id"] == 9
+        assert restored.data["config_revision"] == "revision"
 
     def test_event_to_body_shape(self):
         body = event_to_body(Event(EventType.TrialCompleted, data={"x": 1}))
@@ -56,7 +69,7 @@ class TestWireShape:
         assert event.data == 5
 
     def test_decoded_type_is_eventtype_not_int(self):
-        event = body_to_event(event_to_body(Event(EventType.SessionEnded, 3)).encode(), PROTOCOL_VERSION)
+        event = body_to_event(event_to_body(Event(EventType.TrialCompleted, 3)).encode(), PROTOCOL_VERSION)
         assert isinstance(event.type, EventType)
 
 

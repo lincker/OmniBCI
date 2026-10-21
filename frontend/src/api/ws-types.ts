@@ -9,10 +9,10 @@
  * Server → client only. The top-level `event` field is the discriminator.
  */
 
-/** Engine decoded one trial. `session_id` is REST-queryable (unified id). */
+/** Engine decoded one trial in the current engine generation. */
 export interface TrialCompletedMessage {
   event: "TrialCompleted";
-  session_id: string | null;
+  generation: string;
   trial_number: number;
   config_revision?: string | null;
   target_id: number;
@@ -21,17 +21,6 @@ export interface TrialCompletedMessage {
   forced: boolean;
   /** ISO 8601 UTC */
   produced_at: string;
-}
-
-export interface SessionStartedMessage {
-  event: "SessionStarted";
-  session_id: string;
-}
-
-export interface SessionEndedMessage {
-  event: "SessionEnded";
-  session_id: string | null;
-  total_trials: number;
 }
 
 /** Stimulation process acknowledged a command (relayed engine → WS). */
@@ -50,8 +39,6 @@ export interface PingMessage {
 
 export type WsMessage =
   | TrialCompletedMessage
-  | SessionStartedMessage
-  | SessionEndedMessage
   | StimulationAckMessage
   | PingMessage;
 
@@ -61,7 +48,7 @@ export function isWsMessage(value: unknown): value is WsMessage {
     typeof value === "object" &&
     value !== null &&
     "event" in value &&
-    ["TrialCompleted", "SessionStarted", "SessionEnded", "StimulationAck", "Ping"].includes(
+    ["TrialCompleted", "StimulationAck", "Ping"].includes(
       (value as { event: string }).event,
     )
   );

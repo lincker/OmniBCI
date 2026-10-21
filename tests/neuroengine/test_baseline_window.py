@@ -173,12 +173,9 @@ class TestEpochProcessorPreTriggerData:
 class TestSignalProcessorPreTriggerSamples:
     def _processor(self, baseline_duration, sample_rate=1000):
         from unittest.mock import MagicMock
-        from omnibci.domain.session import BCISession
-        sess = BCISession()
-        sess.start()
         return make_processor(
             detector=MagicMock(), decoder=MagicMock(), command_queue=MagicMock(),
-            data_manager=MagicMock(), event_bus=MagicMock(), session=sess,
+            data_manager=MagicMock(), event_bus=MagicMock(),
             sample_rate=sample_rate, baseline_duration=baseline_duration,
         )
 

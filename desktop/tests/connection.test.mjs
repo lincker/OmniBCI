@@ -22,7 +22,7 @@ test("backend and proxy paths cannot choose another target or carry credentials"
   for (const url of ["file:///etc/passwd", "http://user:secret@host", "https://host/api", "https://host/?token=x"]) {
     assert.throws(() => backendOrigin(url));
   }
-  assert.equal(apiPath("/api/v1/sessions?format=json"), "/api/v1/sessions?format=json");
+  assert.equal(apiPath("/api/v1/results?example=value"), "/api/v1/results?example=value");
   for (const value of ["//evil/api/v1/data", "https://evil/api/v1/data", "/api/v1/%2e%2e/config", "/etc/passwd"]) {
     assert.throws(() => apiPath(value));
   }
@@ -89,7 +89,7 @@ test("response streaming remains guarded after headers have arrived", async () =
     start(controller) { finish = () => { controller.enqueue(new TextEncoder().encode("old result")); controller.close(); }; },
   })));
   await connection.connect("remote", "http://first:8000", "one");
-  const response = await connection.request("/api/v1/sessions/export");
+  const response = await connection.request("/api/v1/results");
   const text = response.text();
   await connection.connect("remote", "http://second:8000", "two");
   finish();
@@ -105,7 +105,7 @@ test("preparing shutdown allows reads but rejects new mutation calls", async () 
   await connection.connect("local", "http://127.0.0.1:8000", "secret");
   connection.stopping(true);
   assert.equal((await connection.request("/api/v1/engine/start", { method: "POST" })).status, 409);
-  await (await connection.request("/api/v1/sessions")).json();
+  await (await connection.request("/api/v1/results")).json();
   assert.equal(requests, 1);
 });
 

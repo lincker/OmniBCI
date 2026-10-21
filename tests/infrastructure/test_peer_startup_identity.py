@@ -5,6 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from omnibci.application.plugin_profiles import ProfileBinding
+from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessStartupError, ChildProcessState, StartupReport,
 )
@@ -15,8 +17,12 @@ from omnibci.infrastructure.process_lifecycle import (
 def peer(request):
     kind, component, selection = request.param
     module = import_module(f"omnibci.infrastructure.{kind}.process_manager")
+    alias = "STIMULATION_THUBCI_SSVEP_classic40" if kind == "stimulation" else "logger"
+    descriptor = PluginCatalog().resolve(selection, alias)
     snapshot = {"CONFIG.revision": "revision", "CONFIG.generation": "run-2",
-                f"{kind.upper()}.{selection}": "selected",
+                "PLUGINS.bindings": [ProfileBinding(
+                    f"{kind}.{selection}", selection, None, descriptor.selection, {},
+                ).to_dict()],
                 f"{kind.upper()}.enabled": True, f"{kind.upper()}.auto_spawn": True}
     return kind, component, module, snapshot
 

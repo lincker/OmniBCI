@@ -156,7 +156,6 @@ class TestProcessorWiring:
         commands.put((SignalProcessorCommand.prepare_signal, CommandRequest("prepare", {
             "plan": plan.to_dict(), "receipt": receipt,
         })))
-        commands.put((SignalProcessorCommand.start_session, CommandRequest("start", {"session_id": "test-session"})))
         # If validation regresses, the loop exits instead of hanging the test.
         commands.put(SignalProcessorCommand.should_stop)
         data_manager = DataManager(buffer=Queue())
@@ -164,13 +163,13 @@ class TestProcessorWiring:
             command_queue=commands, data_manager=data_manager, startup_reporter=reporter,
             settings_snapshot=snapshot,
         )
-        def feed_after_session_start(event):
+        def feed_after_preparation(event):
             if event.type is EventType.CommandResult:
                 assert event.data.ok, event.data.message
-                if event.data.command_id == "start":
+                if event.data.command_id == "prepare":
                     data_manager.put_data(SignalChunk(1.0, 1, np.array([[1., 2., 3.], [7., 0., 9.]])))
 
-        worker.event_bus.put_event.side_effect = feed_after_session_start
+        worker.event_bus.put_event.side_effect = feed_after_preparation
         monkeypatch.setattr(conf_module.settings, "use_snapshot", lambda snapshot: None)
         monkeypatch.setattr(signal_configuration, "load_signal_pipeline", lambda snapshot, plan: (
             InvalidTargetDecoder(), DefaultEpochDetector(parameters={}, context=PluginContext(sample_rate=250)), [],
@@ -185,9 +184,8 @@ class TestProcessorWiring:
         assert "test-revision" in message
         reporter.failed.assert_called_once_with("run", raised.value)
         reporter.close.assert_called_once_with()
-        assert worker.session_runtime.session.session_id == "test-session"
         assert worker.signal_processor._signal_receipt == receipt
-        assert worker.session_runtime.session.trial_count == 0
+        assert worker.signal_processor.completed_trials == 0
         assert all(item.args[0].type is not EventType.TrialCompleted
                    for item in worker.event_bus.put_event.call_args_list)
 
@@ -205,7 +203,6 @@ class TestProcessorWiring:
             command_queue=worker.command_queue,
             data_manager=worker.data_manager,
             event_bus=worker.event_bus,
-            session_runtime=worker.session_runtime,
             baseline_duration=0.3,
             filters=[],
             generation=None,

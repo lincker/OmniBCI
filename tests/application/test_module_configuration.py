@@ -63,10 +63,10 @@ async def test_first_acquisition_apply_executes_without_preparing_an_experiment(
         yield
 
     runtime.engine.runtime_transition = transition
-    archive, acquisition, commands = Mock(), Mock(), Mock()
+    acquisition, commands = Mock(), Mock()
     runtime.executor = RuntimeApplyCoordinator(
-        runtime.engine, profiles, acquisition, SimpleNamespace(active_session_id=None),
-        SimpleNamespace(is_active=False, process_alive=False), commands, archive=archive,
+        runtime.engine, profiles, acquisition,
+        SimpleNamespace(is_active=False, process_alive=False), commands,
     )
     plan = runtime.plan([source_request(profiles)], module="acquisition", expected_revision=None)
     operation = runtime.submit(plan.plan_id, str(uuid4()))
@@ -74,7 +74,7 @@ async def test_first_acquisition_apply_executes_without_preparing_an_experiment(
 
     assert runtime.operation(operation["operation_id"])["status"] == "succeeded"
     assert [b.slot for b in profiles.repository.get_activation().bindings] == ["acquisition.source"]
-    assert not acquisition.mock_calls and not commands.mock_calls and not archive.mock_calls
+    assert not acquisition.mock_calls and not commands.mock_calls
 
 
 @pytest.mark.parametrize("problem", ["legacy_mapping", "missing_package", "invalid_parameters"])
@@ -148,7 +148,7 @@ def test_acquisition_still_validates_its_own_parameters(profiles):
 async def test_connected_source_reconfiguration_does_not_prepare_other_modules(harness, actuation_enabled):
     h = harness(actuation=actuation_enabled)
     h.acquisition.streaming = False
-    h.runtime.executor.sessions = SimpleNamespace(active_session_id=None)
+    h.engine.actuation_process_alive = False
     h.runtime.executor.signal_preparer = Mock(side_effect=AssertionError("Processing is not in use"))
     decoder = next(b for b in h.previous.bindings if b.kind == "decoder")
     dormant = replace(decoder, processing_input=None, legacy={

@@ -2,7 +2,7 @@
 Regression test — EventBus listeners are wired at app startup.
 
 Before this fix, the lifespan stashed ``app.state._register_event_hooks`` but
-nothing ever called it, so the WebSocket broadcaster and the session read-model
+nothing ever called it, so the WebSocket broadcaster and the results read-model
 never received engine events.  The lifespan now calls
 ``register_engine_listeners`` directly during startup; this test pins that
 behaviour so the dangling-hook regression cannot return.
@@ -20,9 +20,8 @@ from omnibci.application.ports.engine_port import EnginePort
 from omnibci.bootstrap import AppContainer
 from omnibci.application.services.acquisition_service import AcquisitionAppService
 from omnibci.application.services.stimulation_service import StimulationAppService
-from omnibci.application.services.session_service import SessionAppService
+from omnibci.application.services.results_service import ResultsService
 from omnibci.application.services.command_result_service import CommandResultBroker
-from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
 from omnibci.shared.events import Event, EventType
 
@@ -53,7 +52,6 @@ class _RecordingEngine(EnginePort):
 
 def _make_container() -> tuple[AppContainer, _RecordingEngine]:
     engine = _RecordingEngine()
-    repo = InMemorySessionRepository()
     command_results = CommandResultBroker(engine)
     container = AppContainer(
         engine_service=engine,
@@ -62,9 +60,7 @@ def _make_container() -> tuple[AppContainer, _RecordingEngine]:
         ),
         stimulation_service=StimulationAppService(engine),
         stimulation_process_manager=StimulationProcessManager(auto_spawn=False),
-        session_repository=repo,
-        session_service=SessionAppService(repository=repo),
-        recording_service=None,  # not exercised by event-hook wiring tests
+        results_service=ResultsService(engine),
         command_results=command_results,
     )
     return container, engine
@@ -86,17 +82,11 @@ def test_lifespan_registers_engine_listeners(monkeypatch):
 
     registered_types = [t for t, _ in engine.subscriptions]
 
-    # Command-result rendezvous + 5 read-model + 4 broadcaster = 10.
-    assert len(engine.subscriptions) == 10
-    assert EventType.RawRecordingState in registered_types
+    assert len(engine.subscriptions) == 5
     assert EventType.CommandResult in registered_types
     assert EventType.AcquisitionState in registered_types
-    # read-model sync
-    assert registered_types.count(EventType.TrialCompleted) == 2   # session + broadcaster
-    assert registered_types.count(EventType.SessionStarted) == 2   # session + broadcaster
-    assert EventType.SessionEnded in registered_types
-    # the session service's own handlers are present
-    handlers = [h for _, h in engine.subscriptions]
-    assert container.session_service.on_session_started in handlers
-    assert container.session_service.on_trial_completed in handlers
-    assert container.session_service.on_session_ended in handlers
+    assert registered_types.count(EventType.TrialCompleted) == 2
+    assert EventType.StimulationAck in registered_types
+    handlers = [handler for _, handler in engine.subscriptions]
+    assert container.results_service.on_trial_completed in handlers
+    assert container.acquisition_service.on_acquisition_state in handlers

@@ -115,8 +115,6 @@ class ValueDecoder(Decoder):
         })))
         prepared = _event(events, EventType.CommandResult, lambda event: event.data.command_id == "prepare")
         assert prepared.ok, prepared.message
-        commands.put((SignalProcessorCommand.start_session, CommandRequest("start", {"session_id": "session"})))
-        _event(events, EventType.CommandResult, lambda event: event.data.command_id == "start")
         data.put(SignalChunk(1.0, 1, np.array([[1., 1., 1.], [7., 0., 0.]])))
         _wait_file(plugin / "epoch-1")
         commands.put((SignalProcessorCommand.stage_configuration, CommandRequest("update", {
@@ -131,6 +129,8 @@ class ValueDecoder(Decoder):
         data.put(SignalChunk(3.0, 3, np.array([[1., 1., 1.], [0., 11., 0.]])))
         new_trial = _event(events, EventType.TrialCompleted)
         assert new_trial.config_revision == "new" and new_trial.classification.target_id == 2
+        assert old_trial.generation == new_trial.generation == "run"
+        assert (old_trial.trial_number, new_trial.trial_number) == (1, 2)
         commands.put(SignalProcessorCommand.should_stop)
         process.join(timeout=10)
         assert process.exitcode == 0

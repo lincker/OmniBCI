@@ -15,6 +15,4 @@
 .file-path-field { display: flex; gap: 8px; min-width: 0; width: 100%; max-width: 440px; margin-top: 0.5rem; }
 .file-path-field input { flex: 1; }
 .result-export-actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-.session-export-list { max-height: 220px; overflow: auto; margin: 12px 0; }
-.session-export-item { display: flex; gap: 10px; align-items: center; padding: 8px 0; }
 @media (max-width: 760px) { .desktop-connection-bar { flex-wrap: wrap; } .desktop-backend-address { flex-basis: 50%; } }

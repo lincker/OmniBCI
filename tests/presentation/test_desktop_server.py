@@ -97,14 +97,14 @@ def request(ready, path, *, method="GET"):
 
 
 @pytest.mark.integration
-def test_desktop_handshake_prepare_export_resume_and_clean_shutdown(desktop_backend):
+def test_desktop_handshake_prepare_resume_and_clean_shutdown(desktop_backend):
     process, send, receive, ready = desktop_backend
     with request(ready, "/api/v1/system/info") as response:
         assert json.load(response)["data"]["instance_id"] == ready["instance_id"]
     send("prepare_shutdown", id="prepare")
-    assert receive() == {"event": "result", "id": "prepare", "ok": True, "errors": [], "sessions": []}
-    with request(ready, "/api/v1/sessions/export") as response:
-        assert json.load(response)["sessions"] == []
+    assert receive() == {"event": "result", "id": "prepare", "ok": True, "errors": []}
+    with request(ready, "/api/v1/results") as response:
+        assert json.load(response)["data"] == {"generation": None, "trials": []}
     with pytest.raises(HTTPError) as blocked:
         request(ready, "/api/v1/missing", method="POST")
     assert blocked.value.code == 409

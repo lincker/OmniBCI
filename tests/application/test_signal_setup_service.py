@@ -1,4 +1,4 @@
-"""Signal setup remains a draft until review, and preparation precedes sessions."""
+"""Signal setup remains a draft until review, and preparation precedes streaming."""
 from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import replace
@@ -7,15 +7,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from omnibci.application.commands.session_commands import CreateSessionCommand
 from omnibci.application.config_errors import ConfigProfileValidationError
 from omnibci.application.plugin_profiles import ActivationSnapshot
-from omnibci.application.services.session_service import SessionAppService
 from omnibci.application.services.signal_setup_service import SignalSetupService
 from omnibci.conf import OmniBCISettings
 from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
-from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
 from omnibci.shared.events import EventType
 
 
@@ -55,10 +52,6 @@ def signal_service(tmp_path):
     return service, metadata, setup, calls
 
 
-
-
-
-
 def test_disconnected_mapping_preview_requires_metadata_from_the_current_connection(signal_service):
     service, _, _, calls = signal_service
     service.acquisition.cached_descriptor = None
@@ -67,8 +60,6 @@ def test_disconnected_mapping_preview_requires_metadata_from_the_current_connect
     with pytest.raises(ConfigProfileValidationError, match="Connect the acquisition source and get metadata"):
         service.preview_input({"outputs": [{'source_channel_id': 'channel-0', 'name': 'O1'}]})
     assert not calls
-
-
 
 
 def test_preparation_uses_current_observation_and_checks_acknowledgement(signal_service):
@@ -106,33 +97,6 @@ def test_known_rate_conflict_blocks_before_processor_command(signal_service):
     service.acquisition.cached_descriptor = replace(metadata, sample_rate=1000).to_dict()
     with pytest.raises(ConfigProfileValidationError, match="sample rate"):
         service.prepare()
-    assert not calls
-
-
-def test_session_freezes_plan_and_failure_creates_no_record(signal_service):
-    service, _, _, _ = signal_service
-    repo = InMemorySessionRepository()
-    sessions = SessionAppService(repo)
-    sessions.set_signal_preparer(service.prepare_session, service.acquisition.lifecycle_lock)
-    session_id = sessions.handle_create_session(CreateSessionCommand())
-    frozen = repo.find_by_id(session_id).signal_plan
-    assert frozen["source_indices"] == [0]
-    service.engine.applied_snapshot["PLUGINS.bindings"][0]["processing_input"]["outputs"] = [{"source_channel_id": "channel-1", "name": "M1"}]
-    assert repo.find_by_id(session_id).signal_plan == frozen
-    service.commands.request = lambda event, payload: SimpleNamespace(data={})
-    with pytest.raises(RuntimeError, match="acknowledge"):
-        sessions.handle_create_session(CreateSessionCommand())
-    assert len(repo.find_all()) == 1
-
-
-@pytest.mark.parametrize("missing_slot", ["processing.decoder", "processing.epoch_detector"])
-def test_session_requires_processing_selection_without_affecting_source_metadata(signal_service, missing_slot):
-    service, _, _, calls = signal_service
-    service.engine.applied_snapshot["PLUGINS.bindings"] = [
-        binding for binding in service.engine.applied_snapshot["PLUGINS.bindings"] if binding["slot"] != missing_slot]
-    service.acquisition.get_descriptor = lambda **kwargs: pytest.fail("Unconfigured processing read metadata")
-    with pytest.raises(ConfigProfileValidationError, match="Configure Signal Processing"):
-        service.prepare_session()
     assert not calls
 
 
@@ -238,10 +202,11 @@ def test_preparation_rejects_missing_algorithm_channel_before_worker_command(sig
     assert not calls
 
 
-def test_modern_preparation_and_session_use_native_input_without_global_setup(signal_service):
+def test_modern_preparation_uses_native_input_without_global_setup(signal_service):
     service, metadata, _, calls = signal_service
     snapshot = modern_binding(service, metadata)
-    plan = service.prepare_session()
+    service.prepare()
+    plan = calls[-1][1]["plan"]
     assert "SIGNAL.setup" not in snapshot
     assert "setup" not in plan
     assert plan["processing_input"]["outputs"] == [{"source_channel_id": "channel-0", "name": "O1"}]
@@ -453,77 +418,6 @@ def test_no_explicit_mapping_still_prepares_using_observed_signal(signal_service
     service.prepare()
     assert calls[0][1]["plan"]["source_indices"] == [0, 1]
     assert calls[0][1]["plan"]["source"]["sample_rate"] == metadata.sample_rate
-
-
-def test_recording_starts_with_legacy_default_input_without_changing_signal_or_snapshot(signal_service):
-    import numpy as np
-    from omnibci.application.processing_source import validate_plan_binding
-    from omnibci.application.services.recording_service import RecordingService
-    from omnibci.domain.channel_mapping import ResolvedSignalPlan
-    from omnibci.domain.signal import SignalChunk
-
-    service, metadata, _, calls = signal_service
-    service.engine.applied_snapshot["PLUGINS.bindings"][0]["processing_input"] = {
-        "schema_version": 1, "outputs": [], "excluded_channels": [],
-        "reference": {"mode": "original", "channels": []},
-    }
-    original = deepcopy(service.engine.applied_snapshot)
-    repo = InMemorySessionRepository()
-    sessions = SessionAppService(repo)
-    sessions.set_signal_preparer(service.prepare_session, service.acquisition.lifecycle_lock)
-    started = []
-
-    def start_stream(command):
-        assert calls[0][0] is EventType.PrepareSignalProcessing
-        assert repo.find_active().signal_plan == calls[0][1]["plan"]
-        started.append(command)
-
-    service.acquisition.handle_start_stream = start_stream
-    session_id = RecordingService(sessions, service.acquisition).start()
-
-    assert sessions.active_session_id == session_id
-    assert len(started) == 1
-    assert len(repo.find_all()) == 1
-    plan = ResolvedSignalPlan.from_dict(repo.find_by_id(session_id).signal_plan)
-    assert plan.source == metadata
-    assert plan.source_indices == (0, 1)
-    assert plan.processing_input == ProcessingInput()
-    assert plan.is_identity
-    validate_plan_binding(original, plan)
-    chunk = SignalChunk(timestamp=123, sequence_id=7,
-                        raw_data=np.array([[1.0, -2.0, 3.0], [4.0, 5.0, -6.0], [0.0, 8.0, 0.0]]))
-    mapped = plan.apply(chunk)
-    np.testing.assert_array_equal(mapped.raw_data, chunk.raw_data)
-    assert (mapped.timestamp, mapped.sequence_id) == (chunk.timestamp, chunk.sequence_id)
-    assert service.engine.applied_snapshot == original
-
-
-@pytest.mark.parametrize("setting", [
-    {"outputs": ["O1"]},
-    {"excluded_channels": ["M1"]},
-    {"reference": {"mode": "single", "channels": ["M1"]}},
-])
-def test_recording_rejects_meaningful_legacy_input_before_session_or_stream(signal_service, setting):
-    from omnibci.application.services.recording_service import RecordingService
-
-    service, _, _, calls = signal_service
-    service.engine.applied_snapshot["PLUGINS.bindings"][0]["processing_input"] = {
-        "schema_version": 1, "outputs": [], "excluded_channels": [],
-        "reference": {"mode": "original", "channels": []}, **setting,
-    }
-    original = deepcopy(service.engine.applied_snapshot)
-    repo = InMemorySessionRepository()
-    sessions = SessionAppService(repo)
-    sessions.set_signal_preparer(service.prepare_session, service.acquisition.lifecycle_lock)
-    service.acquisition.handle_start_stream = lambda _: pytest.fail("Invalid processing input started the stream")
-
-    with pytest.raises(ConfigProfileValidationError):
-        RecordingService(sessions, service.acquisition).start()
-
-    assert not repo.find_all()
-    assert sessions.active_session_id is None
-    assert not calls
-    assert service.engine.applied_snapshot == original
 
 
 @pytest.mark.parametrize("active_legacy", [True, False])

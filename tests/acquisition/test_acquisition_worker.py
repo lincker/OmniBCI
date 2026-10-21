@@ -2,7 +2,7 @@
 
 from queue import Queue
 from pathlib import Path
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -42,7 +42,7 @@ def test_connect_does_not_require_decoder_configuration(bindings):
     source.disconnect.side_effect = lambda: setattr(source, "is_connected", False) or True
     worker = AcquisitionWorker(commands, MagicMock(), events, settings_snapshot={
         "ACQUISITION.signal_source": "test-source", "PLUGINS.bindings": bindings,
-    }, recorder_factory=MagicMock)
+    })
     worker.data_source = source
     worker._run()
 
@@ -81,7 +81,7 @@ def test_file_source_worker_connects_with_unconfigured_processing(decoder):
     worker = AcquisitionWorker(commands, MagicMock(), events, settings_snapshot={
         "ACQUISITION.signal_source": "file_reader",
         "PLUGINS.bindings": [source] + ([decoder] if decoder else []),
-    }, recorder_factory=MagicMock)
+    })
     with patch("omnibci.conf.settings.use_snapshot"):
         worker.run()
 
@@ -123,7 +123,6 @@ def test_run_constructs_runtime_with_explicit_context(processing_input):
         preparation_required=True,
         generation="generation",
         config_revision="revision",
-        recorder=ANY,
     )
     runtime_class.return_value.run.assert_called_once_with()
     assert worker.runtime is runtime_class.return_value
@@ -168,23 +167,7 @@ def test_global_settings_are_pinned_once_for_source_and_runtime():
         data_source=load_source.return_value, command_queue=worker.command_queue,
         data_manager=None, event_bus=None, source_id="global-source", preparation_required=True,
         generation="global-generation", config_revision="global-revision",
-        recorder=ANY,
     )
-
-
-def test_recorder_factory_is_called_inside_worker_run_only():
-    recorder = MagicMock()
-    factory = MagicMock(return_value=recorder)
-    worker = AcquisitionWorker(command_queue=MagicMock(), settings_snapshot={}, recorder_factory=factory)
-    worker.data_source = MagicMock(spec=SignalSource)
-    factory.assert_not_called()
-
-    with patch("omnibci.infrastructure.acquisition.worker.AcquisitionRuntime") as runtime_class:
-        worker._run()
-
-    factory.assert_called_once_with()
-    assert runtime_class.call_args.kwargs["recorder"] is recorder
-    runtime_class.return_value.run.assert_called_once_with()
 
 
 def test_historical_decoder_projection_requires_preparation():

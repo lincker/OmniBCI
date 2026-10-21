@@ -2,7 +2,7 @@
 Unit tests for AcquisitionAppService.
 """
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 from omnibci.application.commands.acquisition_commands import (
     ConnectDataProviderCommand,
@@ -10,7 +10,7 @@ from omnibci.application.commands.acquisition_commands import (
     StartStreamCommand,
     StopStreamCommand,
 )
-from omnibci.application.events import AcquisitionSnapshot
+from omnibci.application.events import AcquisitionSnapshot, CommandResult, StreamDrainReceipt
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 from omnibci.shared.events import Event, EventType
 from omnibci.application.services.acquisition_service import AcquisitionAppService
@@ -52,33 +52,68 @@ class TestAcquisitionConnect:
 class TestAcquisitionStream:
     def test_start_stream_dispatches_event(self, acquisition_service, mock_engine):
         acquisition_service.handle_start_stream(StartStreamCommand())
-        event = mock_engine.event_bus.put_event.call_args[0][0]
-        assert event.type == EventType.StartStream
+        assert [item.args[0].type for item in mock_engine.event_bus.put_event.call_args_list] == [
+            EventType.StopAndDrain, EventType.StartStream,
+        ]
 
     def test_start_stream_does_not_guess_state(self, acquisition_service):
         acquisition_service.handle_start_stream(StartStreamCommand())
         assert acquisition_service._streaming is False
 
-    def test_stop_stream_dispatches_event(self, acquisition_service, mock_engine):
-        acquisition_service.handle_stop_stream(StopStreamCommand())
-        event = mock_engine.event_bus.put_event.call_args[0][0]
-        assert event.type == EventType.StopStream
+    def test_stop_stream_waits_for_processing_drain(self):
+        executor = MagicMock()
+        receipt = StreamDrainReceipt("generation", "revision", 3, 2, False)
+        executor.request.return_value = CommandResult("stop", "StopAndDrain", True, data=receipt.to_dict())
+        service = AcquisitionAppService(executor)
+        service.handle_stop_stream(StopStreamCommand())
+        executor.request.assert_called_once_with(EventType.StopAndDrain, timeout_s=None)
+
+    def test_stop_stream_rejects_missing_drain_evidence(self):
+        executor = MagicMock()
+        executor.request.return_value = CommandResult("stop", "StopAndDrain", True)
+        service = AcquisitionAppService(executor)
+        with pytest.raises(RuntimeError, match="valid stream drain evidence"):
+            service.handle_stop_stream(StopStreamCommand())
 
     def test_start_waits_for_preparation_receipt(self):
         executor = MagicMock()
+        executor.request.return_value = CommandResult("drain", "StopAndDrain", True,
+            data=StreamDrainReceipt(None, None, -1, 0, False).to_dict())
         service = AcquisitionAppService(executor)
         receipt = {"connection_id": "connection"}
         service.set_signal_preparer(lambda: receipt)
         service.handle_start_stream(StartStreamCommand())
-        executor.request.assert_called_once_with(EventType.StartStream, receipt)
+        assert executor.request.call_args_list == [
+            call(EventType.StopAndDrain, timeout_s=None), call(EventType.StartStream, receipt),
+        ]
+
+    def test_start_during_streaming_keeps_the_current_epoch(self):
+        executor = MagicMock()
+        service = AcquisitionAppService(executor)
+        service.on_acquisition_state(Event(EventType.AcquisitionState, AcquisitionSnapshot(True, True)))
+        service.handle_start_stream(StartStreamCommand())
+        executor.request.assert_called_once_with(EventType.StartStream, None)
+
+    def test_failed_drain_prevents_preparation_and_restart(self):
+        executor = MagicMock()
+        executor.request.side_effect = RuntimeError("drain failed")
+        service = AcquisitionAppService(executor)
+        prepare = MagicMock()
+        service.set_signal_preparer(prepare)
+        with pytest.raises(RuntimeError, match="drain failed"):
+            service.handle_start_stream(StartStreamCommand())
+        prepare.assert_not_called()
+        executor.request.assert_called_once_with(EventType.StopAndDrain, timeout_s=None)
 
     def test_failed_preparation_does_not_start_stream(self):
         executor = MagicMock()
+        executor.request.return_value = CommandResult("drain", "StopAndDrain", True,
+            data=StreamDrainReceipt(None, None, -1, 0, False).to_dict())
         service = AcquisitionAppService(executor)
         service.set_signal_preparer(MagicMock(side_effect=ValueError("Missing C3")))
         with pytest.raises(ValueError, match="Missing C3"):
             service.handle_start_stream(StartStreamCommand())
-        executor.request.assert_not_called()
+        executor.request.assert_called_once_with(EventType.StopAndDrain, timeout_s=None)
 
 
 

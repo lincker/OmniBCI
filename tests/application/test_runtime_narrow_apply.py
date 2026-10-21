@@ -1,4 +1,4 @@
-"""Narrow updates preserve workers/session and reconcile uncertain receipts."""
+"""Narrow updates preserve workers and reconcile uncertain receipts."""
 from copy import deepcopy
 from dataclasses import replace
 
@@ -69,6 +69,7 @@ class NarrowCommands(Commands):
 def narrow(rebuild_harness):
     def create(strategy):
         h = rebuild_harness()
+        h.engine.actuation_process_alive = True
         h.commands = NarrowCommands(h.engine, h.acquisition, h.log)
         h.runtime.executor.commands = h.commands
         h.output_restarts = []
@@ -89,8 +90,8 @@ def narrow(rebuild_harness):
                               expected_revision=decoder.revision)
             refresh = ["processing.decoder"]
         else:
-            # Remove a dormant output selection. The enabled-output path uses
-            # the same grouped restart boundary and is covered by real IPC tests.
+            # Remove a disabled output selection while the previous output manager
+            # is still owned. Enabled replacement is also covered by real IPC tests.
             bindings = [item for item in bindings if item["slot"] != "actuation.effector"]
             refresh = []
         h.plan = h.runtime.plan(bindings, expected_revision=h.previous.revision, refresh_slots=refresh)
@@ -103,9 +104,6 @@ def narrow(rebuild_harness):
 def assert_preserved(h):
     assert h.engine.starts == []
     assert h.engine.generation == "original-generation"
-    assert h.sessions.active_session_id == h.original_session
-    assert len(h.repository.find_all()) == 1
-    assert h.repository.find_by_id(h.original_session).state == "running"
 
 
 @pytest.mark.asyncio
@@ -207,11 +205,10 @@ async def test_trial_persistence_failure_checks_selection_before_rollback(narrow
 
 
 @pytest.mark.asyncio
-async def test_module_update_drains_restores_cursor_and_preserves_session(narrow):
+async def test_module_update_drains_restores_cursor_and_preserves_workers(narrow):
     h = narrow("module")
     operation = await apply(h)
     assert operation["status"] == "succeeded"
-    assert operation["result"]["session_preserved"]
     assert h.output_restarts == [h.plan.target_revision]
     assert h.commands.context_targets == [h.plan.target_revision]
     assert h.commands.restores == h.acquisition.starts == [(h.plan.target_revision, 100)]
@@ -238,7 +235,7 @@ async def test_module_receipt_mismatch_cannot_acknowledge_a_guessed_old_revision
 
 
 @pytest.mark.asyncio
-async def test_module_save_failure_restores_old_context_and_cursor_without_new_session(narrow, monkeypatch):
+async def test_module_save_failure_restores_old_context_and_cursor_without_rebuilding(narrow, monkeypatch):
     h = narrow("module")
 
     def fail_save(*args, **kwargs):
@@ -332,7 +329,7 @@ async def test_declared_live_source_resumes_without_replay_checkpoint(narrow, re
     else:
         assert h.engine.starts == [h.plan.target_revision]
         assert operation["result"]["replay_resumed"] is False
-        assert h.sessions.active_session_id != h.original_session
+        assert h.acquisition.streaming
 
 
 @pytest.mark.asyncio
@@ -499,12 +496,12 @@ def test_active_windows_trigger_is_rejected_at_plan_or_revalidation(narrow, monk
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_live_logger_replacement_preserves_source_processing_and_session(tmp_path, monkeypatch, unused_tcp_port):
+async def test_live_logger_replacement_preserves_source_and_processing(tmp_path, monkeypatch, unused_tcp_port):
     import asyncio
     import json
     from uuid import uuid4
 
-    from omnibci.application.commands.acquisition_commands import ConnectDataProviderCommand
+    from omnibci.application.commands.acquisition_commands import ConnectDataProviderCommand, StartStreamCommand
     from omnibci.application.commands.engine_commands import StartEngineCommand, StopEngineCommand
     from omnibci.application.services.engine_service import NeuroEngineService
     from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
@@ -512,7 +509,6 @@ async def test_live_logger_replacement_preserves_source_processing_and_session(t
     from omnibci.bootstrap import assemble, register_engine_listeners
     from omnibci.infrastructure.actuation.process_manager import ActuationProcessManager
     from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
-    from omnibci.infrastructure.repositories.session_repository import InMemorySessionRepository
     from tests.application.test_runtime_apply_integration import configured_profiles, wire_signal_preparation
 
     profiles, bindings = configured_profiles(tmp_path, monkeypatch)
@@ -555,18 +551,19 @@ schema_version=1
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
                                 actuation_process_manager=manager, snapshot_provider=profiles.resolve_settings)
     await engine.startup()
-    container = assemble(engine, InMemorySessionRepository(), admission=engine.admission,
+    container = assemble(engine, admission=engine.admission,
                          actuation_process_manager=manager)
     signal = wire_signal_preparation(profiles, engine, container)
     register_engine_listeners(container)
     coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
-                                          container.session_service, container.stimulation_service,
+                                          container.stimulation_service,
                                           container.command_results, signal_preparer=signal.prepare)
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
     try:
         await engine.handle_start_engine(StartEngineCommand())
         await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
-        session = await asyncio.to_thread(container.recording_service.start)
+        await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
+        await asyncio.to_thread(engine.prepare_actuation)
         await asyncio.sleep(.08)
         old_workers = (engine._engine.acquisition_worker.pid, engine._engine.signal_processing_worker.pid)
         old_actuation = manager._process.pid
@@ -578,13 +575,11 @@ schema_version=1
         await runtime.wait_for_idle()
         operation = runtime.operation(operation["operation_id"])
         assert operation["status"] == "succeeded", operation
-        assert operation["result"]["session_preserved"] is True
         assert manager._process.pid != old_actuation
         assert manager._process.is_alive()
         assert (engine._engine.acquisition_worker.pid, engine._engine.signal_processing_worker.pid) == old_workers
         assert engine.generation == generation
-        assert container.session_service.active_session_id == session
-        assert len(container.session_repository.find_all()) == 1
+        assert container.acquisition_service.is_streaming
         assert engine.applied_revision == profiles.repository.get_activation().revision == plan.target_revision
         checkpoints = [json.loads(line) for line in (tmp_path / "restored.jsonl").read_text().splitlines()]
         assert len(checkpoints) == 1 and checkpoints[0]["cursor"] > 0

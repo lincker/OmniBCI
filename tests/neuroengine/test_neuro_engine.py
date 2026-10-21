@@ -74,12 +74,6 @@ _COMMAND_ROUTES = [
      {"generation": "run", "expected_revision": "old", "checkpoint": {}}),
     (EventType.UpdateAcquisitionRevision, "acquisition_command_queue", AcquisitionCommand.update_revision,
      {"generation": "run", "expected_revision": "old", "target_revision": "new"}),
-    (EventType.BeginRawRecording, "acquisition_command_queue", AcquisitionCommand.begin_recording,
-     {"session_id": "session-1", "subject_id": "subject-1"}),
-    (EventType.EndRawRecording, "acquisition_command_queue", AcquisitionCommand.end_recording,
-     {"session_id": "session-1"}),
-    (EventType.AbortRawRecording, "acquisition_command_queue", AcquisitionCommand.abort_recording,
-     {"session_id": "session-1"}),
     (
         EventType.StageProcessingConfiguration,
         "processor_command_queue",
@@ -120,20 +114,9 @@ _COMMAND_ROUTES = [
         EventType.StopAndDrain,
         "acquisition_command_queue",
         AcquisitionCommand.stop_and_drain,
-        {"session_id": "session-1"},
+        {},
     ),
-    (
-        EventType.StartSession,
-        "processor_command_queue",
-        SignalProcessorCommand.start_session,
-        {"session_id": "session-1", "paradigm": "classic40SSVEP"},
-    ),
-    (
-        EventType.EndSession,
-        "processor_command_queue",
-        SignalProcessorCommand.end_session,
-        "session-1",
-    ),
+
 ]
 
 _EXPECTED_EVENT_TYPES = {
@@ -275,10 +258,10 @@ class TestEventRouting:
         bus.register_event_listener(EventType.CommandResult, received.set_result)
         await bus.start()
         try:
-            bus.put_event(Event(EventType.StartSession, CommandRequest("session-1", {})))
+            bus.put_event(Event(EventType.PrepareSignalProcessing, CommandRequest("prepare", {})))
             bus.put_event(Event(EventType.CloseAllNeuroEngineProcessSystem))
             result_event = await asyncio.wait_for(received, timeout=1)
-            assert result_event.data.command_id == "session-1"
+            assert result_event.data.command_id == "prepare"
             assert result_event.data.error_code == "COMMAND_QUEUE_FULL"
             assert eng.should_stop is True
         finally:

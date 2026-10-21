@@ -8,23 +8,11 @@ from omnibci.domain.classification import Classification
 
 @dataclass(frozen=True)
 class TrialOutcome:
-    """TrialCompleted payload with session context and classification.
-
-    ``trial_number`` is one-based; zero asks the read model to derive it.
-    """
-    session_id: str
+    """One decoded result, numbered within an engine generation."""
+    generation: str
     trial_number: int
     classification: Classification
     config_revision: str | None = None
-
-
-@dataclass(frozen=True)
-class SessionSummary:
-    """SessionEnded payload with session identity and final trial count."""
-    session_id: str
-    total_trials: int
-    config_revision: str | None = None
-    interruption_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -43,7 +31,6 @@ class StreamBarrier:
     generation: str | None
     config_revision: str | None
     last_sequence: int
-    session_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -53,7 +40,6 @@ class StreamDrainReceipt:
     generation: str | None
     config_revision: str | None
     last_sequence: int
-    session_id: str | None
     completed_trials: int
     interrupted_epoch: bool
     outputs_settled: bool = False
@@ -64,11 +50,11 @@ class StreamDrainReceipt:
     @classmethod
     def from_value(cls, value) -> "StreamDrainReceipt":
         if not isinstance(value, Mapping) or set(value) != {
-            "generation", "config_revision", "last_sequence", "session_id",
+            "generation", "config_revision", "last_sequence",
             "completed_trials", "interrupted_epoch", "outputs_settled",
         }:
             raise ValueError("Missing or invalid stream drain receipt")
-        for field in ("generation", "config_revision", "session_id"):
+        for field in ("generation", "config_revision"):
             if value[field] is not None and (
                 not isinstance(value[field], str) or not value[field]
             ):

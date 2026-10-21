@@ -40,9 +40,6 @@ def _bootstrap(stream):
 async def _desktop_server(token, launch_id, control_input, control_output):
     import uvicorn
     from omnibci.presentation.main import create_app
-    from omnibci.presentation.schemas.session import SessionResponse
-    from omnibci.application.queries.session_queries import ListSessionsQuery
-    from dataclasses import asdict
 
     app = create_app(api_token=token, desktop=True)
     loop = asyncio.get_running_loop()
@@ -121,10 +118,8 @@ async def _desktop_server(token, launch_id, control_input, control_output):
                     progress("waiting_for_requests")
                     await app.state.request_gate.prepare()
                     errors = await app.state.shutdown_service.prepare(progress=progress)
-                    sessions = [SessionResponse(**asdict(dto)).model_dump(mode="json")
-                                for dto in app.state.session_service.handle_list_sessions(ListSessionsQuery())]
                     emit({"event": "result", "id": identifier, "ok": not errors,
-                          "errors": errors, "sessions": sessions})
+                          "errors": errors})
                 elif operation == "resume":
                     app.state.shutdown_service.resume()
                     app.state.request_gate.prepared = False

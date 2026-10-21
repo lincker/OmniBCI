@@ -1,14 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import { createWriteStream } from "node:fs";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import { randomUUID } from "node:crypto";
 import { BackendConnection, backendOrigin, handleApiRequest } from "./connection.js";
 import { LocalBackend, type ControlResult } from "./local-backend.js";
-import type { ConnectionTarget, SaveResultsInput } from "./contracts.js";
+import type { ConnectionTarget } from "./contracts.js";
 import { desktopText } from "./i18n.js";
 
 protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -20,7 +17,6 @@ if (process.env.OMNIBCI_DESKTOP_USER_DATA) {
 
 const connection = new BackendConnection((url, init) => net.fetch(url, init));
 const subscriptions = new Map<string, () => void>();
-const exported = new Map<string, string>();
 let window: BrowserWindow;
 let backend: LocalBackend | undefined;
 let quitAllowed = false;
@@ -55,56 +51,6 @@ async function exclusive<T>(action: () => Promise<T>): Promise<T> {
 function clearSubscriptions(): void {
   for (const stop of subscriptions.values()) stop();
   subscriptions.clear();
-}
-
-function stamp(record: Record<string, unknown>): string {
-  return JSON.stringify([record.session_id, record.trial_count, record.state, record.ended_at,
-    record.config_revision, record.interruption_reason]);
-}
-
-async function sessions(): Promise<Array<Record<string, unknown>>> {
-  const response = await connection.request("/api/v1/sessions");
-  if (!response.ok) {
-    await response.body?.cancel();
-    throw new Error(t("Could not read session results; they may still be held by the backend."));
-  }
-  const data = await response.json();
-  if (!Array.isArray(data?.data?.sessions)) throw new Error(t("Invalid session list."));
-  return data.data.sessions;
-}
-
-async function saveResults(input: SaveResultsInput): Promise<{ canceled: boolean }> {
-  if (!input || input.connectionId !== connection.info.id || !["json", "csv"].includes(input.format)
-    || input.sessionIds !== undefined && (!Array.isArray(input.sessionIds)
-      || input.sessionIds.some(id => typeof id !== "string" || id.length > 256))) throw new Error(t("Invalid export request."));
-  const choice = await dialog.showSaveDialog(window, {
-    title: t("Save results"), buttonLabel: t("Save"),
-    defaultPath: `OmniBCI-results-${new Date().toISOString().slice(0, 10)}.${input.format}`,
-    filters: [{ name: input.format.toUpperCase(), extensions: [input.format] }],
-  });
-  if (choice.canceled || !choice.filePath) return { canceled: true };
-  if (input.connectionId !== connection.info.id) throw new Error(t("Connection changed before exporting."));
-  // Mark only records observed before the export snapshot; later trials stay unexported.
-  const records = await sessions();
-  const query = new URLSearchParams({ format: input.format });
-  for (const id of input.sessionIds ?? []) query.append("session_id", id);
-  const response = await connection.request("/api/v1/sessions/export?" + query, {}, input.connectionId);
-  if (!response.ok || !response.body) {
-    await response.body?.cancel();
-    throw new Error(t("Export failed (HTTP {status}).", { status: response.status }));
-  }
-  const temporary = path.join(path.dirname(choice.filePath), `.omnibci-export-${randomUUID()}.tmp`);
-  try {
-    await pipeline(Readable.fromWeb(response.body as any), createWriteStream(temporary, { flags: "wx", mode: 0o600 }));
-    if (input.connectionId !== connection.info.id) throw new Error(t("Connection changed during export."));
-    await rename(temporary, choice.filePath);
-    for (const record of records) {
-      if (!input.sessionIds?.length || input.sessionIds.includes(String(record.session_id))) {
-        exported.set(`${input.connectionId}:${record.session_id}`, stamp(record));
-      }
-    }
-    return { canceled: false };
-  } finally { await rm(temporary, { force: true }); }
 }
 
 async function awaitStop(operation: Promise<ControlResult | void>, owned: LocalBackend): Promise<ControlResult | void> {
@@ -159,7 +105,7 @@ async function disconnect(): Promise<boolean> {
   }
   const owned = backend;
   const confirm = await dialog.showMessageBox(window, { type: "question", message: t("Stop the local backend?"),
-    detail: t("Acquisition, stimulation and outputs will stop. You can export the final results before disconnecting."),
+    detail: t("Acquisition, stimulation and outputs will stop. Live results will be cleared."),
     buttons: [t("Cancel"), t("Stop and continue")], defaultId: 0, cancelId: 0 });
   if (confirm.response === 0) return false;
   connection.stopping(true);
@@ -177,22 +123,6 @@ async function disconnect(): Promise<boolean> {
     await owned.force(); backend = undefined;
     clearSubscriptions(); connection.disconnect(); return true;
   }
-  let canceled = false;
-  try {
-    const records = prepared.sessions ?? await sessions();
-    const unsaved = records.filter(record => exported.get(`${connection.info.id}:${record.session_id}`) !== stamp(record));
-    if (unsaved.length) {
-      const answer = await dialog.showMessageBox(window, { type: "warning", message: t("{count} session(s) have unexported results.", { count: unsaved.length }),
-        detail: t("The local backend stores results in memory. Export them before disconnecting."),
-        buttons: [t("Export JSON"), t("Discard results"), t("Cancel disconnect")], defaultId: 0, cancelId: 2 });
-      canceled = answer.response === 2 || answer.response === 0 && (await saveResults({ connectionId: connection.info.id, format: "json",
-        sessionIds: unsaved.map(record => String(record.session_id)) })).canceled;
-    }
-  } catch (error) {
-    await resumeStoppedBackend(owned);
-    throw error;
-  }
-  if (canceled) { await resumeStoppedBackend(owned); return false; }
   clearSubscriptions();
   let result: ControlResult | void = undefined;
   let shutdownError: unknown;
@@ -310,14 +240,13 @@ async function start(): Promise<void> {
   window.on("query-session-end", event => { event.preventDefault(); if (!transition) void requestQuit().catch(displayError); });
   let previousId = connection.info.id;
   connection.on("change", state => {
-    if (state.id !== previousId) { clearSubscriptions(); exported.clear(); previousId = state.id; }
+    if (state.id !== previousId) { clearSubscriptions(); previousId = state.id; }
     if (!window.isDestroyed()) window.webContents.send("connection:changed", state);
   });
 
   subscribe("connection:get", async () => ({ ...connection.info }));
   subscribe("connection:connect", target => exclusive(async () => { await connect(target); return { ...connection.info }; }));
   subscribe("connection:disconnect", () => exclusive(async () => { await disconnect(); }));
-  subscribe("results:save", input => exclusive(() => saveResults(input)));
   subscribe("recording:choose-file", async () => {
     if (connection.info.kind !== "local" || connection.info.status !== "ready") throw new Error(t("Choose files on the backend machine in remote mode."));
     const owner = connection.info.id;

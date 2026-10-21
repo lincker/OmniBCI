@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createInterface } from "node:readline";
 
-export interface ControlResult { ok: boolean; errors?: string[]; sessions?: Array<Record<string, unknown>>; forced?: boolean }
+export interface ControlResult { ok: boolean; errors?: string[]; forced?: boolean }
 export interface BackendReady { url: string; instance_id: string }
 const shutdownStages = {
   waiting_for_requests: "Waiting for active requests",
@@ -11,7 +11,7 @@ const shutdownStages = {
   stopping_stimulation: "Stopping stimulation",
   stopping_stimulation_process: "Stopping the stimulation process",
   stopping_actuation_process: "Stopping the actuation process",
-  draining_recording: "Draining recorded results",
+  draining_acquisition: "Draining acquisition and processing",
   stopping_engine: "Stopping the engine",
   stopped: "Backend stopped; waiting for exit",
 } as const;

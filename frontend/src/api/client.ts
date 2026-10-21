@@ -12,8 +12,8 @@ type S = components["schemas"];
 export type EngineStatus = S["EngineStatusResponse"];
 export type AcquisitionStatus = S["AcquisitionStatusResponse"];
 export type DataSourceMetadata = S["AcquisitionMetadataResponse"];
-export type SessionInfo = S["SessionResponse"];
 export type Trial = S["TrialResponse"];
+export type ResultsSnapshot = S["ResultsResponse"];
 export type ConfigEntry = S["ConfigEntry"];
 export type ConfigData = S["ConfigResponse"];
 export type PatchConfigResult = S["PatchConfigResponse"];
@@ -72,20 +72,7 @@ export const api = {
   acquisitionStatus: () => get<AcquisitionStatus>("/api/v1/acquisition/status"),
   stimulationStatus: () => get<StimulationStatus>("/api/v1/stimulation/status"),
 
-  /** null = no active session (NO_ACTIVE_SESSION is a normal state, not an error). */
-  activeSession: async (): Promise<SessionInfo | null> => {
-    try {
-      return await get<SessionInfo>("/api/v1/sessions/active");
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 404) return null;
-      throw e;
-    }
-  },
-
-  sessions: () => get<S["SessionListResponse"]>("/api/v1/sessions"),
-
-  sessionTrials: (sessionId: string) =>
-    get<Trial[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/trials`),
+  results: () => get<ResultsSnapshot>("/api/v1/results"),
 
   // ---- control actions (stage 2, lock-free) ------------------------------
   engineStart: () => post("/api/v1/engine/start"),
@@ -101,8 +88,8 @@ export const api = {
   trialStart: (n_trials = 1, trial_params?: number[]) =>
     post("/api/v1/stimulation/trial/start", { n_trials, trial_params }),
 
-  recordingStart: () => post<{ session_id: string }>("/api/v1/recording/start"),
-  recordingStop: () => post<{ session_id: string }>("/api/v1/recording/stop"),
+  acqStreamStart: () => post("/api/v1/acquisition/stream/start"),
+  acqStreamStop: () => post("/api/v1/acquisition/stream/stop"),
 
   // ---- plugin discovery ----------------------------------------------------
   /** List plugins by category: "paradigm" | "decoder" | "acquisition" | "effector" */

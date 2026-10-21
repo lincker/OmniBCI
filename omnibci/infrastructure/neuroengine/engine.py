@@ -414,8 +414,8 @@ class NeuroEngine:
         EventType → (command queue, command, carry_data).
 
         carry_data=False: enqueue the bare command (legacy behaviour).
-        carry_data=True:  enqueue ``(command, event.data)`` so the payload (e.g.
-        a session_id) reaches the subprocess — see docs/session-id-unification.md.
+        carry_data=True: enqueue ``(command, event.data)`` so the request
+        reaches the subprocess.
         """
         acq = self.acquisition_command_queue
         proc = self.processor_command_queue
@@ -426,17 +426,11 @@ class NeuroEngine:
             EventType.DisconnectDataProvider:         (acq, AcquisitionCommand.disconnect, True),
             EventType.StartStream:                    (acq, AcquisitionCommand.start_stream, True),
             EventType.GetSourceMetadata:              (acq, AcquisitionCommand.get_metadata, True),
-            EventType.BeginRawRecording:              (acq, AcquisitionCommand.begin_recording, True),
-            EventType.EndRawRecording:                (acq, AcquisitionCommand.end_recording, True),
-            EventType.AbortRawRecording:              (acq, AcquisitionCommand.abort_recording, True),
             EventType.StopStream:                     (acq, AcquisitionCommand.stop_stream, True),
             EventType.StopAndDrain:                   (acq, AcquisitionCommand.stop_and_drain, True),
             EventType.GetSourceCheckpoint:            (acq, AcquisitionCommand.get_checkpoint, True),
             EventType.RestoreSourceCheckpoint:        (acq, AcquisitionCommand.restore_checkpoint, True),
             EventType.UpdateAcquisitionRevision:      (acq, AcquisitionCommand.update_revision, True),
-            # Session lifecycle: REST-created session_id pushed into the worker.
-            EventType.StartSession:                   (proc, SignalProcessorCommand.start_session, True),
-            EventType.EndSession:                     (proc, SignalProcessorCommand.end_session, True),
             EventType.StageProcessingConfiguration:   (proc, SignalProcessorCommand.stage_configuration, True),
             EventType.CancelProcessingConfiguration:  (proc, SignalProcessorCommand.cancel_configuration, True),
             EventType.UpdateProcessingContext:        (proc, SignalProcessorCommand.update_context, True),

@@ -1,4 +1,4 @@
-"""Output metadata changes preserve the live pipeline and session identity."""
+"""Output metadata changes preserve the live pipeline and runtime identity."""
 from copy import deepcopy
 from queue import Queue
 from types import SimpleNamespace
@@ -52,7 +52,7 @@ def result(events):
 
 def test_confirmed_output_context_keeps_objects_and_updates_next_epoch_revision(context_update):
     processor, before, candidate, events = context_update
-    decoder, filters, detector, session = processor._decoder, processor._filters, processor.detector, processor.session_runtime.session
+    decoder, filters, detector = processor._decoder, processor._filters, processor.detector
     update(processor, candidate)
     receipt = result(events)
     assert receipt.ok
@@ -61,8 +61,8 @@ def test_confirmed_output_context_keeps_objects_and_updates_next_epoch_revision(
     assert processor._decoder is decoder
     assert processor._filters is filters
     assert processor.detector is detector
-    assert processor.session_runtime.session is session
-    assert processor.session_runtime.session.config_revision == "old"
+    assert processor.generation == "run"
+    assert processor.completed_trials == 0
     assert processor.new_epoch_processor().config_revision == "new"
     candidate["PLUGINS.bindings"][-1]["parameters"]["mutated"] = True
     assert processor._settings_snapshot["PLUGINS.bindings"][-1]["parameters"] == {}

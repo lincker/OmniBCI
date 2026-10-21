@@ -35,10 +35,7 @@ class ActuationCommandTranslator:
     def on_trial_completed(self, event: Event) -> None:
         """EventBus listener for TrialCompleted. Emits an ActuationCommand."""
         data = event.data
-        # The bus payload is a TrialOutcome (session_id + trial_number +
-        # classification) since the ACL enrichment — unwrap it. A bare
-        # Classification (pre-enrichment shape) is still accepted for
-        # backward compatibility, mirroring SessionAppService.on_trial_completed.
+        # Completed trials carry the classification and runtime identity.
         clf = getattr(data, "classification", data)
         target_id = getattr(clf, "target_id", None)
         if target_id is None:

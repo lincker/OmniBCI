@@ -7,16 +7,14 @@ from enum import Enum
 import logging
 from queue import Empty
 from typing import Optional
+from uuid import uuid4
 
 from omnibci.domain.signal import SignalChunk
 
 from omnibci.domain.classification import Classification
-from omnibci.domain.events import TrialCompleted
-from omnibci.domain.epoch import EpochInfo
-from omnibci.application.processing_session import DecodedTrial, ProcessingSession
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector
 from omnibci.application.events import (
-    CommandFailureKind, CommandRequest, CommandResult, StreamBarrier,
+    CommandFailureKind, CommandRequest, CommandResult, StreamBarrier, StreamDrainReceipt, TrialOutcome,
 )
 from omnibci.application.processing_source import requires_signal_preparation, validate_plan_binding
 from omnibci.shared.events import Event, EventType
@@ -30,9 +28,6 @@ logger = logging.getLogger(__name__)
 
 class SignalProcessorCommand(Enum):
     should_stop = 'stream_processor_stop'
-    # Session lifecycle (carry a payload — enqueued as (command, payload)):
-    start_session = 'start_session'   # payload: {"session_id": str, "paradigm": str|None}
-    end_session = 'end_session'       # payload: session_id str
     stage_configuration = 'stage_processing_configuration'
     cancel_configuration = 'cancel_processing_configuration'
     update_context = 'update_processing_context'
@@ -63,7 +58,6 @@ class SignalProcessor:
         command_queue,
         data_manager,
         event_bus,
-        session_runtime: ProcessingSession,
         sample_rate: int | None = None,
         baseline_duration: float = 0.0,
         filters=None,
@@ -74,7 +68,6 @@ class SignalProcessor:
         self.data_manager = data_manager
         self.event_bus = event_bus
         self.command_queue = command_queue
-        self.session_runtime = session_runtime
 
         # EpochDetector: reads epoch start/end markers from each chunk. Owned
         # here (the orchestration/state-machine level), not by EpochProcessor —
@@ -110,7 +103,8 @@ class SignalProcessor:
         self._current_state = self._awaiting_state
 
         self._should_stop = False
-        self.generation = generation
+        self.generation = generation or (settings_snapshot or {}).get("CONFIG.generation") or str(uuid4())
+        self.completed_trials = 0
         self.config_revision = config_revision
         self._last_sequence = -1
         self._drain_failure: str | None = None
@@ -125,13 +119,16 @@ class SignalProcessor:
             config_revision=self.config_revision,
         )
 
-    def complete_trial(self, classification: Classification) -> TrialCompleted | None:
-        """Synchronously hand off one result before advancing to the next epoch."""
-        epoch = self.current_epoch.build_epoch()
-        return self.session_runtime.record_trial(DecodedTrial(
-            epoch_info=EpochInfo.from_epoch(epoch), classification=classification,
-            config_revision=getattr(self.current_epoch, "config_revision", None),
-        ))
+    def complete_trial(self, classification: Classification) -> TrialOutcome:
+        """Publish each decoded result before advancing to the next epoch."""
+        outcome = TrialOutcome(
+            generation=self.generation, trial_number=self.completed_trials + 1,
+            classification=classification,
+            config_revision=self.current_epoch.config_revision,
+        )
+        self.event_bus.put_event(Event(EventType.TrialCompleted, outcome))
+        self.completed_trials = outcome.trial_number
+        return outcome
 
     async def next_chunk(self, timeout: float = 0.05) -> "SignalChunk | None":
         """Wait off-loop for a chunk and return control after the timeout."""
@@ -167,7 +164,6 @@ class SignalProcessor:
                 raise ValueError("Drain barrier belongs to a different runtime generation or revision")
             if barrier.last_sequence != self._last_sequence:
                 raise ValueError("Drain barrier sequence differs from the last consumed signal chunk")
-            running_session = self.session_runtime.validate_drain(barrier.session_id)
             if self._drain_failure is not None:
                 raise RuntimeError(self._drain_failure)
             processing_started = True
@@ -175,15 +171,14 @@ class SignalProcessor:
             if self.current_epoch is not None:
                 complete, classification = self.current_epoch.decode_if_ready()
                 if complete and classification is not None:
-                    completion = self.complete_trial(classification)
-                    if running_session is not None and completion is None:
-                        raise RuntimeError("Completed drain trial could not be recorded")
+                    self.complete_trial(classification)
                     interrupted = False
             self.transition_to_awaiting()
             self.pretrigger.clear()
-            receipt = self.session_runtime.drain_receipt(
+            receipt = StreamDrainReceipt(
                 generation=self.generation, config_revision=self.config_revision,
-                last_sequence=self._last_sequence, interrupted_epoch=interrupted,
+                last_sequence=self._last_sequence, completed_trials=self.completed_trials,
+                interrupted_epoch=interrupted,
             )
             self._emit_drain_result(barrier, ok=True, data=receipt.to_dict())
         except Exception as exc:
@@ -244,7 +239,6 @@ class SignalProcessor:
         else:
             command, raw_payload = item, None
         request = CommandRequest.from_value(raw_payload)
-        payload = request.payload if request is not None else raw_payload
         if command == SignalProcessorCommand.prepare_signal:
             if request is not None:
                 self._prepare_signal(request)
@@ -268,24 +262,7 @@ class SignalProcessor:
         error_code = None
         if command == SignalProcessorCommand.should_stop:
             self._should_stop = True
-            # End the session cleanly so SessionEnded domain event is emitted
-            self._end_current_session()
-        elif command == SignalProcessorCommand.start_session:
-            prepared = (self.detector is not None and self._decoder is not None
-                        and (not requires_signal_preparation(self._settings_snapshot or {})
-                             or self._signal_receipt is not None))
-            ok = prepared and self._start_session(payload)
-            if not ok:
-                message = ("StartSession payload must contain a non-empty session_id" if prepared
-                           else "Signal processing has not been prepared")
-                error_code = "INVALID_SESSION_COMMAND"
-        elif command == SignalProcessorCommand.end_session:
-            ok = self._end_session(payload)
-            if not ok:
-                message = (
-                    f"EndSession id {payload!r} does not match the current session"
-                )
-                error_code = "SESSION_ID_MISMATCH"
+            self._cancel_pending_configuration("Signal Processing stopped before the trial boundary")
         else:
             logger.warning("SignalProcessor: unknown command %r", command)
             ok = False
@@ -300,11 +277,6 @@ class SignalProcessor:
                 message=message,
                 error_code=error_code,
             )
-
-    # ------------------------------------------------------------------
-    # Session lifecycle (identity pushed down from the API — see
-    # docs/session-id-unification.md)
-    # ------------------------------------------------------------------
 
     def _prepare_signal(self, request):
         from omnibci.domain.channel_mapping import ResolvedSignalPlan
@@ -344,18 +316,6 @@ class SignalProcessor:
                                    ok=False, message=str(exc), error_code="SIGNAL_PREPARATION_FAILED",
                                    failure_kind=CommandFailureKind.REJECTED)
         self._publish_configuration_result(result)
-
-    def _start_session(self, payload) -> bool:
-        return self.session_runtime.start_session(
-            payload, config_revision=self.config_revision,
-            before_end=self._cancel_pending_configuration,
-        )
-
-    def _end_session(self, payload) -> bool:
-        return self.session_runtime.end_session(payload, before_end=self._cancel_pending_configuration)
-
-    def _end_current_session(self) -> None:
-        self.session_runtime.end_current_session(before_end=self._cancel_pending_configuration)
 
     def _update_output_context(self, request):
         from .pipeline_configuration import validate_output_context
@@ -435,10 +395,7 @@ class SignalProcessor:
         message: str | None,
         error_code: str | None,
     ) -> None:
-        command_name = {
-            SignalProcessorCommand.start_session: EventType.StartSession.name,
-            SignalProcessorCommand.end_session: EventType.EndSession.name,
-        }.get(command, command.name if isinstance(command, Enum) else str(command))
+        command_name = command.name if isinstance(command, Enum) else str(command)
         self.event_bus.put_event(Event(
             EventType.CommandResult,
             CommandResult(

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { ConnectionInfo, ConnectionTarget, DesktopApi, ResultsEvent, SaveResultsInput } from "./contracts.js";
+import type { ConnectionInfo, ConnectionTarget, DesktopApi, ResultsEvent } from "./contracts.js";
 
 let nextSubscription = 0;
 const api: DesktopApi = {
@@ -24,7 +24,6 @@ const api: DesktopApi = {
     };
   },
   chooseRecordingFile: () => ipcRenderer.invoke("recording:choose-file"),
-  saveResults: (input: SaveResultsInput) => ipcRenderer.invoke("results:save", input),
   setEditorState: state => ipcRenderer.send("editor:state", state),
   setLanguage: language => ipcRenderer.send("app:language", language),
   openLogs: () => ipcRenderer.invoke("logs:open"),

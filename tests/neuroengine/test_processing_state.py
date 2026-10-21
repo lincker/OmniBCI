@@ -9,7 +9,7 @@ import pytest
 from tests.processing_helpers import make_processor
 from omnibci.domain.classification import Classification
 from omnibci.domain.epoch import Epoch
-from omnibci.domain.events import SessionStarted, TrialCompleted
+from omnibci.shared.events import EventType
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.signal_processing.processing_state import (
     AssemblingEpochState,
@@ -61,18 +61,17 @@ def _first_marker(chunk, *, starts):
     return (int(positions[0]), int(chunk.triggers[positions[0]])) if positions.size else (-1, None)
 
 
-def _processor(*, auto_start_session=True):
+def _processor():
     processor = make_processor(
         detector=MagicMock(), decoder=MagicMock(), command_queue=MagicMock(),
         data_manager=MagicMock(), event_bus=MagicMock(),
-        auto_start_session=auto_start_session, config_revision="session-revision",
+        generation="run", config_revision="processor-revision",
     )
     processor.detector.detect_start.side_effect = lambda item: _first_marker(item, starts=True)
     processor.detector.detect_end.side_effect = lambda item: _first_marker(item, starts=False)
     processor.current_epoch = MagicMock(
         build_epoch=MagicMock(return_value=_epoch()), config_revision="epoch-revision",
     )
-    processor.session_runtime._publish_events = MagicMock()
     processor.transition_to_assembling()
     return processor
 
@@ -133,43 +132,38 @@ class TestAwaitingEpochState:
 class TestAssemblingEpochState:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("boundary", [False, True])
-    @pytest.mark.parametrize("failure", ["build", "event_mismatch", "record", "publish"])
-    async def test_completion_failure_preserves_active_epoch(self, boundary, failure, monkeypatch):
+    async def test_publication_failure_preserves_active_epoch(self, boundary):
         processor = _processor()
         processor.next_chunk = AsyncMock(return_value=_chunk(end=3) if boundary else _chunk())
         current_epoch = processor.current_epoch
-        classification = _classification(event_id=8 if failure == "event_mismatch" else 7)
-        current_epoch.process_chunk.return_value = (True, classification)
-        current_epoch.force_decode_at_boundary.return_value = (True, classification)
-        if failure == "build":
-            current_epoch.build_epoch.side_effect = RuntimeError("epoch build failed")
-        elif failure == "record":
-            monkeypatch.setattr(processor.session_runtime.session, "record_trial", MagicMock(side_effect=RuntimeError("record failed")))
-        elif failure == "publish":
-            processor.session_runtime._publish_events.side_effect = OSError("publisher failed")
+        current_epoch.process_chunk.return_value = (True, _classification())
+        current_epoch.force_decode_at_boundary.return_value = (True, _classification())
+        processor.event_bus.put_event.side_effect = OSError("publisher failed")
 
-        error = ValueError if failure == "event_mismatch" else OSError if failure == "publish" else RuntimeError
-        with pytest.raises(error):
+        with pytest.raises(OSError, match="publisher failed"):
             await processor._current_state.run()
 
         assert processor.current_epoch is current_epoch
         assert processor._current_state is processor._assembling_state
-        assert processor.session_runtime.session.trial_count == (1 if failure == "publish" else 0)
+        assert processor.completed_trials == 0
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("boundary", [False, True])
-    async def test_standby_completion_discards_epoch_without_recording(self, boundary):
-        processor = _processor(auto_start_session=False)
+    async def test_completion_publishes_without_any_lifecycle_commands(self, boundary):
+        processor = _processor()
         processor.next_chunk = AsyncMock(return_value=_chunk(end=3) if boundary else _chunk())
-        processor.current_epoch.process_chunk.return_value = (True, _classification())
-        processor.current_epoch.force_decode_at_boundary.return_value = (True, _classification())
+        classification = _classification()
+        processor.current_epoch.process_chunk.return_value = (True, classification)
+        processor.current_epoch.force_decode_at_boundary.return_value = (True, classification)
 
         await processor._current_state.run()
 
         assert processor.current_epoch is None
         assert processor._current_state is processor._awaiting_state
-        assert processor.session_runtime.session.trial_count == 0
-        processor.session_runtime._publish_events.assert_not_called()
+        assert processor.completed_trials == 1
+        event = processor.event_bus.put_event.call_args.args[0]
+        assert event.type is EventType.TrialCompleted
+        assert event.data.classification is classification
 
     @pytest.mark.asyncio
     async def test_timeout_leaves_active_epoch_unchanged(self):
@@ -285,48 +279,44 @@ class TestCompleteTrial:
 
         completion = processor.complete_trial(_classification())
 
-        assert processor.session_runtime.session.trial_count == 1
-        events = processor.session_runtime._publish_events.call_args.args[0]
-        assert [type(event) for event in events] == [SessionStarted, TrialCompleted]
-        assert completion is events[1]
-        assert completion.session_id == processor.session_runtime.session.session_id
+        assert processor.completed_trials == 1
+        event = processor.event_bus.put_event.call_args.args[0]
+        assert event.type is EventType.TrialCompleted
+        assert completion is event.data
+        assert completion.generation == "run"
         assert completion.trial_number == 1
         assert completion.config_revision == "epoch-revision"
-        assert processor.session_runtime.session.trials[0].config_revision == "epoch-revision"
-        assert processor.session_runtime.session.pop_events() == []
+        processor.current_epoch.build_epoch.assert_not_called()
 
-    @pytest.mark.parametrize(
-        "error",
-        [RuntimeError("no active epoch"), ValueError("invalid epoch")],
-    )
-    def test_build_failure_propagates_without_recording_or_publishing(self, error):
+    def test_trial_numbers_increase_without_retaining_trial_history(self):
         processor = _processor()
-        processor.current_epoch.build_epoch.side_effect = error
+        first = processor.complete_trial(_classification())
+        second = processor.complete_trial(_classification(event_id=9))
 
-        with pytest.raises(type(error), match=str(error)):
+        assert (first.trial_number, second.trial_number) == (1, 2)
+        assert first.generation == second.generation == processor.generation
+        assert processor.completed_trials == 2
+        assert not hasattr(processor, "session_runtime")
+
+    def test_failed_publication_does_not_advance_trial_count(self):
+        processor = _processor()
+        processor.event_bus.put_event.side_effect = OSError("publisher failed")
+
+        with pytest.raises(OSError, match="publisher failed"):
             processor.complete_trial(_classification())
 
-        assert processor.session_runtime.session.trial_count == 0
-        processor.session_runtime._publish_events.assert_not_called()
+        assert processor.completed_trials == 0
 
-    @pytest.mark.parametrize("ended", [False, True])
-    def test_inactive_session_returns_none_without_recording_or_publishing(self, ended):
-        processor = _processor(auto_start_session=ended)
-        if ended:
-            processor.session_runtime.session.end()
-        processor.session_runtime.session.pop_events()
 
-        assert processor.complete_trial(_classification()) is None
+def test_processor_uses_snapshot_generation_or_creates_one_stable_fallback():
+    def build(snapshot=None):
+        return make_processor(
+            detector=MagicMock(), decoder=MagicMock(), command_queue=MagicMock(),
+            data_manager=MagicMock(), event_bus=MagicMock(), settings_snapshot=snapshot,
+        )
 
-        assert processor.session_runtime.session.trial_count == 0
-        assert processor.session_runtime.session.pop_events() == []
-        processor.session_runtime._publish_events.assert_not_called()
-
-    def test_event_id_mismatch_propagates_without_recording_or_publishing(self):
-        processor = _processor()
-
-        with pytest.raises(ValueError, match="does not match"):
-            processor.complete_trial(_classification(event_id=8))
-
-        assert processor.session_runtime.session.trial_count == 0
-        processor.session_runtime._publish_events.assert_not_called()
+    configured = build({"CONFIG.generation": "configured-generation"})
+    assert configured.generation == "configured-generation"
+    first, second = build(), build()
+    assert isinstance(first.generation, str) and first.generation
+    assert first.generation != second.generation

@@ -123,7 +123,7 @@ export class BackendConnection extends EventEmitter {
         ...init, method, headers, signal, redirect: "error", credentials: "omit",
       });
       if (this.info.id !== connectionId) { controller.abort(); return proxyError(409, "Connection changed."); }
-      // Keep cancellation alive through the response body, including streamed exports.
+      // Keep cancellation alive through the response body, including streamed data.
       const responseHeaders = new Headers();
       for (const name of ["Content-Type", "Content-Disposition"]) {
         const value = response.headers.get(name);

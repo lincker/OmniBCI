@@ -20,8 +20,9 @@ persist authentication tokens. Local backend credentials are generated for each
 launch and remain in the Electron main process. Switching connections clears the
 previous connection's runtime state and result subscriptions.
 
-Export results before stopping a local backend: sessions are currently held in
-backend memory. The desktop asks before stopping active work or discarding results.
+The Results page shows the latest 200 decoded trials held in backend memory.
+Restarting the engine or backend clears that view. Historical result export is
+not part of the minimal runtime. The desktop asks before stopping the local backend.
 Disconnecting from a remote backend leaves that service and its experiment running.
 No user configuration, plugins, logs, recordings, or exports are stored in the
 application's installation directory. Desktop preferences and logs live below
@@ -252,10 +253,11 @@ spaces and non-ASCII characters:
 
 1. Install and launch. Confirm the empty workspace is usable and no data is
    silently selected. Starting acquisition without a source must give a clear error.
-2. Select a real recording on that machine; start, stop and export results. Confirm
-   the output opens and survives app restart.
+2. Select a real recording on that machine; start reading and confirm decoded
+   results appear. Stop reading and confirm the source stops. Restart the engine
+   and confirm the live result view clears.
 3. Close or switch connections during work. Check cancellation, graceful stop,
-   the unexported-results prompt and cleanup of owned backend/worker processes.
+   and cleanup of owned backend/worker processes.
 4. Connect to a separate remote backend with authentication. Check live results,
    reconnect behavior and that disconnecting does not stop the remote experiment.
 5. Restart and reinstall. Confirm per-user configuration is retained and no

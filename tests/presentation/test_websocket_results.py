@@ -13,8 +13,6 @@ import pytest
 from omnibci.presentation.websockets.results import ResultsBroadcaster
 from omnibci.presentation.schemas.ws import (
     PingMessage,
-    SessionEndedMessage,
-    SessionStartedMessage,
     TrialCompletedMessage,
     WsMessage,
 )
@@ -76,19 +74,18 @@ class TestOnTrialCompleted:
         assert sent == []
         assert "TrialOutcome" in caplog.text or "Classification" in caplog.text
 
-    def test_trial_outcome_broadcast_carries_real_session_context(self):
-        # Headline fix: session_id/trial_number are real, not hardcoded "current"/0.
+    def test_trial_outcome_broadcast_carries_engine_generation(self):
         from omnibci.infrastructure.outbound import TrialOutcome
         b = ResultsBroadcaster()
         b.set_loop(asyncio.new_event_loop())
         b._clients.add(MagicMock())
         captured = []
         b._schedule = captured.append  # capture the JSON instead of scheduling
-        outcome = TrialOutcome(session_id="sess-7", trial_number=4, classification=_clf(target_id=2))
+        outcome = TrialOutcome(generation="engine-7", trial_number=4, classification=_clf(target_id=2))
         b.on_trial_completed(_event(EventType.TrialCompleted, outcome))
         assert len(captured) == 1
         payload = json.loads(captured[0])
-        assert payload["session_id"] == "sess-7"
+        assert payload["generation"] == "engine-7"
         assert payload["trial_number"] == 4
         assert payload["target_id"] == 2
 
@@ -102,7 +99,7 @@ class TestOnTrialCompleted:
 
         clf = _clf(target_id=7, event_id=202, confidence=0.91, forced=True)
         await b._broadcast(TrialCompletedMessage(
-            session_id="s1", trial_number=3,
+            generation="s1", trial_number=3,
             target_id=clf.target_id, event_id=clf.event_id,
             confidence=clf.confidence, forced=clf.forced,
             produced_at=clf.produced_at,
@@ -125,30 +122,6 @@ class TestOnTrialCompleted:
         assert dead not in b._clients
 
 
-class TestSessionMessages:
-    @pytest.mark.asyncio
-    async def test_session_started(self):
-        b = ResultsBroadcaster()
-        sent = []
-        ws = MagicMock()
-        ws.send_text = AsyncMock(side_effect=sent.append)
-        b._clients.add(ws)
-        await b._broadcast(SessionStartedMessage(session_id="abc").model_dump_json())
-        assert json.loads(sent[0]) == {"event": "SessionStarted", "session_id": "abc"}
-
-    @pytest.mark.asyncio
-    async def test_session_ended(self):
-        b = ResultsBroadcaster()
-        sent = []
-        ws = MagicMock()
-        ws.send_text = AsyncMock(side_effect=sent.append)
-        b._clients.add(ws)
-        await b._broadcast(SessionEndedMessage(session_id="abc", total_trials=10).model_dump_json())
-        payload = json.loads(sent[0])
-        assert payload["event"] == "SessionEnded"
-        assert payload["total_trials"] == 10
-
-
 # ---------------------------------------------------------------------------
 # Schema tests
 # ---------------------------------------------------------------------------
@@ -156,7 +129,7 @@ class TestSessionMessages:
 class TestTrialCompletedMessage:
     def test_defaults(self):
         msg = TrialCompletedMessage(
-            session_id="s", trial_number=1, target_id=0,
+            generation="s", trial_number=1, target_id=0,
             event_id=100, produced_at=datetime.now(timezone.utc),
         )
         assert msg.event == "TrialCompleted"
@@ -167,7 +140,7 @@ class TestTrialCompletedMessage:
         from pydantic import ValidationError
         with pytest.raises(ValidationError):
             TrialCompletedMessage(
-                session_id="s", trial_number=1, target_id=0,
+                generation="s", trial_number=1, target_id=0,
                 event_id=100, confidence=1.5,
                 produced_at=datetime.now(timezone.utc),
             )
@@ -178,13 +151,12 @@ class TestPingMessage:
         assert json.loads(PingMessage().model_dump_json()) == {"event": "Ping"}
 
     def test_ping_is_in_the_frozen_union(self):
-        # Contract freeze: 5 ws message kinds. Changing this set must be a
+        # Contract freeze: 3 ws message kinds. Changing this set must be a
         # deliberate, same-commit change with frontend/src/api/ws-types.ts.
         import typing
         names = {m.__name__ for m in typing.get_args(WsMessage)}
         assert names == {
-            "TrialCompletedMessage", "SessionStartedMessage",
-            "SessionEndedMessage", "StimulationAckMessage", "PingMessage",
+            "TrialCompletedMessage", "StimulationAckMessage", "PingMessage",
         }
 
 
@@ -240,7 +212,7 @@ class TestWebSocketEndpoint:
 
         clf = _clf(target_id=9, event_id=999)
         msg = TrialCompletedMessage(
-            session_id="test", trial_number=1,
+            generation="test", trial_number=1,
             target_id=clf.target_id, event_id=clf.event_id,
             confidence=clf.confidence, forced=clf.forced,
             produced_at=clf.produced_at,

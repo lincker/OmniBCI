@@ -1,7 +1,7 @@
 """
 SignalProcessingWorker loads the selected pipeline in a dedicated process.
 
-It starts in standby and receives session identity through StartSession.
+It starts in standby until its signal pipeline has been prepared.
 """
 
 import logging
@@ -9,8 +9,6 @@ import multiprocessing as mp
 from copy import deepcopy
 from typing import Optional
 
-from omnibci.application.session_runtime import SessionRuntime
-from omnibci.infrastructure.event_translator import DomainEventPublisher
 from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessor
 from omnibci.infrastructure.process_lifecycle import StartupReporter
 
@@ -21,8 +19,7 @@ class SignalProcessingWorker(mp.Process):
     """
     Multiprocessing wrapper for SignalProcessor.
 
-    Starts the processor in standby (no running session); session identity is
-    delivered via a start_session command from the API.
+    Prepares the selected pipeline on demand and publishes decoded results.
     """
 
     def __init__(self, command_queue, data_manager=None, event_bus=None,
@@ -37,7 +34,6 @@ class SignalProcessingWorker(mp.Process):
         self.baseline_duration = baseline_duration
         self.settings_snapshot = deepcopy(settings_snapshot)
         self.signal_processor: Optional[SignalProcessor] = None
-        self.session_runtime: Optional[SessionRuntime] = None
         self.startup_reporter = startup_reporter
         self._startup_stage = "settings"
 
@@ -63,19 +59,12 @@ class SignalProcessingWorker(mp.Process):
         return settings.snapshot()
 
     def _run_processor(self) -> None:
-        # The aggregate and processor share one child process and event producer.
-        # Result publication completes synchronously before a drain acknowledgment.
-        self.session_runtime = SessionRuntime(
-            DomainEventPublisher(self.event_bus).publish_all,
-            config_revision=(self.settings_snapshot or {}).get("CONFIG.revision"),
-        )
         self.signal_processor = SignalProcessor(
             decoder=None,
             detector=None,
             command_queue=self.command_queue,
             data_manager=self.data_manager,
             event_bus=self.event_bus,
-            session_runtime=self.session_runtime,
             baseline_duration=self.baseline_duration,
             filters=[],
             generation=(self.settings_snapshot or {}).get("CONFIG.generation"),
@@ -85,5 +74,5 @@ class SignalProcessingWorker(mp.Process):
         if self.startup_reporter is not None:
             self.startup_reporter.ready()
         self._startup_stage = "run"
-        logger.info("SignalProcessor in standby — awaiting start_session command")
+        logger.info("SignalProcessor in standby — awaiting signal preparation")
         self.signal_processor.run()

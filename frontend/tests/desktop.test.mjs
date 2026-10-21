@@ -16,7 +16,6 @@ const { api } = await server.ssrLoadModule("/src/api/client.ts");
 const { pluginConfigApi } = await server.ssrLoadModule("/src/api/plugin-config.ts");
 const { pluginMarketApi } = await server.ssrLoadModule("/src/api/plugin-market.ts");
 const { openResultsSocket } = await server.ssrLoadModule("/src/api/results-socket.ts");
-const { saveSessionResults, exportPath } = await server.ssrLoadModule("/src/ResultExport.tsx");
 const { SchemaForm, schemaErrors } = await server.ssrLoadModule("/src/SchemaForm.tsx");
 const { default: App } = await server.ssrLoadModule("/src/App.tsx");
 const { I18nProvider } = await server.ssrLoadModule("/src/i18n.tsx");
@@ -123,17 +122,6 @@ test("desktop results subscriptions suppress old connection events and close onc
   assert.equal(unsubscribed, 1);
 });
 
-test("export passes exact selected sessions to the native saver and preserves cancellation", async () => {
-  window.omnibciDesktop.saveResults = async (input) => {
-    assert.deepEqual(input, { connectionId: "backend-A", format: "csv", sessionIds: ["a/b", "session 2"] });
-    return { canceled: true };
-  };
-  assert.deepEqual(await saveSessionResults("csv", ["a/b", "session 2"]), { canceled: true });
-  window.omnibciDesktop.saveResults = async () => { throw new Error("Disk full"); };
-  await assert.rejects(saveSessionResults("json", []), /Disk full/);
-  assert.equal(exportPath("csv", ["a/b", "session 2"]), "/api/v1/sessions/export?format=csv&session_id=a%2Fb&session_id=session+2");
-});
-
 test("file fields allow blank setup and offer native selection only on the local backend", () => {
   const schema = { type: "object", required: ["path"], properties: {
     path: { type: "string", default: "", "x-widget": "file-path", "x-scope": "machine" },
@@ -167,4 +155,21 @@ test("the built-in manifest's qualified File Reader identity requires a recordin
   assert.equal(recordingPathMissing(selected("/recordings/subject.cnt")), false);
   assert.equal(recordingPathMissing(selected("", "example.device")), false);
   assert.equal(recordingPathMissing(null), false);
+});
+
+test("live results and read controls use only results and acquisition endpoints", async () => {
+  const paths = [];
+  delete window.omnibciDesktop;
+  globalThis.fetch = async (path, options) => {
+    paths.push([path, options.method ?? "GET"]);
+    return Response.json({ success: true, data: { generation: null, trials: [] } });
+  };
+  await api.results();
+  await api.acqStreamStart();
+  await api.acqStreamStop();
+  assert.deepEqual(paths, [
+    ["/api/v1/results", "GET"],
+    ["/api/v1/acquisition/stream/start", "POST"],
+    ["/api/v1/acquisition/stream/stop", "POST"],
+  ]);
 });

@@ -3,9 +3,8 @@ WebSocket endpoint: /api/v1/ws/results
 
 Data chain:
   SignalProcessor
-    → BCISession.record_trial()
     → TrialCompleted domain event
-    → EventBus (EventType.TrialCompleted, payload=Classification VO)
+    → EventBus (EventType.TrialCompleted, payload=TrialOutcome)
     → ResultsBroadcaster.on_trial_completed()
     → JSON fan-out to WebSocket clients
 """
@@ -20,8 +19,6 @@ from omnibci.shared.events import Event
 from omnibci.infrastructure.outbound import event_to_wire
 from omnibci.presentation.schemas.ws import (
     PingMessage,
-    SessionEndedMessage,
-    SessionStartedMessage,
     StimulationAckMessage,
     TrialCompletedMessage,
 )
@@ -30,8 +27,6 @@ from omnibci.presentation.schemas.ws import (
 # ws schemas remain the canonical contract and validate each message.
 _WIRE_MODELS = {
     "TrialCompleted": TrialCompletedMessage,
-    "SessionStarted": SessionStartedMessage,
-    "SessionEnded": SessionEndedMessage,
     "StimulationAck": StimulationAckMessage,
 }
 
@@ -58,7 +53,7 @@ class ResultsBroadcaster:
         self._loop = loop
 
     # ------------------------------------------------------------------
-    # Heartbeat (frontend-separation §五.3: WS 心跳)
+    # Heartbeat
     # ------------------------------------------------------------------
 
     def start_heartbeat(self, interval_s: float = HEARTBEAT_INTERVAL_S) -> None:
@@ -111,12 +106,6 @@ class ResultsBroadcaster:
 
     # Named handlers kept as the EventBus subscription seam (see bootstrap).
     def on_trial_completed(self, event: Event) -> None:
-        self._broadcast_event(event)
-
-    def on_session_started(self, event: Event) -> None:
-        self._broadcast_event(event)
-
-    def on_session_ended(self, event: Event) -> None:
         self._broadcast_event(event)
 
     def on_stimulation_ack(self, event: Event) -> None:

@@ -69,7 +69,7 @@ class NeuroEngineService(EnginePort):
         self._snapshot_provider = snapshot_provider
         self._graph_snapshot: dict | None = None
         self._applied_snapshot: dict | None = None
-        # Managed Actuation starts when a session is prepared. Acquisition
+        # Managed Actuation starts when signal processing is prepared. Acquisition
         # startup does not require output plugins or device configuration.
         self._actuation_manager = actuation_process_manager
         self._stimulation_manager = stimulation_process_manager
@@ -95,12 +95,6 @@ class NeuroEngineService(EnginePort):
         self._lifecycle_lock = asyncio.Lock()
         self._configuration_lock = RLock()
         self._transitioning = False
-        self._configuration_archive = None
-        self._configuration_attempt = None
-
-    def set_configuration_archive(self, archive):
-        """Archive candidates before worker creation and receipts after readiness."""
-        self._configuration_archive = archive
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -144,7 +138,7 @@ class NeuroEngineService(EnginePort):
 
         if self._engine is None or self._needs_rebuild:
             # Rebuild the engine graph (fresh workers, queues, bus, gateway),
-            # then replay listeners (session read-model + WS broadcaster) onto
+            # then replay result listeners and the WS broadcaster onto
             # the new EventBus — they were registered on the discarded one.
             snapshot = settings_snapshot
             if snapshot is None and self._snapshot_provider is not None:
@@ -159,14 +153,7 @@ class NeuroEngineService(EnginePort):
                     raise ValueError("settings_snapshot must be a configuration dictionary")
                 snapshot = deepcopy(snapshot)
                 snapshot["CONFIG.generation"] = str(uuid4())
-                if self._configuration_archive is not None:
-                    self._configuration_attempt = self._configuration_archive.stage(snapshot, context="engine_start")
-                try:
-                    self._engine = self._engine_factory(deepcopy(snapshot))
-                except Exception as exc:
-                    if self._configuration_archive is not None and self._configuration_attempt is not None:
-                        self._configuration_archive.fail(self._configuration_attempt, str(exc))
-                    raise
+                self._engine = self._engine_factory(deepcopy(snapshot))
                 self._graph_snapshot = snapshot
             for event_type, handler in self._subscriptions:
                 self._engine.event_bus.register_event_listener(event_type, handler)
@@ -198,8 +185,6 @@ class NeuroEngineService(EnginePort):
             if not self._engine_thread.is_alive():
                 if self._engine_shutdown_complete():
                     self._needs_rebuild = True
-                    if self._configuration_archive is not None and self._configuration_attempt is not None:
-                        self._configuration_archive.fail(self._configuration_attempt, str(exc))
                 else:
                     self._restart_blocked = True
                 self._engine_thread = None
@@ -209,15 +194,6 @@ class NeuroEngineService(EnginePort):
             raise
 
         self._running = True
-        if self._configuration_archive is not None and self._configuration_attempt is not None:
-            try:
-                self._configuration_archive.confirm(
-                    self._configuration_attempt, self._graph_snapshot, receipt={"engine_ready": True},
-                )
-            except Exception:
-                self._admission.quarantine("Engine started but its configuration receipt could not be archived")
-                await self._stop_engine_locked(StopEngineCommand())
-                raise
         with self._configuration_lock:
             self._applied_snapshot = deepcopy(self._graph_snapshot)
             self._accepting_commands = True
@@ -225,7 +201,7 @@ class NeuroEngineService(EnginePort):
 
     @admitted
     def prepare_actuation(self) -> None:
-        """Require managed output readiness only before creating an experiment session."""
+        """Prepare enabled managed outputs before reading signals."""
         snapshot = self.applied_snapshot or {}
         if not snapshot.get("ACTUATION.enabled", False) or not snapshot.get("ACTUATION.auto_spawn", True):
             return

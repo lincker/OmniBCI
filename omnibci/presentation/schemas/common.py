@@ -34,11 +34,6 @@ class ErrorCode(str, Enum):
     # Domain-specific codes (raised explicitly by routers via ApiError) so the
     # frontend can branch on the *reason*, not just the HTTP status class.
     ENGINE_NOT_READY = "ENGINE_NOT_READY"        # engine/processor not initialised
-    SESSION_NOT_FOUND = "SESSION_NOT_FOUND"      # unknown session id
-    NO_ACTIVE_SESSION = "NO_ACTIVE_SESSION"      # /sessions/active with none running
-    NO_TRIALS = "NO_TRIALS"                      # last-trial query before any trial
-    ALREADY_RECORDING = "ALREADY_RECORDING"      # /recording/start while one is active
-    NO_ACTIVE_RECORDING = "NO_ACTIVE_RECORDING"  # /recording/stop with none active
     COMMAND_REJECTED = "COMMAND_REJECTED"        # state/input precondition rejected
     COMMAND_EXECUTION_FAILED = "COMMAND_EXECUTION_FAILED"  # device/plugin/internal fault
     COMMAND_TIMEOUT = "COMMAND_TIMEOUT"          # no terminal consumer result in time

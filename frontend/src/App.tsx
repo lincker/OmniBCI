@@ -10,8 +10,7 @@ import { PluginProfiles } from "./PluginProfiles";
 import { PluginMarket } from "./PluginMarket";
 import { ConfigDialog } from "./ConfigDialog";
 import { RunConsole } from "./RunConsole";
-import { SessionSummary, TrialResults } from "./TrialResults";
-import { ResultExport } from "./ResultExport";
+import { TrialResults } from "./TrialResults";
 import { desktopBridge } from "./desktop";
 import type { ConnectionInfo } from "../../desktop/src/contracts";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
@@ -138,12 +137,11 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
             : view === "run" ? <RunConsole engine={engine} acquisition={acquisition} feed={feed}
               runtime={runtime} onBusyChange={setBusy} onEditSetup={() => navigate(lastSetup)} onResults={() => navigate("results")} />
             : view === "results" ? <div className="runtime-content">
-              <div className="breadcrumbs">{t("app.results")} <Icon name="chevron" /> {t("app.currentSession")}</div>
-              <header className="editor-heading"><div><p className="eyebrow">{t("app.sessionData")}</p><h1>{t("app.trialResults")}</h1>
+              <div className="breadcrumbs">{t("app.results")} <Icon name="chevron" /> {t("app.liveResults")}</div>
+              <header className="editor-heading"><div><p className="eyebrow">{t("app.liveData")}</p><h1>{t("app.trialResults")}</h1>
                 <p>{t("app.resultsDescription")}</p></div>
                 <button onClick={() => navigate("run")}><Icon name="play" />{t("app.openRun")}</button></header>
-              <ResultExport onBusyChange={setBusy} />
-              <SessionSummary session={feed.session} trialCount={feed.trials.length} />
+              {feed.error && <p className="error" role="alert">{feed.error}</p>}
               <section className="card"><h2>{t("app.results")} <span className="count">{feed.trials.length}</span></h2><TrialResults trials={feed.trials} /></section>
             </div>
             : view === "logs" ? <BackendLogs navigation={navigation} />
