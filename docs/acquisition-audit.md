@@ -10,6 +10,19 @@ Implementation authorization: the user approved the staged cleanup and normalize
 
 Delivery acceptance: inspect a finite, bounded selection of acquisition-output chunks by generation and sequence; preserve useful counters and capture-time identity; isolate diagnostics from processing and stop-and-drain; defer native protocol byte inspection.
 
+## Follow-up: automatic rolling chunk inspection
+
+The user subsequently requested one green dot per received data block and confirmed automatic collection while reading, retaining the latest 32 blocks. This supersedes the finite, manually started Web capture described in the original delivery record below.
+
+- Each successful stream start creates a continuous preview before the first source read. The default selection includes all available signal rows up to 16, plus the original trigger row, and up to 512 sample columns within the 8,192-value budget. Small chunks are retained as complete matrices; larger chunks retain the explicitly bounded selection.
+- Continuous capture has no 32-observation, 10-second or cumulative-byte stopping condition. Per-frame size, the eight-slot nonblocking channel and the 32-frame / 4 MiB retained-cache bounds still apply. Preview drops remain separate from source/processing failures. Only successfully cached blocks produce green dots.
+- The inspector opens by default and refreshes its list every 250 ms while open. Dots follow reception order from oldest to newest; later blocks replace the oldest retained blocks. Each dot identifies its chunk sequence and sample count and supports keyboard activation.
+- Clicking a dot loads that block's matrix. New blocks do not change the selected sequence. A loaded matrix stays visible if its block leaves the live window, with an explicit notice; only that one client-side snapshot is held. Temporary polling errors also preserve the loaded selection. A new capture or generation resets the selection.
+- Stopping reading or reaching EOF retains the last window while the engine graph exists. Starting reading again creates a new capture. The optional **Matrix selection → Apply selection** control replaces the live window with a chosen bounded slice while reading. Existing finite REST captures remain supported with `continuous=false`; the Web selection control uses `continuous=true`.
+- Native protocol packets, headers and raw bytes remain outside this phase. A green dot represents an acquisition-output chunk, not evidence of receipt of every native protocol packet.
+
+Validation: the full non-hardware, non-GUI backend suite passed with 2,952 tests and one platform skip; all 215 frontend tests, the production frontend build, OpenAPI generation checks and all seven architecture contracts passed. A local File Playback run produced 739 chunks and retained the latest 32 (sequences 707–738); selecting dot 738 displayed its complete 10 × 100 matrix. One diagnostic delivery drop was reported separately from the 739 successfully read source chunks. Tests also cover rolling beyond 32 chunks, 10 seconds and 4 MiB of cumulative traffic, restarting reads, matrix selection changes, eviction and temporary polling errors.
+
 ## Implemented delivery
 
 The sections after this delivery record retain the original audit and its historical line references. Implementation was delivered in this order:

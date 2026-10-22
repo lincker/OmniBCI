@@ -32,21 +32,33 @@ def harness():
     return service, executor, cache, generation, state
 
 
-def test_start_generates_capture_id_and_sends_pinned_selection(harness):
+@pytest.mark.parametrize("continuous", [False, True])
+def test_start_generates_capture_id_and_sends_pinned_selection(harness, continuous):
     service, executor, cache, _, state = harness
     def request(event, payload):
         state.update(capture_id=payload["capture_id"], status="capturing", reason=None)
         return CommandResult("start", event.name, True, data=deepcopy(state))
     executor.request.side_effect = request
     result = service.start_preview(generation="generation", expected_revision="a" * 64,
-                                   connection_id="connection", selection={"rows": [2, 0], "sample_count": 2})
+                                   connection_id="connection", selection={"rows": [2, 0], "sample_count": 2},
+                                   continuous=continuous)
     event, payload = executor.request.call_args.args
     assert event is EventType.StartAcquisitionPreview
     assert payload["capture_id"] and payload["capture_id"] == result["capture_id"]
     assert payload["generation"] == "generation" and payload["connection_id"] == "connection"
     assert payload["expected_revision"] == "a" * 64
     assert payload["selection"] == PreviewSelection(rows=(2, 0), sample_count=2).to_dict()
+    assert payload["continuous"] is continuous
     cache.assert_called_once_with(result["capture_id"])
+
+
+@pytest.mark.parametrize("continuous", [1, "true", None])
+def test_invalid_continuous_flag_never_dispatches(harness, continuous):
+    service, executor, _, _, _ = harness
+    with pytest.raises(ValueError):
+        service.start_preview(generation="generation", expected_revision="a" * 64,
+                              connection_id="connection", continuous=continuous)
+    executor.request.assert_not_called()
 
 
 @pytest.mark.parametrize("selection", [

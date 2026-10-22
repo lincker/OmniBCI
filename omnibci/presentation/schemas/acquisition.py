@@ -85,6 +85,7 @@ class StartAcquisitionPreviewRequest(BaseModel):
     expected_revision: str = Field(pattern="^[0-9a-f]{64}$")
     connection_id: str = Field(min_length=1, max_length=128)
     selection: AcquisitionPreviewSelectionModel = Field(default_factory=AcquisitionPreviewSelectionModel)
+    continuous: bool = False
 
 
 class StopAcquisitionPreviewRequest(BaseModel):
@@ -126,6 +127,7 @@ class AcquisitionPreviewResponse(BaseModel):
     source_id: str | None
     connection_id: str | None
     status: Literal["idle", "capturing", "finished"]
+    continuous: bool = False
     reason: str | None
     selection: AcquisitionPreviewSelectionModel | None
     observed: int

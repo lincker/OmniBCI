@@ -249,7 +249,8 @@ class AcquisitionRuntime:
                 if not self.data_source.is_connected or not self.data_source.is_streaming:
                     raise ValueError("Start the signal stream before capturing a preview")
                 self.preview.start(payload.get("capture_id"),
-                                   PreviewSelection.from_value(payload.get("selection", {})), self._preview_identity())
+                                   PreviewSelection.from_value(payload.get("selection", {})), self._preview_identity(),
+                                   continuous=payload.get("continuous", False))
             elif command is AcquisitionCommand.stop_preview:
                 self.preview.stop(payload.get("capture_id"))
             elif (payload.get("capture_id") is not None
@@ -360,6 +361,11 @@ class AcquisitionRuntime:
                 "STREAM_START_FAILED",
                 "Data source did not enter the streaming state",
             )
+        try:
+            if self.preview.queue is not None:
+                self.preview.start(uuid4().hex, None, self._preview_identity(), continuous=True)
+        except Exception:
+            logger.exception("Automatic acquisition preview failed; the signal stream is unaffected")
         self.fetch_task = asyncio.create_task(self.fetch())
         logger.info('Fetch task started')
         self._emit_state()

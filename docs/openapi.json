@@ -1163,7 +1163,7 @@
         "tags": [
           "Acquisition"
         ],
-        "summary": "Capture the next bounded selection of signal chunks",
+        "summary": "Capture a bounded or rolling selection of signal chunks",
         "operationId": "start_preview_api_v1_acquisition_preview_start_post",
         "requestBody": {
           "content": {
@@ -5307,6 +5307,11 @@
             ],
             "title": "Status"
           },
+          "continuous": {
+            "type": "boolean",
+            "title": "Continuous",
+            "default": false
+          },
           "reason": {
             "anyOf": [
               {
@@ -8491,6 +8496,11 @@
           },
           "selection": {
             "$ref": "#/components/schemas/AcquisitionPreviewSelectionModel"
+          },
+          "continuous": {
+            "type": "boolean",
+            "title": "Continuous",
+            "default": false
           }
         },
         "additionalProperties": false,

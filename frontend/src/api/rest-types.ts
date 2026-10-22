@@ -217,7 +217,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Capture the next bounded selection of signal chunks */
+        /** Capture a bounded or rolling selection of signal chunks */
         post: operations["start_preview_api_v1_acquisition_preview_start_post"];
         delete?: never;
         options?: never;
@@ -886,6 +886,11 @@ export interface components {
              * @enum {string}
              */
             status: "idle" | "capturing" | "finished";
+            /**
+             * Continuous
+             * @default false
+             */
+            continuous: boolean;
             /** Reason */
             reason: string | null;
             selection: components["schemas"]["AcquisitionPreviewSelectionModel"] | null;
@@ -2140,6 +2145,11 @@ export interface components {
             /** Connection Id */
             connection_id: string;
             selection?: components["schemas"]["AcquisitionPreviewSelectionModel"];
+            /**
+             * Continuous
+             * @default false
+             */
+            continuous: boolean;
         };
         /** StartStimulationRequest */
         StartStimulationRequest: {

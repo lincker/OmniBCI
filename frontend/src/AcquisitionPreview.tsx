@@ -34,16 +34,7 @@ export function parsePreviewSelection(form: PreviewForm, limits: PreviewLimits):
 export function PreviewChunkTable({ chunk }: { chunk: AcquisitionPreviewChunk }) {
   const descriptor = chunk.descriptor;
   return <div className="preview-detail">
-    <dl className="preview-context">
-      <div><dt>Chunk</dt><dd>{chunk.sequence_id}</dd></div>
-      <div><dt>Original shape / dtype</dt><dd>{chunk.original_shape.join(" × ")} / {chunk.dtype}</dd></div>
-      <div><dt>Host capture time (ns)</dt><dd>{chunk.timestamp_ns}</dd></div>
-      <div><dt>Source / connection</dt><dd>{chunk.source_id} / {chunk.connection_id}</dd></div>
-      <div><dt>Generation</dt><dd>{chunk.generation}</dd></div>
-      <div><dt>Configuration revision</dt><dd>{chunk.config_revision ?? "Unknown"}</dd></div>
-      <div><dt>Metadata provenance</dt><dd>{descriptor?.provenance ?? "Unavailable"}</dd></div>
-      <div><dt>Sample rate</dt><dd>{descriptor ? `${descriptor.sample_rate} Hz` : "Unknown"}</dd></div>
-    </dl>
+    <p><strong>Chunk #{chunk.sequence_id}</strong> · {chunk.original_shape.join(" × ")} / {chunk.dtype}</p>
     <p className="meta">Captured selection: {chunk.row_indices.length} rows, {chunk.sample_count} samples.
       All row and sample indices are zero-based. Values are acquisition output before processing.</p>
     {chunk.sample_count === 0 ? <p role="status">This chunk has no samples in the requested range.</p>
@@ -57,6 +48,18 @@ export function PreviewChunkTable({ chunk }: { chunk: AcquisitionPreviewChunk })
           {chunk.values[index].map((value, column) => <td key={column}>{String(value)}</td>)}</tr>;
         })}</tbody></table>
       </div>}
+    <details className="preview-metadata"><summary>Chunk metadata</summary>
+      <dl className="preview-context">
+        <div><dt>Chunk</dt><dd>{chunk.sequence_id}</dd></div>
+        <div><dt>Original shape / dtype</dt><dd>{chunk.original_shape.join(" × ")} / {chunk.dtype}</dd></div>
+        <div><dt>Host capture time (ns)</dt><dd>{chunk.timestamp_ns}</dd></div>
+        <div><dt>Source / connection</dt><dd>{chunk.source_id} / {chunk.connection_id}</dd></div>
+        <div><dt>Generation</dt><dd>{chunk.generation}</dd></div>
+        <div><dt>Configuration revision</dt><dd>{chunk.config_revision ?? "Unknown"}</dd></div>
+        <div><dt>Metadata provenance</dt><dd>{descriptor?.provenance ?? "Unavailable"}</dd></div>
+        <div><dt>Sample rate</dt><dd>{descriptor ? `${descriptor.sample_rate} Hz` : "Unknown"}</dd></div>
+      </dl>
+    </details>
   </div>;
 }
 
@@ -81,19 +84,33 @@ export function PreviewChunkDetail({ generation, captureId, sequenceId }: {
     ? <PreviewChunkTable chunk={chunk} /> : <p role="status">Loading chunk…</p>;
 }
 
-function PreviewChunks({ snapshot }: { snapshot: Preview }) {
+export function PreviewChunks({ snapshot }: { snapshot: Preview }) {
   const [sequence, setSequence] = useState<number | null>(null);
+  const [wasRetained, setWasRetained] = useState(false);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const retained = snapshot.chunks.some((chunk) => chunk.sequence_id === sequence);
+  useEffect(() => { if (retained) setWasRetained(true); }, [retained]);
   const select = (value: string) => {
-    try { setSequence(integer(value, "Chunk sequence")); setError(null); }
+    try {
+      const selected = integer(value, "Chunk sequence");
+      setSequence(selected);
+      setWasRetained((previous) => selected === sequence && previous
+        || snapshot.chunks.some((chunk) => chunk.sequence_id === selected));
+      setError(null);
+    }
     catch (cause) { setError((cause as Error).message); }
   };
   return <>
-    <div className="preview-chunks" aria-label="Retained chunks">
-      {snapshot.chunks.map((chunk) => <button key={chunk.sequence_id} type="button"
-        aria-pressed={chunk.sequence_id === sequence} onClick={() => select(String(chunk.sequence_id))}>
-        #{chunk.sequence_id} · {chunk.sample_count} samples</button>)}
+    <div className="preview-chunks" role="group" aria-label="Retained chunks">
+      {snapshot.chunks.map((chunk) => {
+        const label = `Chunk #${chunk.sequence_id} · ${chunk.sample_count} samples`;
+        return <button key={chunk.sequence_id} type="button" className="preview-chunk-dot"
+          title={label} aria-label={label} aria-pressed={chunk.sequence_id === sequence}
+          onClick={() => select(String(chunk.sequence_id))}>
+          <span className="preview-chunk-dot-marker" aria-hidden="true" />
+        </button>;
+      })}
     </div>
     {!snapshot.chunks.length && <p role="status">No chunks retained yet.</p>}
     <form className="actions" onSubmit={(event) => { event.preventDefault(); select(query); }}>
@@ -101,20 +118,22 @@ function PreviewChunks({ snapshot }: { snapshot: Preview }) {
       <button type="submit" disabled={!snapshot.capture_id}>View chunk</button>
     </form>
     {error && <p className="error" role="alert">{error}</p>}
+    {wasRetained && !retained && <p role="status">Selected chunk #{sequence} has left the live window.</p>}
     {sequence !== null && snapshot.capture_id && <PreviewChunkDetail
       key={`${snapshot.capture_id}:${sequence}`} generation={snapshot.generation} captureId={snapshot.capture_id} sequenceId={sequence} />}
   </>;
 }
 
-function PreviewStatus({ generation, captureId, onSnapshot }: {
-  generation: string; captureId?: string; onSnapshot: (snapshot: Preview | null) => void;
+export function PreviewStatus({ generation, onSnapshot }: {
+  generation: string; onSnapshot: (snapshot: Preview | null) => void;
 }) {
-  const status = usePoll(() => api.acqPreview(generation, captureId));
+  const status = usePoll(() => api.acqPreview(generation), 250);
   useEffect(() => { onSnapshot(status.error ? null : status.data); }, [status.data, status.error, onSnapshot]);
-  if (status.error) return <p className="error" role="alert">{status.error.message}</p>;
   const snapshot = status.data;
-  if (!snapshot) return <p role="status">Loading preview status…</p>;
+  if (!snapshot) return status.error ? <p className="error" role="alert">{status.error.message}</p>
+    : <p role="status">Loading preview status…</p>;
   return <>
+    {status.error && <p className="error" role="alert">Live updates paused: {status.error.message}</p>}
     <p role="status">{snapshot.status}{snapshot.reason ? ` · ${snapshot.reason.replace(/_/g, " ")}` : ""}.
       Observed {snapshot.observed} · Sent {snapshot.enqueued} · Retained {snapshot.received} · Dropped {snapshot.dropped}</p>
     <p className="meta">Current stream: {snapshot.stream_chunk_count} chunks / {snapshot.stream_sample_count} samples.
@@ -122,7 +141,7 @@ function PreviewStatus({ generation, captureId, onSnapshot }: {
     {!snapshot.available && <p className="error" role="alert">Preview delivery is unavailable. Acquisition continues independently.</p>}
     {(snapshot.dropped > 0 || snapshot.cache_errors > 0) && <p role="status">This capture is partial.
       Oversized: {snapshot.oversized}. Cache errors: {snapshot.cache_errors}.</p>}
-    {snapshot.status === "finished" && snapshot.received < snapshot.enqueued
+    {!snapshot.continuous && snapshot.status === "finished" && snapshot.received < snapshot.enqueued
       && <p role="status">Some sent chunks have not reached the cache. Only retained chunks can be inspected.</p>}
     <PreviewChunks key={snapshot.capture_id ?? "idle"} snapshot={snapshot} />
   </>;
@@ -131,46 +150,49 @@ function PreviewStatus({ generation, captureId, onSnapshot }: {
 function CapturePanel({ generation, revision, connectionId, streaming, disabled }: Context) {
   const [form, setForm] = useState<PreviewForm>({ rows: "0", sampleStart: "0", sampleCount: "128", chunkCount: "32", includeTrigger: true });
   const [snapshot, setSnapshot] = useState<Preview | null>(null);
-  const [captureId, setCaptureId] = useState<string | undefined>();
   const [epoch, setEpoch] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const active = snapshot?.status === "capturing";
   const change = (name: keyof PreviewForm, value: string | boolean) => setForm((current) => ({ ...current, [name]: value }));
-  const control = async (start: boolean) => {
+  const applySelection = async () => {
     if (!snapshot) return;
     setError(null); setBusy(true);
     try {
-      const result = start ? await api.acqPreviewStart({ generation, expected_revision: revision,
-        connection_id: connectionId!, selection: parsePreviewSelection(form, snapshot.limits) })
-        : await api.acqPreviewStop(generation, snapshot.capture_id!);
+      const result = await api.acqPreviewStart({ generation, expected_revision: revision,
+        connection_id: connectionId!, selection: parsePreviewSelection(form, snapshot.limits), continuous: true });
       if (!result) throw new Error("No preview status was returned.");
-      setSnapshot(result); setCaptureId(result.capture_id ?? undefined); setEpoch((value) => value + 1);
+      setSnapshot(result); setEpoch((value) => value + 1);
     } catch (cause) { setError((cause as Error).message); }
     finally { setBusy(false); }
   };
   return <>
-    <p className="meta">Choose the selection before capturing. Only the next selected chunks are retained;
-      earlier or unselected data cannot be recovered. Capture ends after the requested count or {snapshot?.limits.capture_timeout_seconds ?? 10} seconds.</p>
-    <fieldset disabled={busy || active || disabled} className="preview-selection">
-      <legend>Next capture</legend>
-      <label>Signal rows (comma-separated)<input value={form.rows} onChange={(event) => change("rows", event.target.value)} /></label>
-      <label>Sample start<input inputMode="numeric" value={form.sampleStart} onChange={(event) => change("sampleStart", event.target.value)} /></label>
-      <label>Samples per chunk<input inputMode="numeric" value={form.sampleCount} onChange={(event) => change("sampleCount", event.target.value)} /></label>
-      <label>Chunks<input inputMode="numeric" value={form.chunkCount} onChange={(event) => change("chunkCount", event.target.value)} /></label>
-      <label className="preview-trigger"><input type="checkbox" checked={form.includeTrigger} onChange={(event) => change("includeTrigger", event.target.checked)} />Include trigger row</label>
-    </fieldset>
-    {snapshot && <p className="meta">Limits: {snapshot.limits.max_rows} signal rows, {snapshot.limits.max_samples} samples per chunk,{" "}
-      {snapshot.limits.max_values} values including trigger, {snapshot.limits.max_chunks} chunks.</p>}
-    <div className="actions">
-      <button type="button" disabled={busy || disabled || !streaming || !connectionId || !snapshot?.available || active}
-        onClick={() => void control(true)}>Start capture</button>
-      <button type="button" disabled={busy || !active} onClick={() => void control(false)}>Stop capture</button>
-      <button type="button" disabled={busy} onClick={() => { setCaptureId(undefined); setSnapshot(null); setEpoch((value) => value + 1); }}>Show latest capture</button>
-    </div>
-    {!streaming && <p className="meta">Start reading data to capture new chunks. Retained chunks remain available while the engine is running.</p>}
+    <p className="meta">Reading automatically retains the latest {snapshot?.limits.max_chunks ?? 32} chunks.
+      Each green dot is a cached chunk, ordered from oldest to newest. Click a dot to inspect its matrix;
+      the selected matrix stays fixed as new data arrives.</p>
+    <details onToggle={(event) => {
+      const selected = snapshot?.selection;
+      if (event.currentTarget.open && selected) setForm({ rows: (selected.rows ?? [0]).join(", "),
+        sampleStart: String(selected.sample_start ?? 0), sampleCount: String(selected.sample_count ?? 128),
+        chunkCount: String(snapshot!.limits.max_chunks), includeTrigger: selected.include_trigger ?? true });
+    }}>
+      <summary>Matrix selection</summary>
+      <p className="meta">Large matrices are limited to the selected rows and sample range.
+        Applying a selection starts a new live window. Each new reading starts with the default bounded selection.</p>
+      <fieldset disabled={busy || disabled} className="preview-selection">
+        <legend>Rows and samples</legend>
+        <label>Signal rows (comma-separated)<input value={form.rows} onChange={(event) => change("rows", event.target.value)} /></label>
+        <label>Sample start<input inputMode="numeric" value={form.sampleStart} onChange={(event) => change("sampleStart", event.target.value)} /></label>
+        <label>Samples per chunk<input inputMode="numeric" value={form.sampleCount} onChange={(event) => change("sampleCount", event.target.value)} /></label>
+        <label className="preview-trigger"><input type="checkbox" checked={form.includeTrigger} onChange={(event) => change("includeTrigger", event.target.checked)} />Include trigger row</label>
+      </fieldset>
+      {snapshot && <p className="meta">Limits: {snapshot.limits.max_rows} signal rows, {snapshot.limits.max_samples} samples per chunk,{" "}
+        {snapshot.limits.max_values} values including trigger.</p>}
+      <button type="button" disabled={busy || disabled || !streaming || !connectionId || !snapshot?.available}
+        onClick={() => void applySelection()}>Apply selection</button>
+    </details>
+    {!streaming && <p className="meta">Start reading to accumulate green dots. After reading stops, the last window remains available while the engine is running.</p>}
     {error && <p className="error" role="alert">{error}</p>}
-    <PreviewStatus key={epoch} generation={generation} captureId={captureId} onSnapshot={setSnapshot} />
+    <PreviewStatus key={epoch} generation={generation} onSnapshot={setSnapshot} />
   </>;
 }
 
@@ -178,8 +200,8 @@ export function AcquisitionPreview({ generation, revision, connectionId, streami
   generation: string | null | undefined; revision: string | null | undefined;
   connectionId: string | null; streaming: boolean; disabled: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  return <details className="acquisition-preview" onToggle={(event) => setOpen(event.currentTarget.open)}>
+  const [open, setOpen] = useState(true);
+  return <details className="acquisition-preview" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
     <summary>Inspect acquisition chunks</summary>
     {open && (generation && revision ? <CapturePanel key={`${generation}:${connectionId}:${revision}`}
       generation={generation} revision={revision} connectionId={connectionId} streaming={streaming} disabled={disabled} />

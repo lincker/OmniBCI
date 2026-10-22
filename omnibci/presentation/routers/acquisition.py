@@ -169,7 +169,7 @@ def _preview_response(callback, *args, **kwargs):
 
 
 @router.post("/preview/start", response_model=ApiResponse[AcquisitionPreviewResponse],
-             responses=COMMAND_EXECUTION_RESPONSES, summary="Capture the next bounded selection of signal chunks")
+             responses=COMMAND_EXECUTION_RESPONSES, summary="Capture a bounded or rolling selection of signal chunks")
 def start_preview(body: StartAcquisitionPreviewRequest,
                   svc: AcquisitionAppService = Depends(get_acquisition_service)):
     return _preview_response(svc.start_preview, **body.model_dump())

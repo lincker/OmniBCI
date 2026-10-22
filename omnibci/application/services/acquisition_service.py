@@ -253,8 +253,11 @@ class AcquisitionAppService:
 
     @admitted
     def start_preview(self, *, generation: str, expected_revision: str,
-                      connection_id: str, selection: dict | None = None) -> dict:
+                      connection_id: str, selection: dict | None = None,
+                      continuous: bool = False) -> dict:
         selected = PreviewSelection.from_value({} if selection is None else selection)
+        if type(continuous) is not bool:
+            raise ValueError("continuous must be a boolean")
         if not isinstance(expected_revision, str) or len(expected_revision) != 64:
             raise ValueError("A pinned configuration revision is required")
         if not isinstance(connection_id, str) or not connection_id:
@@ -263,7 +266,7 @@ class AcquisitionAppService:
             result = self._preview_request(EventType.StartAcquisitionPreview, {
                 "generation": generation, "expected_revision": expected_revision,
                 "connection_id": connection_id, "capture_id": uuid4().hex,
-                "selection": selected.to_dict(),
+                "selection": selected.to_dict(), "continuous": continuous,
             })
             return {**result, **self._read_preview_cache(generation, result["capture_id"])}
 

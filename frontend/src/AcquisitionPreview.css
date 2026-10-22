@@ -1,12 +1,16 @@
 .acquisition-preview { margin-top: 1rem; border-top: 1px solid var(--border-soft); padding-top: 1rem; }
+.runtime-grid > .card:has(> .acquisition-preview[open]) { grid-column: 1 / -1; }
 .acquisition-preview summary { cursor: pointer; font-weight: 600; }
 .preview-selection { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 1rem 0; padding: 0.75rem; border: 1px solid var(--border-soft); }
 .preview-selection label { display: grid; gap: 0.35rem; font-size: 0.75rem; flex: 1 1 8rem; }
 .preview-selection input { min-width: 0; width: 100%; }
 .preview-selection .preview-trigger { display: flex; align-items: center; }
 .preview-trigger input { width: auto; }
-.preview-chunks { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.75rem 0; max-height: 10rem; overflow-y: auto; }
-.preview-chunks button[aria-pressed="true"] { outline: 2px solid var(--accent); }
+.preview-chunks { display: flex; flex-wrap: wrap; gap: 0.125rem; margin: 0.75rem 0; padding: 0.25rem; }
+.preview-chunks .preview-chunk-dot { flex: none; width: 1.75rem; height: 1.75rem; min-height: 1.75rem; padding: 0; border-color: transparent; border-radius: 50%; background: transparent; }
+.preview-chunk-dot-marker { width: 0.625rem; height: 0.625rem; border-radius: 50%; background: var(--ok); }
+.preview-chunks .preview-chunk-dot[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.preview-chunks .preview-chunk-dot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .preview-context { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.75rem; font-size: 0.75rem; }
 .preview-context dt { color: var(--muted); }
 .preview-context dd { margin: 0.3rem 0 0; overflow-wrap: anywhere; }
@@ -16,3 +20,7 @@
 .preview-table th { position: sticky; background: var(--bg); }
 .preview-table thead th { top: 0; z-index: 1; }
 .preview-table tbody th { left: 0; text-align: left; }
+.preview-metadata { margin-top: 0.75rem; }
+@media (pointer: coarse) {
+  .preview-chunks .preview-chunk-dot { width: 2.75rem; height: 2.75rem; }
+}

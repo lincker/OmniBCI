@@ -1,4 +1,4 @@
-/** Finite previews display retained samples and never reuse another capture's response. */
+/** Live previews preserve the selected snapshot without reusing another capture's response. */
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import React from "react";
@@ -7,7 +7,7 @@ import { createServer } from "vite";
 
 const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
 after(() => server.close());
-const { PreviewChunkTable, PreviewChunkDetail, parsePreviewSelection } = await server.ssrLoadModule("/src/AcquisitionPreview.tsx");
+const { AcquisitionPreview, PreviewChunkTable, PreviewChunkDetail, PreviewChunks, parsePreviewSelection } = await server.ssrLoadModule("/src/AcquisitionPreview.tsx");
 const { api } = await server.ssrLoadModule("/src/api/client.ts");
 const { translate } = await server.ssrLoadModule("/src/i18n.tsx");
 const english = { language: "en", t: (key, params) => translate("en", key, params) };
@@ -28,6 +28,20 @@ const chunk = (changes = {}) => ({
       index, name, signal_type: "eeg", unit: "uV" })) },
   ...changes,
 });
+const summary = (sequenceId, sampleCount = 3) => ({
+  sequence_id: sequenceId, timestamp_ns: "1780000000000000001", original_shape: [5, 12],
+  dtype: "float64", row_indices: [2, 4], sample_start: 5, sample_count: sampleCount,
+  trigger_row_index: 4, encoded_bytes: 512,
+});
+const snapshot = (chunks, changes = {}) => ({
+  generation: "generation-original", capture_id: "capture-original", chunks,
+  config_revision: "a".repeat(64), source_id: "source-original", connection_id: "connection-original",
+  status: "capturing", reason: null, continuous: true, available: true, cache_errors: 0,
+  dropped: 0, oversized: 0, stream_chunk_count: chunks.length, stream_sample_count: chunks.length * 3,
+  last_sequence: chunks.at(-1)?.sequence_id ?? -1, limits,
+  selection: { rows: [2], sample_start: 5, sample_count: 3, chunk_count: 32, include_trigger: true },
+  observed: chunks.length, enqueued: chunks.length, received: chunks.length, ...changes,
+});
 
 function elements(tree) {
   if (Array.isArray(tree)) return tree.flatMap(elements);
@@ -37,6 +51,12 @@ function text(tree) {
   if (Array.isArray(tree)) return tree.map(text).join("");
   if (React.isValidElement(tree)) return text(tree.props.children);
   return tree == null || typeof tree === "boolean" ? "" : String(tree);
+}
+function chunkButtons(tree) {
+  return elements(tree).filter((item) => item.type === "button" && typeof item.props["aria-pressed"] === "boolean");
+}
+function selectedDetail(tree) {
+  return elements(tree).find((item) => item.type === PreviewChunkDetail);
 }
 function table(value) {
   const current = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
@@ -135,7 +155,7 @@ test("sample text is inert and an empty retained selection creates no synthetic 
 const sameDependencies = (left, right) => !!left && !!right && left.length === right.length
   && left.every((value, index) => Object.is(value, right[index]));
 
-function detailHarness(initialProps) {
+function previewHarness(Component, initialProps) {
   const hooks = [];
   let cursor = 0, dirty = true, tree, pendingEffects = [];
   const props = { ...initialProps };
@@ -144,12 +164,18 @@ function detailHarness(initialProps) {
     useState(initial) {
       const index = cursor++;
       hooks[index] ??= { value: typeof initial === "function" ? initial() : initial };
-      return [hooks[index].value, (next) => {
+      hooks[index].set ??= (next) => {
         const value = typeof next === "function" ? next(hooks[index].value) : next;
         if (!Object.is(value, hooks[index].value)) { hooks[index].value = value; dirty = true; }
-      }];
+      };
+      return [hooks[index].value, hooks[index].set];
     },
     useRef(initial) { return hooks[cursor++] ??= { current: initial }; },
+    useCallback(callback, deps) {
+      const index = cursor++;
+      if (!hooks[index] || !sameDependencies(hooks[index].deps, deps)) hooks[index] = { value: callback, deps };
+      return hooks[index].value;
+    },
     useEffect(effect, deps) {
       const index = cursor++;
       const previous = hooks[index];
@@ -169,17 +195,262 @@ function detailHarness(initialProps) {
           const current = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
           const previous = current.current;
           current.current = dispatcher; cursor = 0; dirty = false;
-          try { tree = PreviewChunkDetail(props); } finally { current.current = previous; }
+          try { tree = Component(props); } finally { current.current = previous; }
           const effects = pendingEffects; pendingEffects = [];
           effects.forEach((effect) => effect());
         }
         await Promise.resolve();
       }
-      assert.equal(dirty, false, "Preview detail did not settle");
+      assert.equal(dirty, false, "Preview component did not settle");
     },
     dispose() { hooks.forEach((hook) => hook?.cleanup?.()); },
   };
 }
+
+function component(tree, name) {
+  return elements(tree).find((item) => typeof item.type === "function" && item.type.name === name);
+}
+
+async function panelHarness() {
+  const props = { generation: "generation-original", revision: "a".repeat(64),
+    connectionId: "connection-original", streaming: true, disabled: false };
+  const preview = previewHarness(AcquisitionPreview, props);
+  await preview.settle();
+  const element = component(preview.tree, "CapturePanel");
+  const panel = previewHarness(element.type, element.props);
+  await panel.settle();
+  return { preview, panel };
+}
+
+function polling(responses) {
+  const original = { request: api.acqPreview, document: globalThis.document,
+    setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout };
+  const requests = [], timers = [];
+  globalThis.document = { hidden: false };
+  globalThis.setTimeout = (callback, delay) => {
+    const timer = { callback, delay, cancelled: false };
+    timers.push(timer);
+    return timer;
+  };
+  globalThis.clearTimeout = (timer) => { if (timer) timer.cancelled = true; };
+  api.acqPreview = (...args) => {
+    requests.push(args);
+    assert.ok(responses.length, "Unexpected preview polling request");
+    const value = responses.shift();
+    return value instanceof Error ? Promise.reject(value) : Promise.resolve(value);
+  };
+  return {
+    requests,
+    async next() {
+      const timer = timers.find((item) => !item.cancelled);
+      assert.ok(timer, "No preview poll was scheduled");
+      timer.cancelled = true;
+      assert.equal(timer.delay, 250);
+      await timer.callback();
+    },
+    restore() {
+      api.acqPreview = original.request;
+      if (original.document === undefined) delete globalThis.document;
+      else globalThis.document = original.document;
+      globalThis.setTimeout = original.setTimeout;
+      globalThis.clearTimeout = original.clearTimeout;
+    },
+  };
+}
+
+test("live preview opens automatically and polling does not overwrite edited matrix selection", async () => {
+  const original = api.acqPreviewStart;
+  const requests = [];
+  api.acqPreviewStart = async (body) => {
+    requests.push(body);
+    return snapshot([], { capture_id: "capture-selection" });
+  };
+  const { preview, panel } = await panelHarness();
+  try {
+    assert.equal(preview.tree.props.open, true);
+    let status = component(panel.tree, "PreviewStatus");
+    status.props.onSnapshot(snapshot([summary(41)])); await panel.settle();
+    const selection = elements(panel.tree).find((item) => item.type === "details");
+    selection.props.onToggle({ currentTarget: { open: true } }); await panel.settle();
+    const rowsInput = () => elements(panel.tree).find((item) => item.type === "input");
+    assert.equal(rowsInput().props.value, "2");
+    rowsInput().props.onChange({ target: { value: "1, 0" } }); await panel.settle();
+    status.props.onSnapshot(snapshot([summary(41), summary(42)])); await panel.settle();
+    assert.equal(rowsInput().props.value, "1, 0");
+    assert.equal(component(panel.tree, "PreviewStatus").key, status.key);
+    assert.equal(requests.length, 0, "Opening or polling the live view must not start another capture");
+
+    const apply = elements(panel.tree).find((item) => item.type === "button" && text(item) === "Apply selection");
+    assert.equal(apply.props.disabled, false);
+    apply.props.onClick(); await panel.settle();
+    assert.deepEqual(requests, [{ generation: "generation-original", expected_revision: "a".repeat(64),
+      connection_id: "connection-original", continuous: true,
+      selection: { rows: [1, 0], sample_start: 5, sample_count: 3, chunk_count: 32, include_trigger: true } }]);
+    assert.notEqual(component(panel.tree, "PreviewStatus").key, status.key);
+
+    const priorPanel = component(preview.tree, "CapturePanel");
+    preview.update({ generation: "generation-next" }); await preview.settle();
+    assert.notEqual(component(preview.tree, "CapturePanel").key, priorPanel.key);
+  } finally { panel.dispose(); preview.dispose(); api.acqPreviewStart = original; }
+});
+
+test("latest-capture polling preserves selection for new snapshots and resets it for a new reading", async () => {
+  const { preview, panel } = await panelHarness();
+  const polls = polling([snapshot([summary(41)]), snapshot([summary(41), summary(42)]),
+    snapshot([summary(41)], { capture_id: "capture-next" })]);
+  const status = component(panel.tree, "PreviewStatus");
+  const h = previewHarness(status.type, status.props);
+  let chunks;
+  try {
+    await h.settle();
+    const first = component(h.tree, "PreviewChunks");
+    chunks = previewHarness(first.type, first.props); await chunks.settle();
+    chunkButtons(chunks.tree)[0].props.onClick(); await chunks.settle();
+    const selected = selectedDetail(chunks.tree);
+
+    await polls.next(); await h.settle();
+    const appended = component(h.tree, "PreviewChunks");
+    assert.equal(appended.key, first.key);
+    chunks.update(appended.props); await chunks.settle();
+    assert.equal(selectedDetail(chunks.tree).key, selected.key);
+    assert.deepEqual(chunkButtons(chunks.tree).map((item) => item.props["aria-pressed"]), [true, false]);
+
+    await polls.next(); await h.settle();
+    const restarted = component(h.tree, "PreviewChunks");
+    assert.notEqual(restarted.key, first.key);
+    chunks.dispose(); chunks = previewHarness(restarted.type, restarted.props); await chunks.settle();
+    assert.equal(selectedDetail(chunks.tree), undefined);
+    assert.deepEqual(chunkButtons(chunks.tree).map((item) => item.props["aria-pressed"]), [false]);
+    assert.deepEqual(polls.requests, Array.from({ length: 3 }, () => ["generation-original"]));
+  } finally { chunks?.dispose(); h.dispose(); panel.dispose(); preview.dispose(); polls.restore(); }
+});
+
+test("a temporary status polling failure does not unmount the selected live-window detail", async () => {
+  const { preview, panel } = await panelHarness();
+  const polls = polling([snapshot([summary(41)]), new Error("Temporary preview status failure"),
+    snapshot([summary(41), summary(42)])]);
+  const status = component(panel.tree, "PreviewStatus");
+  const h = previewHarness(status.type, status.props);
+  let chunks;
+  try {
+    await h.settle();
+    const first = component(h.tree, "PreviewChunks");
+    chunks = previewHarness(first.type, first.props); await chunks.settle();
+    chunkButtons(chunks.tree)[0].props.onClick(); await chunks.settle();
+    const selected = selectedDetail(chunks.tree);
+    await polls.next(); await h.settle();
+    const failed = component(h.tree, "PreviewChunks");
+    assert.ok(failed, "The retained window must stay mounted during a temporary polling failure");
+    assert.equal(failed.key, first.key);
+    assert.equal(failed.props.snapshot, first.props.snapshot);
+    assert.match(text(h.tree), /Temporary preview status failure/);
+    chunks.update(failed.props); await chunks.settle();
+    assert.equal(selectedDetail(chunks.tree).key, selected.key);
+    await panel.settle();
+    const apply = () => elements(panel.tree).find((item) => item.type === "button" && text(item) === "Apply selection");
+    assert.equal(apply().props.disabled, true);
+    await polls.next(); await h.settle();
+    const recovered = component(h.tree, "PreviewChunks");
+    assert.equal(recovered.key, first.key);
+    chunks.update(recovered.props); await chunks.settle();
+    assert.equal(selectedDetail(chunks.tree).key, selected.key);
+    await panel.settle();
+    assert.equal(apply().props.disabled, false);
+  } finally { chunks?.dispose(); h.dispose(); panel.dispose(); preview.dispose(); polls.restore(); }
+});
+
+test("retained chunk points expose their sequence and samples and select the matching detail", async () => {
+  const h = previewHarness(PreviewChunks, { snapshot: snapshot([summary(41), summary(42, 2)]) });
+  try {
+    await h.settle();
+    const buttons = chunkButtons(h.tree);
+    assert.equal(buttons.length, 2);
+    for (const [index, [sequenceId, sampleCount]] of [[41, 3], [42, 2]].entries()) {
+      for (const attribute of ["title", "aria-label"]) {
+        assert.match(buttons[index].props[attribute], new RegExp(`\\b${sequenceId}\\b`));
+        assert.match(buttons[index].props[attribute], new RegExp(`\\b${sampleCount}\\b`));
+      }
+      assert.equal(buttons[index].props.type, "button");
+      assert.equal(buttons[index].props["aria-pressed"], false);
+    }
+    assert.equal(selectedDetail(h.tree), undefined);
+
+    buttons[1].props.onClick(); await h.settle();
+    assert.deepEqual(chunkButtons(h.tree).map((item) => item.props["aria-pressed"]), [false, true]);
+    assert.deepEqual(selectedDetail(h.tree).props, {
+      generation: "generation-original", captureId: "capture-original", sequenceId: 42,
+    });
+
+    chunkButtons(h.tree)[0].props.onClick(); await h.settle();
+    assert.deepEqual(chunkButtons(h.tree).map((item) => item.props["aria-pressed"]), [true, false]);
+    assert.equal(selectedDetail(h.tree).props.sequenceId, 41);
+  } finally { h.dispose(); }
+});
+
+test("new retained chunks preserve the user's existing selection", async () => {
+  const h = previewHarness(PreviewChunks, { snapshot: snapshot([summary(41), summary(42)]) });
+  try {
+    await h.settle();
+    chunkButtons(h.tree)[0].props.onClick(); await h.settle();
+    h.update({ snapshot: snapshot([summary(41), summary(42), summary(47, 1)]) });
+    await h.settle();
+
+    assert.deepEqual(chunkButtons(h.tree).map((item) => item.props["aria-pressed"]), [true, false, false]);
+    assert.equal(selectedDetail(h.tree).props.sequenceId, 41);
+  } finally { h.dispose(); }
+});
+
+test("observed or sent chunks never create points before they reach the cache", async () => {
+  const h = previewHarness(PreviewChunks, {
+    snapshot: snapshot([], { observed: 32, enqueued: 8, received: 0, last_sequence: 42 }),
+  });
+  try {
+    await h.settle();
+    assert.equal(chunkButtons(h.tree).length, 0);
+    assert.equal(selectedDetail(h.tree), undefined);
+    assert.match(text(h.tree), /No chunks retained/i);
+  } finally { h.dispose(); }
+});
+
+test("leaving the live window preserves the selected detail and its fetched snapshot", async () => {
+  const original = api.acqPreviewChunk;
+  const calls = [];
+  const retained = chunk();
+  api.acqPreviewChunk = async (...args) => { calls.push(args); return retained; };
+  const h = previewHarness(PreviewChunks, { snapshot: snapshot([summary(41), summary(42)]) });
+  let detail;
+  try {
+    await h.settle();
+    chunkButtons(h.tree)[0].props.onClick(); await h.settle();
+    const selected = selectedDetail(h.tree);
+    detail = previewHarness(PreviewChunkDetail, selected.props);
+    await detail.settle();
+    assert.deepEqual(detail.shown, retained);
+
+    h.update({ snapshot: snapshot([summary(42), summary(47)]) }); await h.settle();
+
+    assert.equal(chunkButtons(h.tree).length, 2);
+    assert.deepEqual(chunkButtons(h.tree).map((item) => item.props["aria-pressed"]), [false, false]);
+    assert.equal(selectedDetail(h.tree).key, selected.key);
+    assert.deepEqual(selectedDetail(h.tree).props, selected.props);
+    const statuses = elements(h.tree).filter((item) => item.props.role === "status");
+    assert.match(text(statuses), /41.*left the live window/i);
+
+    detail.update(selectedDetail(h.tree).props); await detail.settle();
+    assert.deepEqual(detail.shown, retained);
+    assert.deepEqual(calls, [["generation-original", "capture-original", 41]]);
+
+    elements(h.tree).find((item) => item.type === "input").props.onChange({ target: { value: "41" } });
+    await h.settle();
+    elements(h.tree).find((item) => item.type === "form").props.onSubmit({ preventDefault() {} });
+    await h.settle();
+    assert.equal(selectedDetail(h.tree).key, selected.key);
+    assert.match(text(elements(h.tree).filter((item) => item.props.role === "status")), /41.*left the live window/i);
+    detail.update(selectedDetail(h.tree).props); await detail.settle();
+    assert.deepEqual(detail.shown, retained);
+    assert.equal(calls.length, 1);
+  } finally { detail?.dispose(); h.dispose(); api.acqPreviewChunk = original; }
+});
 
 function deferred() {
   let resolve, reject;
@@ -191,7 +462,7 @@ test("detail uses complete capture identity and ignores an older response", asyn
   const original = api.acqPreviewChunk;
   const pending = [];
   api.acqPreviewChunk = (...args) => { const request = deferred(); pending.push({ ...request, args }); return request.promise; };
-  const h = detailHarness({ generation: "generation-original", captureId: "capture-original", sequenceId: 41 });
+  const h = previewHarness(PreviewChunkDetail, { generation: "generation-original", captureId: "capture-original", sequenceId: 41 });
   try {
     await h.settle();
     assert.deepEqual(pending[0].args, ["generation-original", "capture-original", 41]);
@@ -210,7 +481,7 @@ test("changing a selected chunk clears the previous detail while the next reques
   const next = deferred();
   let calls = 0;
   api.acqPreviewChunk = () => ++calls === 1 ? Promise.resolve(chunk()) : next.promise;
-  const h = detailHarness({ generation: "generation-original", captureId: "capture-original", sequenceId: 41 });
+  const h = previewHarness(PreviewChunkDetail, { generation: "generation-original", captureId: "capture-original", sequenceId: 41 });
   try {
     await h.settle();
     assert.equal(h.shown?.sequence_id, 41);
@@ -226,7 +497,7 @@ test("an obsolete request failure cannot hide the newly selected chunk", async (
   const original = api.acqPreviewChunk;
   const pending = [];
   api.acqPreviewChunk = () => { const request = deferred(); pending.push(request); return request.promise; };
-  const h = detailHarness({ generation: "generation-original", captureId: "capture-original", sequenceId: 41 });
+  const h = previewHarness(PreviewChunkDetail, { generation: "generation-original", captureId: "capture-original", sequenceId: 41 });
   try {
     await h.settle();
     h.update({ captureId: "capture-next" }); await h.settle();

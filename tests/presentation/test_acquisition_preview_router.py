@@ -36,12 +36,21 @@ def start_body(**changes):
 def test_start_uses_default_bounded_selection(api_client, preview_service):
     response = api_client.post("/api/v1/acquisition/preview/start", json=start_body())
     assert response.status_code == 200
-    preview_service.start_preview.assert_called_once_with(**start_body(), selection=PreviewSelection().to_dict())
+    preview_service.start_preview.assert_called_once_with(**start_body(), selection=PreviewSelection().to_dict(), continuous=False)
     assert response.json()["data"]["limits"]["max_chunks"] == 32
+
+
+def test_continuous_selection_is_passed_to_the_service(api_client, preview_service):
+    preview_service.start_preview.return_value["continuous"] = True
+    response = api_client.post("/api/v1/acquisition/preview/start", json=start_body(continuous=True))
+    assert response.status_code == 200
+    assert response.json()["data"]["continuous"] is True
+    assert preview_service.start_preview.call_args.kwargs["continuous"] is True
 
 
 @pytest.mark.parametrize("changes", [
     {"generation": ""}, {"connection_id": ""}, {"expected_revision": "stale"}, {"unexpected": True},
+    {"continuous": "true"}, {"continuous": 1}, {"continuous": None},
     {"selection": {"rows": [True]}}, {"selection": {"rows": [0, 0]}},
     {"selection": {"rows": list(range(17))}}, {"selection": {"sample_count": 513}},
     {"selection": {"rows": [], "include_trigger": False}}, {"selection": {"sample_start": -1}},

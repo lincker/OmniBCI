@@ -1,4 +1,4 @@
-"""Finite acquisition previews never become a second signal consumer."""
+"""Acquisition previews never become a second signal consumer."""
 import asyncio
 import pickle
 from queue import Queue
@@ -8,7 +8,9 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from omnibci.application.acquisition_preview import PreviewSelection
+from omnibci.application.acquisition_preview import (
+    MAX_CACHE_BYTES, MAX_ROWS, MAX_SAMPLES, MAX_VALUES, PreviewSelection,
+)
 from omnibci.application.events import CommandRequest
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand, AcquisitionRuntime
@@ -145,6 +147,9 @@ class Source:
             return None
         self.reads -= 1
         return chunk().raw_data
+
+    async def start_stream(self):
+        self.is_streaming = True
 
     async def stop_stream(self):
         self.is_streaming = False
@@ -301,3 +306,177 @@ async def test_revision_change_ends_capture_before_pending_read_can_be_mislabele
     await task
     assert main.qsize() == 1 and frames.empty()
     assert acquisition.preview.snapshot()["reason"] == "context_changed"
+
+
+def test_continuous_capture_survives_chunk_time_and_cumulative_byte_limits():
+    now, frames = [0.0], Queue()
+    producer = PreviewCapture(frames, clock=lambda: now[0])
+    producer.start("continuous", None, IDENTITY, continuous=True)
+    raw = np.arange(17 * 600, dtype=np.float64).reshape(17, 600)
+    for sequence in range(70):
+        now[0] += 1
+        producer.offer(SignalChunk(sequence, sequence, raw), IDENTITY)
+        frame = pickle.loads(frames.get_nowait())
+        assert frame["row_indices"] == list(range(MAX_ROWS + 1))
+        assert frame["sample_count"] == min(MAX_SAMPLES, MAX_VALUES // 17)
+        assert frame["values"].size <= MAX_VALUES
+    status = producer.snapshot()
+    assert status["continuous"] is True and status["status"] == "capturing"
+    assert status["observed"] == status["enqueued"] == 70
+    assert status["enqueued_bytes"] > MAX_CACHE_BYTES
+    assert status["reason"] is None and status["dropped"] == 0
+
+
+@pytest.mark.parametrize("rows", [2, 3, 20])
+def test_automatic_selection_preserves_small_matrices_and_original_trigger_row(rows):
+    frames = Queue()
+    producer = PreviewCapture(frames)
+    producer.start("automatic", None, IDENTITY, continuous=True)
+    assert producer.snapshot()["selection"] is None
+    raw = np.arange(rows * 5, dtype=np.int32).reshape(rows, 5)
+    expected_rows = list(range(min(MAX_ROWS, rows - 1))) + [rows - 1]
+    expected = raw[expected_rows].copy()
+    producer.offer(SignalChunk(123, 0, raw), IDENTITY)
+    raw[:] = -1
+    frame = pickle.loads(frames.get_nowait())
+    assert frame["row_indices"] == expected_rows
+    assert frame["sample_count"] == 5
+    np.testing.assert_array_equal(frame["values"], expected)
+
+
+def test_full_continuous_channel_drops_frames_without_ending_capture():
+    frames = Queue(maxsize=1)
+    producer = PreviewCapture(frames)
+    producer.start("continuous", None, IDENTITY, continuous=True)
+    for sequence in range(40):
+        producer.offer(chunk(sequence), IDENTITY)
+    status = producer.snapshot()
+    assert (status["observed"], status["enqueued"], status["dropped"]) == (40, 1, 39)
+    assert status["status"] == "capturing"
+
+
+def test_continuous_capture_can_be_replaced_but_finite_capture_cannot():
+    producer = PreviewCapture(Queue())
+    producer.start("automatic", None, IDENTITY, continuous=True)
+    producer.start("selected", PreviewSelection(rows=(1,)), IDENTITY, continuous=True)
+    assert producer.snapshot()["capture_id"] == "selected"
+    producer.start("finite", PreviewSelection(chunk_count=1), IDENTITY)
+    assert producer.snapshot()["continuous"] is False
+    with pytest.raises(ValueError, match="active"):
+        producer.start("automatic", None, IDENTITY, continuous=True)
+    with pytest.raises(ValueError, match="capture"):
+        producer.stop("selected")
+    producer.offer(chunk(), IDENTITY)
+    assert producer.snapshot()["reason"] == "chunk_limit"
+
+
+@pytest.mark.parametrize("continuous", [None, 0, 1, "true"])
+def test_continuous_requires_a_boolean(continuous):
+    producer = PreviewCapture(Queue())
+    with pytest.raises(ValueError, match="continuous"):
+        producer.start("invalid", PreviewSelection(), IDENTITY, continuous=continuous)
+    assert producer.snapshot()["status"] == "idle"
+
+
+def test_automatic_selection_requires_continuous_mode():
+    producer = PreviewCapture(Queue())
+    with pytest.raises(ValueError, match="selection"):
+        producer.start("invalid", None, IDENTITY)
+
+
+@pytest.mark.asyncio
+async def test_each_stream_automatically_captures_its_first_chunk_and_retains_eof_result():
+    source, frames = Source(), Queue()
+    source.is_streaming = False
+    acquisition, _, main = runtime(source, frames)
+    await acquisition._on_start_stream()
+    first_capture = acquisition.preview.snapshot()["capture_id"]
+    assert first_capture and acquisition.preview.snapshot()["continuous"] is True
+    await acquisition.fetch_task
+    assert main.qsize() == frames.qsize() == 3
+    assert pickle.loads(frames.get_nowait())["sequence_id"] == 0
+    assert acquisition.preview.snapshot()["reason"] == "source_eof"
+    assert acquisition.preview.snapshot()["capture_id"] == first_capture
+    source.reads = 2
+    await acquisition._on_start_stream()
+    second_capture = acquisition.preview.snapshot()["capture_id"]
+    assert second_capture != first_capture
+    await acquisition.fetch_task
+    assert main.qsize() == 5 and acquisition.preview.snapshot()["observed"] == 2
+    remaining = [pickle.loads(frames.get_nowait()) for _ in range(frames.qsize())]
+    assert [item["sequence_id"] for item in remaining if item["capture_id"] == second_capture] == [3, 4]
+
+
+@pytest.mark.asyncio
+async def test_automatic_preview_start_failure_does_not_prevent_main_stream():
+    source = Source()
+    source.is_streaming = False
+    acquisition, _, main = runtime(source)
+    acquisition.preview.start = Mock(side_effect=RuntimeError("preview failure"))
+    await acquisition._on_start_stream()
+    await acquisition.fetch_task
+    assert main.qsize() == 3 and acquisition._fetch_failure is None
+    acquisition.preview.start.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_continuous_flag_is_forwarded_and_strictly_validated_by_runtime():
+    acquisition, events, _ = runtime()
+    await start(acquisition, continuous=1)
+    assert not events[-1].data.ok
+    await start(acquisition, continuous=True)
+    assert events[-1].data.ok and events[-1].data.data["continuous"] is True
+
+
+@pytest.mark.asyncio
+async def test_stopping_stream_retains_its_automatic_capture():
+    waiting = asyncio.Event()
+    source, frames = Source(reads=1), Queue()
+    source.is_streaming = False
+
+    async def read():
+        if source.reads:
+            source.reads -= 1
+            return chunk().raw_data
+        waiting.set()
+        await asyncio.Event().wait()
+
+    source.read_chunk = read
+    acquisition, _, main = runtime(source, frames)
+    await acquisition._on_start_stream()
+    await waiting.wait()
+    capture_id = acquisition.preview.snapshot()["capture_id"]
+    await acquisition._on_start_stream()
+    assert acquisition.preview.snapshot()["capture_id"] == capture_id
+    await acquisition._on_stop_stream()
+    status = acquisition.preview.snapshot()
+    assert status["capture_id"] == capture_id and status["reason"] == "source_stopped"
+    assert status["status"] == "finished" and status["observed"] == 1
+    assert main.qsize() == frames.qsize() == 1
+    assert pickle.loads(frames.get_nowait())["capture_id"] == capture_id
+
+
+@pytest.mark.asyncio
+async def test_start_without_preview_channel_preserves_main_stream():
+    source = Source()
+    source.is_streaming = False
+    acquisition, _, main = runtime(source)
+    acquisition.preview = PreviewCapture(None)
+    acquisition.preview.start = Mock(side_effect=AssertionError("No preview channel"))
+    await acquisition._on_start_stream()
+    await acquisition.fetch_task
+    assert main.qsize() == 3 and acquisition._fetch_failure is None
+    acquisition.preview.start.assert_not_called()
+
+
+def test_continuous_capture_still_drops_oversized_frames_and_ignores_stale_identity():
+    frames = Queue()
+    producer = PreviewCapture(frames)
+    producer.start("continuous", None, IDENTITY, continuous=True)
+    producer.offer(chunk(), {**IDENTITY, "connection_id": "old"})
+    assert producer.snapshot()["observed"] == 0
+    producer.offer(chunk(), IDENTITY, descriptor={"description": "x" * (128 * 1024)})
+    status = producer.snapshot()
+    assert status["status"] == "capturing"
+    assert status["observed"] == status["dropped"] == status["oversized"] == 1
+    assert frames.empty()
