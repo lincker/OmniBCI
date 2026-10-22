@@ -5,6 +5,7 @@ import { usePoll } from "./hooks/usePoll";
 import type { ResultsFeed } from "./hooks/useResultsFeed";
 import { translateControlLabel, translatePluginName, useI18n, type TranslationKey, type TranslationParams } from "./i18n";
 import { TrialResults } from "./TrialResults";
+import { AcquisitionPreview } from "./AcquisitionPreview";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
 import { pluginConfigApi, selectionKey, type Activation, type PluginProfile, type PluginDefinition } from "./api/plugin-config";
 import { readTrialControls, type TrialControl } from "./plugin-controls";
@@ -198,6 +199,9 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
               onClick={() => void read.run()}>{t("run.startReading")}</button>
             <button disabled={stopBlocked || !acquisitionAvailable || !reading} onClick={() => void stopRead.run()}>{t("run.stopReading")}</button></div>
         </div>
+        <AcquisitionPreview generation={running ? runtime.status?.generation : null}
+          revision={runtime.status?.applied_revision} connectionId={acquisition.data?.connection_id ?? null}
+          streaming={reading} disabled={controlsBlocked} />
       </section>
       <section className="card"><h2><Icon name="system" />{t("run.stimulation")}</h2>
         <p><Dot on={stimulation.data?.process_alive} label={t("run.processRunning")} />

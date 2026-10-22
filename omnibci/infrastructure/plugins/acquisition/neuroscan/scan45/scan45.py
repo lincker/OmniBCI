@@ -66,32 +66,10 @@ class Scan45Message:
             return header_bytes
 
     def __init__(self) -> None:
-        self.startAcquistionCommand = self._build_start_acquisition_header()
-        self.stopAcquistionCommand = self._build_stop_acquisition_header()
         self.startSendingDataCommand = self._build_start_send_data_header()
         self.stopSendingDataCommand = self._build_stop_send_data_header()
         self.getEDFHeaderInfoCommand = self._build_get_EDF_header()
         self.closingUpConnectionCommand = self._build_closing_up_connection_header()
-
-    def _build_start_acquisition_header(self):
-        header = self.Header(
-            ID='CTRL',
-            code=self.ControlCode.CTRL_FromServer,
-            request=self.Request.StartAcquisition,
-            size_body=0
-        )
-        # header bytes = b'CTRL\x00\x02\x00\x01\x00\x00\x00\x00'
-        return header.to_bytes()
-
-    def _build_stop_acquisition_header(self):
-        header = self.Header(
-            ID='CTRL',
-            code=self.ControlCode.CTRL_FromServer,
-            request=self.Request.StopAcquisition,
-            size_body=0
-        )
-        # header bytes = b'CTRL\x00\x02\x00\x02\x00\x00\x00\x00'
-        return header.to_bytes()
 
     def _build_start_send_data_header(self):
         header = self.Header(
@@ -150,9 +128,6 @@ class Scan45DataReader(SignalSource):
         self._sample_rate = parameters.get("sample_rate", context.sample_rate if context else None)
         if type(self.channel_number) is not int or self.channel_number < 2:
             raise ValueError("channel_number must be an integer >= 2, including the event channel")
-        # self.record_srate = config.get('record_srate', 1000)
-        # self.srate # TODO: refactor later
-        # self.info = None
         self.reader = None
         self.writer = None
         self._pending_header = None
@@ -225,20 +200,11 @@ class Scan45DataReader(SignalSource):
         self._is_streaming = False
         return True
 
-#   TODO: refactor function name: send_start_acquisition_command start data stream
-#     async def _start_data_stream(self):
-#         self.writer.write(scan45_message_manager.startSendingDataCommand)
-
-    # async def _stop_data_stream(self):
-    #     self.writer.write(scan45_message_manager.stopSendingDataCommand)
-
     async def read_chunk(self):
         # load 1 package data and unpack it
         header, body = await self._load_package()
         if header.ID == 'DATA' and header.code == 2:
             data = self._parse_body_data(header, body)
-            # print('data header', header)
-            # print('data body', data)
             return data
         else:
             raise Exception('header indicates body does not contain data, not implemented')
@@ -265,11 +231,8 @@ class Scan45DataReader(SignalSource):
             raise ValueError("Scan45 packet body length does not match its header")
         if header.request == 2:
             # 32 bit data
-            # data  = np.frombuffer(body, dtype=np.uint32)
-            # data = np.frombuffer(body, dtype=np.unit8)
             data = body
             data = self._unpack_int32_eeg(data)
-            # data = self._down_sample(data)
             return data
         elif header.request == 1:
             raise NotImplementedError('16 bit data parse method not implemented')
@@ -289,8 +252,6 @@ class Scan45DataReader(SignalSource):
         packet_event = packet[-1, :]
         # remove duplicated events data
         for index, event in enumerate(packet_event):
-            # if events != 0:
-                # print(f'index = {index}-----------events = {events}')
             if self._previous_event == 0 and event != 0:
                 self._previous_event = event
                 print(f'neuroscan scan4.5 index = {index}-----------event = {event}')
@@ -319,8 +280,6 @@ class Scan45Trigger(TriggerEmitter):
         self.clear()
 
     def send(self, event_id):
-        # self._send(0)
-        # time.sleep(0.02)
         self._send(event_id)
 
     def _send(self, data):

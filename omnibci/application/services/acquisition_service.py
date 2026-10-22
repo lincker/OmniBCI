@@ -8,6 +8,9 @@ Keeps acquisition routing and result-waiting logic out of the routers.
 import logging
 from threading import RLock
 from copy import deepcopy
+from uuid import uuid4
+from omnibci.application.acquisition_preview import PreviewSelection
+from omnibci.application.plugin_profiles import ProfileRevisionConflict
 from omnibci.application.runtime_admission import admitted
 from omnibci.application.processing_source import acquisition_binding_key
 from omnibci.application.source_expectations import compare_source_expectations
@@ -44,6 +47,9 @@ class AcquisitionAppService:
         settings=None,
         admission=None,
         lifecycle_lock=None,
+        *,
+        preview_provider=None,
+        generation_provider=None,
     ) -> None:
         self._admission = admission
         """Use injected settings only for optional device status metadata."""
@@ -57,6 +63,8 @@ class AcquisitionAppService:
         self.lifecycle_lock = lifecycle_lock or RLock()
         self._prepare_signal = None
         self._metadata_binding = None
+        self._preview_provider = preview_provider
+        self._generation_provider = generation_provider
         self._clear_metadata()
 
     def set_signal_preparer(self, callback) -> None:
@@ -91,14 +99,14 @@ class AcquisitionAppService:
     @admitted
     def handle_connect(self, cmd: ConnectDataProviderCommand) -> None:
         with self.lifecycle_lock:
-            self._put_event(EventType.ConnectDataProvider)
+            self._command_executor.request(EventType.ConnectDataProvider, None)
         logger.info("ConnectDataProvider event dispatched")
 
     @admitted(recovery=True)
     def handle_disconnect(self, cmd: DisconnectDataProviderCommand) -> None:
         with self.lifecycle_lock:
             self._clear_metadata()
-            self._put_event(EventType.DisconnectDataProvider)
+            self._command_executor.request(EventType.DisconnectDataProvider, None)
         logger.info("DisconnectDataProvider event dispatched")
 
     @admitted
@@ -108,7 +116,7 @@ class AcquisitionAppService:
                 # EOF and disconnect stop the source before processing finishes.
                 self.handle_stop_and_drain()
             receipt = self._prepare_signal() if self._prepare_signal is not None else None
-            self._put_event(EventType.StartStream, receipt)
+            self._command_executor.request(EventType.StartStream, receipt)
         logger.info("StartStream event dispatched")
 
     @admitted(recovery=True)
@@ -243,6 +251,98 @@ class AcquisitionAppService:
             return source, None, None
         return source, self._descriptor.sample_rate, self._descriptor.signal_channel_count
 
+    @admitted
+    def start_preview(self, *, generation: str, expected_revision: str,
+                      connection_id: str, selection: dict | None = None,
+                      continuous: bool = False) -> dict:
+        selected = PreviewSelection.from_value({} if selection is None else selection)
+        if type(continuous) is not bool:
+            raise ValueError("continuous must be a boolean")
+        if not isinstance(expected_revision, str) or len(expected_revision) != 64:
+            raise ValueError("A pinned configuration revision is required")
+        if not isinstance(connection_id, str) or not connection_id:
+            raise ValueError("A source connection ID is required")
+        with self.lifecycle_lock:
+            result = self._preview_request(EventType.StartAcquisitionPreview, {
+                "generation": generation, "expected_revision": expected_revision,
+                "connection_id": connection_id, "capture_id": uuid4().hex,
+                "selection": selected.to_dict(), "continuous": continuous,
+            })
+            return {**result, **self._read_preview_cache(generation, result["capture_id"])}
+
+    @admitted(recovery=True)
+    def stop_preview(self, *, generation: str, capture_id: str) -> dict:
+        self._require_capture_id(capture_id)
+        with self.lifecycle_lock:
+            result = self._preview_request(EventType.StopAcquisitionPreview,
+                                           {"generation": generation, "capture_id": capture_id})
+            return {**result, **self._read_preview_cache(generation, capture_id)}
+
+    @admitted(recovery=True)
+    def get_preview(self, *, generation: str, capture_id: str | None = None) -> dict:
+        if capture_id is not None:
+            self._require_capture_id(capture_id)
+        with self.lifecycle_lock:
+            payload = {"generation": generation}
+            if capture_id is not None:
+                payload["capture_id"] = capture_id
+            result = self._preview_request(EventType.GetAcquisitionPreview, payload)
+            # These channels progress independently; preserve both counters.
+            return {**result, **self._read_preview_cache(generation, result["capture_id"])}
+
+    @admitted(recovery=True)
+    def get_preview_chunk(self, sequence_id: int, *, generation: str, capture_id: str) -> dict:
+        self._require_capture_id(capture_id)
+        if type(sequence_id) is not int or sequence_id < 0:
+            raise ValueError("sequence_id must be a non-negative integer")
+        with self.lifecycle_lock:
+            result = self._preview_request(EventType.GetAcquisitionPreview,
+                                           {"generation": generation, "capture_id": capture_id})
+            cached = self._read_preview_cache(generation, capture_id, sequence_id)
+            chunk = cached.get("chunk")
+            if chunk is None:
+                raise LookupError("The preview chunk is not retained")
+            if any(chunk.get(key) != result.get(key) for key in (
+                    "capture_id", "generation", "config_revision", "source_id", "connection_id")):
+                raise ProfileRevisionConflict("Preview chunk belongs to a different capture")
+            if chunk.get("sequence_id") != sequence_id:
+                raise RuntimeError("Preview cache returned a different sequence")
+            return chunk
+
+    @staticmethod
+    def _require_capture_id(capture_id) -> None:
+        if not isinstance(capture_id, str) or not capture_id or len(capture_id) > 128:
+            raise ValueError("A valid capture_id is required")
+
+    def _require_preview_generation(self, generation) -> None:
+        if not isinstance(generation, str) or not generation:
+            raise ValueError("A runtime generation is required")
+        if self._generation_provider is None or self._preview_provider is None:
+            raise RuntimeError("Acquisition preview is unavailable")
+        current = self._generation_provider()
+        if current is None:
+            raise RuntimeError("Engine is not ready")
+        if current != generation:
+            raise ProfileRevisionConflict("Preview belongs to a different runtime generation")
+
+    def _preview_request(self, event_type, payload) -> dict:
+        generation = payload["generation"]
+        self._require_preview_generation(generation)
+        result = self._command_executor.request(event_type, payload).data
+        self._require_preview_generation(generation)
+        if not isinstance(result, dict) or "capture_id" not in result:
+            raise RuntimeError("Worker returned invalid acquisition preview status")
+        if (result.get("generation") != generation or payload.get("capture_id") is not None
+                and result["capture_id"] != payload["capture_id"]):
+            raise ProfileRevisionConflict("Preview belongs to a different capture or runtime generation")
+        return deepcopy(result)
+
+    def _read_preview_cache(self, generation, capture_id, sequence_id=None) -> dict:
+        cached = (self._preview_provider(capture_id) if sequence_id is None
+                  else self._preview_provider(capture_id, sequence_id))
+        self._require_preview_generation(generation)
+        return deepcopy(cached)
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -251,6 +351,3 @@ class AcquisitionAppService:
         self._descriptor = None
         self._raw_metadata = None
         self._descriptor_owner = None
-
-    def _put_event(self, event_type: EventType, data=None) -> None:
-        self._command_executor.request(event_type, data)

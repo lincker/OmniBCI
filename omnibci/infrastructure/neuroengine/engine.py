@@ -8,6 +8,7 @@ from queue import Full
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
+from omnibci.infrastructure.acquisition.preview_cache import PreviewCache
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.shared.events import Event, EventType
@@ -70,9 +71,11 @@ class NeuroEngine:
         config_revision: str | None = None,
         generation: str | None = None,
         allow_process_termination: bool = True,
+        preview_cache: PreviewCache | None = None,
     ) -> None:
         self.event_bus = event_bus
         self.data_manager = data_manager
+        self.preview_cache = preview_cache
         self.acquisition_worker = acquisition_worker
         self.acquisition_command_queue = acquisition_command_queue
         self.signal_processing_worker = signal_processing_worker
@@ -189,7 +192,8 @@ class NeuroEngine:
         if self._started:
             return
         if any((self._acquisition_started, self._processor_started,
-                self._event_bus_started, self._gateway_started)):
+                self._event_bus_started, self._gateway_started)) or (
+                    self.preview_cache is not None and not self.preview_cache.stopped):
             raise RuntimeError("NeuroEngine is in a partial lifecycle state")
         if self._shutdown_complete:
             raise RuntimeError("A stopped NeuroEngine graph cannot be restarted")
@@ -199,6 +203,8 @@ class NeuroEngine:
             # publish.  Registering after the gateway bind left a small window
             # where a valid inbound event could be consumed and then lost.
             self._register_event_listeners()
+            if self.preview_cache is not None:
+                await self.preview_cache.start()
             self.acquisition_worker.start()
             self._acquisition_started = True
             self._close_parent_startup_sender(self.acquisition_worker)
@@ -335,6 +341,13 @@ class NeuroEngine:
             else:
                 setattr(self, attr, False)
 
+        if self.preview_cache is not None:
+            try:
+                await self.preview_cache.stop()
+            except Exception as exc:
+                errors.append(exc)
+                logger.exception("Error stopping acquisition preview consumer")
+
         if self._gateway_started:
             try:
                 await self.peer_gateway.stop()
@@ -359,7 +372,8 @@ class NeuroEngine:
         workers_stopped = not (
             self._acquisition_started or self._processor_started
         )
-        if workers_stopped and not self._event_bus_started and not self._queues_closed:
+        preview_stopped = self.preview_cache is None or self.preview_cache.stopped
+        if workers_stopped and preview_stopped and not self._event_bus_started and not self._queues_closed:
             queue_errors = []
             for queue in (
                 self.processor_command_queue,
@@ -382,6 +396,7 @@ class NeuroEngine:
             and not self._event_bus_started
             and self._queues_closed
             and self._startup_channels_closed
+            and (self.preview_cache is None or self.preview_cache.stopped)
         )
         if errors:
             raise ExceptionGroup("NeuroEngine shutdown failed", errors)
@@ -425,6 +440,9 @@ class NeuroEngine:
             EventType.ConnectDataProvider:            (acq, AcquisitionCommand.connect, True),
             EventType.DisconnectDataProvider:         (acq, AcquisitionCommand.disconnect, True),
             EventType.StartStream:                    (acq, AcquisitionCommand.start_stream, True),
+            EventType.StartAcquisitionPreview:        (acq, AcquisitionCommand.start_preview, True),
+            EventType.StopAcquisitionPreview:         (acq, AcquisitionCommand.stop_preview, True),
+            EventType.GetAcquisitionPreview:          (acq, AcquisitionCommand.get_preview, True),
             EventType.GetSourceMetadata:              (acq, AcquisitionCommand.get_metadata, True),
             EventType.StopStream:                     (acq, AcquisitionCommand.stop_stream, True),
             EventType.StopAndDrain:                   (acq, AcquisitionCommand.stop_and_drain, True),
@@ -436,6 +454,11 @@ class NeuroEngine:
             EventType.UpdateProcessingContext:        (proc, SignalProcessorCommand.update_context, True),
             EventType.PrepareSignalProcessing:        (proc, SignalProcessorCommand.prepare_signal, True),
         }
+
+    def read_acquisition_preview(self, capture_id: str | None, sequence_id: int | None = None) -> dict:
+        if self.preview_cache is None:
+            raise RuntimeError("Acquisition preview is unavailable")
+        return self.preview_cache.read(capture_id, sequence_id)
 
     def _register_event_listeners(self) -> None:
         for event_type, (queue, command, carry_data) in self._command_routes().items():

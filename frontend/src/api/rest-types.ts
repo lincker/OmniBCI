@@ -208,6 +208,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/acquisition/preview/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Capture a bounded or rolling selection of signal chunks */
+        post: operations["start_preview_api_v1_acquisition_preview_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/acquisition/preview/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop the preview capture and retain captured chunks */
+        post: operations["stop_preview_api_v1_acquisition_preview_stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/acquisition/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect preview capture and delivery status */
+        get: operations["get_preview_api_v1_acquisition_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/acquisition/preview/chunks/{sequence_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the exact retained rows and samples of a preview chunk */
+        get: operations["get_preview_chunk_api_v1_acquisition_preview_chunks__sequence_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stimulation/status": {
         parameters: {
             query?: never;
@@ -726,6 +794,159 @@ export interface components {
             descriptor: components["schemas"]["SignalInfoModel"] | null;
             comparison?: components["schemas"]["SourceExpectationsModel"] | null;
         };
+        /** AcquisitionPreviewChunkResponse */
+        AcquisitionPreviewChunkResponse: {
+            /** Capture Id */
+            capture_id: string;
+            /** Generation */
+            generation: string;
+            /** Config Revision */
+            config_revision: string | null;
+            /** Source Id */
+            source_id: string;
+            /** Connection Id */
+            connection_id: string;
+            /** Sequence Id */
+            sequence_id: number;
+            /** Timestamp Ns */
+            timestamp_ns: string;
+            /** Original Shape */
+            original_shape: number[];
+            /** Dtype */
+            dtype: string;
+            /** Row Indices */
+            row_indices: number[];
+            /** Sample Start */
+            sample_start: number;
+            /** Sample Count */
+            sample_count: number;
+            /** Trigger Row Index */
+            trigger_row_index: number;
+            /** Values */
+            values: (number | boolean | string)[][];
+            descriptor: components["schemas"]["SignalInfoModel"] | null;
+        };
+        /** AcquisitionPreviewChunkSummary */
+        AcquisitionPreviewChunkSummary: {
+            /** Sequence Id */
+            sequence_id: number;
+            /** Timestamp Ns */
+            timestamp_ns: string;
+            /** Original Shape */
+            original_shape: number[];
+            /** Dtype */
+            dtype: string;
+            /** Row Indices */
+            row_indices: number[];
+            /** Sample Start */
+            sample_start: number;
+            /** Sample Count */
+            sample_count: number;
+            /** Trigger Row Index */
+            trigger_row_index: number;
+            /** Encoded Bytes */
+            encoded_bytes: number;
+        };
+        /** AcquisitionPreviewLimitsModel */
+        AcquisitionPreviewLimitsModel: {
+            /** Max Chunks */
+            max_chunks: number;
+            /** Max Rows */
+            max_rows: number;
+            /** Max Samples */
+            max_samples: number;
+            /** Max Values */
+            max_values: number;
+            /** Max Frame Bytes */
+            max_frame_bytes: number;
+            /** Max Cache Bytes */
+            max_cache_bytes: number;
+            /** Preview Queue Size */
+            preview_queue_size: number;
+            /** Capture Timeout Seconds */
+            capture_timeout_seconds: number;
+        };
+        /**
+         * AcquisitionPreviewResponse
+         * @description Capture-time context and independently sampled producer/cache counters.
+         */
+        AcquisitionPreviewResponse: {
+            /** Capture Id */
+            capture_id: string | null;
+            /** Generation */
+            generation: string;
+            /** Config Revision */
+            config_revision: string | null;
+            /** Source Id */
+            source_id: string | null;
+            /** Connection Id */
+            connection_id: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "idle" | "capturing" | "finished";
+            /**
+             * Continuous
+             * @default false
+             */
+            continuous: boolean;
+            /** Reason */
+            reason: string | null;
+            selection: components["schemas"]["AcquisitionPreviewSelectionModel"] | null;
+            /** Observed */
+            observed: number;
+            /** Enqueued */
+            enqueued: number;
+            /** Dropped */
+            dropped: number;
+            /** Oversized */
+            oversized: number;
+            /** Enqueued Bytes */
+            enqueued_bytes: number;
+            limits: components["schemas"]["AcquisitionPreviewLimitsModel"];
+            /** Stream Chunk Count */
+            stream_chunk_count: number;
+            /** Stream Sample Count */
+            stream_sample_count: number;
+            /** Last Sequence */
+            last_sequence: number;
+            /** Available */
+            available: boolean;
+            /** Cache Errors */
+            cache_errors: number;
+            /** Received */
+            received: number;
+            /** Retained Bytes */
+            retained_bytes: number;
+            /** Chunks */
+            chunks: components["schemas"]["AcquisitionPreviewChunkSummary"][];
+        };
+        /** AcquisitionPreviewSelectionModel */
+        AcquisitionPreviewSelectionModel: {
+            /** Rows */
+            rows?: number[];
+            /**
+             * Sample Start
+             * @default 0
+             */
+            sample_start: number;
+            /**
+             * Sample Count
+             * @default 128
+             */
+            sample_count: number;
+            /**
+             * Include Trigger
+             * @default true
+             */
+            include_trigger: boolean;
+            /**
+             * Chunk Count
+             * @default 32
+             */
+            chunk_count: number;
+        };
         /** AcquisitionStatusResponse */
         AcquisitionStatusResponse: {
             /** Connected */
@@ -793,6 +1014,34 @@ export interface components {
              */
             message: string;
             data?: components["schemas"]["AcquisitionMetadataResponse"] | null;
+        };
+        /** ApiResponse[AcquisitionPreviewChunkResponse] */
+        ApiResponse_AcquisitionPreviewChunkResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["AcquisitionPreviewChunkResponse"] | null;
+        };
+        /** ApiResponse[AcquisitionPreviewResponse] */
+        ApiResponse_AcquisitionPreviewResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["AcquisitionPreviewResponse"] | null;
         };
         /** ApiResponse[AcquisitionStatusResponse] */
         ApiResponse_AcquisitionStatusResponse_: {
@@ -1887,6 +2136,21 @@ export interface components {
             /** Actual */
             actual: number;
         };
+        /** StartAcquisitionPreviewRequest */
+        StartAcquisitionPreviewRequest: {
+            /** Generation */
+            generation: string;
+            /** Expected Revision */
+            expected_revision: string;
+            /** Connection Id */
+            connection_id: string;
+            selection?: components["schemas"]["AcquisitionPreviewSelectionModel"];
+            /**
+             * Continuous
+             * @default false
+             */
+            continuous: boolean;
+        };
         /** StartStimulationRequest */
         StartStimulationRequest: {
             /** Paradigm */
@@ -1926,6 +2190,13 @@ export interface components {
             engine_connected: boolean;
             /** Paradigm */
             paradigm?: string | null;
+        };
+        /** StopAcquisitionPreviewRequest */
+        StopAcquisitionPreviewRequest: {
+            /** Generation */
+            generation: string;
+            /** Capture Id */
+            capture_id: string;
         };
         /** SystemInfoResponse */
         SystemInfoResponse: {
@@ -2959,6 +3230,390 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_AcquisitionMetadataResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    start_preview_api_v1_acquisition_preview_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartAcquisitionPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_AcquisitionPreviewResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    stop_preview_api_v1_acquisition_preview_stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StopAcquisitionPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_AcquisitionPreviewResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_preview_api_v1_acquisition_preview_get: {
+        parameters: {
+            query: {
+                generation: string;
+                capture_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_AcquisitionPreviewResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_preview_chunk_api_v1_acquisition_preview_chunks__sequence_id__get: {
+        parameters: {
+            query: {
+                generation: string;
+                capture_id: string;
+            };
+            header?: never;
+            path: {
+                sequence_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_AcquisitionPreviewChunkResponse_"];
                 };
             };
             /** @description Bad request */

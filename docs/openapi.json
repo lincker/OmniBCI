@@ -1158,6 +1158,495 @@
         }
       }
     },
+    "/api/v1/acquisition/preview/start": {
+      "post": {
+        "tags": [
+          "Acquisition"
+        ],
+        "summary": "Capture a bounded or rolling selection of signal chunks",
+        "operationId": "start_preview_api_v1_acquisition_preview_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartAcquisitionPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AcquisitionPreviewResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Command execution timeout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/acquisition/preview/stop": {
+      "post": {
+        "tags": [
+          "Acquisition"
+        ],
+        "summary": "Stop the preview capture and retain captured chunks",
+        "operationId": "stop_preview_api_v1_acquisition_preview_stop_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StopAcquisitionPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AcquisitionPreviewResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Command execution timeout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/acquisition/preview": {
+      "get": {
+        "tags": [
+          "Acquisition"
+        ],
+        "summary": "Inspect preview capture and delivery status",
+        "operationId": "get_preview_api_v1_acquisition_preview_get",
+        "parameters": [
+          {
+            "name": "generation",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Generation"
+            }
+          },
+          {
+            "name": "capture_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Capture Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AcquisitionPreviewResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Command execution timeout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/acquisition/preview/chunks/{sequence_id}": {
+      "get": {
+        "tags": [
+          "Acquisition"
+        ],
+        "summary": "Read the exact retained rows and samples of a preview chunk",
+        "operationId": "get_preview_chunk_api_v1_acquisition_preview_chunks__sequence_id__get",
+        "parameters": [
+          {
+            "name": "sequence_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Sequence Id"
+            }
+          },
+          {
+            "name": "generation",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Generation"
+            }
+          },
+          {
+            "name": "capture_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Capture Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AcquisitionPreviewChunkResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Command execution timeout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/stimulation/status": {
       "get": {
         "tags": [
@@ -4527,6 +5016,451 @@
         ],
         "title": "AcquisitionMetadataResponse"
       },
+      "AcquisitionPreviewChunkResponse": {
+        "properties": {
+          "capture_id": {
+            "type": "string",
+            "title": "Capture Id"
+          },
+          "generation": {
+            "type": "string",
+            "title": "Generation"
+          },
+          "config_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Revision"
+          },
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "connection_id": {
+            "type": "string",
+            "title": "Connection Id"
+          },
+          "sequence_id": {
+            "type": "integer",
+            "title": "Sequence Id"
+          },
+          "timestamp_ns": {
+            "type": "string",
+            "title": "Timestamp Ns"
+          },
+          "original_shape": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Original Shape"
+          },
+          "dtype": {
+            "type": "string",
+            "title": "Dtype"
+          },
+          "row_indices": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Row Indices"
+          },
+          "sample_start": {
+            "type": "integer",
+            "title": "Sample Start"
+          },
+          "sample_count": {
+            "type": "integer",
+            "title": "Sample Count"
+          },
+          "trigger_row_index": {
+            "type": "integer",
+            "title": "Trigger Row Index"
+          },
+          "values": {
+            "items": {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            "type": "array",
+            "title": "Values"
+          },
+          "descriptor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignalInfoModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "capture_id",
+          "generation",
+          "config_revision",
+          "source_id",
+          "connection_id",
+          "sequence_id",
+          "timestamp_ns",
+          "original_shape",
+          "dtype",
+          "row_indices",
+          "sample_start",
+          "sample_count",
+          "trigger_row_index",
+          "values",
+          "descriptor"
+        ],
+        "title": "AcquisitionPreviewChunkResponse"
+      },
+      "AcquisitionPreviewChunkSummary": {
+        "properties": {
+          "sequence_id": {
+            "type": "integer",
+            "title": "Sequence Id"
+          },
+          "timestamp_ns": {
+            "type": "string",
+            "title": "Timestamp Ns"
+          },
+          "original_shape": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Original Shape"
+          },
+          "dtype": {
+            "type": "string",
+            "title": "Dtype"
+          },
+          "row_indices": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Row Indices"
+          },
+          "sample_start": {
+            "type": "integer",
+            "title": "Sample Start"
+          },
+          "sample_count": {
+            "type": "integer",
+            "title": "Sample Count"
+          },
+          "trigger_row_index": {
+            "type": "integer",
+            "title": "Trigger Row Index"
+          },
+          "encoded_bytes": {
+            "type": "integer",
+            "title": "Encoded Bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sequence_id",
+          "timestamp_ns",
+          "original_shape",
+          "dtype",
+          "row_indices",
+          "sample_start",
+          "sample_count",
+          "trigger_row_index",
+          "encoded_bytes"
+        ],
+        "title": "AcquisitionPreviewChunkSummary"
+      },
+      "AcquisitionPreviewLimitsModel": {
+        "properties": {
+          "max_chunks": {
+            "type": "integer",
+            "title": "Max Chunks"
+          },
+          "max_rows": {
+            "type": "integer",
+            "title": "Max Rows"
+          },
+          "max_samples": {
+            "type": "integer",
+            "title": "Max Samples"
+          },
+          "max_values": {
+            "type": "integer",
+            "title": "Max Values"
+          },
+          "max_frame_bytes": {
+            "type": "integer",
+            "title": "Max Frame Bytes"
+          },
+          "max_cache_bytes": {
+            "type": "integer",
+            "title": "Max Cache Bytes"
+          },
+          "preview_queue_size": {
+            "type": "integer",
+            "title": "Preview Queue Size"
+          },
+          "capture_timeout_seconds": {
+            "type": "number",
+            "title": "Capture Timeout Seconds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "max_chunks",
+          "max_rows",
+          "max_samples",
+          "max_values",
+          "max_frame_bytes",
+          "max_cache_bytes",
+          "preview_queue_size",
+          "capture_timeout_seconds"
+        ],
+        "title": "AcquisitionPreviewLimitsModel"
+      },
+      "AcquisitionPreviewResponse": {
+        "properties": {
+          "capture_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capture Id"
+          },
+          "generation": {
+            "type": "string",
+            "title": "Generation"
+          },
+          "config_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Revision"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "connection_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "capturing",
+              "finished"
+            ],
+            "title": "Status"
+          },
+          "continuous": {
+            "type": "boolean",
+            "title": "Continuous",
+            "default": false
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AcquisitionPreviewSelectionModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observed": {
+            "type": "integer",
+            "title": "Observed"
+          },
+          "enqueued": {
+            "type": "integer",
+            "title": "Enqueued"
+          },
+          "dropped": {
+            "type": "integer",
+            "title": "Dropped"
+          },
+          "oversized": {
+            "type": "integer",
+            "title": "Oversized"
+          },
+          "enqueued_bytes": {
+            "type": "integer",
+            "title": "Enqueued Bytes"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/AcquisitionPreviewLimitsModel"
+          },
+          "stream_chunk_count": {
+            "type": "integer",
+            "title": "Stream Chunk Count"
+          },
+          "stream_sample_count": {
+            "type": "integer",
+            "title": "Stream Sample Count"
+          },
+          "last_sequence": {
+            "type": "integer",
+            "title": "Last Sequence"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "cache_errors": {
+            "type": "integer",
+            "title": "Cache Errors"
+          },
+          "received": {
+            "type": "integer",
+            "title": "Received"
+          },
+          "retained_bytes": {
+            "type": "integer",
+            "title": "Retained Bytes"
+          },
+          "chunks": {
+            "items": {
+              "$ref": "#/components/schemas/AcquisitionPreviewChunkSummary"
+            },
+            "type": "array",
+            "title": "Chunks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "capture_id",
+          "generation",
+          "config_revision",
+          "source_id",
+          "connection_id",
+          "status",
+          "reason",
+          "selection",
+          "observed",
+          "enqueued",
+          "dropped",
+          "oversized",
+          "enqueued_bytes",
+          "limits",
+          "stream_chunk_count",
+          "stream_sample_count",
+          "last_sequence",
+          "available",
+          "cache_errors",
+          "received",
+          "retained_bytes",
+          "chunks"
+        ],
+        "title": "AcquisitionPreviewResponse",
+        "description": "Capture-time context and independently sampled producer/cache counters."
+      },
+      "AcquisitionPreviewSelectionModel": {
+        "properties": {
+          "rows": {
+            "items": {
+              "type": "integer",
+              "minimum": 0.0
+            },
+            "type": "array",
+            "maxItems": 16,
+            "title": "Rows"
+          },
+          "sample_start": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Sample Start",
+            "default": 0
+          },
+          "sample_count": {
+            "type": "integer",
+            "maximum": 512.0,
+            "minimum": 1.0,
+            "title": "Sample Count",
+            "default": 128
+          },
+          "include_trigger": {
+            "type": "boolean",
+            "title": "Include Trigger",
+            "default": true
+          },
+          "chunk_count": {
+            "type": "integer",
+            "maximum": 32.0,
+            "minimum": 1.0,
+            "title": "Chunk Count",
+            "default": 32
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "AcquisitionPreviewSelectionModel"
+      },
       "AcquisitionStatusResponse": {
         "properties": {
           "connected": {
@@ -4688,6 +5622,58 @@
         },
         "type": "object",
         "title": "ApiResponse[AcquisitionMetadataResponse]"
+      },
+      "ApiResponse_AcquisitionPreviewChunkResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AcquisitionPreviewChunkResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[AcquisitionPreviewChunkResponse]"
+      },
+      "ApiResponse_AcquisitionPreviewResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AcquisitionPreviewResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[AcquisitionPreviewResponse]"
       },
       "ApiResponse_AcquisitionStatusResponse_": {
         "properties": {
@@ -7489,6 +8475,43 @@
         ],
         "title": "SourceParameterComparisonModel"
       },
+      "StartAcquisitionPreviewRequest": {
+        "properties": {
+          "generation": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Generation"
+          },
+          "expected_revision": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Expected Revision"
+          },
+          "connection_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Connection Id"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/AcquisitionPreviewSelectionModel"
+          },
+          "continuous": {
+            "type": "boolean",
+            "title": "Continuous",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "generation",
+          "expected_revision",
+          "connection_id"
+        ],
+        "title": "StartAcquisitionPreviewRequest"
+      },
       "StartStimulationRequest": {
         "properties": {
           "paradigm": {
@@ -7566,6 +8589,29 @@
         ],
         "title": "StimulationStatusResponse",
         "description": "Live status of the Stimulation subsystem.\n\nactive          — the application service has issued a StartStimulation command.\nprocess_alive   — the Stimulation subprocess is currently running (auto_spawn only).\nengine_connected — the Stimulation process has an active IPC connection to the engine."
+      },
+      "StopAcquisitionPreviewRequest": {
+        "properties": {
+          "generation": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Generation"
+          },
+          "capture_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Capture Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "generation",
+          "capture_id"
+        ],
+        "title": "StopAcquisitionPreviewRequest"
       },
       "SystemInfoResponse": {
         "properties": {

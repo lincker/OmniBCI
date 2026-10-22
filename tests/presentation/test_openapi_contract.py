@@ -40,6 +40,10 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/acquisition/status", "get"),
     ("/api/v1/acquisition/metadata", "get"),
     ("/api/v1/acquisition/metadata/refresh", "post"),
+    ("/api/v1/acquisition/preview/start", "post"),
+    ("/api/v1/acquisition/preview/stop", "post"),
+    ("/api/v1/acquisition/preview", "get"),
+    ("/api/v1/acquisition/preview/chunks/{sequence_id}", "get"),
     # stimulation
     ("/api/v1/stimulation/status", "get"),
     # plugins

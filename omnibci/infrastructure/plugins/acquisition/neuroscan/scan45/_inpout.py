@@ -48,7 +48,6 @@ class PParallelInpOut:
         _inp = self.port.Inp32(self.base + 2)
         self.port.Out32(self.base + 2,
                         int(_inp & ~uint8(1 << 5)))
-        self.status = None
 
     def setData(self, data):
         """Set the data to be presented on the parallel port (one ubyte).

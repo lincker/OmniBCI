@@ -3,6 +3,8 @@ import multiprocessing as mp
 from copy import deepcopy
 from dataclasses import dataclass
 
+from omnibci.infrastructure.acquisition.preview_channel import PreviewChannel
+from omnibci.infrastructure.acquisition.preview_cache import PreviewCache
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
@@ -106,6 +108,8 @@ class NeuroEngineBuilder:
         # 2. Shared data buffer
         data_buffer = mp.Queue()
         data_manager = DataManager(buffer=data_buffer)
+        preview_queue = PreviewChannel()
+        preview_cache = PreviewCache(preview_queue, generation=generation)
 
         # 3. Command queues
         acquisition_command_queue = mp.Queue(cfg.queue_size)
@@ -128,6 +132,7 @@ class NeuroEngineBuilder:
             event_bus=event_bus,
             settings_snapshot=self._settings_snapshot,
             startup_reporter=acquisition_reporter,
+            preview_queue=preview_queue,
         )
         signal_processing_worker = SignalProcessingWorker(
             command_queue=processor_command_queue,
@@ -176,7 +181,8 @@ class NeuroEngineBuilder:
             signal_processing_worker=signal_processing_worker,
             processor_command_queue=processor_command_queue,
             peer_gateway=peer_gateway,
-            owned_ipc_queues=(event_queue, data_buffer),
+            owned_ipc_queues=(event_queue, data_buffer, preview_queue),
+            preview_cache=preview_cache,
             actuation_translator=actuation_translator,
             actuation_feedback=actuation_feedback,
             debug=cfg.debug,

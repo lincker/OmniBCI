@@ -62,6 +62,12 @@ class _BoundedCommandQueue(queue.Queue):
 
 
 _COMMAND_ROUTES = [
+    (EventType.StartAcquisitionPreview, "acquisition_command_queue", AcquisitionCommand.start_preview,
+     {"generation": "run", "capture_id": "capture", "selection": {}}),
+    (EventType.StopAcquisitionPreview, "acquisition_command_queue", AcquisitionCommand.stop_preview,
+     {"generation": "run", "capture_id": "capture"}),
+    (EventType.GetAcquisitionPreview, "acquisition_command_queue", AcquisitionCommand.get_preview,
+     {"generation": "run"}),
     (EventType.GetSourceMetadata, "acquisition_command_queue", AcquisitionCommand.get_metadata,
      {"refresh": True}),
     (EventType.PrepareSignalProcessing, "processor_command_queue", SignalProcessorCommand.prepare_signal,

@@ -23,7 +23,6 @@ class FileReader(SignalSource):
         super().__init__()
         self.reader_adapter = None
         self.file_pointer = 0
-        self._data_length = 0
         self._file_identity = None
         self._resume_checkpoint = None
         self._read_in_progress = False
@@ -32,7 +31,6 @@ class FileReader(SignalSource):
         if not isinstance(file_path, (str, Path)) or not str(file_path).strip():
             raise ValueError("Select a recording file before starting acquisition")
         self.file_path = str(resolve_config_path(file_path))
-        self.data = None
 
     def set_file_path(self, file_path: str | Path):
         if not str(file_path).strip():
