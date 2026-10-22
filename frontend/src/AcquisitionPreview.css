@@ -1,0 +1,18 @@
+.acquisition-preview { margin-top: 1rem; border-top: 1px solid var(--border-soft); padding-top: 1rem; }
+.acquisition-preview summary { cursor: pointer; font-weight: 600; }
+.preview-selection { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 1rem 0; padding: 0.75rem; border: 1px solid var(--border-soft); }
+.preview-selection label { display: grid; gap: 0.35rem; font-size: 0.75rem; flex: 1 1 8rem; }
+.preview-selection input { min-width: 0; width: 100%; }
+.preview-selection .preview-trigger { display: flex; align-items: center; }
+.preview-trigger input { width: auto; }
+.preview-chunks { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.75rem 0; max-height: 10rem; overflow-y: auto; }
+.preview-chunks button[aria-pressed="true"] { outline: 2px solid var(--accent); }
+.preview-context { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.75rem; font-size: 0.75rem; }
+.preview-context dt { color: var(--muted); }
+.preview-context dd { margin: 0.3rem 0 0; overflow-wrap: anywhere; }
+.preview-table { max-height: 26rem; overflow: auto; border: 1px solid var(--border-soft); }
+.preview-table table { border-collapse: collapse; font-size: 0.75rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.preview-table th, .preview-table td { padding: 0.5rem; text-align: right; border-bottom: 1px solid var(--border-soft); }
+.preview-table th { position: sticky; background: var(--bg); }
+.preview-table thead th { top: 0; z-index: 1; }
+.preview-table tbody th { left: 0; text-align: left; }

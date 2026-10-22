@@ -12,6 +12,10 @@ type S = components["schemas"];
 export type EngineStatus = S["EngineStatusResponse"];
 export type AcquisitionStatus = S["AcquisitionStatusResponse"];
 export type DataSourceMetadata = S["AcquisitionMetadataResponse"];
+export type AcquisitionPreview = S["AcquisitionPreviewResponse"];
+export type AcquisitionPreviewChunk = S["AcquisitionPreviewChunkResponse"];
+export type PreviewSelection = S["AcquisitionPreviewSelectionModel"];
+export type PreviewLimits = S["AcquisitionPreviewLimitsModel"];
 export type Trial = S["TrialResponse"];
 export type ResultsSnapshot = S["ResultsResponse"];
 export type ConfigEntry = S["ConfigEntry"];
@@ -81,6 +85,14 @@ export const api = {
   acqConnect: () => post("/api/v1/acquisition/connect"),
   acqDisconnect: () => post("/api/v1/acquisition/disconnect"),
   acqMetadata: () => post<DataSourceMetadata>("/api/v1/acquisition/metadata/refresh"),
+  acqPreviewStart: (body: S["StartAcquisitionPreviewRequest"]) =>
+    post<AcquisitionPreview>("/api/v1/acquisition/preview/start", body),
+  acqPreviewStop: (generation: string, captureId: string) =>
+    post<AcquisitionPreview>("/api/v1/acquisition/preview/stop", { generation, capture_id: captureId }),
+  acqPreview: (generation: string, captureId?: string) =>
+    get<AcquisitionPreview>(`/api/v1/acquisition/preview?${new URLSearchParams({ generation, ...(captureId ? { capture_id: captureId } : {}) })}`),
+  acqPreviewChunk: (generation: string, captureId: string, sequenceId: number) =>
+    get<AcquisitionPreviewChunk>(`/api/v1/acquisition/preview/chunks/${sequenceId}?${new URLSearchParams({ generation, capture_id: captureId })}`),
 
   stimStart: (paradigm?: string) =>
     post("/api/v1/stimulation/start", paradigm ? { paradigm } : {}),
