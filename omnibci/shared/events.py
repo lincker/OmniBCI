@@ -18,6 +18,9 @@ class EventType(IntEnum):
     StartStream = 111
     StopStream = 112
     StopAndDrain = 113  # acquisition stop followed by an ordered processing barrier
+    StartAcquisitionPreview = 114
+    StopAcquisitionPreview = 115
+    GetAcquisitionPreview = 116
     StageProcessingConfiguration = 211  # stage a pipeline until the next epoch boundary
     CancelProcessingConfiguration = 212  # reconcile or cancel a staged pipeline
     UpdateProcessingContext = 213  # acknowledge output metadata after an ordered drain

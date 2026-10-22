@@ -16,6 +16,8 @@ from omnibci.application.events import (
 from omnibci.domain.signal_info import SignalInfo
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.domain.signal import SignalChunk
+from omnibci.application.acquisition_preview import PreviewSelection
+from omnibci.infrastructure.acquisition.preview_capture import PreviewCapture
 from omnibci.shared.events import Event, EventType
 
 logger = logging.getLogger(__name__)
@@ -46,6 +48,9 @@ class AcquisitionCommand(Enum):
     get_checkpoint    = 'get checkpoint'
     restore_checkpoint = 'restore checkpoint'
     update_revision   = 'update revision'
+    start_preview     = 'start preview'
+    stop_preview      = 'stop preview'
+    get_preview       = 'get preview'
 
 
 class AcquisitionCommandRejected(RuntimeError):
@@ -66,6 +71,9 @@ _COMMAND_RESULT_NAMES = {
     AcquisitionCommand.restore_checkpoint: EventType.RestoreSourceCheckpoint.name,
     AcquisitionCommand.update_revision: EventType.UpdateAcquisitionRevision.name,
     AcquisitionCommand.get_metadata: EventType.GetSourceMetadata.name,
+    AcquisitionCommand.start_preview: EventType.StartAcquisitionPreview.name,
+    AcquisitionCommand.stop_preview: EventType.StopAcquisitionPreview.name,
+    AcquisitionCommand.get_preview: EventType.GetAcquisitionPreview.name,
 }
 
 
@@ -86,6 +94,7 @@ class AcquisitionRuntime:
         preparation_required: bool,
         generation: str | None = None,
         config_revision: str | None = None,
+        preview_queue=None,
     ) -> None:
         self.data_source = data_source
         self.command_queue = command_queue
@@ -101,6 +110,7 @@ class AcquisitionRuntime:
         self.stream_chunk_count = 0
         self.stream_sample_count = 0
         self._fetch_failure: str | None = None
+        self.preview = PreviewCapture(preview_queue)
         self._clear_metadata()
         self.connection_id = uuid4().hex if getattr(data_source, "is_connected", False) else None
 
@@ -116,6 +126,7 @@ class AcquisitionRuntime:
 
     async def shutdown(self) -> None:
         logger.info('Acquisition shutting down')
+        self.preview.finish("engine_stopped")
         if self.data_source.is_connected or self.data_source.is_streaming:
             await self._on_disconnect()
         else:
@@ -124,6 +135,7 @@ class AcquisitionRuntime:
 
     async def main_loop(self) -> None:
         while not self.should_exit:
+            self.preview.expire()
             if not self.command_queue.empty():
                 await self.execute(self.command_queue.get())
             await asyncio.sleep(0.01)
@@ -148,6 +160,9 @@ class AcquisitionRuntime:
             AcquisitionCommand.stop_and_drain:   self._on_stop_stream,
             AcquisitionCommand.stop_acquisition: self._on_stop_acquisition,
             AcquisitionCommand.get_metadata:     self._on_get_metadata,
+            AcquisitionCommand.start_preview:    self._preview_command,
+            AcquisitionCommand.stop_preview:     self._preview_command,
+            AcquisitionCommand.get_preview:      self._preview_command,
         }.get(command)
         if handler is None:
             logger.warning('Unknown acquisition command: %s', command)
@@ -169,6 +184,9 @@ class AcquisitionRuntime:
                 data = await self._on_get_metadata(request)
             elif command is AcquisitionCommand.start_stream:
                 await self._on_start_stream(request.payload if request else None)
+            elif command in (AcquisitionCommand.start_preview, AcquisitionCommand.stop_preview,
+                             AcquisitionCommand.get_preview):
+                data = self._preview_command(command, request)
             else:
                 await handler()
             if command is AcquisitionCommand.stop_and_drain:
@@ -215,6 +233,36 @@ class AcquisitionRuntime:
         if request is not None:
             self._emit_command_result(request, command, ok=True, data=data)
 
+    def _preview_identity(self) -> dict:
+        return {"generation": self.generation, "config_revision": self.config_revision,
+                "source_id": self.source_id, "connection_id": self.connection_id}
+
+    def _preview_command(self, command, request) -> dict:
+        payload = request.payload if request is not None else None
+        if not isinstance(payload, dict) or payload.get("generation") != self.generation:
+            raise AcquisitionCommandRejected("PREVIEW_IDENTITY_MISMATCH", "Preview requires the current runtime generation")
+        try:
+            if command is AcquisitionCommand.start_preview:
+                if (payload.get("expected_revision") != self.config_revision
+                        or payload.get("connection_id") != self.connection_id):
+                    raise ValueError("Preview belongs to a different source connection or revision")
+                if not self.data_source.is_connected or not self.data_source.is_streaming:
+                    raise ValueError("Start the signal stream before capturing a preview")
+                self.preview.start(payload.get("capture_id"),
+                                   PreviewSelection.from_value(payload.get("selection", {})), self._preview_identity())
+            elif command is AcquisitionCommand.stop_preview:
+                self.preview.stop(payload.get("capture_id"))
+            elif (payload.get("capture_id") is not None
+                  and payload["capture_id"] != self.preview.snapshot()["capture_id"]):
+                raise ValueError("Preview capture does not match the requested capture_id")
+        except ValueError as exc:
+            raise AcquisitionCommandRejected("PREVIEW_REJECTED", str(exc)) from exc
+        result = self.preview.snapshot()
+        if result["status"] == "idle":
+            result.update(self._preview_identity())
+        return {**result, "stream_chunk_count": self.stream_chunk_count,
+                "stream_sample_count": self.stream_sample_count, "last_sequence": self._last_sequence}
+
     def _configuration_command(self, command, request) -> None:
         if request is None:
             return
@@ -227,6 +275,8 @@ class AcquisitionRuntime:
                 revision = payload.get("target_revision")
                 if not isinstance(revision, str) or len(revision) != 64:
                     raise ValueError("A pinned target revision is required")
+                if revision != self.config_revision:
+                    self.preview.finish("context_changed")
                 self.config_revision = revision
                 data = {}
             else:
@@ -269,6 +319,7 @@ class AcquisitionRuntime:
         self._emit_state()
 
     async def _on_disconnect(self) -> None:
+        self.preview.finish("disconnected")
         self.connection_id = None
         self._clear_metadata()
         # A successful disconnect means no reader coroutine remains alive.
@@ -314,6 +365,7 @@ class AcquisitionRuntime:
         self._emit_state()
 
     async def _on_stop_stream(self) -> None:
+        self.preview.finish("source_stopped")
         if not self.data_source.is_streaming:
             await self._cancel_fetch_task()
             self._emit_state()
@@ -413,6 +465,7 @@ class AcquisitionRuntime:
         self.stream_sample_count = 0
         try:
             while True:
+                read_identity = self._preview_identity()
                 raw_data = await self.data_source.read_chunk()
                 if raw_data is None:
                     # EOF is a clean stream transition and must update the projection.
@@ -430,6 +483,13 @@ class AcquisitionRuntime:
                 self._last_sequence = chunk.sequence_id
                 self.stream_chunk_count += 1
                 self.stream_sample_count += raw_data.shape[1]
+                try:
+                    if self.preview.active and read_identity == self._preview_identity():
+                        self.preview.offer(chunk, read_identity, descriptor=(
+                            self._descriptor.to_dict() if self._descriptor is not None else None))
+                except Exception:
+                    self.preview.finish("preview_error")
+                    logger.exception("Acquisition preview failed; the signal stream is unaffected")
         except asyncio.CancelledError:
             logger.info('Fetch task cancelled')
         except Exception as exc:
@@ -447,6 +507,7 @@ class AcquisitionRuntime:
     async def _finish_stream(self) -> None:
         """Close the stream from inside fetch() (EOF / fatal error) and
         publish the resulting state."""
+        self.preview.finish("source_error" if self._fetch_failure is not None else "source_eof")
         try:
             await self.data_source.stop_stream()
         except Exception as exc:

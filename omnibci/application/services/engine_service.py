@@ -100,6 +100,13 @@ class NeuroEngineService(EnginePort):
     # Lifecycle
     # ------------------------------------------------------------------
 
+    def read_acquisition_preview(self, capture_id: str | None, sequence_id: int | None = None) -> dict:
+        """Read the current graph's independent cache without consuming signal data."""
+        with self._configuration_lock:
+            if not self.is_engine_ready or self._engine is None:
+                raise RuntimeError("Engine is not ready")
+            return self._engine.read_acquisition_preview(capture_id, sequence_id)
+
     async def startup(self) -> None:
         """Allow listener registration; build the graph at the actual start."""
         self._initialized = True

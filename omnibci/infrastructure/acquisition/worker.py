@@ -34,6 +34,7 @@ class AcquisitionWorker(mp.Process):
         event_bus=None,
         settings_snapshot: dict | None = None,
         startup_reporter: StartupReporter | None = None,
+        preview_queue=None,
     ) -> None:
         super().__init__()
         self.data_source: SignalSource
@@ -44,10 +45,13 @@ class AcquisitionWorker(mp.Process):
         self.event_bus = event_bus
         self.settings_snapshot = deepcopy(settings_snapshot)
         self.startup_reporter = startup_reporter
+        self.preview_queue = preview_queue
         self._startup_stage = "settings"
 
     def run(self) -> None:
         try:
+            if self.preview_queue is not None:
+                self.preview_queue.cancel_join_thread()
             from omnibci.conf import settings
             settings.use_snapshot(self._settings_snapshot())
             self._startup_stage = "signal_source"
@@ -74,6 +78,7 @@ class AcquisitionWorker(mp.Process):
             preparation_required=requires_signal_preparation(snapshot),
             generation=snapshot.get("CONFIG.generation"),
             config_revision=snapshot.get("CONFIG.revision"),
+            **({"preview_queue": self.preview_queue} if self.preview_queue is not None else {}),
         )
         if self.startup_reporter is not None:
             self.startup_reporter.ready()
