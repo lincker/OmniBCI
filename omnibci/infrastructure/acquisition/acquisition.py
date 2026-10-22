@@ -98,6 +98,8 @@ class AcquisitionRuntime:
         self.generation = generation
         self.config_revision = config_revision
         self._last_sequence = -1
+        self.stream_chunk_count = 0
+        self.stream_sample_count = 0
         self._fetch_failure: str | None = None
         self._clear_metadata()
         self.connection_id = uuid4().hex if getattr(data_source, "is_connected", False) else None
@@ -407,14 +409,15 @@ class AcquisitionRuntime:
             raise AcquisitionCommandRejected("SIGNAL_NOT_PREPARED", "Prepare the signal mapping for this connection and configuration before streaming")
 
     async def fetch(self) -> None:
-        packets_counter = 0
+        self.stream_chunk_count = 0
+        self.stream_sample_count = 0
         try:
             while True:
                 raw_data = await self.data_source.read_chunk()
                 if raw_data is None:
                     # EOF is a clean stream transition and must update the projection.
                     logger.info('Data source end of stream after %d chunks; fetch task finished',
-                                packets_counter)
+                                self.stream_chunk_count)
                     await self._finish_stream()
                     break
                 chunk = SignalChunk(
@@ -425,7 +428,8 @@ class AcquisitionRuntime:
                 # TODO: Consider validating data matrices against the acquisition descriptor in the future.
                 self.data_manager.put_data(chunk)
                 self._last_sequence = chunk.sequence_id
-                packets_counter += 1
+                self.stream_chunk_count += 1
+                self.stream_sample_count += raw_data.shape[1]
         except asyncio.CancelledError:
             logger.info('Fetch task cancelled')
         except Exception as exc:
