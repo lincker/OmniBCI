@@ -7,7 +7,7 @@ import { createServer } from "vite";
 
 const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
 after(() => server.close());
-const { AcquisitionPreview, PreviewChunkTable, PreviewChunkDetail, PreviewChunks, parsePreviewSelection } = await server.ssrLoadModule("/src/AcquisitionPreview.tsx");
+const { AcquisitionPreview, PreviewChunkTable, PreviewChunkDetail, PreviewChunks, parsePreviewSelection, previewValueKey } = await server.ssrLoadModule("/src/AcquisitionPreview.tsx");
 const { api } = await server.ssrLoadModule("/src/api/client.ts");
 const { translate } = await server.ssrLoadModule("/src/i18n.tsx");
 const english = { language: "en", t: (key, params) => translate("en", key, params) };
@@ -61,7 +61,12 @@ function selectedDetail(tree) {
 function table(value) {
   const current = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
   const previous = current.current;
-  current.current = { useContext: () => english };
+  current.current = {
+    useContext: () => english,
+    useState: (initial) => [typeof initial === "function" ? initial() : initial, () => {}],
+    useRef: (initial) => ({ current: initial }),
+    useEffect: () => {},
+  };
   try { return PreviewChunkTable({ chunk: value }); }
   finally { current.current = previous; }
 }
@@ -536,4 +541,194 @@ test("preview client methods retain identity in API requests through the shared 
     assert.equal(calls[4].url.searchParams.get("generation"), "generation");
     assert.equal(calls[4].url.searchParams.get("capture_id"), "capture");
   } finally { globalThis.fetch = previous; }
+});
+
+
+function searchControl(tree, label) {
+  return elements(tree).find((item) => item.props["aria-label"] === label);
+}
+function searchButton(tree, label) {
+  return elements(tree).find((item) => item.type === "button" && text(item) === label);
+}
+function matchedCells(tree, current = false) {
+  const className = current ? "preview-search-current" : "preview-search-match";
+  return elements(tree).filter((item) => item.type === "td" && item.props.className?.split(/\s+/).includes(className));
+}
+async function searchTable(h, value, channel = "all") {
+  searchControl(h.tree, "Search channel").props.onChange({ target: { value: channel } });
+  searchControl(h.tree, "Equals value").props.onChange({ target: { value } });
+  await h.settle();
+  searchControl(h.tree, "Search displayed chunk").props.onSubmit({ preventDefault() {} });
+  await h.settle();
+}
+
+for (const forms of [
+  ["1.25", "1.250", "125e-2", "+001.2500", " 1.25 "],
+  ["0", "-0", "+0.00", "0e9999999999999999999999999999999"],
+  ["-0.125", "-.1250", "-125e-3"],
+  ["9007199254740993", "9007199254740993.0", "9.007199254740993e15"],
+  ["0.00000000000000000001", "1e-20", ".0000000000000000000100"],
+]) {
+  test(`equal-value search normalizes decimal representations of ${forms[0]} exactly`, () => {
+    const expected = previewValueKey(forms[0]);
+    assert.notEqual(expected, null);
+    for (const value of forms) assert.equal(previewValueKey(value), expected, value);
+  });
+}
+
+test("equal-value search never rounds adjacent int64 or decimal values together", () => {
+  for (const [left, right] of [
+    ["9007199254740992", "9007199254740993"],
+    ["-9223372036854775808", "-9223372036854775807"],
+    ["0.1", "0.10000000000000001"],
+    ["1e9999999999999999999999999999999", "1e9999999999999999999999999999998"],
+  ]) {
+    assert.notEqual(previewValueKey(left), null);
+    assert.notEqual(previewValueKey(right), null);
+    assert.notEqual(previewValueKey(left), previewValueKey(right));
+  }
+});
+
+test("equal-value search supports displayed special values without numeric boolean coercion", () => {
+  const keys = ["NaN", "Infinity", "-Infinity", "true", "false", "1", "0"].map(previewValueKey);
+  assert.ok(keys.every((key) => key !== null));
+  assert.equal(new Set(keys).size, keys.length);
+});
+
+test("equal-value search rejects incomplete, nondecimal and excessively long queries", () => {
+  for (const value of ["", " ", "+", "-", ".", "1e", "1e+", "1 2", "1,000", "0x10", "0b10",
+    "1.2.3", "null", "undefined", "1".repeat(129), "1e" + "9".repeat(127)]) {
+    assert.equal(previewValueKey(value), null, value);
+  }
+});
+
+test("search highlights all displayed channels and navigates actual row and sample indices", async () => {
+  const value = chunk({ values: [[2, 8, 2], [0, 2, 1]] });
+  const before = structuredClone(value);
+  const h = previewHarness(PreviewChunkTable, { chunk: value });
+  try {
+    await h.settle();
+    const options = elements(searchControl(h.tree, "Search channel")).filter((item) => item.type === "option");
+    assert.deepEqual(options.map((item) => item.props.value), ["all", "2", "4"]);
+    assert.match(text(options[1]), /C3/);
+    assert.match(text(options[2]), /trigger/i);
+    await searchTable(h, "2.0");
+    assert.equal(matchedCells(h.tree).length, 3);
+    assert.deepEqual(matchedCells(h.tree).map(text), ["2", "2", "2"]);
+    assert.equal(matchedCells(h.tree, true).length, 1);
+    assert.match(text(h.tree), /3 matches/);
+    assert.match(text(h.tree), /row 2.*sample 5/i);
+
+    searchButton(h.tree, "Next match").props.onClick(); await h.settle();
+    assert.match(text(h.tree), /row 2.*sample 7/i);
+    searchButton(h.tree, "Next match").props.onClick(); await h.settle();
+    assert.match(text(h.tree), /row 4.*sample 6/i);
+    searchButton(h.tree, "Next match").props.onClick(); await h.settle();
+    assert.match(text(h.tree), /row 2.*sample 5/i);
+    searchButton(h.tree, "Previous match").props.onClick(); await h.settle();
+    assert.match(text(h.tree), /row 4.*sample 6/i);
+    searchButton(h.tree, "Previous match").props.onClick(); await h.settle();
+    assert.match(text(h.tree), /row 2.*sample 7/i);
+    assert.equal(matchedCells(h.tree, true).length, 1);
+    assert.deepEqual(value, before);
+  } finally { h.dispose(); }
+});
+
+test("search can select one captured channel or the trigger row without hiding the matrix", async () => {
+  const h = previewHarness(PreviewChunkTable, { chunk: chunk({ values: [[2, 8, 2], [0, 2, 1]] }) });
+  try {
+    await h.settle();
+    await searchTable(h, "2", "2");
+    assert.equal(matchedCells(h.tree).length, 2);
+    assert.match(text(h.tree), /2 matches/);
+    await searchTable(h, "2", "4");
+    assert.equal(matchedCells(h.tree).length, 1);
+    assert.match(text(h.tree), /row 4.*sample 6/i);
+    assert.equal(elements(h.tree).filter((item) => item.type === "td").length, 6);
+  } finally { h.dispose(); }
+});
+
+test("search reports no matches, rejects invalid input and clears its highlights", async () => {
+  const h = previewHarness(PreviewChunkTable, { chunk: chunk({ values: [[2, 8, 2], [0, 2, 1]] }) });
+  try {
+    await h.settle();
+    await searchTable(h, "999");
+    assert.equal(matchedCells(h.tree).length, 0);
+    assert.match(text(h.tree), /0 matches/);
+    for (const label of ["Previous match", "Next match"]) {
+      const button = searchButton(h.tree, label);
+      assert.ok(!button || button.props.disabled, "No result must not expose active match navigation");
+    }
+    await searchTable(h, "not a number");
+    assert.ok(elements(h.tree).some((item) => item.props.role === "alert"));
+    assert.equal(matchedCells(h.tree).length, 0);
+    await searchTable(h, "2");
+    assert.equal(matchedCells(h.tree).length, 3);
+    searchButton(h.tree, "Clear").props.onClick(); await h.settle();
+    assert.equal(matchedCells(h.tree).length, 0);
+    assert.equal(matchedCells(h.tree, true).length, 0);
+    assert.equal(searchControl(h.tree, "Equals value").props.value, "");
+    assert.equal(elements(h.tree).filter((item) => item.props.role === "alert").length, 0);
+  } finally { h.dispose(); }
+});
+
+test("matrix search matches preserved large integers and special values exactly", async () => {
+  const h = previewHarness(PreviewChunkTable, { chunk: chunk() });
+  try {
+    await h.settle();
+    for (const [query, expected] of [["9.007199254740993e15", "9007199254740993"],
+      ["NaN", "NaN"], ["Infinity", "Infinity"], ["-Infinity", "-Infinity"], ["true", "true"]]) {
+      await searchTable(h, query);
+      assert.deepEqual(matchedCells(h.tree).map(text), [expected]);
+    }
+    for (const query of ["9007199254740992", "1", "false"]) {
+      await searchTable(h, query);
+      assert.equal(matchedCells(h.tree).length, 0, query);
+    }
+  } finally { h.dispose(); }
+});
+
+test("search only inspects the selected snapshot and keeps it selected as the live window advances", async () => {
+  const original = api.acqPreviewChunk;
+  const calls = [];
+  const retained = chunk();
+  api.acqPreviewChunk = async (...args) => { calls.push(args); return retained; };
+  const chunks = previewHarness(PreviewChunks, { snapshot: snapshot([summary(41), summary(42)]) });
+  let detail, matrix;
+  try {
+    await chunks.settle();
+    chunkButtons(chunks.tree)[0].props.onClick(); await chunks.settle();
+    const selected = selectedDetail(chunks.tree);
+    detail = previewHarness(PreviewChunkDetail, selected.props); await detail.settle();
+    matrix = previewHarness(PreviewChunkTable, { chunk: detail.shown }); await matrix.settle();
+    await searchTable(matrix, "1.25", "2");
+    chunks.update({ snapshot: snapshot([summary(42), summary(47)]) }); await chunks.settle();
+    detail.update(selectedDetail(chunks.tree).props); await detail.settle();
+    matrix.update({ chunk: detail.shown }); await matrix.settle();
+    assert.equal(selectedDetail(chunks.tree).key, selected.key);
+    assert.equal(selectedDetail(chunks.tree).props.sequenceId, 41);
+    assert.deepEqual(matchedCells(matrix.tree).map(text), ["1.25"]);
+    assert.deepEqual(calls, [["generation-original", "capture-original", 41]]);
+  } finally { matrix?.dispose(); detail?.dispose(); chunks.dispose(); api.acqPreviewChunk = original; }
+});
+
+
+test("editing search criteria clears obsolete highlights until the next search", async () => {
+  const h = previewHarness(PreviewChunkTable, { chunk: chunk({ values: [[2, 8, 2], [0, 2, 1]] }) });
+  try {
+    await h.settle();
+    await searchTable(h, "2");
+    assert.equal(matchedCells(h.tree).length, 3);
+    searchControl(h.tree, "Equals value").props.onChange({ target: { value: "8" } }); await h.settle();
+    assert.equal(matchedCells(h.tree).length, 0);
+    assert.doesNotMatch(text(h.tree), /3 matches/);
+    await searchTable(h, "2");
+    searchControl(h.tree, "Search channel").props.onChange({ target: { value: "4" } }); await h.settle();
+    assert.equal(matchedCells(h.tree).length, 0);
+    assert.doesNotMatch(text(h.tree), /3 matches/);
+    await searchTable(h, "2");
+    await searchTable(h, "bad value");
+    assert.equal(matchedCells(h.tree).length, 0);
+    assert.ok(elements(h.tree).some((item) => item.props.role === "alert"));
+  } finally { h.dispose(); }
 });

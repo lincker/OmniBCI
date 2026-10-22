@@ -23,6 +23,12 @@ The user subsequently requested one green dot per received data block and confir
 
 Validation: the full non-hardware, non-GUI backend suite passed with 2,952 tests and one platform skip; all 215 frontend tests, the production frontend build, OpenAPI generation checks and all seven architecture contracts passed. A local File Playback run produced 739 chunks and retained the latest 32 (sequences 707–738); selecting dot 738 displayed its complete 10 × 100 matrix. One diagnostic delivery drop was reported separately from the 739 successfully read source chunks. Tests also cover rolling beyond 32 chunks, 10 seconds and 4 MiB of cumulative traffic, restarting reads, matrix selection changes, eviction and temporary polling errors.
 
+### Search within the displayed block
+
+The selected matrix now supports an **Equals** search across all displayed channels or a single displayed channel, including Trigger. Matches are highlighted and counted; **Previous match** and **Next match** locate the actual source row and sample index, scrolling only the matrix. Editing a condition or clearing the search removes old highlights. Search remains local to the selected snapshot and does not request other blocks or change the live selection.
+
+Comparison normalizes decimal text, including scientific notation, without rounding exact integer strings or nearby decimal values. It uses no floating-point tolerance. Displayed `NaN`, `Infinity`, `-Infinity`, `true` and `false` can also be found; boolean values are distinct from numeric zero and one. Empty, malformed and overlong queries are rejected. Validation: all 229 frontend tests and the production build passed. Browser checks against File Playback confirmed all-channel zero matches, single-channel filtering, scientific-notation equality, and navigation to the last sample column.
+
 ## Implemented delivery
 
 The sections after this delivery record retain the original audit and its historical line references. Implementation was delivered in this order:

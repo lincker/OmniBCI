@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type AcquisitionPreview as Preview, type AcquisitionPreviewChunk,
   type PreviewLimits, type PreviewSelection } from "./api/client";
 import { usePoll } from "./hooks/usePoll";
@@ -31,21 +31,109 @@ export function parsePreviewSelection(form: PreviewForm, limits: PreviewLimits):
     chunk_count: chunkCount, include_trigger: form.includeTrigger };
 }
 
+export function previewValueKey(value: string): string | null {
+  const text = value.trim().toLowerCase();
+  if (!text || text.length > 128) return null;
+  if (/^(true|false|nan|[+-]?infinity)$/.test(text)) return text.replace(/^\+/, "");
+  const match = /^([+-]?)(\d+\.?\d*|\.\d+)(?:e([+-]?\d+))?$/.exec(text);
+  if (!match) return null;
+  const [whole, fraction = ""] = match[2].split(".");
+  const digits = (whole + fraction).replace(/^0+/, "");
+  if (!digits) return "0";
+  const significant = digits.replace(/0+$/, "");
+  // Normalize decimal text without rounding exact integers or nearby float values.
+  const exponent = BigInt(match[3] ?? "0") - BigInt(fraction.length) + BigInt(digits.length - significant.length);
+  return `${match[1] === "-" ? "-" : ""}${significant}e${exponent}`;
+}
+
 export function PreviewChunkTable({ chunk }: { chunk: AcquisitionPreviewChunk }) {
   const descriptor = chunk.descriptor;
+  const [channel, setChannel] = useState("all");
+  const [query, setQuery] = useState("");
+  const [matches, setMatches] = useState<{ row: number; column: number }[] | null>(null);
+  const [active, setActive] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const currentCell = useRef<HTMLTableCellElement>(null);
+  const selected = matches?.[active];
+  const highlighted = new Set(matches?.map(({ row, column }) => `${row}:${column}`));
+  const rowLabel = (row: number) => {
+    const channel = descriptor?.channels.find((item) => item.index === row);
+    return `${row}: ${row === chunk.trigger_row_index ? "Trigger"
+      : `${channel?.name ?? "Unknown channel"} (${channel?.unit ?? "unknown unit"})`}`;
+  };
+  const resetSearch = () => { setMatches(null); setActive(0); setError(null); };
+  const search = () => {
+    resetSearch();
+    const key = previewValueKey(query);
+    if (key === null) {
+      setError("Enter a number, NaN, Infinity, -Infinity, true or false (up to 128 characters).");
+      return;
+    }
+    const found: { row: number; column: number }[] = [];
+    chunk.row_indices.forEach((row, index) => {
+      if (channel !== "all" && String(row) !== channel) return;
+      chunk.values[index].forEach((value, column) => {
+        if (previewValueKey(String(value)) === key) found.push({ row, column });
+      });
+    });
+    setMatches(found);
+  };
+  useEffect(() => {
+    const cell = currentCell.current;
+    const container = cell?.closest(".preview-table");
+    if (!cell || !container) return;
+    const bounds = container.getBoundingClientRect();
+    const target = cell.getBoundingClientRect();
+    const left = bounds.left + (cell.parentElement?.querySelector("th")?.getBoundingClientRect().width ?? 0);
+    const top = bounds.top + (container.querySelector("thead")?.getBoundingClientRect().height ?? 0);
+    container.scrollBy({
+      left: target.left < left || target.right > bounds.right ? target.left - left : 0,
+      top: target.top < top || target.bottom > bounds.bottom ? target.top - top : 0,
+    });
+  }, [matches, active]);
   return <div className="preview-detail">
     <p><strong>Chunk #{chunk.sequence_id}</strong> · {chunk.original_shape.join(" × ")} / {chunk.dtype}</p>
     <p className="meta">Captured selection: {chunk.row_indices.length} rows, {chunk.sample_count} samples.
       All row and sample indices are zero-based. Values are acquisition output before processing.</p>
+    <form className="actions preview-search" aria-label="Search displayed chunk"
+      onSubmit={(event) => { event.preventDefault(); search(); }}>
+      <label className="control">Channel<select aria-label="Search channel" value={channel}
+        onChange={(event) => { setChannel(event.target.value); resetSearch(); }}>
+        <option value="all">All channels (including trigger)</option>
+        {chunk.row_indices.map((row) => <option key={row} value={String(row)}>{rowLabel(row)}</option>)}
+      </select></label>
+      <label className="control">Equals<input aria-label="Equals value" value={query} maxLength={128}
+        placeholder="e.g. 0 or 1.25e-3" onChange={(event) => { setQuery(event.target.value); resetSearch(); }} /></label>
+      <button type="submit" disabled={chunk.sample_count === 0}>Search</button>
+      <button type="button" onClick={() => { setQuery(""); resetSearch(); }}>Clear</button>
+    </form>
+    <p className="meta">Search only this displayed block. Values must match exactly; decimal and scientific notation are equivalent.
+      NaN, Infinity, -Infinity, true and false can also be searched as displayed.</p>
+    {error && <p className="error" role="alert">{error}</p>}
+    {matches && <div className="actions preview-search-results">
+      <span role="status">{matches.length} {matches.length === 1 ? "match" : "matches"}{selected
+        ? ` · Match ${active + 1} of ${matches.length} · Row ${rowLabel(selected.row)} · Sample ${chunk.sample_start + selected.column}`
+        : " in this displayed block."}</span>
+      {selected && <>
+        <button type="button" disabled={matches.length < 2}
+          onClick={() => setActive((value) => (value + matches.length - 1) % matches.length)}>Previous match</button>
+        <button type="button" disabled={matches.length < 2}
+          onClick={() => setActive((value) => (value + 1) % matches.length)}>Next match</button>
+      </>}
+    </div>}
     {chunk.sample_count === 0 ? <p role="status">This chunk has no samples in the requested range.</p>
       : <div className="preview-table" tabIndex={0} role="region" aria-label="Captured sample values">
         <table><thead><tr><th scope="col">Row / channel</th>
           {Array.from({ length: chunk.sample_count }, (_, i) => <th scope="col" key={i}>{chunk.sample_start + i}</th>)}
         </tr></thead><tbody>{chunk.row_indices.map((row, index) => {
-          const channel = descriptor?.channels.find((item) => item.index === row);
-          return <tr key={row}><th scope="row">{row}: {row === chunk.trigger_row_index ? "Trigger"
-            : `${channel?.name ?? "Unknown channel"} (${channel?.unit ?? "unknown unit"})`}</th>
-          {chunk.values[index].map((value, column) => <td key={column}>{String(value)}</td>)}</tr>;
+          return <tr key={row}><th scope="row">{rowLabel(row)}</th>
+          {chunk.values[index].map((value, column) => {
+            const current = selected?.row === row && selected.column === column;
+            return <td key={column} ref={current ? currentCell : undefined}
+              className={highlighted.has(`${row}:${column}`)
+                ? `preview-search-match${current ? " preview-search-current" : ""}` : undefined}
+              aria-current={current ? "true" : undefined}>{String(value)}</td>;
+          })}</tr>;
         })}</tbody></table>
       </div>}
     <details className="preview-metadata"><summary>Chunk metadata</summary>
