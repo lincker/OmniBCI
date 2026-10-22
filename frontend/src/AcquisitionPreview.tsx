@@ -46,37 +46,86 @@ export function previewValueKey(value: string): string | null {
   return `${match[1] === "-" ? "-" : ""}${significant}e${exponent}`;
 }
 
-export function PreviewChunkTable({ chunk }: { chunk: AcquisitionPreviewChunk }) {
+type PreviewMatch = { chunk: AcquisitionPreviewChunk; row: number; column: number };
+
+export function PreviewChunkTable({ chunk, snapshot, onSelectChunk }: {
+  chunk: AcquisitionPreviewChunk; snapshot?: Preview; onSelectChunk?: (chunk: AcquisitionPreviewChunk) => void;
+}) {
   const descriptor = chunk.descriptor;
+  const [scope, setScope] = useState("current");
   const [channel, setChannel] = useState("all");
   const [query, setQuery] = useState("");
-  const [matches, setMatches] = useState<{ row: number; column: number }[] | null>(null);
+  const [matches, setMatches] = useState<PreviewMatch[] | null>(null);
   const [active, setActive] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [coverage, setCoverage] = useState<{ searched: number; total: number; unavailable: number[] } | null>(null);
+  const request = useRef(0);
   const currentCell = useRef<HTMLTableCellElement>(null);
   const selected = matches?.[active];
-  const highlighted = new Set(matches?.map(({ row, column }) => `${row}:${column}`));
+  const highlighted = new Set(matches?.filter((match) => match.chunk.sequence_id === chunk.sequence_id)
+    .map(({ row, column }) => `${row}:${column}`));
+  const rows = scope === "all" && snapshot
+    ? [...new Set(snapshot.chunks.flatMap((item) => item.row_indices).concat(chunk.row_indices))].sort((a, b) => a - b)
+    : chunk.row_indices;
   const rowLabel = (row: number) => {
     const channel = descriptor?.channels.find((item) => item.index === row);
     return `${row}: ${row === chunk.trigger_row_index ? "Trigger"
       : `${channel?.name ?? "Unknown channel"} (${channel?.unit ?? "unknown unit"})`}`;
   };
-  const resetSearch = () => { setMatches(null); setActive(0); setError(null); };
-  const search = () => {
+  const resetSearch = () => {
+    request.current += 1;
+    setMatches(null); setActive(0); setError(null); setCoverage(null); setBusy(false);
+  };
+  useEffect(() => () => { request.current += 1; }, []);
+  const search = async () => {
     resetSearch();
+    const ticket = request.current;
     const key = previewValueKey(query);
     if (key === null) {
       setError("Enter a number, NaN, Infinity, -Infinity, true or false (up to 128 characters).");
       return;
     }
-    const found: { row: number; column: number }[] = [];
-    chunk.row_indices.forEach((row, index) => {
-      if (channel !== "all" && String(row) !== channel) return;
-      chunk.values[index].forEach((value, column) => {
-        if (previewValueKey(String(value)) === key) found.push({ row, column });
+    const found: PreviewMatch[] = [];
+    const inspect = (value: AcquisitionPreviewChunk) => {
+      value.row_indices.forEach((row, index) => {
+        if (channel !== "all" && String(row) !== channel) return;
+        value.values[index].forEach((sample, column) => {
+          if (previewValueKey(String(sample)) === key) found.push({ chunk: value, row, column });
+        });
       });
-    });
+    };
+    if (scope === "all") {
+      if (!snapshot?.capture_id || snapshot.generation !== chunk.generation || snapshot.capture_id !== chunk.capture_id) {
+        setError("The retained window is unavailable for this capture.");
+        return;
+      }
+      const window = snapshot.chunks.slice(-snapshot.limits.max_chunks);
+      const unavailable: number[] = [];
+      setBusy(true);
+      for (let start = 0; start < window.length; start += 4) {
+        const batch = window.slice(start, start + 4);
+        const results = await Promise.allSettled(batch.map(async (item) =>
+          api.acqPreviewChunk(chunk.generation, chunk.capture_id, item.sequence_id)));
+        if (ticket !== request.current) return;
+        results.forEach((result, index) => {
+          const value = result.status === "fulfilled" ? result.value : null;
+          if (!value || value.generation !== chunk.generation || value.capture_id !== chunk.capture_id
+            || value.sequence_id !== batch[index].sequence_id || value.connection_id !== chunk.connection_id
+            || value.source_id !== chunk.source_id || value.config_revision !== chunk.config_revision) {
+            unavailable.push(batch[index].sequence_id);
+          } else inspect(value);
+        });
+      }
+      setCoverage({ searched: window.length - unavailable.length, total: window.length, unavailable });
+      setBusy(false);
+    } else inspect(chunk);
     setMatches(found);
+    if (found.length) onSelectChunk?.(found[0].chunk);
+  };
+  const navigate = (index: number) => {
+    setActive(index);
+    if (matches?.[index]) onSelectChunk?.(matches[index].chunk);
   };
   useEffect(() => {
     const cell = currentCell.current;
@@ -90,36 +139,49 @@ export function PreviewChunkTable({ chunk }: { chunk: AcquisitionPreviewChunk })
       left: target.left < left || target.right > bounds.right ? target.left - left : 0,
       top: target.top < top || target.bottom > bounds.bottom ? target.top - top : 0,
     });
-  }, [matches, active]);
+  }, [matches, active, chunk]);
   return <div className="preview-detail">
     <p><strong>Chunk #{chunk.sequence_id}</strong> · {chunk.original_shape.join(" × ")} / {chunk.dtype}</p>
     <p className="meta">Captured selection: {chunk.row_indices.length} rows, {chunk.sample_count} samples.
       All row and sample indices are zero-based. Values are acquisition output before processing.</p>
     <form className="actions preview-search" aria-label="Search displayed chunk"
-      onSubmit={(event) => { event.preventDefault(); search(); }}>
+      onSubmit={(event) => { event.preventDefault(); void search(); }}>
+      <label className="control">Scope<select aria-label="Search scope" value={scope}
+        onChange={(event) => { setScope(event.target.value); resetSearch(); }}>
+        <option value="current">Current chunk</option>
+        <option value="all" disabled={!snapshot || !onSelectChunk}>All retained chunks (latest 32)</option>
+      </select></label>
       <label className="control">Channel<select aria-label="Search channel" value={channel}
         onChange={(event) => { setChannel(event.target.value); resetSearch(); }}>
         <option value="all">All channels (including trigger)</option>
-        {chunk.row_indices.map((row) => <option key={row} value={String(row)}>{rowLabel(row)}</option>)}
+        {rows.map((row) => <option key={row} value={String(row)}>{rowLabel(row)}</option>)}
       </select></label>
       <label className="control">Equals<input aria-label="Equals value" value={query} maxLength={128}
         placeholder="e.g. 0 or 1.25e-3" onChange={(event) => { setQuery(event.target.value); resetSearch(); }} /></label>
-      <button type="submit" disabled={chunk.sample_count === 0}>Search</button>
-      <button type="button" onClick={() => { setQuery(""); resetSearch(); }}>Clear</button>
+      <div className="preview-search-actions">
+        <button type="submit" disabled={busy || (scope === "current" ? chunk.sample_count === 0 : !snapshot?.chunks.length)}>
+          {busy ? "Searching…" : "Search"}</button>
+        <button type="button" onClick={() => { setQuery(""); resetSearch(); }}>Clear</button>
+      </div>
     </form>
-    <p className="meta">Search only this displayed block. Values must match exactly; decimal and scientific notation are equivalent.
+    <p className="meta">{scope === "all"
+      ? "Search the retained window when Search is clicked. Results stay fixed; search again to include new chunks. Only captured rows and samples are searched."
+      : "Search only this displayed block."} Values must match exactly; decimal and scientific notation are equivalent.
       NaN, Infinity, -Infinity, true and false can also be searched as displayed.</p>
     {error && <p className="error" role="alert">{error}</p>}
+    {busy && <p role="status">Searching retained chunks…</p>}
+    {coverage && <p role="status">Searched {coverage.searched} of {coverage.total} chunks.
+      {coverage.unavailable.length > 0 && ` Results are partial. Unavailable chunks: ${coverage.unavailable.map((id) => `#${id}`).join(", ")}. They may have left the live window or failed to load.`}</p>}
     {matches && <div className="actions preview-search-results">
       <span role="status">{matches.length} {matches.length === 1 ? "match" : "matches"}{selected
-        ? ` · Match ${active + 1} of ${matches.length} · Row ${rowLabel(selected.row)} · Sample ${chunk.sample_start + selected.column}`
-        : " in this displayed block."}</span>
-      {selected && <>
+        ? ` · Match ${active + 1} of ${matches.length} · Chunk #${selected.chunk.sequence_id} · Row ${rowLabel(selected.row)} · Sample ${selected.chunk.sample_start + selected.column}`
+        : scope === "all" ? " in the chunks searched." : " in this displayed block."}</span>
+      {selected && <div className="preview-search-actions">
         <button type="button" disabled={matches.length < 2}
-          onClick={() => setActive((value) => (value + matches.length - 1) % matches.length)}>Previous match</button>
+          onClick={() => navigate((active + matches.length - 1) % matches.length)}>Previous match</button>
         <button type="button" disabled={matches.length < 2}
-          onClick={() => setActive((value) => (value + 1) % matches.length)}>Next match</button>
-      </>}
+          onClick={() => navigate((active + 1) % matches.length)}>Next match</button>
+      </div>}
     </div>}
     {chunk.sample_count === 0 ? <p role="status">This chunk has no samples in the requested range.</p>
       : <div className="preview-table" tabIndex={0} role="region" aria-label="Captured sample values">
@@ -128,7 +190,7 @@ export function PreviewChunkTable({ chunk }: { chunk: AcquisitionPreviewChunk })
         </tr></thead><tbody>{chunk.row_indices.map((row, index) => {
           return <tr key={row}><th scope="row">{rowLabel(row)}</th>
           {chunk.values[index].map((value, column) => {
-            const current = selected?.row === row && selected.column === column;
+            const current = selected?.chunk.sequence_id === chunk.sequence_id && selected.row === row && selected.column === column;
             return <td key={column} ref={current ? currentCell : undefined}
               className={highlighted.has(`${row}:${column}`)
                 ? `preview-search-match${current ? " preview-search-current" : ""}` : undefined}
@@ -151,12 +213,14 @@ export function PreviewChunkTable({ chunk }: { chunk: AcquisitionPreviewChunk })
   </div>;
 }
 
-export function PreviewChunkDetail({ generation, captureId, sequenceId }: {
-  generation: string; captureId: string; sequenceId: number;
+export function PreviewChunkDetail({ generation, captureId, sequenceId, snapshot, selectionKey = 0, onSelectSequence }: {
+  generation: string; captureId: string; sequenceId: number; snapshot?: Preview;
+  selectionKey?: number; onSelectSequence?: (sequence: number) => void;
 }) {
   const [chunk, setChunk] = useState<AcquisitionPreviewChunk | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
+    if (chunk?.generation === generation && chunk.capture_id === captureId && chunk.sequence_id === sequenceId) return;
     let alive = true;
     setChunk(null); setError(null);
     api.acqPreviewChunk(generation, captureId, sequenceId).then((value) => {
@@ -169,11 +233,14 @@ export function PreviewChunkDetail({ generation, captureId, sequenceId }: {
   }, [generation, captureId, sequenceId]);
   if (error) return <p className="error" role="alert">{error}</p>;
   return chunk && chunk.generation === generation && chunk.capture_id === captureId && chunk.sequence_id === sequenceId
-    ? <PreviewChunkTable chunk={chunk} /> : <p role="status">Loading chunk…</p>;
+    ? <PreviewChunkTable key={selectionKey} chunk={chunk} snapshot={snapshot} onSelectChunk={(value) => {
+      setChunk(value); onSelectSequence?.(value.sequence_id);
+    }} /> : <p role="status">Loading chunk…</p>;
 }
 
 export function PreviewChunks({ snapshot }: { snapshot: Preview }) {
   const [sequence, setSequence] = useState<number | null>(null);
+  const [selectionKey, setSelectionKey] = useState(0);
   const [wasRetained, setWasRetained] = useState(false);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -183,6 +250,7 @@ export function PreviewChunks({ snapshot }: { snapshot: Preview }) {
     try {
       const selected = integer(value, "Chunk sequence");
       setSequence(selected);
+      setSelectionKey((value) => value + 1);
       setWasRetained((previous) => selected === sequence && previous
         || snapshot.chunks.some((chunk) => chunk.sequence_id === selected));
       setError(null);
@@ -208,7 +276,10 @@ export function PreviewChunks({ snapshot }: { snapshot: Preview }) {
     {error && <p className="error" role="alert">{error}</p>}
     {wasRetained && !retained && <p role="status">Selected chunk #{sequence} has left the live window.</p>}
     {sequence !== null && snapshot.capture_id && <PreviewChunkDetail
-      key={`${snapshot.capture_id}:${sequence}`} generation={snapshot.generation} captureId={snapshot.capture_id} sequenceId={sequence} />}
+      generation={snapshot.generation} captureId={snapshot.capture_id} sequenceId={sequence} snapshot={snapshot}
+      selectionKey={selectionKey} onSelectSequence={(value) => {
+        setSequence(value); setWasRetained(true); setError(null);
+      }} />}
   </>;
 }
 

@@ -195,7 +195,7 @@ function previewHarness(Component, initialProps) {
     get shown() { return elements(tree).find((item) => item.type === PreviewChunkTable)?.props.chunk; },
     update(next) { Object.assign(props, next); dirty = true; },
     async settle() {
-      for (let round = 0; round < 12; round += 1) {
+      for (let round = 0; round < 64; round += 1) {
         if (dirty) {
           const current = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
           const previous = current.current;
@@ -382,9 +382,12 @@ test("retained chunk points expose their sequence and samples and select the mat
 
     buttons[1].props.onClick(); await h.settle();
     assert.deepEqual(chunkButtons(h.tree).map((item) => item.props["aria-pressed"]), [false, true]);
-    assert.deepEqual(selectedDetail(h.tree).props, {
-      generation: "generation-original", captureId: "capture-original", sequenceId: 42,
-    });
+    const detailProps = selectedDetail(h.tree).props;
+    assert.deepEqual([detailProps.generation, detailProps.captureId, detailProps.sequenceId],
+      ["generation-original", "capture-original", 42]);
+    assert.equal(detailProps.snapshot.chunks.length, 2);
+    assert.equal(typeof detailProps.onSelectSequence, "function");
+    assert.equal(typeof detailProps.selectionKey, "number");
 
     chunkButtons(h.tree)[0].props.onClick(); await h.settle();
     assert.deepEqual(chunkButtons(h.tree).map((item) => item.props["aria-pressed"]), [true, false]);
@@ -437,7 +440,11 @@ test("leaving the live window preserves the selected detail and its fetched snap
     assert.equal(chunkButtons(h.tree).length, 2);
     assert.deepEqual(chunkButtons(h.tree).map((item) => item.props["aria-pressed"]), [false, false]);
     assert.equal(selectedDetail(h.tree).key, selected.key);
-    assert.deepEqual(selectedDetail(h.tree).props, selected.props);
+    const updated = selectedDetail(h.tree).props;
+    for (const name of ["generation", "captureId", "sequenceId", "selectionKey"]) {
+      assert.equal(updated[name], selected.props[name]);
+    }
+    assert.deepEqual(updated.snapshot.chunks.map((item) => item.sequence_id), [42, 47]);
     const statuses = elements(h.tree).filter((item) => item.props.role === "status");
     assert.match(text(statuses), /41.*left the live window/i);
 
@@ -731,4 +738,267 @@ test("editing search criteria clears obsolete highlights until the next search",
     assert.equal(matchedCells(h.tree).length, 0);
     assert.ok(elements(h.tree).some((item) => item.props.role === "alert"));
   } finally { h.dispose(); }
+});
+
+async function setSearchScope(h, value = "all") {
+  const scope = searchControl(h.tree, "Search scope");
+  assert.ok(scope, "Search scope must be selectable");
+  scope.props.onChange({ target: { value } });
+  await h.settle();
+}
+
+function matrixElement(h) {
+  return elements(h.tree).find((item) => item.type === PreviewChunkTable);
+}
+
+test("all-chunk search applies the channel filter and navigates frozen result matrices", async () => {
+  const original = api.acqPreviewChunk;
+  const first = chunk({ values: [[2, 8, 2], [0, 2, 1]] });
+  const second = chunk({ sequence_id: 42, values: [[2, 9, 9], [9, 2, 9]], sample_start: 12 });
+  const third = chunk({ sequence_id: 43, values: [[9, 9, 9], [9, 9, 9]] });
+  const values = new Map([[41, first], [42, second], [43, third]]);
+  const calls = [], selected = [];
+  api.acqPreviewChunk = async (...args) => { calls.push(args); return values.get(args[2]); };
+  let h;
+  h = previewHarness(PreviewChunkTable, {
+    chunk: first, snapshot: snapshot([summary(41), summary(42), summary(43)]),
+    onSelectChunk: (value) => { selected.push(value); h.update({ chunk: value }); },
+  });
+  try {
+    await h.settle();
+    assert.equal(searchControl(h.tree, "Search scope").props.value, "current");
+    await setSearchScope(h);
+    await searchTable(h, "2.0", "2");
+    assert.match(text(h.tree), /3 matches/);
+    assert.match(text(h.tree), /Searched 3 of 3 chunks/i);
+    assert.ok(calls.some((args) => args[2] === 42));
+    assert.ok(calls.some((args) => args[2] === 43));
+    assert.ok(calls.every((args) => args[0] === "generation-original" && args[1] === "capture-original"));
+    assert.equal(matchedCells(h.tree).length, 2);
+    searchButton(h.tree, "Next match").props.onClick(); await h.settle();
+    assert.match(text(h.tree), /row 2.*sample 7/i);
+    searchButton(h.tree, "Next match").props.onClick(); await h.settle();
+    assert.equal(selected.at(-1), second);
+    assert.match(text(h.tree), /Chunk #42/);
+    assert.match(text(h.tree), /row 2.*sample 12/i);
+    assert.equal(matchedCells(h.tree).length, 1);
+    const fetched = calls.length;
+    h.update({ snapshot: snapshot([summary(43), summary(44)]) }); await h.settle();
+    searchButton(h.tree, "Previous match").props.onClick(); await h.settle();
+    assert.equal(selected.at(-1), first);
+    assert.match(text(h.tree), /3 matches/);
+    assert.equal(calls.length, fetched, "Navigating loaded results must not fetch evicted chunks again");
+  } finally { h.dispose(); api.acqPreviewChunk = original; }
+});
+
+test("all-chunk search freezes its submitted window and fetches at most four chunks concurrently", async () => {
+  const original = api.acqPreviewChunk;
+  const pending = [], calls = [];
+  let active = 0, maximum = 0;
+  api.acqPreviewChunk = (...args) => {
+    const request = deferred();
+    calls.push(args); pending.push({ ...request, sequence: args[2] });
+    active += 1; maximum = Math.max(maximum, active);
+    return request.promise.finally(() => { active -= 1; });
+  };
+  const h = previewHarness(PreviewChunkTable, {
+    chunk: chunk(), snapshot: snapshot(Array.from({ length: 6 }, (_, index) => summary(50 + index))),
+    onSelectChunk: (value) => h.update({ chunk: value }),
+  });
+  try {
+    await h.settle(); await setSearchScope(h); await searchTable(h, "2");
+    assert.equal(pending.length, 4);
+    h.update({ snapshot: snapshot([summary(60), summary(61)]) }); await h.settle();
+    pending.slice(0, 4).forEach((request) => request.resolve(chunk({ sequence_id: request.sequence,
+      values: [[2, 9, 9], [9, 9, 9]] })));
+    await h.settle();
+    assert.equal(pending.length, 6);
+    pending.slice(4).forEach((request) => request.resolve(chunk({ sequence_id: request.sequence,
+      values: [[2, 9, 9], [9, 9, 9]] })));
+    await h.settle();
+    assert.equal(maximum, 4);
+    assert.deepEqual(calls.map((args) => args[2]), [50, 51, 52, 53, 54, 55]);
+    assert.match(text(h.tree), /Searched 6 of 6 chunks/i);
+    assert.match(text(h.tree), /6 matches/);
+    assert.doesNotMatch(text(h.tree), /Chunk #60|Chunk #61/);
+  } finally { h.dispose(); api.acqPreviewChunk = original; }
+});
+
+test("all-chunk search reports partial coverage and rejects every mismatched identity", async () => {
+  const original = api.acqPreviewChunk;
+  const values = new Map([
+    [50, chunk({ sequence_id: 50, values: [[2, 9, 9], [9, 9, 9]] })],
+    [51, new Error("Requested chunk was not retained")],
+    [52, chunk({ sequence_id: 52, generation: "generation-obsolete" })],
+    [53, chunk({ sequence_id: 53, capture_id: "capture-obsolete" })],
+    [54, chunk({ sequence_id: 999 })],
+    [55, null],
+    [56, chunk({ sequence_id: 56, connection_id: "connection-obsolete" })],
+    [57, chunk({ sequence_id: 57, source_id: "source-obsolete" })],
+    [58, chunk({ sequence_id: 58, config_revision: "b".repeat(64) })],
+  ]);
+  api.acqPreviewChunk = async (_generation, _capture, sequence) => {
+    const value = values.get(sequence);
+    if (value instanceof Error) throw value;
+    return value;
+  };
+  const h = previewHarness(PreviewChunkTable, {
+    chunk: chunk(), snapshot: snapshot([...values.keys()].map((sequence) => summary(sequence))),
+    onSelectChunk: (value) => h.update({ chunk: value }),
+  });
+  try {
+    await h.settle(); await setSearchScope(h); await searchTable(h, "2");
+    await h.settle();
+    assert.match(text(h.tree), /1 match\b/);
+    assert.match(text(h.tree), /Searched 1 of 9 chunks/i);
+    assert.match(text(h.tree), /Unavailable chunks/i);
+    for (const sequence of [51, 52, 53, 54, 55, 56, 57, 58]) assert.match(text(h.tree), new RegExp(`\\b${sequence}\\b`));
+    assert.match(text(h.tree), /Chunk #50/);
+    assert.doesNotMatch(text(h.tree), /Chunk #999/);
+  } finally { h.dispose(); api.acqPreviewChunk = original; }
+});
+
+for (const action of ["query", "channel", "scope", "clear", "unmount"]) {
+  test(`${action} cancels pending all-chunk results and prevents later batches`, async () => {
+    const original = api.acqPreviewChunk;
+    const pending = [], selected = [];
+    api.acqPreviewChunk = (...args) => {
+      const request = deferred(); pending.push({ ...request, sequence: args[2] }); return request.promise;
+    };
+    const h = previewHarness(PreviewChunkTable, {
+      chunk: chunk(), snapshot: snapshot(Array.from({ length: 8 }, (_, index) => summary(50 + index))),
+      onSelectChunk: (value) => selected.push(value),
+    });
+    try {
+      await h.settle(); await setSearchScope(h); await searchTable(h, "2");
+      assert.equal(pending.length, 4);
+      if (action === "query") searchControl(h.tree, "Equals value").props.onChange({ target: { value: "9" } });
+      else if (action === "channel") searchControl(h.tree, "Search channel").props.onChange({ target: { value: "4" } });
+      else if (action === "scope") searchControl(h.tree, "Search scope").props.onChange({ target: { value: "current" } });
+      else if (action === "clear") searchButton(h.tree, "Clear").props.onClick();
+      else h.dispose();
+      await h.settle();
+      pending.forEach((request) => request.resolve(chunk({ sequence_id: request.sequence,
+        values: [[2, 9, 9], [9, 9, 9]] })));
+      await h.settle();
+      assert.equal(pending.length, 4, "Cancelled searches must not start additional requests");
+      assert.equal(selected.length, 0, "Cancelled results must not navigate the selected chunk");
+      assert.equal(matchedCells(h.tree).length, 0);
+      assert.doesNotMatch(text(h.tree), /4 matches|Searched 4 of 8 chunks/i);
+    } finally { h.dispose(); api.acqPreviewChunk = original; }
+  });
+}
+
+test("all-chunk search remains available when the selected matrix has no samples", async () => {
+  const original = api.acqPreviewChunk;
+  const second = chunk({ sequence_id: 42, values: [[2, 9, 9], [9, 9, 9]] });
+  api.acqPreviewChunk = async (_generation, _capture, sequence) => sequence === 42 ? second : chunk({ sample_count: 0, values: [[], []] });
+  const h = previewHarness(PreviewChunkTable, {
+    chunk: chunk({ sample_count: 0, values: [[], []] }), snapshot: snapshot([summary(41, 0), summary(42)]),
+    onSelectChunk: (value) => h.update({ chunk: value }),
+  });
+  try {
+    await h.settle();
+    assert.equal(searchButton(h.tree, "Search").props.disabled, true);
+    await setSearchScope(h);
+    assert.equal(!!searchButton(h.tree, "Search").props.disabled, false);
+    await searchTable(h, "2");
+    assert.match(text(h.tree), /1 match\b/);
+    assert.match(text(h.tree), /Chunk #42/);
+  } finally { h.dispose(); api.acqPreviewChunk = original; }
+});
+
+test("result navigation preserves the matrix component and green-dot selection without another GET", async () => {
+  const original = api.acqPreviewChunk;
+  const first = chunk(), second = chunk({ sequence_id: 42 });
+  const calls = [];
+  api.acqPreviewChunk = async (...args) => { calls.push(args); return args[2] === 41 ? first : second; };
+  const chunks = previewHarness(PreviewChunks, { snapshot: snapshot([summary(41), summary(42)]) });
+  let detail;
+  try {
+    await chunks.settle(); chunkButtons(chunks.tree)[0].props.onClick(); await chunks.settle();
+    const initial = selectedDetail(chunks.tree);
+    detail = previewHarness(PreviewChunkDetail, initial.props); await detail.settle();
+    const initialTable = matrixElement(detail);
+    assert.equal(initialTable.props.chunk, first);
+    assert.equal(typeof initialTable.props.onSelectChunk, "function");
+    initialTable.props.onSelectChunk(second);
+    await chunks.settle(); detail.update(selectedDetail(chunks.tree).props); await detail.settle();
+    assert.deepEqual(chunkButtons(chunks.tree).map((item) => item.props["aria-pressed"]), [false, true]);
+    assert.equal(selectedDetail(chunks.tree).key, initial.key);
+    assert.equal(selectedDetail(chunks.tree).props.selectionKey, initial.props.selectionKey);
+    assert.equal(matrixElement(detail).key, initialTable.key);
+    assert.equal(detail.shown, second);
+    assert.deepEqual(calls, [["generation-original", "capture-original", 41]]);
+
+    chunkButtons(chunks.tree)[1].props.onClick(); await chunks.settle();
+    detail.update(selectedDetail(chunks.tree).props); await detail.settle();
+    assert.notEqual(selectedDetail(chunks.tree).props.selectionKey, initial.props.selectionKey);
+    assert.notEqual(matrixElement(detail).key, initialTable.key, "Explicit dot selection must reset search state");
+    assert.equal(detail.shown, second);
+    assert.equal(calls.length, 1);
+  } finally { detail?.dispose(); chunks.dispose(); api.acqPreviewChunk = original; }
+});
+
+test("all-chunk search honors the retained chunk limit and reports zero matches honestly", async () => {
+  const original = api.acqPreviewChunk;
+  const calls = [];
+  api.acqPreviewChunk = async (...args) => { calls.push(args); return chunk({ sequence_id: args[2] }); };
+  const h = previewHarness(PreviewChunkTable, {
+    chunk: chunk(), snapshot: snapshot(Array.from({ length: 36 }, (_, index) => summary(50 + index))),
+    onSelectChunk: () => assert.fail("A search with no matches must not navigate"),
+  });
+  try {
+    await h.settle(); await setSearchScope(h); await searchTable(h, "999");
+    assert.deepEqual(calls.map((args) => args[2]), Array.from({ length: 32 }, (_, index) => 54 + index));
+    assert.match(text(h.tree), /Searched 32 of 32 chunks/i);
+    assert.match(text(h.tree), /0 matches/);
+    assert.equal(matchedCells(h.tree).length, 0);
+    for (const label of ["Previous match", "Next match"]) {
+      const button = searchButton(h.tree, label);
+      assert.ok(!button || button.props.disabled);
+    }
+  } finally { h.dispose(); api.acqPreviewChunk = original; }
+});
+
+test("a superseded all-chunk request cannot replace a newer search or its selected matrix", async () => {
+  const original = api.acqPreviewChunk;
+  const pending = [], selected = [];
+  api.acqPreviewChunk = (...args) => { const request = deferred(); pending.push({ ...request, sequence: args[2] }); return request.promise; };
+  const h = previewHarness(PreviewChunkTable, {
+    chunk: chunk(), snapshot: snapshot([summary(50), summary(51)]),
+    onSelectChunk: (value) => { selected.push(value); h.update({ chunk: value }); },
+  });
+  try {
+    await h.settle(); await setSearchScope(h); await searchTable(h, "2");
+    assert.equal(pending.length, 2);
+    await searchTable(h, "9");
+    assert.equal(pending.length, 4);
+    const next = chunk({ sequence_id: 51, values: [[9, 3, 3], [3, 3, 3]] });
+    pending[2].resolve(chunk({ sequence_id: 50, values: [[3, 3, 3], [3, 3, 3]] }));
+    pending[3].resolve(next); await h.settle();
+    assert.match(text(h.tree), /1 match\b/);
+    assert.equal(selected.at(-1), next);
+    pending[0].resolve(chunk({ sequence_id: 50, values: [[2, 2, 2], [2, 2, 2]] }));
+    pending[1].reject(new Error("Obsolete transport failure")); await h.settle();
+    assert.match(text(h.tree), /1 match\b/);
+    assert.deepEqual(matchedCells(h.tree).map(text), ["9"]);
+    assert.equal(selected.length, 1);
+    assert.equal(selected.at(-1), next);
+    assert.doesNotMatch(text(h.tree), /Obsolete transport failure|Results are partial/);
+  } finally { h.dispose(); api.acqPreviewChunk = original; }
+});
+
+test("invalid all-chunk criteria make no network requests", async () => {
+  const original = api.acqPreviewChunk;
+  let calls = 0;
+  api.acqPreviewChunk = async () => { calls += 1; return chunk(); };
+  const h = previewHarness(PreviewChunkTable, {
+    chunk: chunk(), snapshot: snapshot([summary(41), summary(42)]), onSelectChunk() {},
+  });
+  try {
+    await h.settle(); await setSearchScope(h); await searchTable(h, "not a number");
+    assert.equal(calls, 0);
+    assert.ok(elements(h.tree).some((item) => item.props.role === "alert"));
+  } finally { h.dispose(); api.acqPreviewChunk = original; }
 });
