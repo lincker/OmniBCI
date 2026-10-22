@@ -4,7 +4,7 @@ import logging
 import time
 from uuid import uuid4
 from enum import Enum
-from typing import Optional, Protocol, runtime_checkable
+from typing import Optional, Protocol
 
 from omnibci.application.events import (
     AcquisitionSnapshot,
@@ -21,7 +21,6 @@ from omnibci.shared.events import Event, EventType
 logger = logging.getLogger(__name__)
 
 
-@runtime_checkable
 class CommandQueue(Protocol):
     """Minimal command queue contract consumed by the acquisition worker."""
 
@@ -30,7 +29,6 @@ class CommandQueue(Protocol):
     def get(self) -> "AcquisitionCommand": ...
 
 
-@runtime_checkable
 class DataSink(Protocol):
     """Minimal downstream sink contract for acquired signal chunks."""
 
@@ -109,13 +107,10 @@ class AcquisitionRuntime:
 
     async def serve(self) -> None:
         try:
-            await self.startup()
+            logger.info('Acquisition started')
             await self.main_loop()
         finally:
             await self.shutdown()
-
-    async def startup(self) -> None:
-        logger.info('Acquisition started')
 
     async def shutdown(self) -> None:
         logger.info('Acquisition shutting down')

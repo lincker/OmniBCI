@@ -91,14 +91,14 @@ class AcquisitionAppService:
     @admitted
     def handle_connect(self, cmd: ConnectDataProviderCommand) -> None:
         with self.lifecycle_lock:
-            self._put_event(EventType.ConnectDataProvider)
+            self._command_executor.request(EventType.ConnectDataProvider, None)
         logger.info("ConnectDataProvider event dispatched")
 
     @admitted(recovery=True)
     def handle_disconnect(self, cmd: DisconnectDataProviderCommand) -> None:
         with self.lifecycle_lock:
             self._clear_metadata()
-            self._put_event(EventType.DisconnectDataProvider)
+            self._command_executor.request(EventType.DisconnectDataProvider, None)
         logger.info("DisconnectDataProvider event dispatched")
 
     @admitted
@@ -108,7 +108,7 @@ class AcquisitionAppService:
                 # EOF and disconnect stop the source before processing finishes.
                 self.handle_stop_and_drain()
             receipt = self._prepare_signal() if self._prepare_signal is not None else None
-            self._put_event(EventType.StartStream, receipt)
+            self._command_executor.request(EventType.StartStream, receipt)
         logger.info("StartStream event dispatched")
 
     @admitted(recovery=True)
@@ -251,6 +251,3 @@ class AcquisitionAppService:
         self._descriptor = None
         self._raw_metadata = None
         self._descriptor_owner = None
-
-    def _put_event(self, event_type: EventType, data=None) -> None:
-        self._command_executor.request(event_type, data)
