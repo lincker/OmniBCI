@@ -35,6 +35,7 @@ class FakeEngine(EnginePort):
         self._initialized = initialized
         self._ready = ready
         self.subscriptions = []
+        self.generation = "test-generation"
 
     def dispatch(self, event: Event) -> None:  # unused here
         pass
@@ -49,6 +50,9 @@ class FakeEngine(EnginePort):
 
     def subscribe(self, event_type, handler) -> None:
         self.subscriptions.append((event_type, handler))
+
+    def read_acquisition_preview(self, capture_id, sequence_id=None) -> dict:
+        raise NotImplementedError("Preview reads are not exercised by this wiring fake")
 
 
 def _container(engine) -> AppContainer:
@@ -78,6 +82,9 @@ class TestAssemble:
         assert c.stimulation_service._engine is engine
         assert c.stimulation_service._command_results is c.command_results
         assert c.engine_service is engine
+        assert c.acquisition_service._preview_provider == engine.read_acquisition_preview
+        engine.generation = "next-generation"
+        assert c.acquisition_service._generation_provider() == "next-generation"
 
     def test_results_follow_the_same_engine(self):
         engine = FakeEngine()

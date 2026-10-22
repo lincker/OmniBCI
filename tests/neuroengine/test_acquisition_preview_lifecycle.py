@@ -1,8 +1,12 @@
 """Preview IPC must neither hold children open nor steal processing data."""
 import asyncio
 import multiprocessing as mp
+import os
+from pathlib import Path
 import pickle
-from queue import Empty, Full, Queue
+from queue import Empty, Full
+import subprocess
+import sys
 import time
 from unittest.mock import AsyncMock, MagicMock
 
@@ -11,6 +15,7 @@ import pytest
 
 from omnibci.application.acquisition_preview import MAX_FRAME_BYTES, PREVIEW_QUEUE_SIZE
 from omnibci.infrastructure.acquisition.preview_cache import PreviewCache
+from omnibci.infrastructure.acquisition.preview_channel import PreviewChannel
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from tests.neuroengine.test_neuro_engine import _make_engine
 
@@ -26,10 +31,21 @@ def _frame(sequence=0):
     })
 
 
+def _put_frame_with_retry(output, payload):
+    deadline = time.monotonic() + 1
+    while True:
+        try:
+            output.put_nowait(payload)
+            return
+        except Full:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.005)
+
+
 def _publish_frame(output, payload):
-    output.put_nowait(payload)
+    _put_frame_with_retry(output, payload)
     output.close()
-    output.join_thread()
 
 
 def _run_worker_with_unconsumed_preview(output, report):
@@ -38,8 +54,8 @@ def _run_worker_with_unconsumed_preview(output, report):
     worker = AcquisitionWorker(command_queue=None, settings_snapshot={}, preview_queue=output)
     worker._load_data_source = lambda: None
 
-    def fill_preview_queue():
-        payload = pickle.dumps({"data": b"x" * (MAX_FRAME_BYTES - 1024)})
+    def fill_preview_channel():
+        payload = b"x" * MAX_FRAME_BYTES
         for _ in range(PREVIEW_QUEUE_SIZE):
             output.put_nowait(payload)
         try:
@@ -47,13 +63,43 @@ def _run_worker_with_unconsumed_preview(output, report):
         except Full:
             report.send((PREVIEW_QUEUE_SIZE, len(payload), "full"))
         else:
-            raise AssertionError("Preview queue did not enforce its capacity")
+            raise AssertionError("Preview channel did not enforce its capacity")
 
-    worker._run = fill_preview_queue
+    worker._run = fill_preview_channel
     try:
         worker.run()
     finally:
         report.close()
+
+
+def _exit_with_preview_lock(output):
+    output._lock.acquire()
+    os._exit(0)
+
+
+def _check_cache_after_locked_producer_exit():
+    context = mp.get_context("spawn")
+    output = PreviewChannel(context=context)
+    process = context.Process(target=_exit_with_preview_lock, args=(output,))
+
+    async def stop_cache():
+        cache = PreviewCache(output, generation="generation")
+        await cache.start()
+        await asyncio.sleep(0.1)
+        await asyncio.wait_for(cache.stop(), timeout=1)
+        assert cache.stopped
+        assert cache.read("capture")["available"] is False
+
+    try:
+        process.start()
+        process.join(timeout=10)
+        assert process.exitcode == 0
+        assert not output._lock.acquire(False)
+        asyncio.run(stop_cache())
+        print("preview_cache_and_event_loop_stopped", flush=True)
+    finally:
+        _close_process(process)
+        output.close()
 
 
 def _close_process(process):
@@ -70,9 +116,9 @@ async def _wait_for_frame(cache, sequence=0):
 
 
 @pytest.mark.integration
-def test_spawned_worker_exits_with_a_full_preview_queue_and_no_consumer():
+def test_spawned_worker_exits_with_full_preview_channel_and_leaves_complete_maximum_frames():
     context = mp.get_context("spawn")
-    output = context.Queue(PREVIEW_QUEUE_SIZE)
+    output = PreviewChannel(context=context)
     receiver, sender = context.Pipe(duplex=False)
     process = context.Process(target=_run_worker_with_unconsumed_preview, args=(output, sender))
     try:
@@ -81,23 +127,41 @@ def test_spawned_worker_exits_with_a_full_preview_queue_and_no_consumer():
         assert receiver.poll(15), "Child did not finish offering bounded preview frames"
         count, encoded_bytes, state = receiver.recv()
         assert count == PREVIEW_QUEUE_SIZE and state == "full"
-        assert 64 * 1024 < encoded_bytes <= MAX_FRAME_BYTES
+        assert encoded_bytes == MAX_FRAME_BYTES
         process.join(timeout=5)
-        assert not process.is_alive(), "Child waited for an unconsumed preview feeder"
+        assert not process.is_alive(), "Child waited for an unconsumed preview channel"
         assert process.exitcode == 0
+        for _ in range(PREVIEW_QUEUE_SIZE):
+            assert output.get(timeout=0.5) == b"x" * MAX_FRAME_BYTES
+        with pytest.raises(Empty):
+            output.get(timeout=0.05)
     finally:
         _close_process(process)
         receiver.close()
         sender.close()
-        output.cancel_join_thread()
         output.close()
+
+
+@pytest.mark.integration
+def test_dead_producer_holding_preview_lock_does_not_block_cache_or_event_loop_shutdown():
+    result = subprocess.run(
+        [sys.executable, "-c", (
+            "from tests.neuroengine.test_acquisition_preview_lifecycle "
+            "import _check_cache_after_locked_producer_exit; "
+            "_check_cache_after_locked_producer_exit()"
+        )],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True, text=True, timeout=20,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "preview_cache_and_event_loop_stopped" in result.stdout
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_spawned_bytes_reach_preview_consumer_and_empty_consumer_stops():
     context = mp.get_context("spawn")
-    output = context.Queue(PREVIEW_QUEUE_SIZE)
+    output = PreviewChannel(context=context)
     cache = PreviewCache(output, generation="generation")
     process = context.Process(target=_publish_frame, args=(output, _frame()))
     try:
@@ -116,19 +180,18 @@ async def test_spawned_bytes_reach_preview_consumer_and_empty_consumer_stops():
     finally:
         _close_process(process)
         await cache.stop()
-        output.cancel_join_thread()
         output.close()
 
 
 @pytest.mark.asyncio
 async def test_preview_consumer_keeps_processing_final_frames_during_both_worker_joins():
-    output = Queue(PREVIEW_QUEUE_SIZE)
+    output = PreviewChannel(context=mp.get_context("spawn"))
     cache = PreviewCache(output, generation="generation")
     engine = _make_engine(preview_cache=cache)
 
     def join_with_last_frame(sequence, timeout):
         assert cache.read("capture")["available"] is True
-        output.put_nowait(_frame(sequence))
+        _put_frame_with_retry(output, _frame(sequence))
         deadline = time.monotonic() + 1
         while cache.read("capture", sequence)["chunk"] is None and time.monotonic() < deadline:
             time.sleep(0.005)
@@ -144,12 +207,13 @@ async def test_preview_consumer_keeps_processing_final_frames_during_both_worker
         assert [item["sequence_id"] for item in cache.read("capture")["chunks"]] == [0, 1]
     finally:
         await cache.stop()
+        output.close()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["acquisition_start", "gateway_start"])
-async def test_engine_start_failure_stops_preview_and_closes_its_owned_queue(failure):
-    output = mp.get_context("spawn").Queue(PREVIEW_QUEUE_SIZE)
+async def test_engine_start_failure_stops_preview_and_closes_its_owned_channel(failure):
+    output = PreviewChannel(context=mp.get_context("spawn"))
     cache = PreviewCache(output, generation="generation")
     engine = _make_engine(preview_cache=cache, owned_ipc_queues=(output,))
     engine.acquisition_worker.is_alive.return_value = False
@@ -169,7 +233,34 @@ async def test_engine_start_failure_stops_preview_and_closes_its_owned_queue(fai
             engine.peer_gateway.stop.assert_awaited_once()
     finally:
         await cache.stop()
-        output.cancel_join_thread()
+        output.close()
+
+
+@pytest.mark.asyncio
+async def test_engine_rejects_restart_after_rollback_leaves_preview_consumer_running(monkeypatch):
+    output = PreviewChannel(context=mp.get_context("spawn"))
+    cache = PreviewCache(output, generation="generation")
+    engine = _make_engine(preview_cache=cache, owned_ipc_queues=(output,))
+    engine.acquisition_worker.start.side_effect = RuntimeError("worker startup failed")
+    engine.acquisition_worker.is_alive.return_value = False
+    engine.signal_processing_worker.is_alive.return_value = False
+    stop = cache.stop
+    monkeypatch.setattr(cache, "stop", AsyncMock(side_effect=RuntimeError("consumer shutdown failed")))
+    try:
+        with pytest.raises(RuntimeError, match="worker startup failed"):
+            await engine._start()
+        assert not cache.stopped and not engine.shutdown_complete
+        engine.acquisition_worker.start.side_effect = None
+
+        with pytest.raises(RuntimeError, match="partial lifecycle state"):
+            await engine._start()
+
+        engine.acquisition_worker.start.assert_called_once()
+        engine.signal_processing_worker.start.assert_not_called()
+    finally:
+        monkeypatch.setattr(cache, "stop", stop)
+        await engine._stop()
+        await cache.stop()
         output.close()
 
 
@@ -179,12 +270,13 @@ async def test_preview_stop_failure_continues_cleanup_but_preserves_active_consu
     cache = MagicMock()
     cache.start = AsyncMock()
     cache.stop = AsyncMock(side_effect=RuntimeError("preview consumer failed"))
-    cache.stopped = consumer_stopped
+    cache.stopped = True
     output = MagicMock()
     engine = _make_engine(preview_cache=cache, owned_ipc_queues=(output,))
     engine.acquisition_worker.is_alive.return_value = False
     engine.signal_processing_worker.is_alive.return_value = False
     await engine._start()
+    cache.stopped = consumer_stopped
 
     with pytest.raises(ExceptionGroup, match="shutdown failed"):
         await engine._stop()
@@ -203,8 +295,8 @@ async def test_preview_stop_failure_continues_cleanup_but_preserves_active_consu
 
 
 @pytest.mark.asyncio
-async def test_desktop_retained_worker_keeps_preview_queue_owned_until_worker_exits():
-    output = mp.get_context("spawn").Queue(PREVIEW_QUEUE_SIZE)
+async def test_desktop_retained_worker_keeps_preview_channel_owned_until_worker_exits():
+    output = PreviewChannel(context=mp.get_context("spawn"))
     cache = PreviewCache(output, generation="generation")
     engine = _make_engine(preview_cache=cache, owned_ipc_queues=(output,),
                           allow_process_termination=False)
@@ -227,12 +319,11 @@ async def test_desktop_retained_worker_keeps_preview_queue_owned_until_worker_ex
         engine.acquisition_worker.is_alive.return_value = False
         await engine._stop()
         await cache.stop()
-        output.cancel_join_thread()
         output.close()
 
 
 @pytest.mark.asyncio
-async def test_builder_owns_one_independent_bounded_preview_queue_per_graph():
+async def test_builder_owns_one_independent_bounded_preview_channel_per_graph():
     engines = []
     try:
         for generation in ("first", "second"):
@@ -240,6 +331,8 @@ async def test_builder_owns_one_independent_bounded_preview_queue_per_graph():
         first, second = engines
         output = first.acquisition_worker.preview_queue
         other_output = second.acquisition_worker.preview_queue
+        assert isinstance(output, PreviewChannel)
+        assert isinstance(other_output, PreviewChannel)
         assert output is not other_output
         assert first.preview_cache._queue is output
         assert second.preview_cache._queue is other_output

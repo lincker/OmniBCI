@@ -50,8 +50,6 @@ class AcquisitionWorker(mp.Process):
 
     def run(self) -> None:
         try:
-            if self.preview_queue is not None:
-                self.preview_queue.cancel_join_thread()
             from omnibci.conf import settings
             settings.use_snapshot(self._settings_snapshot())
             self._startup_stage = "signal_source"

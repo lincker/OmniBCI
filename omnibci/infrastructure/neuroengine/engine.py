@@ -192,7 +192,8 @@ class NeuroEngine:
         if self._started:
             return
         if any((self._acquisition_started, self._processor_started,
-                self._event_bus_started, self._gateway_started)):
+                self._event_bus_started, self._gateway_started)) or (
+                    self.preview_cache is not None and not self.preview_cache.stopped):
             raise RuntimeError("NeuroEngine is in a partial lifecycle state")
         if self._shutdown_complete:
             raise RuntimeError("A stopped NeuroEngine graph cannot be restarted")

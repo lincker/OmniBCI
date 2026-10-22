@@ -2,13 +2,50 @@
 
 Date: 2026-10-22. Branch: `refactor/acquisition`. Audited source commit: `e9154ad`.
 
-Revision: the user subsequently requested retaining counters and useful information for a future Web view of selected data inside acquisition packets/chunks. The revised retention decisions below supersede the original A4/P4 deletion proposal and P9 formatter retirement. This revision changes the report only; no preview feature or counter implementation has been added.
+Audit revision: the user subsequently requested retaining counters and useful information for a future Web view of selected data inside acquisition packets/chunks. The revised retention decisions below supersede the original A4/P4 deletion proposal and P9 formatter retirement. That analysis revision changed the report only; implementation was authorized subsequently, as recorded below.
 
 Confirmed delivery scope: phase one inspects normalized acquisition output chunks. Native protocol headers/raw-byte inspection is deferred to a later phase. This supersedes the intervening raw-packet-first preference; it does not authorize implementation or pending deletion batches by itself.
 
 Implementation authorization: the user approved the staged cleanup and normalized-chunk inspector on 2026-10-22, with a separate Git commit after each verified step. The inventory below records the pre-change audit at `e9154ad`. Approved cleanup covers A1, A2, A5, A6 and B1-B3. A3 and C1-C5 remain deferred; A4 remains withdrawn. The subsequent commits are the implementation record.
 
 Delivery acceptance: inspect a finite, bounded selection of acquisition-output chunks by generation and sequence; preserve useful counters and capture-time identity; isolate diagnostics from processing and stop-and-drain; defer native protocol byte inspection.
+
+## Implemented delivery
+
+The sections after this delivery record retain the original audit and its historical line references. Implementation was delivered in this order:
+
+| Step | Commit | Result |
+| --- | --- | --- |
+| 1 | `7f073c7` | Record the audit, approved cleanup scope and delivery acceptance. |
+| 2 | `4d262df` | Remove approved unused plugin state, commands and commented fragments (A1/A2/A5/A6). |
+| 3 | `6cfe174` | Inline thin forwarding wrappers and remove unused runtime protocol checks (B1-B3). |
+| 4 | `03dc963` | Define bounded preview selection and per-stream chunk/sample counters. |
+| 5 | `b5b865a` | Capture selected values on an independent diagnostic channel and retain bounded snapshots. |
+| 6 | `9150e8a` | Expose capture control, status and sequence lookup through the application and REST API; regenerate API types. |
+| 7 | `863c91c` | Add the Web acquisition chunk inspector and frontend regression tests. |
+| 8 | Final verification commit | Replace the diagnostic pipe queue with a bounded shared-memory channel and guard incomplete lifecycle rollback. |
+
+Open **Run Console → Acquisition → Inspect acquisition chunks** while the engine is running. Choose signal rows, a sample-column range and a finite chunk count before capture; optionally include the trigger row. Start reading data, start capture, then select a retained chunk or enter its sequence. Stopping capture does not stop acquisition. The view includes original row/sample indices, values, shape, dtype, host timestamp, capture-time identity and available metadata. Native protocol bytes are outside this delivery.
+
+Limits are 32 observed chunks per capture, 16 signal rows, 512 samples per chunk and 8,192 values including trigger. The capture stops after 10 seconds even if the source is silent. Encoded frames are capped at 128 KiB; the independent channel has eight fixed slots and the retained cache is capped at 32 frames / 4 MiB. Full or contended slots drop preview frames without waiting. Preview drops and delivery counters are distinct from stream counters and do not imply source packet loss. Results remain available while the engine graph exists, but starting a new capture supersedes lookup of the previous capture.
+
+Final lifecycle review reproduced a partial-message hang with `multiprocessing.Queue` when a producer exited after cancelling its feeder join. The replacement copies complete frames under a shared-memory lock with nonblocking writes and deadline-bound reads. If a producer dies while holding that lock, diagnostic delivery may stop until the graph is rebuilt; reads and shutdown still finish. Regression tests cover producer exit with eight maximum-size frames, death while holding the lock, consumer/event-loop shutdown, startup rollback, and prevention of restart after an incomplete rollback.
+
+### Implementation verification
+
+- Backend software regression: **2,926 tests verified passing; one Windows-only process-tree test skipped on macOS**. The full sweep produced 2,924 passes and two failures because the composition-root test fake lacked the new preview provider. The fake was updated to the engine-service contract, with an assertion that preview generation follows the current engine. Its five tests passed; the final `--lf` rerun also passed both previously failing tests. No other backend failures remained.
+- Frontend: **208 tests passed**, including 31 new inspector cases. Type checking, production build and generated REST type consistency passed.
+- Architecture: **all seven import-layer contracts passed**; `git diff --check` passed.
+- Browser verification exercised chunk selection and exact value rendering using clearly identified fixture data. This was a UI verification, not a hardware acquisition run.
+- Validation ran locally on macOS / Python 3.14. Physical-device and GUI-marked tests were excluded; Windows and Linux execution remains for their respective CI environments.
+
+Backend commands:
+
+```sh
+MPLBACKEND=Agg venv/bin/python -m pytest -o addopts='' -q -m 'not hardware and not gui'
+MPLBACKEND=Agg venv/bin/python -m pytest -o addopts='' -q -m 'not hardware and not gui' --lf
+venv/bin/lint-imports
+```
 
 ## Scope and success criteria
 

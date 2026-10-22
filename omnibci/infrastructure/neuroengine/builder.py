@@ -3,7 +3,7 @@ import multiprocessing as mp
 from copy import deepcopy
 from dataclasses import dataclass
 
-from omnibci.application.acquisition_preview import PREVIEW_QUEUE_SIZE
+from omnibci.infrastructure.acquisition.preview_channel import PreviewChannel
 from omnibci.infrastructure.acquisition.preview_cache import PreviewCache
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
 from omnibci.infrastructure.ipc.data_manager import DataManager
@@ -108,7 +108,7 @@ class NeuroEngineBuilder:
         # 2. Shared data buffer
         data_buffer = mp.Queue()
         data_manager = DataManager(buffer=data_buffer)
-        preview_queue = mp.Queue(PREVIEW_QUEUE_SIZE)
+        preview_queue = PreviewChannel()
         preview_cache = PreviewCache(preview_queue, generation=generation)
 
         # 3. Command queues

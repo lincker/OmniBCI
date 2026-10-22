@@ -11,6 +11,7 @@ from omnibci.application.services.acquisition_service import AcquisitionAppServi
 from omnibci.application.services.command_result_service import CommandResultBroker
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand, AcquisitionRuntime
 from omnibci.infrastructure.acquisition.preview_cache import PreviewCache
+from omnibci.infrastructure.acquisition.preview_channel import PreviewChannel
 from omnibci.presentation.dependencies import get_acquisition_service
 from omnibci.presentation.main import create_app
 from omnibci.shared.events import EventType
@@ -39,7 +40,7 @@ class Source:
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_real_capture_round_trip_preserves_selected_values_and_main_stream():
-    commands, diagnostics, main = Queue(), Queue(maxsize=8), Queue()
+    commands, diagnostics, main = Queue(), PreviewChannel(), Queue()
     cache = PreviewCache(diagnostics, generation="g")
     routes = {
         EventType.StartAcquisitionPreview: AcquisitionCommand.start_preview,
@@ -108,4 +109,5 @@ async def test_real_capture_round_trip_preserves_selected_values_and_main_stream
         await loop_task
         await runtime.shutdown()
         await cache.stop()
+        diagnostics.close()
         client.close()
