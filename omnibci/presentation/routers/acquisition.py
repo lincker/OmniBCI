@@ -2,7 +2,7 @@
 /api/v1/acquisition — Data acquisition control endpoints.
 """
 from omnibci.application.plugin_profiles import ProfileRevisionConflict
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Path, Query, status
 
 from omnibci.presentation.dependencies import get_acquisition_service
 from omnibci.presentation.errors import (
@@ -11,7 +11,11 @@ from omnibci.presentation.errors import (
     command_error_to_api_error,
 )
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
-from omnibci.presentation.schemas.acquisition import AcquisitionMetadataResponse, AcquisitionStatusResponse
+from omnibci.presentation.schemas.acquisition import (
+    AcquisitionMetadataResponse, AcquisitionStatusResponse,
+    AcquisitionPreviewResponse, AcquisitionPreviewChunkResponse,
+    StartAcquisitionPreviewRequest, StopAcquisitionPreviewRequest,
+)
 from omnibci.application.commands.acquisition_commands import (
     ConnectDataProviderCommand,
     DisconnectDataProviderCommand,
@@ -147,3 +151,49 @@ def get_metadata(svc: AcquisitionAppService = Depends(get_acquisition_service)):
 )
 def refresh_metadata(svc: AcquisitionAppService = Depends(get_acquisition_service)):
     return _metadata_response(svc, refresh=True)
+
+
+def _preview_response(callback, *args, **kwargs):
+    try:
+        return ApiResponse(data=callback(*args, **kwargs))
+    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as exc:
+        raise command_error_to_api_error(exc)
+    except ProfileRevisionConflict:
+        raise
+    except LookupError as exc:
+        raise ApiError(404, ErrorCode.NOT_FOUND, str(exc))
+    except ValueError as exc:
+        raise ApiError(422, ErrorCode.VALIDATION_ERROR, str(exc))
+    except RuntimeError as exc:
+        raise ApiError(503, ErrorCode.ENGINE_NOT_READY, str(exc))
+
+
+@router.post("/preview/start", response_model=ApiResponse[AcquisitionPreviewResponse],
+             responses=COMMAND_EXECUTION_RESPONSES, summary="Capture the next bounded selection of signal chunks")
+def start_preview(body: StartAcquisitionPreviewRequest,
+                  svc: AcquisitionAppService = Depends(get_acquisition_service)):
+    return _preview_response(svc.start_preview, **body.model_dump())
+
+
+@router.post("/preview/stop", response_model=ApiResponse[AcquisitionPreviewResponse],
+             responses=COMMAND_EXECUTION_RESPONSES, summary="Stop the preview capture and retain captured chunks")
+def stop_preview(body: StopAcquisitionPreviewRequest,
+                 svc: AcquisitionAppService = Depends(get_acquisition_service)):
+    return _preview_response(svc.stop_preview, **body.model_dump())
+
+
+@router.get("/preview", response_model=ApiResponse[AcquisitionPreviewResponse],
+            responses=COMMAND_EXECUTION_RESPONSES, summary="Inspect preview capture and delivery status")
+def get_preview(generation: str = Query(min_length=1, max_length=128),
+                capture_id: str | None = Query(default=None, min_length=1, max_length=128),
+                svc: AcquisitionAppService = Depends(get_acquisition_service)):
+    return _preview_response(svc.get_preview, generation=generation, capture_id=capture_id)
+
+
+@router.get("/preview/chunks/{sequence_id}", response_model=ApiResponse[AcquisitionPreviewChunkResponse],
+            responses=COMMAND_EXECUTION_RESPONSES, summary="Read the exact retained rows and samples of a preview chunk")
+def get_preview_chunk(sequence_id: int = Path(ge=0),
+                      generation: str = Query(min_length=1, max_length=128),
+                      capture_id: str = Query(min_length=1, max_length=128),
+                      svc: AcquisitionAppService = Depends(get_acquisition_service)):
+    return _preview_response(svc.get_preview_chunk, sequence_id, generation=generation, capture_id=capture_id)

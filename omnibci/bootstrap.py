@@ -109,6 +109,8 @@ def assemble(
         command_results,
         settings=acquisition_settings if acquisition_settings is not None else settings,
         admission=admission,
+        preview_provider=engine_service.read_acquisition_preview,
+        generation_provider=lambda: engine_service.generation,
     )
     process_manager = stimulation_process_manager or StimulationProcessManager(auto_spawn=auto_spawn)
 
