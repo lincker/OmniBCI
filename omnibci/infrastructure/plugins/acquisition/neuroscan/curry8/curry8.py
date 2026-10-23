@@ -158,7 +158,7 @@ class Curry8Metadata:
 
 
 class Curry8DataReader(SignalSource):
-    """Receive uncompressed CURRY 8 data with a native final event row."""
+    """Receive uncompressed CURRY 8 data with low-byte stimulus codes in the final row."""
 
     plugin_type = "neuroscan_curry8_reader"
 
@@ -454,7 +454,10 @@ class Curry8DataReader(SignalSource):
                 f"{metadata.channel_count} channels"
             )
         samples = np.frombuffer(body, dtype=dtype)
-        return samples.reshape(-1, metadata.channel_count).T.copy()
+        packet = samples.reshape(-1, metadata.channel_count).T.copy()
+        # Select the stimulus byte from decoded values, including float32 triggers.
+        packet[-1] = packet[-1].astype(np.int64) & 0xFF
+        return packet
 
     async def _close_writer(self) -> None:
         writer = self.writer

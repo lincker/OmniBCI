@@ -45,8 +45,9 @@ They do not certify every subsequent change or hardware/storage deployment.
 The Curry 8 path is TCP NetStreaming → source adapter → `SignalChunk` → IPC
 queue → processing channel mapping → epoch collection → ordered filters → decoder
 → `TrialOutcome` → results view and WebSocket. The source adapter preserves
-auxiliary channels and the native event row; processing selects only configured
-signal inputs. No Session lifecycle or storage writer is required.
+auxiliary channels and extracts the low eight bits of the native event row;
+processing selects only configured signal inputs. No Session lifecycle or storage
+writer is required.
 
 | Boundary | Processing and checks | Runtime implication |
 | --- | --- | --- |
@@ -54,7 +55,7 @@ signal inputs. No Session lifecycle or storage writer is required.
 | Device metadata | Read sample rate, row count, sample size and 144-byte channel records; exclude the final event row from signal-channel descriptors. | Actual device dimensions feed processing. Labels are retained; missing labels receive generated names. Curry channel types remain `unknown`. |
 | Experiment expectations | Compare only explicitly configured sample rate and output-row count with observed metadata. | Missing expectations use the device values. A provided mismatch still blocks preparation, even when the other field is absent. Profiles are not rewritten. |
 | Processing preparation | Resolve channel IDs, ordering, aliases and declared types; check the decoder's channel requirements and acknowledge the plan for the current connection/configuration. | CCA/FBCCA require EEG inputs. Select actual EEG channels and declare `eeg` in processing input when Curry reports no types. Coordinates and a montage are not required. Stale plans and unavailable channels remain errors. |
-| EEG packets | Decode supported int16/float32 payloads into channels × samples; preserve the native final trigger row. Ignore separate event-list and impedance packets. | Truncated/misaligned EEG bodies fail. Compressed streaming is currently unsupported and must be disabled on the server. No amplitude threshold, resampling or unit conversion is applied here. |
+| EEG packets | Decode supported int16/float32 payloads into channels × samples; retain only the low eight bits of each decoded value in the final trigger row, so 65280 becomes 0. Repeated trigger samples are retained. Ignore separate event-list and impedance packets. | Truncated/misaligned EEG bodies fail. Compressed streaming is currently unsupported and must be disabled on the server. No amplitude threshold, resampling or unit conversion is applied here. |
 | Acquisition queue | Add host acquisition time and an increasing chunk sequence, then enqueue the original matrix. | The trigger row stays part of each chunk. There is no storage write or writer-ownership gate on this path. |
 | Mapping and epochs | Select/reorder signal rows while preserving trigger values; detect boundaries and collect post-trigger samples plus separate pre-trigger history. | The default detector treats each nonzero trigger sample as a new start. No trigger means no decoded Trial, while raw acquisition can continue. |
 | Filters and decoding | Apply configured filters in order to the accumulated window, then call the decoder. Baseline data is supplied separately to filters. | Baseline collection alone does not apply baseline correction. Closing boundaries can force a decode before the normal duration gate. A decoder may decline an unusable window with `None`. |
@@ -92,8 +93,9 @@ python -m pytest tests/infrastructure/test_classic40_short_epochs.py
 
 The TCP test uses 500 Hz and 700 float32 samples across five signal channels and
 one event row. It loads the configured Curry plugin, acknowledges preparation
-without expected source dimensions, verifies all incoming rows exactly, selects O2/O1/Oz
-as EEG, and produces target 1 for a simulated 8 Hz input through the real CCA
+without expected source dimensions, verifies unchanged signal rows and low-byte
+trigger values with both zero and 0xFF00 trigger baselines, selects O2/O1/Oz as EEG,
+and produces target 1 for a simulated 8 Hz input through the real CCA
 and default epoch detector. It exercises the runtimes in one process; the CNT
 mapping integration test separately covers spawned workers, direct stream control,
 reconnection and channel preparation without source expectations.

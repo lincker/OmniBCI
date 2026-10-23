@@ -32,7 +32,8 @@ def _packet(code, request, body, *, start_sample=0):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(monkeypatch):
+@pytest.mark.parametrize("trigger_high_bits", [0, 0xFF00])
+async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(monkeypatch, trigger_high_bits):
     sample_rate = 500
     labels = ("Fz", "O1", "Oz", "O2", "VEOG", "Trigger")
     times = np.arange(700) / sample_rate
@@ -72,7 +73,9 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
                 elif request == 8:
                     start_sample = 1000
                     for block in blocks:
-                        writer.write(_packet(2, 1, block.T.tobytes(), start_sample=start_sample))
+                        wire_block = block.copy()
+                        wire_block[-1] += trigger_high_bits
+                        writer.write(_packet(2, 1, wire_block.T.tobytes(), start_sample=start_sample))
                         start_sample += block.shape[1]
                 elif request == 9:
                     break
