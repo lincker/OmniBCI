@@ -191,7 +191,7 @@ def test_acquisition_version_copy_discards_retired_montage(service, monkeypatch)
     definition = svc.profiles.catalog.legacy("acquisition", "file_reader")
     montage = {"source_id": "file_reader", "sample_rate": 500, "channels": [{"index": 0, "name": "O1"}]}
     source = svc.profiles.create("acquisition", definition.selection, "Reader", {
-        "sample_rate": 500, "channel_number": 2})
+        "sample_rate": 500, "channel_count": 2})
     source = svc.profiles.repository.save_profile(replace(source, legacy={"acquisition_montage": montage, "manual_montage": montage}),
                                                    expected_revision=source.revision)
     target = replace(definition, selection=replace(definition.selection, version="99.0.0"))

@@ -38,7 +38,7 @@ class SourceParameterComparisonModel(BaseModel):
 class SourceExpectationsModel(BaseModel):
     status: Literal["unconfirmed", "matched", "mismatched", "unverified"]
     sample_rate: SourceParameterComparisonModel
-    channel_number: SourceParameterComparisonModel
+    channel_count: SourceParameterComparisonModel
 
 
 class AcquisitionMetadataResponse(BaseModel):

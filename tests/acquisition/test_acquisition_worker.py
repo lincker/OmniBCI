@@ -199,7 +199,7 @@ def test_load_data_source_uses_pinned_parameters_without_registry_or_global_sett
         slot="acquisition.source", kind="acquisition", profile_id=None,
         selection=descriptor.selection,
         parameters={"data_file_path": "selected.cnt", "file_reader_chunk_size": 37,
-                    "sample_rate": 250, "channel_number": 10},
+                    "sample_rate": 250, "channel_count": 10},
     )
     worker = AcquisitionWorker(command_queue=MagicMock(), settings_snapshot={
         "PLUGINS.bindings": [binding.to_dict()], "ACQUISITION.sample_rate": 250,

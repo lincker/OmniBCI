@@ -119,7 +119,7 @@ test("configured descriptors are identified without interpreting source response
 
 const comparison = (status, expected = null) => ({ status,
   sample_rate: { expected: expected?.sample_rate ?? null, actual: 500 },
-  channel_number: { expected: expected?.channel_number ?? null, actual: 3 },
+  channel_count: { expected: expected?.channel_count ?? null, actual: 3 },
 });
 
 test("source comparison treats unspecified expectations as optional and keeps adoption explicit", () => {
@@ -141,7 +141,7 @@ test("source comparison treats unspecified expectations as optional and keeps ad
 
 test("mismatched and matched observations display the comparison without changing source values", () => {
   for (const status of ["mismatched", "matched"]) {
-    const value = { ...source("Device information"), comparison: comparison(status, { sample_rate: status === "matched" ? 500 : 1000, channel_number: 3 }) };
+    const value = { ...source("Device information"), comparison: comparison(status, { sample_rate: status === "matched" ? 500 : 1000, channel_count: 3 }) };
     const before = structuredClone(value);
     const tree = render({ value });
     assert.match(text(tree), status === "matched" ? /observed source values match/ : /observed source values differ/);
@@ -160,7 +160,7 @@ test("the adoption action is disabled when the current source is unavailable or 
 
 test("Scan45 declarations are shown as unverified and have no adoption action", () => {
   const value = { ...source("Metadata is not implemented.", { ...descriptor, provenance: "user-declared" }),
-    comparison: comparison("unverified", { sample_rate: 500, channel_number: 3 }) };
+    comparison: comparison("unverified", { sample_rate: 500, channel_count: 3 }) };
   const tree = render({ value, canUseObserved: true, onUseObserved: () => {}, onSaveObservedProfile: () => {} });
   assert.match(text(tree), /cannot independently verify/);
   assert.match(text(tree), /Declared \(configuration\)/);
@@ -170,7 +170,7 @@ test("Scan45 declarations are shown as unverified and have no adoption action", 
 
 test("saving observations as a new profile requires its own explicit action and a current source", () => {
   let saves = 0;
-  const value = { ...source("Device information"), comparison: comparison("mismatched", { sample_rate: 1000, channel_number: 10 }) };
+  const value = { ...source("Device information"), comparison: comparison("mismatched", { sample_rate: 1000, channel_count: 10 }) };
   const props = { value, canUseObserved: true, onSaveObservedProfile: () => { saves += 1; } };
   const tree = render(props);
   const save = elements(tree).find((element) => element.type === "button" && text(element) === "Save observed values as new profile");
@@ -203,21 +203,21 @@ test("new drafts show the source observation without comparing an absent saved b
 });
 
 test("saved profiles warn in red only for explicitly configured mismatches", () => {
-  for (const channel_number of [null, 3]) {
+  for (const channel_count of [null, 3]) {
     const value = { ...source("Device information"), comparison: comparison("mismatched", {
-      sample_rate: 1000, channel_number,
+      sample_rate: 1000, channel_count,
     }) };
     const tree = render({ value });
     const warning = elements(tree).find((element) => element.props.role === "alert");
     assert.ok(warning.props.className.includes("source-mismatch"));
     const rows = elements(tree).filter((element) => element.type === "tr" && element.key === "sample_rate");
     assert.equal(rows[0].props.className, "source-mismatch");
-    const matching = elements(tree).find((element) => element.type === "tr" && element.key === "channel_number");
+    const matching = elements(tree).find((element) => element.type === "tr" && element.key === "channel_count");
     assert.equal(matching.props.className, undefined);
   }
   for (const status of ["matched", "unverified", "unconfirmed"]) {
     const tree = render({ value: { ...source("Device information"), comparison: comparison(status, {
-      sample_rate: status === "unconfirmed" ? null : 500, channel_number: 3,
+      sample_rate: status === "unconfirmed" ? null : 500, channel_count: 3,
     }) } });
     assert.equal(elements(tree).some((element) => element.props.role === "alert"), false);
     assert.equal(elements(tree).some((element) => element.props.className?.includes("source-mismatch")), false);

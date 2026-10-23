@@ -14,6 +14,7 @@ def signal_context(snapshot, plan):
     )
     return PluginContext(
         sample_rate=source.sample_rate,
+        # Retain acquired names for SDK compatibility; processing uses input_signal.channels.
         channel_names=tuple(channel.name for channel in source.channels),
         config_revision=snapshot.get("CONFIG.revision"),
         acquired_signal=source, input_signal=output,

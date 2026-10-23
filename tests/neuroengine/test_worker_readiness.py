@@ -249,7 +249,7 @@ def _pinned_worker_snapshot(decoder_alias, broken_kind=None):
                 "ACQUISITION.signal_source": "file_reader"}
     bindings = []
     for slot, kind, alias, parameters in (
-        ("acquisition.source", "acquisition", "file_reader", {"sample_rate": 250, "channel_number": 10,
+        ("acquisition.source", "acquisition", "file_reader", {"sample_rate": 250, "channel_count": 10,
          "data_file_path": str(Path(__file__).parents[1] / "fixture" / "train.cnt")}),
         ("processing.decoder", "decoder", decoder_alias, {}),
         ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),

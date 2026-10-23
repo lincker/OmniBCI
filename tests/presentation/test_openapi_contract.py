@@ -188,7 +188,7 @@ class TestResponseDtos:
         assert set(props) == {"source_id", "connection_id", "metadata", "descriptor", "comparison"}
         assert props["metadata"]["type"] == "string"
         comparison = _schema(spec, "SourceExpectationsModel")["properties"]
-        assert set(comparison) == {"status", "sample_rate", "channel_number"}
+        assert set(comparison) == {"status", "sample_rate", "channel_count"}
         assert set(comparison["status"]["enum"]) == {"unconfirmed", "matched", "mismatched", "unverified"}
         refresh = spec["paths"]["/api/v1/acquisition/metadata/refresh"]["post"]
         assert all(parameter["name"] != "profile_id" for parameter in refresh.get("parameters", []))

@@ -65,7 +65,7 @@ def test_profile_writes_cannot_accept_source_metadata(service, field):
 
 
 def test_saved_legacy_montage_is_ignored_by_selection_and_cleared_on_profile_edit(service):
-    profile = create_source(service, sample_rate=250, channel_number=3)
+    profile = create_source(service, sample_rate=250, channel_count=3)
     legacy = service.repository.save_profile(
         replace(profile, legacy={"manual_montage": _source_montage(), "acquisition_montage": _source_montage()}),
         expected_revision=profile.revision,
@@ -86,7 +86,7 @@ def test_saved_legacy_montage_is_ignored_by_selection_and_cleared_on_profile_edi
 
 
 def test_legacy_activation_retains_hash_and_storage_without_materializing_montage(service):
-    profile = create_source(service, sample_rate=250, channel_number=3)
+    profile = create_source(service, sample_rate=250, channel_count=3)
     selections = complete_selections(service, [{"slot": "acquisition.source", "profile_id": profile.profile_id}])
     candidate = service.propose(selections)
     legacy = ActivationSnapshot(candidate.settings, tuple(
@@ -291,7 +291,7 @@ def test_processing_input_cannot_be_saved_to_an_acquisition_profile(service):
 
 
 def test_save_never_changes_accepted_values_even_for_active_profile(service):
-    profile = create_source(service, sample_rate=1000, channel_number=10)
+    profile = create_source(service, sample_rate=1000, channel_count=10)
     selections = complete_selections(service, [{"slot": "acquisition.source", "profile_id": profile.profile_id}])
     candidate = service.propose(selections)
     service.accept(candidate, expected_revision=None)
@@ -364,7 +364,7 @@ def test_new_activation_and_worker_settings_exclude_backend_logging(service):
 LEGACY_PLUGIN_SETTINGS = {
     "ACQUISITION.signal_source": "old_source",
     "ACQUISITION.sample_rate": 500,
-    "ACQUISITION.channel_number": 99,
+    "ACQUISITION.channel_count": 99,
     "ACQUISITION.DATA_PROVIDER_IP": "192.0.2.1",
     "ACQUISITION.DATA_PROVIDER_PORT": 9000,
     "ACQUISITION.data_file_path": "old.cnt",
@@ -427,7 +427,7 @@ def test_old_plugin_setting_copies_are_inert_and_cannot_change_accepted_revision
 
 
 def test_materialization_uses_bindings_instead_of_old_plugin_setting_copies(service):
-    source = create_source(service, sample_rate=256, channel_number=5)
+    source = create_source(service, sample_rate=256, channel_count=5)
     selections = complete_selections(service, [{"slot": "acquisition.source", "profile_id": source.profile_id}])
     proposed = service.propose(selections)
     host = {"ALGORITHM.baseline_duration": 0.4, "ACQUISITION.channel_names": ["C3", "C4"]}
@@ -436,13 +436,13 @@ def test_materialization_uses_bindings_instead_of_old_plugin_setting_copies(serv
     runtime = service.materialize(previous)
 
     derived = {
-        "ACQUISITION.signal_source", "ACQUISITION.sample_rate", "ACQUISITION.channel_number",
+        "ACQUISITION.signal_source", "ACQUISITION.sample_rate", "ACQUISITION.channel_count",
         "ACQUISITION.data_file_path", "ACQUISITION.file_reader_chunk_size", "ALGORITHM.decoder",
         "ALGORITHM.epoch_detector", "ALGORITHM.filters", "STIMULATION.paradigm",
     }
     assert not (set(LEGACY_PLUGIN_SETTINGS) - derived) & runtime.keys()
     assert runtime["ACQUISITION.sample_rate"] == 256
-    assert runtime["ACQUISITION.channel_number"] == 5
+    assert runtime["ACQUISITION.channel_count"] == 5
     assert runtime["ACQUISITION.signal_source"] == "file_reader"
     assert "ALGORITHM.decoder" not in runtime
     assert "ALGORITHM.filters" not in runtime
@@ -464,7 +464,7 @@ def test_flat_plugin_edits_do_not_change_a_clean_activation(service):
     assert candidate == before
     assert candidate.revision == before.revision
     assert "ACQUISITION.sample_rate" not in service.materialize(candidate)
-    assert "ACQUISITION.channel_number" not in service.materialize(candidate)
+    assert "ACQUISITION.channel_count" not in service.materialize(candidate)
 
 
 INERT_HOST_SETTINGS = {
@@ -740,18 +740,18 @@ def external_source_profile(service, monkeypatch, parameters):
     return service.create("acquisition", external.selection, "External source", parameters)
 
 
-@pytest.mark.parametrize("key", ["sample_rate", "channel_number"])
+@pytest.mark.parametrize("key", ["sample_rate", "channel_count"])
 @pytest.mark.parametrize("value", [True, 0, -1, 1.5])
 def test_declared_source_expectations_must_be_positive_integers(service, monkeypatch, key, value):
     before = service.propose(complete_selections(service))
     service.accept(before, expected_revision=None)
-    parameters = {"sample_rate": 250, "channel_number": 1}
+    parameters = {"sample_rate": 250, "channel_count": 1}
     parameters[key] = value
     profile = external_source_profile(service, monkeypatch, parameters)
     selections = complete_selections(service, [{"slot": "acquisition.source", "profile_id": profile.profile_id}])
     proposed = service.propose(selections)
     candidate = ActivationSnapshot({**proposed.settings, "ACQUISITION.sample_rate": 500,
-                                    "ACQUISITION.channel_number": 16}, proposed.bindings)
+                                    "ACQUISITION.channel_count": 16}, proposed.bindings)
     original_files = {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")}
 
     with pytest.raises(PluginSchemaError, match=rf"acquisition.source.*{key}.*positive integer"):
@@ -769,47 +769,73 @@ def test_resolving_old_source_without_expectations_does_not_reuse_flat_placehold
     profile = external_source_profile(service, monkeypatch, {})
     selections = complete_selections(service, [{"slot": "acquisition.source", "profile_id": profile.profile_id}])
     candidate = service.propose(selections)
-    previous = ActivationSnapshot({"ACQUISITION.sample_rate": 250, "ACQUISITION.channel_number": 16},
+    previous = ActivationSnapshot({"ACQUISITION.sample_rate": 250, "ACQUISITION.channel_count": 16,
+                                   "ACQUISITION.channel_labels": ["Stale", "Trigger"]},
                                   candidate.bindings)
     service.repository.save_activation(previous, expected_revision=None)
     original_files = {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")}
 
     runtime = service.resolve_settings()
     assert "ACQUISITION.sample_rate" not in runtime
-    assert "ACQUISITION.channel_number" not in runtime
+    assert "ACQUISITION.channel_count" not in runtime
+    assert "ACQUISITION.channel_labels" not in runtime
     assert service.repository.get_activation() == previous
     assert {path: path.read_bytes() for path in original_files} == original_files
 
 
 def test_external_source_can_declare_one_channel_without_an_event_row(service, monkeypatch):
-    profile = external_source_profile(service, monkeypatch, {"sample_rate": 250, "channel_number": 1})
+    profile = external_source_profile(service, monkeypatch, {"sample_rate": 250, "channel_count": 1})
     selections = complete_selections(service, [{"slot": "acquisition.source", "profile_id": profile.profile_id}])
     accepted = service.accept(service.propose(selections), expected_revision=None)
 
     runtime = service.materialize(accepted)
 
     assert runtime["ACQUISITION.sample_rate"] == 250
-    assert runtime["ACQUISITION.channel_number"] == 1
+    assert runtime["ACQUISITION.channel_count"] == 1
+
+
+def test_curry8_labels_persist_in_the_profile_and_pinned_runtime(service):
+    labels = ["PZ", "PO5", "PO3", "POZ", "PO4", "PO6", "O1", "OZ", "O2", "Trigger"]
+    plugin = service.catalog.legacy("acquisition", "neuroscan_curry8_reader")
+    profile = service.create("acquisition", plugin.selection, "Curry8", {
+        "sample_rate": 1000, "channel_count": 10, "channel_labels": labels,
+    })
+    service.settings_source = lambda: {"ACQUISITION.channel_labels": ["Stale", "Trigger"]}
+    selections = complete_selections(service, [{"slot": "acquisition.source", "profile_id": profile.profile_id}])
+    accepted = service.accept(service.propose(selections), expected_revision=None)
+    assert "ACQUISITION.channel_labels" not in accepted.settings
+
+    fresh = PluginProfileService(TomlPluginProfileRepository(service.repository.root), service.catalog,
+                                 settings_source=service.settings_source)
+    assert fresh.repository.get_profile(profile.profile_id).parameters["channel_labels"] == labels
+    runtime = fresh.resolve_settings()
+    assert runtime["ACQUISITION.channel_labels"] == labels
+    assert next(item for item in runtime["PLUGINS.bindings"] if item["kind"] == "acquisition")["parameters"]["channel_labels"] == labels
+
+    service.update(profile.profile_id, name=profile.name,
+                   parameters={**profile.parameters, "channel_labels": ["Changed"] * 10},
+                   expected_revision=profile.revision)
+    assert fresh.resolve_settings()["ACQUISITION.channel_labels"] == labels
 
 
 @pytest.mark.parametrize("channels", [2, 9, 10, 33, 65])
 def test_scan45_profile_resolves_its_configured_channel_count(service, channels):
     plugin = service.catalog.legacy("acquisition", "neuroscan_scan45_reader")
-    profile = service.create("acquisition", plugin.selection, "Device", {"channel_number": channels})
+    profile = service.create("acquisition", plugin.selection, "Device", {"channel_count": channels})
     candidate = service.propose(complete_selections(service, [
         {"slot": "acquisition.source", "profile_id": profile.profile_id},
     ]))
     service.accept(candidate, expected_revision=None)
 
-    assert service.repository.get_profile(profile.profile_id).parameters["channel_number"] == channels
-    assert service.resolve_settings()["ACQUISITION.channel_number"] == channels
+    assert service.repository.get_profile(profile.profile_id).parameters["channel_count"] == channels
+    assert service.resolve_settings()["ACQUISITION.channel_count"] == channels
 
 
 @pytest.mark.parametrize("channels", [True, 0, 1, 3.5, "33"])
 def test_scan45_profile_rejects_invalid_channel_count(service, channels):
     plugin = service.catalog.legacy("acquisition", "neuroscan_scan45_reader")
-    with pytest.raises(PluginSchemaError, match="channel_number"):
-        service.create("acquisition", plugin.selection, "Invalid", {"channel_number": channels})
+    with pytest.raises(PluginSchemaError, match="channel_count"):
+        service.create("acquisition", plugin.selection, "Invalid", {"channel_count": channels})
 
 
 def test_running_guard_blocks_accept_but_allows_saving(service):
@@ -928,7 +954,7 @@ def test_observed_sources_can_be_saved_and_applied_before_the_first_metadata_rea
     plugin = service.catalog.legacy("acquisition", alias)
     profile = service.create("acquisition", plugin.selection, "New source", {})
     assert "sample_rate" not in profile.parameters
-    assert "channel_number" not in profile.parameters
+    assert "channel_count" not in profile.parameters
     selections = complete_selections(service, [
         {"slot": "acquisition.source", "profile_id": profile.profile_id},
     ])
@@ -936,6 +962,6 @@ def test_observed_sources_can_be_saved_and_applied_before_the_first_metadata_rea
     service.accept(candidate, expected_revision=None)
     runtime = service.resolve_settings()
     assert "ACQUISITION.sample_rate" not in runtime
-    assert "ACQUISITION.channel_number" not in runtime
+    assert "ACQUISITION.channel_count" not in runtime
     assert service.repository.get_profile(profile.profile_id) == profile
     assert service.repository.get_activation() == candidate

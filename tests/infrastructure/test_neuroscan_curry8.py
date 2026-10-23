@@ -226,9 +226,14 @@ def test_header_uses_the_20_byte_network_order_layout():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("protocol_version,data_size,dtype", [(802, 2, "<i2"), (803, 4, "<f4")])
-async def test_single_data_packet_preserves_native_trigger_row_without_waiting_for_next_block(
-    protocol_version, data_size, dtype,
+@pytest.mark.parametrize("protocol_version,data_size,dtype,raw_events", [
+    (802, 2, "<i2", [0, 1, 7, 7, 255, 0]),
+    (802, 2, "<i2", [-256, -255, -249, -249, -1, -256]),
+    (803, 4, "<f4", [0, 1, 7, 7, 255, 0]),
+    (803, 4, "<f4", [65280, 65281, 65287, 65287, 65535, 65280]),
+])
+async def test_single_data_packet_extracts_low_byte_triggers_without_waiting_for_next_block(
+    protocol_version, data_size, dtype, raw_events,
 ):
     driver = Curry8DataReader(host="127.0.0.1", port=4455, parameters={})
     driver._is_connected = driver._is_streaming = True
@@ -242,16 +247,19 @@ async def test_single_data_packet_preserves_native_trigger_row_without_waiting_f
         channel_labels=("C3", "C4", "Trigger"),
     )
     driver.reader = asyncio.StreamReader()
-    packet = np.asarray([[1, 10, 0], [2, 20, 7], [3, 30, 0]], dtype=dtype).tobytes()
-    driver.reader.feed_data(_packet(b"DATA", DataCode.EEG, BlockType.FLOAT32, packet))
+    expected = np.asarray([
+        [-1.5, 2.25, -3.5, 4.25, -5.5, 6.25],
+        [10, -20, 30, -40, 50, -60],
+        [0, 1, 7, 7, 255, 0],
+    ], dtype=dtype)
+    frames = expected.T.copy()
+    frames[:, -1] = raw_events
+    driver.reader.feed_data(_packet(b"DATA", DataCode.EEG, BlockType.FLOAT32, frames.tobytes()))
     driver.reader.feed_eof()
 
     chunk = await driver.read_chunk()
 
-    np.testing.assert_array_equal(
-        chunk,
-        np.asarray([[1, 2, 3], [10, 20, 30], [0, 7, 0]], dtype=dtype),
-    )
+    np.testing.assert_array_equal(chunk, expected)
     assert chunk.dtype == np.dtype(dtype)
 
 

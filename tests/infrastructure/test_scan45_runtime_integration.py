@@ -29,7 +29,7 @@ from omnibci.shared.events import EventType
 async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session_commands():
     sample_rate = 500
     generation, revision = "scan45-generation", "scan45-revision"
-    reader = Scan45DataReader(parameters={"channel_number": 10, "sample_rate": sample_rate})
+    reader = Scan45DataReader(parameters={"channel_count": 10, "sample_rate": sample_rate})
     source = reader.describe_output(source_id=reader.plugin_type, connection_id="scan45-connection")
     assert [channel.name for channel in source.channels] == [f"CH{index}" for index in range(1, 10)]
     assert source.output_row_count == 10 and source.trigger_row_index == 9
@@ -45,7 +45,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
     snapshot = {
         "CONFIG.generation": generation, "CONFIG.revision": revision,
         "ACQUISITION.signal_source": reader.plugin_type,
-        "ACQUISITION.sample_rate": sample_rate, "ACQUISITION.channel_number": 10,
+        "ACQUISITION.sample_rate": sample_rate, "ACQUISITION.channel_count": 10,
         "PLUGINS.bindings": [
             ProfileBinding(
                 "processing.decoder", "decoder", None,
@@ -108,9 +108,9 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         event_words[25:30] |= 1
         raw = np.vstack((eeg, event_words))
         expected_events = np.zeros(times.size, dtype=int)
-        expected_events[25] = 1
+        expected_events[25:30] = 1
 
-        # Split inside the held pulse: Scan45 must preserve one event across
+        # Split inside the held pulse: Scan45 must preserve every event sample across
         # packet boundaries while processing aliases change only metadata.
         for sequence, (start, end) in enumerate(((0, 27), (27, 300), (300, 700))):
             body = raw[:, start:end].T.astype("<u4").tobytes()

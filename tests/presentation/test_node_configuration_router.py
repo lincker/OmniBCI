@@ -27,7 +27,7 @@ def node_api():
         "NEUROENGINE.message_server_ip": "127.0.0.1", "NEUROENGINE.message_server_port": 9000,
         "ACTUATION.server_ip": "127.0.0.1", "ACTUATION.server_port": 9001,
         "PLUGINS.bindings": [
-            binding("acquisition.source", "acquisition", {"sample_rate": 500, "channel_number": 2,
+            binding("acquisition.source", "acquisition", {"sample_rate": 500, "channel_count": 2,
                                                           "data_file_path": "private.cnt"}),
             binding("stimulation.paradigm", "paradigm"), binding("stimulation.trigger", "trigger"),
             binding("actuation.effector", "effector"),

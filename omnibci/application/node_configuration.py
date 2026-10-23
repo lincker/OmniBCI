@@ -23,7 +23,8 @@ _REQUIRED_SLOTS = {
     "actuation": frozenset({"actuation.effector"}),
 }
 _CONTEXT_KEYS = frozenset({
-    "ACQUISITION.sample_rate", "ACQUISITION.channel_number", "ACQUISITION.channel_names",
+    "ACQUISITION.sample_rate", "ACQUISITION.channel_count",
+    "ACQUISITION.channel_labels",
 })
 _ROLE_SETTING_KEYS = {
     "engine": RUNTIME_HOST_SETTING_KEYS | _CONTEXT_KEYS,
@@ -61,15 +62,15 @@ def _validate_role(role: str) -> None:
 def _validate_settings(role: str, settings: dict) -> None:
     if not isinstance(settings, dict) or set(settings) - _ROLE_SETTING_KEYS[role]:
         raise PluginSchemaError("Node settings contain unsupported fields for this role")
-    for key in ("ACQUISITION.sample_rate", "ACQUISITION.channel_number"):
+    for key in ("ACQUISITION.sample_rate", "ACQUISITION.channel_count"):
         if key not in settings:
             continue
         value = settings.get(key)
         if type(value) is not int or value <= 0:
             raise PluginSchemaError(f"{key} must be a positive integer")
-    names = settings.get("ACQUISITION.channel_names", [])
-    if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
-        raise PluginSchemaError("ACQUISITION.channel_names must be a list of strings")
+    labels = settings.get("ACQUISITION.channel_labels", [])
+    if not isinstance(labels, list) or any(not isinstance(label, str) for label in labels):
+        raise PluginSchemaError("ACQUISITION.channel_labels must be a list of strings")
     for key, value in settings.items():
         if key in _CONTEXT_KEYS:
             continue
@@ -170,7 +171,7 @@ def project_node_configuration(runtime_snapshot: dict, role: str) -> NodeConfigu
     if source is None:
         raise PluginSchemaError("Node projection requires acquisition source context")
     settings = {key: value for key, value in runtime_snapshot.items() if key in _ROLE_SETTING_KEYS[role]}
-    for name in ("sample_rate", "channel_number"):
+    for name in ("sample_rate", "channel_count", "channel_labels"):
         key = f"ACQUISITION.{name}"
         value = source.parameters.get(name)
         if key in settings and _canonical(settings[key]) != _canonical(value):
@@ -207,7 +208,7 @@ def materialize_node_configuration(configuration: NodeConfiguration,
         if binding.slot in _ALIASES:
             result[_ALIASES[binding.slot]] = definition.plugin_type
         if binding.kind == "acquisition":
-            for key in ("sample_rate", "channel_number"):
+            for key in ("sample_rate", "channel_count", "channel_labels"):
                 if _canonical(parameters.get(key)) != _canonical(result.get(f"ACQUISITION.{key}")):
                     raise PluginSchemaError(f"ACQUISITION.{key} disagrees with the pinned source")
             result.update({f"ACQUISITION.{key}": value for key, value in parameters.items()})

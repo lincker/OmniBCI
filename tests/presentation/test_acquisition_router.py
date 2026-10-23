@@ -160,14 +160,14 @@ class TestAcquisitionMetadata:
             "source_id": "test", "connection_id": "current", "metadata": raw,
             "descriptor": descriptor.to_dict(),
             "comparison": {"status": "mismatched", "sample_rate": {"expected": 250, "actual": 500},
-                           "channel_number": {"expected": 3, "actual": 2}},
+                           "channel_count": {"expected": 3, "actual": 2}},
         })
         response = api_client.get("/api/v1/acquisition/metadata")
         assert response.status_code == 200
         result = response.json()["data"]
         assert result["metadata"] == raw
         assert result["comparison"]["status"] == "mismatched"
-        assert result["comparison"]["channel_number"] == {"expected": 3, "actual": 2}
+        assert result["comparison"]["channel_count"] == {"expected": 3, "actual": 2}
         assert result["descriptor"]["signal_channel_count"] == 1
         assert result["descriptor"]["channels"][0]["channel_id"] == "channel-0"
         assert "original_reference" not in result["descriptor"]

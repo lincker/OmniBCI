@@ -108,9 +108,11 @@ the process working directory or import backend settings and service objects.
 
 `context.input_signal` is a `SignalInfo` describing the ordered
 mapped input, including channel IDs, names, types, and units. Use its channels to
-resolve names to matrix row indices. `context.channel_names` and
-`context.acquired_signal` describe the original Acquisition, before mapping.
-Never use their indices for mapped input.
+resolve names to matrix row indices. `context.acquired_signal.channels` describes
+the original Acquisition channels, before mapping; never use its indices for
+mapped input. `context.channel_names` remains compatible but is deprecated. New
+plugins should use `context.acquired_signal.channels` for original channels and
+`context.input_signal.channels` for their actual input.
 
 Decoder arrays have shape **signal channels × samples**, without a trigger row
 or pre-trigger data. `window` contains the post-trigger data accumulated up to

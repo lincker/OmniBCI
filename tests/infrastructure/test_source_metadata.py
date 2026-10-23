@@ -352,7 +352,7 @@ async def test_disconnect_clears_metadata_and_reconnect_invalidates_old_receipt(
 @pytest.mark.asyncio
 async def test_scan45_metadata_reports_unsupported_query_separately_from_configured_output():
     from omnibci.infrastructure.plugins.acquisition.neuroscan.scan45.scan45 import Scan45DataReader
-    source = Scan45DataReader(parameters={"sample_rate": 250, "channel_number": 3})
+    source = Scan45DataReader(parameters={"sample_rate": 250, "channel_count": 3})
     source.request_basic_info = AsyncMock(side_effect=AssertionError("must not read unimplemented header"))
     metadata = await source.get_metadata()
     assert isinstance(metadata, str)

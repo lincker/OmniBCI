@@ -33,12 +33,11 @@ def binding(kind, parameters=None):
 def runtime():
     bindings = [binding(kind) for kind in SLOTS]
     bindings[0] = binding("acquisition", {
-        "sample_rate": 1000, "channel_number": 2, "data_file_path": "private/source.cnt",
+        "sample_rate": 1000, "channel_count": 2, "data_file_path": "private/source.cnt",
     })
     return {
         "CONFIG.revision": "a" * 64, "CONFIG.generation": "engine-generation-1",
-        "ACQUISITION.sample_rate": 1000, "ACQUISITION.channel_number": 2,
-        "ACQUISITION.channel_names": ["C3", "C4"],
+        "ACQUISITION.sample_rate": 1000, "ACQUISITION.channel_count": 2,
         "NEUROENGINE.message_server_ip": "192.0.2.1", "NEUROENGINE.message_server_port": 8765,
         "NEUROENGINE.queue_size": 100, "STIMULATION.renderer": "pyopengl",
         "STIMULATION.auto_spawn": False, "ACTUATION.auto_spawn": False,
@@ -65,7 +64,8 @@ class LocalCatalog:
             self.definitions["acquisition"] = replace(self.definitions["acquisition"], schema={
                 "type": "object", "additionalProperties": False,
                 "properties": {"sample_rate": {"type": "integer", "minimum": 1},
-                               "channel_number": {"type": "integer", "minimum": 1},
+                               "channel_count": {"type": "integer", "minimum": 1},
+                               "channel_labels": {"type": "array", "items": {"type": "string"}},
                                "data_file_path": {"type": "string"}},
             })
 
@@ -91,8 +91,8 @@ def test_node_needs_only_owned_plugins(runtime, role, kinds, alias):
     assert result["CONFIG.generation"] == runtime["CONFIG.generation"]
     assert result["CONFIG.node_role"] == role
     assert result["ACQUISITION.sample_rate"] == 1000
-    assert result["ACQUISITION.channel_number"] == 2
-    assert result["ACQUISITION.channel_names"] == ["C3", "C4"]
+    assert result["ACQUISITION.channel_count"] == 2
+    assert "ACQUISITION.channel_names" not in result
     assert "LOGGING.file_path" not in result
     assert "custom.private_key" not in result
     if role != "engine":
@@ -190,11 +190,13 @@ def test_decoder_input_overrides_legacy_setup_using_pinned_source(runtime, proce
 
 
 def test_projected_dto_is_independent_of_input_and_export_mutation(runtime):
+    runtime["PLUGINS.bindings"][0]["parameters"]["channel_labels"] = ["C3", "Trigger"]
+    runtime["ACQUISITION.channel_labels"] = ["C3", "Trigger"]
     dto = project_node_configuration(runtime, "stimulation")
     expected = dto.to_dict()
-    runtime["ACQUISITION.channel_names"].clear()
+    runtime["ACQUISITION.channel_labels"].clear()
     exported = dto.to_dict()
-    exported["settings"]["ACQUISITION.channel_names"].clear()
+    exported["settings"]["ACQUISITION.channel_labels"].clear()
     exported["bindings"][0]["parameters"]["injected"] = True
     dto.settings.clear()
     assert dto.to_dict() == expected
@@ -236,6 +238,61 @@ def test_flat_context_cannot_disagree_with_pinned_source(runtime):
         project_node_configuration(runtime, "stimulation")
 
 
+@pytest.mark.parametrize("role", ["engine", "stimulation", "actuation"])
+@pytest.mark.parametrize("names", [["obsolete", "names"], None])
+def test_node_projection_ignores_retired_flat_channel_names(runtime, role, names):
+    expected = project_node_configuration(runtime, role).to_dict()
+    runtime["ACQUISITION.channel_names"] = names
+
+    assert project_node_configuration(runtime, role).to_dict() == expected
+
+
+@pytest.mark.parametrize("role", ["engine", "stimulation", "actuation"])
+def test_received_node_settings_reject_retired_flat_channel_names(runtime, role):
+    data = project_node_configuration(runtime, role).to_dict()
+    data["settings"]["ACQUISITION.channel_names"] = ["obsolete", "names"]
+
+    with pytest.raises(PluginSchemaError, match="unsupported fields"):
+        NodeConfiguration.from_dict(data)
+
+
+@pytest.mark.parametrize(("role", "kinds"), [
+    ("engine", {"acquisition", "decoder", "epoch_detector"}),
+    ("stimulation", {"paradigm", "trigger"}),
+    ("actuation", {"effector"}),
+])
+def test_nodes_preserve_optional_native_channel_labels(runtime, role, kinds):
+    labels = ["C3", "Trigger"]
+    runtime["PLUGINS.bindings"][0]["parameters"]["channel_labels"] = labels
+    dto = NodeConfiguration.from_dict(project_node_configuration(runtime, role).to_dict())
+    assert dto.settings["ACQUISITION.channel_labels"] == labels
+    result = materialize_node_configuration(dto, LocalCatalog(kinds))
+    assert result["ACQUISITION.channel_labels"] == labels
+
+
+@pytest.mark.parametrize("stage", ["projection", "materialization"])
+def test_channel_labels_cannot_disagree_with_pinned_source(runtime, stage):
+    runtime["PLUGINS.bindings"][0]["parameters"]["channel_labels"] = ["C3", "Trigger"]
+    if stage == "projection":
+        runtime["ACQUISITION.channel_labels"] = ["C4", "Trigger"]
+        with pytest.raises(PluginSchemaError, match="channel_labels.*disagrees"):
+            project_node_configuration(runtime, "stimulation")
+    else:
+        data = project_node_configuration(runtime, "engine").to_dict()
+        data["settings"]["ACQUISITION.channel_labels"] = ["C4", "Trigger"]
+        dto = NodeConfiguration.from_dict(data)
+        with pytest.raises(PluginSchemaError, match="channel_labels.*disagrees"):
+            materialize_node_configuration(dto, LocalCatalog({"acquisition", "decoder", "epoch_detector"}))
+
+
+@pytest.mark.parametrize("labels", ["C3,Trigger", None, ["C3", 1]])
+def test_node_channel_labels_must_be_a_list_of_strings(runtime, labels):
+    data = project_node_configuration(runtime, "actuation").to_dict()
+    data["settings"]["ACQUISITION.channel_labels"] = labels
+    with pytest.raises(PluginSchemaError, match="channel_labels.*list of strings"):
+        NodeConfiguration.from_dict(data)
+
+
 @pytest.mark.parametrize("change", ["foreign_binding", "foreign_setting", "unknown_field", "version", "revision", "generation", "role", "context", "missing_binding", "duplicate_binding"])
 def test_remote_envelope_rejects_invalid_or_unowned_content(runtime, change):
     data = project_node_configuration(runtime, "stimulation").to_dict()
@@ -254,7 +311,7 @@ def test_remote_envelope_rejects_invalid_or_unowned_content(runtime, change):
     elif change == "role":
         data["role"] = "arbitrary"
     elif change == "context":
-        data["settings"]["ACQUISITION.channel_number"] = True
+        data["settings"]["ACQUISITION.channel_count"] = True
     elif change == "missing_binding":
         data["bindings"].clear()
     elif change == "duplicate_binding":
@@ -271,11 +328,10 @@ def test_disabled_actuation_cannot_be_projected(runtime):
 
 def test_source_metadata_can_be_derived_without_flat_aliases(runtime):
     runtime.pop("ACQUISITION.sample_rate")
-    runtime.pop("ACQUISITION.channel_number")
-    runtime.pop("ACQUISITION.channel_names")
+    runtime.pop("ACQUISITION.channel_count")
     dto = project_node_configuration(runtime, "stimulation")
     assert dto.settings["ACQUISITION.sample_rate"] == 1000
-    assert dto.settings["ACQUISITION.channel_number"] == 2
+    assert dto.settings["ACQUISITION.channel_count"] == 2
     assert "ACQUISITION.channel_names" not in dto.settings
 
 
@@ -285,15 +341,15 @@ def test_source_metadata_can_be_derived_without_flat_aliases(runtime):
     ("actuation", {"effector"}),
 ])
 def test_nodes_can_start_before_source_expectations_are_confirmed(runtime, role, kinds):
-    for name in ("sample_rate", "channel_number"):
+    for name in ("sample_rate", "channel_count"):
         runtime.pop(f"ACQUISITION.{name}")
         runtime["PLUGINS.bindings"][0]["parameters"].pop(name)
     dto = NodeConfiguration.from_dict(project_node_configuration(runtime, role).to_dict())
     result = materialize_node_configuration(dto, LocalCatalog(kinds))
     assert "ACQUISITION.sample_rate" not in dto.settings
-    assert "ACQUISITION.channel_number" not in dto.settings
+    assert "ACQUISITION.channel_count" not in dto.settings
     assert "ACQUISITION.sample_rate" not in result
-    assert "ACQUISITION.channel_number" not in result
+    assert "ACQUISITION.channel_count" not in result
     assert result["CONFIG.revision"] == runtime["CONFIG.revision"]
 
 
@@ -328,7 +384,7 @@ def test_received_engine_source_must_match_declared_context(runtime):
     ("ACTUATION.server_port", True), ("ACTUATION.server_port", 0),
     ("ACTUATION.server_ip", ""), ("ACTUATION.watchdog_timeout_s", float("inf")),
     ("ACTUATION.max_command_age_s", -1), ("ACTUATION.auto_spawn", "false"),
-    ("ACQUISITION.channel_names", [123]),
+    ("ACQUISITION.channel_labels", [123]),
 ])
 def test_node_transport_and_timing_settings_are_validated(runtime, key, value):
     data = project_node_configuration(runtime, "actuation").to_dict()

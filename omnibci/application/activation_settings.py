@@ -3,7 +3,8 @@ from copy import deepcopy
 
 
 PLUGIN_SETTING_KEYS = frozenset({
-    "ACQUISITION.signal_source", "ACQUISITION.sample_rate", "ACQUISITION.channel_number",
+    "ACQUISITION.signal_source", "ACQUISITION.sample_rate", "ACQUISITION.channel_count",
+    "ACQUISITION.channel_labels",
     "ACQUISITION.DATA_PROVIDER_IP", "ACQUISITION.DATA_PROVIDER_PORT",
     "ACQUISITION.data_file_path", "ACQUISITION.file_reader_chunk_size",
     "ACQUISITION.trigger", "ACQUISITION.parallel_port_address",

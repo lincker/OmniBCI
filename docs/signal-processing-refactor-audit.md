@@ -238,7 +238,7 @@ The two concrete `run()` methods look similar, but encode different entry invari
 | `signal_context` :9 | KEEP | Called by `load_signal_pipeline` and `build_pipeline_update`; describes acquired signal separately from mapped decoder input. |
 | `load_signal_pipeline` :23 | KEEP | Called by `SignalProcessor._prepare_signal` :305; constructs decoder, detector and ordered filters after source preparation. |
 
-Initial preparation includes the detector; trial updates intentionally do not replace it. Do not merge these paths into an undifferentiated load operation. `PluginContext.channel_names` remains an SDK field describing acquired names, even when `input_signal` uses mapped/renamed channels.
+Initial preparation includes the detector; trial updates intentionally do not replace it. Do not merge these paths into an undifferentiated load operation. `PluginContext.channel_names` remains compatible as a deprecated SDK field describing acquired names. New plugin code uses `acquired_signal.channels` for the original channels and `input_signal.channels` for mapped/renamed input; the retired `ACQUISITION.channel_names` configuration key does not supply these values.
 
 ### 10. `signal_processor.py` — 408 lines, 20 functions
 

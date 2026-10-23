@@ -23,11 +23,11 @@ def source():
 def snapshot():
     return {
         "ACQUISITION.signal_source": "file_reader", "ACQUISITION.sample_rate": 250,
-        "ACQUISITION.channel_number": 4, "CONFIG.revision": "a" * 64,
+        "ACQUISITION.channel_count": 4, "CONFIG.revision": "a" * 64,
         "CONFIG.generation": "generation-one", "PLUGINS.bindings": [
             {"slot": "acquisition.source", "kind": "acquisition", "profile_id": "source-profile",
              "selection": {"package_id": "test.source", "contribution_id": "reader", "version": "1.0.0"},
-             "parameters": {"sample_rate": 250, "channel_number": 4, "data_file_path": "one.cnt"},
+             "parameters": {"sample_rate": 250, "channel_count": 4, "data_file_path": "one.cnt"},
              "profile_revision": 1, "configuration_version": 1},
             {"slot": "processing.decoder", "kind": "decoder", "profile_id": "decoder-profile",
              "selection": {"package_id": "test.decoder", "contribution_id": "decoder", "version": "1.0.0"},
@@ -120,7 +120,7 @@ def test_processing_binding_survives_profile_revision_and_decoder_parameter_chan
 
 @pytest.mark.parametrize("field,value", [
     ("profile_id", "other-source"),
-    ("parameters", {"sample_rate": 250, "channel_number": 4, "data_file_path": "two.cnt"}),
+    ("parameters", {"sample_rate": 250, "channel_count": 4, "data_file_path": "two.cnt"}),
     ("selection", {"package_id": "test.source", "contribution_id": "reader", "version": "2.0.0"}),
 ])
 def test_processing_binding_distinguishes_source_ownership(snapshot, field, value):

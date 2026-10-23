@@ -1,4 +1,5 @@
 """Exercise the same downloadable starter used by the in-app authoring guide."""
+from dataclasses import replace
 from pathlib import Path
 import zipfile
 
@@ -36,18 +37,20 @@ def context(*names):
         ChannelDescriptor(index, name, signal_type="eeg", unit="uV")
         for index, name in enumerate(("Oz", "O2", "O1"))
     ), 3)
-    mapped = SignalInfo("tutorial", 4, tuple(
-        ChannelDescriptor(index, name, signal_type="eeg", unit="uV") for index, name in enumerate(names)
-    ), len(names))
-    return PluginContext(sample_rate=4, channel_names=("Oz", "O2", "O1"),
-                         acquired_signal=source, input_signal=mapped)
+    mapped = replace(source, channels=tuple(
+        replace(next(channel for channel in source.channels if channel.name == name), index=index)
+        for index, name in enumerate(names)
+    ), trigger_row_index=len(names))
+    return PluginContext(sample_rate=4, acquired_signal=source, input_signal=mapped)
 
 
 def test_starter_installs_and_decodes_mapped_named_input(descriptor):
     assert descriptor.signal_input_contract == 2
     assert descriptor.channel_requirements.required_names == ("Oz",)
     assert descriptor.channel_requirements.default_names == ("Oz",)
-    decoder = PluginLoader.instantiate(descriptor, Decoder, parameters={}, context=context("O2", "Oz"))
+    prepared = context("O2", "Oz")
+    assert tuple(channel.channel_id for channel in prepared.input_signal.channels) == ("channel-1", "channel-0")
+    decoder = PluginLoader.instantiate(descriptor, Decoder, parameters={}, context=prepared)
     # Oz was source row 0 and is mapped row 1. The unrelated row has the opposite sign.
     window = np.array([[-100.0] * 4, [2.0] * 4])
     assert decoder.should_decode(window)

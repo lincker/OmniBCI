@@ -25,7 +25,6 @@ def configured_bindings(snapshot: dict, *, slot: str | None = None) -> tuple[Pro
 def plugin_context(snapshot: dict) -> PluginContext:
     return PluginContext(
         sample_rate=snapshot.get("ACQUISITION.sample_rate"),
-        channel_names=tuple(snapshot.get("ACQUISITION.channel_names", ())),
         config_revision=snapshot.get("CONFIG.revision"),
     )
 

@@ -92,8 +92,8 @@ schema_version=1
         'properties': {'size':{'type':'integer','default':5,'minimum':0,'x-apply':'module'},
                        'log':{'type':'string','default':str(tmp_path / 'restored.jsonl')},
                        'sample_rate':{'type':'integer','default':100},
-                       'channel_number':{'type':'integer','default':2}},
-        'required':['size','log','sample_rate','channel_number'],
+                       'channel_count':{'type':'integer','default':2}},
+        'required':['size','log','sample_rate','channel_count'],
     }))
     host = {'NEUROENGINE.message_server_port':0, 'STIMULATION.auto_spawn':True,
             'ACTUATION.enabled':False, 'ALGORITHM.baseline_duration':0.0}

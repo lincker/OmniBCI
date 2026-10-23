@@ -4,7 +4,7 @@ import json
 import pytest
 import tomlkit
 
-from omnibci.application.plugin_schema import validate_parameters
+from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.infrastructure.plugins.loader import PluginLoader, PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import (
     PluginCatalog, PluginManifestError, PluginRoot, vendor_plugins_dir,
@@ -49,19 +49,46 @@ def test_observed_sources_preserve_optional_expectations_without_an_invented_bas
     catalog = PluginCatalog({"effector": lambda: [PluginRoot(vendor_plugins_dir(), "builtin", 100)]})
     schema = catalog.resolve("acquisition", alias).configuration_schema
     defaults = validate_parameters(schema, {})
-    assert not {"sample_rate", "channel_number"} & defaults.keys()
-    saved = validate_parameters(schema, {"sample_rate": 500, "channel_number": 33})
+    assert not {"sample_rate", "channel_count"} & defaults.keys()
+    saved = validate_parameters(schema, {"sample_rate": 500, "channel_count": 33})
     assert saved["sample_rate"] == 500
-    assert saved["channel_number"] == 33
+    assert saved["channel_count"] == 33
 
 
 def test_scan45_retains_required_stream_dimensions_and_defaults():
     catalog = PluginCatalog({"effector": lambda: [PluginRoot(vendor_plugins_dir(), "builtin", 100)]})
     schema = catalog.resolve("acquisition", "neuroscan_scan45_reader").configuration_schema
-    assert {"sample_rate", "channel_number"} <= set(schema["required"])
+    assert {"sample_rate", "channel_count"} <= set(schema["required"])
     defaults = validate_parameters(schema, {})
     assert defaults["sample_rate"] == 1000
-    assert defaults["channel_number"] == 10
+    assert defaults["channel_count"] == 10
+
+
+def test_curry8_labels_are_optional_and_preserve_all_native_rows():
+    schema = PluginCatalog().resolve("acquisition", "neuroscan_curry8_reader").configuration_schema
+    assert "channel_labels" not in validate_parameters(schema, {})
+    labels = ["PZ", "PO5", "PO3", "POZ", "PO4", "PO6", "O1", "OZ", "O2", "Trigger"]
+    assert validate_parameters(schema, {"channel_count": 10, "channel_labels": labels})["channel_labels"] == labels
+    assert validate_parameters(schema, {"channel_labels": ["", "OZ", "OZ", "Trigger"]})["channel_labels"] == [
+        "", "OZ", "OZ", "Trigger",
+    ]
+
+
+@pytest.mark.parametrize("labels", ["OZ,Trigger", None, ["OZ", 1], [True, "Trigger"]])
+def test_curry8_labels_require_an_array_of_strings(labels):
+    schema = PluginCatalog().resolve("acquisition", "neuroscan_curry8_reader").configuration_schema
+    with pytest.raises(PluginSchemaError, match="channel_labels.*must be"):
+        validate_parameters(schema, {"channel_labels": labels})
+
+
+@pytest.mark.parametrize("alias", ["file_reader", "neuroscan_curry8_reader", "neuroscan_scan45_reader"])
+def test_acquisition_schemas_use_channel_count_and_reject_the_old_parameter(alias):
+    schema = PluginCatalog().resolve("acquisition", alias).configuration_schema
+    assert "channel_count" in schema["properties"]
+    assert "channel_number" not in schema["properties"]
+    assert validate_parameters(schema, {"channel_count": 33})["channel_count"] == 33
+    with pytest.raises(PluginSchemaError, match="channel_number"):
+        validate_parameters(schema, {"channel_number": 33})
 
 
 @pytest.mark.parametrize("configuration", [

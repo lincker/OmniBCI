@@ -108,7 +108,7 @@ async def test_cnt_mapping_prepares_before_streaming_and_rejects_stale_connectio
         assert source.profile_id is None
         saved_source = profiles.create("acquisition", source.selection, "Observed CNT experiment", {
             **source.parameters, "sample_rate": metadata["descriptor"]["sample_rate"],
-            "channel_number": metadata["descriptor"]["output_row_count"],
+            "channel_count": metadata["descriptor"]["output_row_count"],
         })
         assert profiles.repository.get_activation().bindings[0].profile_id is None
         selections[0] = {"slot": "acquisition.source", "profile_id": saved_source.profile_id}

@@ -27,7 +27,7 @@
       "x-apply": "module",
       "minimum": 1
     },
-    "channel_number": {
+    "channel_count": {
       "type": "integer",
       "title": "Output rows including event row",
       "description": "Total channels sent by the device, including the final event channel. Must match the Scan45 stream.",
@@ -41,6 +41,6 @@
     "DATA_PROVIDER_IP",
     "DATA_PROVIDER_PORT",
     "sample_rate",
-    "channel_number"
+    "channel_count"
   ]
 }
