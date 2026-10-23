@@ -249,17 +249,17 @@ class Scan45DataReader(SignalSource):
         int_data = np.fromiter(iterable, int)
         n_samples = len(int_data) // n_channels
         packet = np.reshape(int_data, (n_channels, n_samples), order='F')
-        packet_event = packet[-1, :]
-        # Keep only the first event in each nonzero run, including across packets.
-        for index, event in enumerate(packet_event):
-            if self._previous_event == 0 and event != 0:
-                self._previous_event = event
-                print(f'neuroscan scan4.5 index = {index}-----------event = {event}')
-            elif self._previous_event != 0:
-                if event != 0:
-                    packet_event[index] = 0
-                else:
-                    self._previous_event = event
+        # Disabled: keep only the first event in each nonzero run across packets.
+        # packet_event = packet[-1, :]
+        # for index, event in enumerate(packet_event):
+        #     if self._previous_event == 0 and event != 0:
+        #         self._previous_event = event
+        #         print(f'neuroscan scan4.5 index = {index}-----------event = {event}')
+        #     elif self._previous_event != 0:
+        #         if event != 0:
+        #             packet_event[index] = 0
+        #         else:
+        #             self._previous_event = event
         return packet
 
 

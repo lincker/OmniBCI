@@ -108,9 +108,9 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         event_words[25:30] |= 1
         raw = np.vstack((eeg, event_words))
         expected_events = np.zeros(times.size, dtype=int)
-        expected_events[25] = 1
+        expected_events[25:30] = 1
 
-        # Split inside the held pulse: Scan45 must preserve one event across
+        # Split inside the held pulse: Scan45 must preserve every event sample across
         # packet boundaries while processing aliases change only metadata.
         for sequence, (start, end) in enumerate(((0, 27), (27, 300), (300, 700))):
             body = raw[:, start:end].T.astype("<u4").tobytes()
