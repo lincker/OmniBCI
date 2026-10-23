@@ -105,6 +105,7 @@ def plugin_check():
         assert pack.idle_frame.shape == (990, 1920, 1)
         assert sum(1 for _ in pack.iter_stimulation_frames()) == 240
         assert sum(1 for _ in pack.iter_cue_frames()) == 40
+        assert sum(1 for _ in pack.iter_result_frames()) == 40
     return len(contributions)
 
 

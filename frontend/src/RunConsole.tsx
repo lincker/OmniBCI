@@ -8,7 +8,7 @@ import { EpochProcessing } from "./EpochProcessing";
 import { AcquisitionPreview } from "./AcquisitionPreview";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
 import { pluginConfigApi, selectionKey, type Activation, type PluginProfile, type PluginDefinition } from "./api/plugin-config";
-import { readTrialControls, type TrialControl } from "./plugin-controls";
+import { MAX_TRIALS, parseTrialSequence, readTrialControls, type TrialControl } from "./plugin-controls";
 import { signalConfigApi } from "./api/signal-config";
 
 function Dot({ on, label }: { on: boolean | undefined; label: string }) {
@@ -39,7 +39,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
   const [controls, setControls] = useState<Record<string, TrialControl>>({});
   const [loadError, setLoadError] = useState<string | { key: TranslationKey; params?: TranslationParams } | null>(null);
   const [controlValues, setControlValues] = useState<Record<string, string>>({});
-  const [trialError, setTrialError] = useState<"count" | { name: string; label: string } | null>(null);
+  const [trialError, setTrialError] = useState<"count" | "sequence" | { name: string; label: string } | null>(null);
   const refresh = async () => { await Promise.all([engine.refresh(), acquisition.refresh(), stimulation.refresh(), signal.refresh()]); };
   const start = useAction(api.engineStart, refresh);
   const stop = useAction(api.engineStop, refresh);
@@ -76,6 +76,17 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
     && (!running || runtime.status?.applied_revision === selection?.revision)
     && (!stimulation.data?.active || stimulation.data.paradigm === selectedParadigm.plugin_type);
   const hasTrialCount = Object.values(controls).some((control) => control.field === "n_trials");
+  const sequenceControl = Object.entries(controls).find(([, control]) => control.default_sequence !== undefined);
+  const countControl = Object.entries(controls).find(([, control]) => control.field === "n_trials");
+  const repetitions = Number(controlValues[countControl?.[0] ?? "n_trials"] ?? countControl?.[1].default ?? 1);
+  let targetSequence: number[] | undefined;
+  if (sequenceControl) {
+    const [name, control] = sequenceControl;
+    try { targetSequence = parseTrialSequence(controlValues[name] ?? control.default_sequence!, control); }
+    catch { /* Invalid text is reported when the form is submitted. */ }
+  }
+  const totalTrials = targetSequence && Number.isSafeInteger(repetitions) && repetitions > 0
+    ? targetSequence.length * repetitions : undefined;
   const steps = [
     { label: t("pipeline.selectPlugins"), done: (engineAvailable && running)
       || Boolean(selection?.bindings.some((item) => item.slot === "acquisition.source")
@@ -107,15 +118,18 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
   // Controls are taken from the exact selected package, contribution, and version.
   useEffect(() => {
     setControlValues(Object.fromEntries(Object.entries(controls)
-      .map(([name, control]) => [name, control.default == null ? "" : String(control.default)])));
+      .map(([name, control]) => [name, control.default_sequence ?? (control.default == null ? "" : String(control.default))])));
     setTrialError(null);
   }, [controls]);
 
   const triggerTrial = () => {
-    if (controlsBlocked || !trialControlsReady) return;
+    if (controlsBlocked || !trialControlsReady || !stimulationAvailable
+        || !stimulation.data?.active || !stimulation.data.engine_connected) return;
+    if (sequenceControl && !targetSequence) { setTrialError("sequence"); return; }
     let nTrials = hasTrialCount ? 1 : Number(controlValues.n_trials ?? 1);
     let perTrial: number | undefined;
     for (const [name, control] of Object.entries(controls)) {
+      if (control.default_sequence !== undefined) continue;
       const raw = controlValues[name];
       const value = raw?.trim() ? Number(raw) : undefined;
       if (value === undefined || !Number.isFinite(value)
@@ -127,11 +141,15 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
       if (control.field === "n_trials") nTrials = value;
       if (control.field === "trial_params") perTrial = value;
     }
-    if (!Number.isSafeInteger(nTrials) || nTrials < 1 || nTrials > 10000) {
+    const total = nTrials * (targetSequence?.length ?? 1);
+    if (!Number.isSafeInteger(nTrials) || nTrials < 1 || !Number.isSafeInteger(total) || total > MAX_TRIALS) {
       setTrialError("count"); return;
     }
     setTrialError(null);
-    void trigger.run(nTrials, perTrial === undefined ? undefined : Array(nTrials).fill(perTrial));
+    const params = targetSequence
+      ? Array.from({ length: total }, (_, index) => targetSequence[index % targetSequence.length])
+      : perTrial === undefined ? undefined : Array(nTrials).fill(perTrial);
+    void trigger.run(total, params);
   };
 
   return <div className="runtime-content">
@@ -214,21 +232,39 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
           <button disabled={stopBlocked || !stimulationAvailable || !(stimulation.data?.process_alive || stimulation.data?.active || stimulation.data?.engine_connected)}
             onClick={() => void stopStim.run()}>{t("run.stopStimulation")}</button></div>
         <form className="actions trial-controls" onSubmit={(event) => { event.preventDefault(); triggerTrial(); }}>
-          {!hasTrialCount && <label className="control"><span className="meta">{t("run.numberOfTrials")}</span>
-            <input aria-label={t("run.numberOfTrials")} type="number" required min={1} max={10000} step={1} disabled={controlsBlocked}
+          {sequenceControl && <div className="trial-sequence">
+            <label className="control"><span className="meta">{t("run.targetSequence")}</span>
+              <input type="text" required disabled={controlsBlocked} maxLength={100000}
+                aria-describedby="trial-sequence-help" aria-invalid={trialError === "sequence" || undefined}
+                value={controlValues[sequenceControl[0]] ?? sequenceControl[1].default_sequence}
+                onChange={(event) => { setControlValues({ ...controlValues, [sequenceControl[0]]: event.target.value }); setTrialError(null); }} /></label>
+            <button type="button" disabled={controlsBlocked} onClick={() => {
+              setControlValues({ ...controlValues, [sequenceControl[0]]: sequenceControl[1].default_sequence! }); setTrialError(null);
+            }}>{t("run.resetSequence")}</button>
+            <p className="meta" id="trial-sequence-help">{t("run.sequenceHelp")}
+              {sequenceControl[1].min != null && sequenceControl[1].max != null
+                && <> {t("run.sequenceRange", { min: sequenceControl[1].min, max: sequenceControl[1].max })}</>}</p>
+          </div>}
+          {!hasTrialCount && <label className="control"><span className="meta">{t(sequenceControl ? "run.sequenceRepetitions" : "run.numberOfTrials")}</span>
+            <input aria-label={t(sequenceControl ? "run.sequenceRepetitions" : "run.numberOfTrials")} type="number" required min={1} max={MAX_TRIALS} step={1} disabled={controlsBlocked}
               value={controlValues.n_trials ?? "1"} onChange={(event) => setControlValues({ ...controlValues, n_trials: event.target.value })} /></label>}
-          {Object.entries(controls).map(([name, control]) => <label key={name} className="control">
-            <span className="meta">{translateControlLabel(name, String(control.label ?? name), t)}</span>
+          {Object.entries(controls).filter(([, control]) => control.default_sequence === undefined).map(([name, control]) => <label key={name} className="control">
+            <span className="meta">{sequenceControl && control.field === "n_trials" ? t("run.sequenceRepetitions")
+              : translateControlLabel(name, String(control.label ?? name), t)}</span>
             <input type="number" required disabled={controlsBlocked} value={controlValues[name] ?? ""}
               min={control.min == null ? (control.field === "n_trials" ? 1 : undefined) : Number(control.min)}
               max={control.max == null ? (control.field === "n_trials" ? 10000 : undefined) : Number(control.max)}
               step={control.field === "n_trials" || control.field === "trial_params" || control.type === "int" ? 1 : "any"}
               onChange={(event) => setControlValues({ ...controlValues, [name]: event.target.value })} /></label>)}
           <button type="submit" className="primary" disabled={controlsBlocked || !trialControlsReady || !stimulationAvailable || !stimulation.data?.active || !stimulation.data.engine_connected}>{t("run.triggerTrial")}</button>
+          {totalTrials !== undefined && <p className={`trial-sequence-summary meta${totalTrials > MAX_TRIALS ? " error" : ""}`} aria-live="polite">
+            {t("run.sequenceSummary", { targets: targetSequence!.length, repetitions, total: totalTrials })}
+          </p>}
         </form>
       </section>
     </div>
-    {(actionError || trialError) && <p className="inline-message error" role="alert">{trialError === "count" ? t("run.invalidTrialCount") : trialError
+    {(actionError || trialError) && <p className="inline-message error" role="alert">{trialError === "count" ? t(sequenceControl ? "run.invalidSequenceCount" : "run.invalidTrialCount")
+      : trialError === "sequence" ? t("run.invalidSequence") : trialError
       ? t("run.invalidControl", { label: translateControlLabel(trialError.name, trialError.label, t) }) : actionError}</p>}
     {feed.error && <p className="error" role="alert">{feed.error}</p>}
     <EpochProcessing onResults={onResults} disabled={busy} />

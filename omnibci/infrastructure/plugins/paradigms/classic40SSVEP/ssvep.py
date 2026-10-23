@@ -55,8 +55,8 @@ def _center_rect(cx_px: int, cy_px: int, w_px: int, h_px: int) -> Rect:
     return Rect(x=cx - hw, y=cy - hh, w=hw * 2, h=hh * 2)
 
 
-# Matches original StimImage(position=(0, -45)) for a 1920×1080 image
-_STIM_RECT: Rect = _center_rect(0, -45, _WIN_W, _WIN_H)
+# Preserve the 1920×990 frame pack's aspect ratio below the 90-pixel feedback area.
+_STIM_RECT: Rect = _center_rect(0, -45, _WIN_W, 990)
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +86,7 @@ class Classic40SSVEP_2(Paradigm):
         self._init_tex: TextureHandle | None     = None
         self._stim_textures: list[TextureHandle] = []
         self._cue_textures:  list[TextureHandle] = []
+        self._result_textures: list[TextureHandle] = []
 
         # Text feedback widget
         self._text_view = FeedbackDisplay(pos_x=0, pos_y=495)
@@ -101,6 +102,7 @@ class Classic40SSVEP_2(Paradigm):
         self._current_event    = 0
         self._cue_countdown    = 0
         self._stim_frame_idx   = 0
+        self._result_target_id = 0
         self._result_countdown = 0
 
     # ── Paradigm port ──────────────────────────────────────────────────────
@@ -120,12 +122,16 @@ class Classic40SSVEP_2(Paradigm):
             self._cue_textures = [
                 renderer.upload_texture(frame) for frame in pack.iter_cue_frames()
             ]
+            self._result_textures = [
+                renderer.upload_texture(frame) for frame in pack.iter_result_frames()
+            ]
 
         # Text widget — uploads blank texture
         self._text_view.setup(renderer)
 
         with self._lock:
             self._state = _State.IDLE
+            self._result_target_id = 0
 
     def teardown(self, renderer: Renderer = None) -> None:  # type: ignore[override]
         """Release all GPU textures."""
@@ -137,10 +143,13 @@ class Classic40SSVEP_2(Paradigm):
             r.release_texture(tex)
         for tex in self._cue_textures:
             r.release_texture(tex)
+        for tex in self._result_textures:
+            r.release_texture(tex)
         if self._init_tex is not None:
             r.release_texture(self._init_tex)
         self._stim_textures.clear()
         self._cue_textures.clear()
+        self._result_textures.clear()
         self._renderer = None
 
     # ── RenderLoop interface ───────────────────────────────────────────────
@@ -182,9 +191,13 @@ class Classic40SSVEP_2(Paradigm):
                     self._draw_idle(r)
 
             elif self._state == _State.RESULT:
-                self._draw_idle(r)
+                r.draw_texture(
+                    self._result_textures[self._result_target_id - 1], _STIM_RECT
+                )
+                self._text_view.draw(r)
                 self._result_countdown -= 1
                 if self._result_countdown <= 0:
+                    self._result_target_id = 0
                     self._state = _State.IDLE
 
     # ── Trial control (application thread) ────────────────────────────────
@@ -208,6 +221,7 @@ class Classic40SSVEP_2(Paradigm):
         event_id = params if isinstance(params, int) else 0
         with self._lock:
             self._current_event = event_id
+            self._result_target_id = 0
             if 0 < event_id <= _N_TARGETS:
                 self._cue_countdown = _CUE_FRAMES
                 self._state         = _State.CUE
@@ -219,14 +233,15 @@ class Classic40SSVEP_2(Paradigm):
                 self._state          = _State.STIM
 
     def trial_result_present(self, result=None) -> None:
-        """Update feedback text and display for ~1.5 s.  Thread-safe."""
+        """Update the result target and feedback text for ~1.5 s.  Thread-safe."""
         text = self._parse_feedback(result)
         logging.info(f"feedback result={result!r}, char={text!r}")
-        if text == 'Del':
-            self._text_view.remove_last()
-        else:
-            self._text_view.add_text(text)
         with self._lock:
+            if text == 'Del':
+                self._text_view.remove_last()
+            else:
+                self._text_view.add_text(text)
+            self._result_target_id = result
             self._result_countdown = _RESULT_FRAMES
             self._state            = _State.RESULT
 
