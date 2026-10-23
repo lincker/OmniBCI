@@ -52,10 +52,20 @@ def test_decode_uses_configured_frame_width_and_final_event_row(channels):
 def test_event_debounce_spans_packets(channels):
     reader = scan45.Scan45DataReader(parameters={"channel_number": channels})
     first, _ = packet(channels, [7, 7])
-    second, _ = packet(channels, [7, 0, 7, 8])
+    second, _ = packet(channels, [8, 9, 0, 7, 8, 0, 8])
 
     np.testing.assert_array_equal(reader._unpack_int32_eeg(first)[-1], [7, 0])
-    np.testing.assert_array_equal(reader._unpack_int32_eeg(second)[-1], [0, 0, 7, 8])
+    np.testing.assert_array_equal(reader._unpack_int32_eeg(second)[-1], [0, 0, 0, 7, 0, 0, 8])
+
+
+def test_event_run_preserves_only_first_nonzero_until_zero():
+    reader = scan45.Scan45DataReader(parameters={"channel_number": 3})
+    body, eeg = packet(3, [0, 7, 7, 8, 9, 0, 8])
+
+    decoded = reader._unpack_int32_eeg(body)
+
+    np.testing.assert_array_equal(decoded[:-1], eeg)
+    np.testing.assert_array_equal(decoded[-1], [0, 7, 0, 0, 0, 0, 8])
 
 
 @pytest.mark.parametrize("kwargs", [{"parameters": {}}, {"parameters": {}, "context": PluginContext()}])

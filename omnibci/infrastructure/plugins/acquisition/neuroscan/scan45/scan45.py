@@ -250,13 +250,13 @@ class Scan45DataReader(SignalSource):
         n_samples = len(int_data) // n_channels
         packet = np.reshape(int_data, (n_channels, n_samples), order='F')
         packet_event = packet[-1, :]
-        # remove duplicated events data
+        # Keep only the first event in each nonzero run, including across packets.
         for index, event in enumerate(packet_event):
             if self._previous_event == 0 and event != 0:
                 self._previous_event = event
                 print(f'neuroscan scan4.5 index = {index}-----------event = {event}')
             elif self._previous_event != 0:
-                if event == self._previous_event:
+                if event != 0:
                     packet_event[index] = 0
                 else:
                     self._previous_event = event
