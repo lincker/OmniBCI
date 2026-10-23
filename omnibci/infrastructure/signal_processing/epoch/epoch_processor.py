@@ -60,6 +60,16 @@ class EpochProcessor:
         self._event_id: Optional[int] = None
         self._pending_decode = False
 
+    @property
+    def sample_count(self) -> int:
+        """Number of collected post-trigger samples, excluding reference data."""
+        return self._epoch_data.shape[1]
+
+    @property
+    def pre_trigger_samples(self) -> int:
+        """Number of captured reference samples before the start marker."""
+        return self._pre_trigger_data.shape[1]
+
     # ------------------------------------------------------------------
     # Buffer management
     # ------------------------------------------------------------------

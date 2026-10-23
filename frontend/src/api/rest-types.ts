@@ -378,6 +378,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/results/epochs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List all processed epochs in the current engine run */
+        get: operations["get_epochs_api_v1_results_epochs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/config": {
         parameters: {
             query?: never;
@@ -1113,6 +1130,20 @@ export interface components {
             message: string;
             data?: components["schemas"]["EngineStatusResponse"] | null;
         };
+        /** ApiResponse[EpochListResponse] */
+        ApiResponse_EpochListResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["EpochListResponse"] | null;
+        };
         /** ApiResponse[NodeConfigurationPublicationResponse] */
         ApiResponse_NodeConfigurationPublicationResponse_: {
             /**
@@ -1524,6 +1555,72 @@ export interface components {
             processor_alive: boolean;
             /** Stimulation Connected */
             stimulation_connected: boolean;
+        };
+        /** EpochListResponse */
+        EpochListResponse: {
+            /** Generation */
+            generation: string | null;
+            /** Total */
+            total: number;
+            /** Offset */
+            offset: number;
+            /** Limit */
+            limit: number;
+            /** Epochs */
+            epochs: components["schemas"]["EpochSummary"][];
+        };
+        /** EpochResult */
+        EpochResult: {
+            /** Target Id */
+            target_id: number;
+            /** Confidence */
+            confidence?: number | null;
+            /** Forced */
+            forced: boolean;
+        };
+        /** EpochSummary */
+        EpochSummary: {
+            /** Generation */
+            generation: string;
+            /** Epoch Number */
+            epoch_number: number;
+            /** Event Id */
+            event_id: number | null;
+            /** Config Revision */
+            config_revision: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "decoded" | "no_result" | "interrupted" | "error";
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "prediction" | "end_marker" | "next_start" | "stream_stop" | "processor_stop" | "error";
+            /** Sample Rate */
+            sample_rate: number | null;
+            /** Channel Count */
+            channel_count: number;
+            /** Sample Count */
+            sample_count: number;
+            /** Pre Trigger Samples */
+            pre_trigger_samples: number;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * Completed At
+             * Format: date-time
+             */
+            completed_at: string;
+            /** Trial Number */
+            trial_number: number | null;
+            result: components["schemas"]["EpochResult"] | null;
+            /** Error */
+            error: string | null;
         };
         /**
          * ErrorCode
@@ -4147,6 +4244,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_ResultsResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_epochs_api_v1_results_epochs_get: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_EpochListResponse_"];
                 };
             };
             /** @description Bad request */

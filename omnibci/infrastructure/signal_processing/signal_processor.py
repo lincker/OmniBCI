@@ -3,6 +3,7 @@
 import asyncio
 from copy import deepcopy
 from dataclasses import replace
+from datetime import datetime, timezone
 from enum import Enum
 import logging
 from queue import Empty
@@ -14,7 +15,8 @@ from omnibci.domain.signal import SignalChunk
 from omnibci.domain.classification import Classification
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector
 from omnibci.application.events import (
-    CommandFailureKind, CommandRequest, CommandResult, StreamBarrier, StreamDrainReceipt, TrialOutcome,
+    CommandFailureKind, CommandRequest, CommandResult, EpochProcessed,
+    StreamBarrier, StreamDrainReceipt, TrialOutcome,
 )
 from omnibci.application.processing_source import requires_signal_preparation, validate_plan_binding
 from omnibci.shared.events import Event, EventType
@@ -105,6 +107,8 @@ class SignalProcessor:
         self._should_stop = False
         self.generation = generation or (settings_snapshot or {}).get("CONFIG.generation") or str(uuid4())
         self.completed_trials = 0
+        self._epoch_number = 0
+        self._epoch_record = None
         self.config_revision = config_revision
         self._last_sequence = -1
         self._drain_failure: str | None = None
@@ -129,6 +133,43 @@ class SignalProcessor:
         self.event_bus.put_event(Event(EventType.TrialCompleted, outcome))
         self.completed_trials = outcome.trial_number
         return outcome
+
+    def record_epoch_started(self, event_id: int, channel_count: int) -> None:
+        """Capture the identity and signal metadata before collecting an epoch."""
+        self._epoch_number += 1
+        self._epoch_record = {
+            "generation": self.generation,
+            "epoch_number": self._epoch_number,
+            "event_id": event_id,
+            "config_revision": self.config_revision,
+            "sample_rate": self._sample_rate,
+            "channel_count": channel_count,
+            "started_at": datetime.now(timezone.utc),
+        }
+
+    def record_epoch_processed(self, status: str, reason: str, *,
+                               classification: Classification | None = None,
+                               trial_number: int | None = None,
+                               error: str | None = None) -> None:
+        """Publish terminal metadata without copying signals or changing outcomes."""
+        metadata = self._epoch_record
+        if metadata is None:
+            return
+        # Clear before publishing: shutdown and drain error paths may converge.
+        self._epoch_record = None
+        try:
+            record = EpochProcessed(
+                **metadata, completed_at=datetime.now(timezone.utc),
+                sample_count=self.current_epoch.sample_count if self.current_epoch is not None else 0,
+                pre_trigger_samples=self.current_epoch.pre_trigger_samples if self.current_epoch is not None else 0,
+                status=status, reason=reason,
+                classification=classification, trial_number=trial_number, error=error,
+            )
+            self.event_bus.put_event(Event(EventType.EpochProcessed, record))
+        except Exception:
+            # Inspection must not turn a successful decode into a failed trial,
+            # or replace the original algorithm exception during shutdown.
+            logger.exception("Unable to publish epoch processing record")
 
     async def next_chunk(self, timeout: float = 0.05) -> "SignalChunk | None":
         """Wait off-loop for a chunk and return control after the timeout."""
@@ -171,8 +212,14 @@ class SignalProcessor:
             if self.current_epoch is not None:
                 complete, classification = self.current_epoch.decode_if_ready()
                 if complete and classification is not None:
-                    self.complete_trial(classification)
+                    outcome = self.complete_trial(classification)
+                    self.record_epoch_processed(
+                        "decoded", "stream_stop", classification=classification,
+                        trial_number=outcome.trial_number,
+                    )
                     interrupted = False
+                else:
+                    self.record_epoch_processed("interrupted", "stream_stop")
             self.transition_to_awaiting()
             self.pretrigger.clear()
             receipt = StreamDrainReceipt(
@@ -186,6 +233,7 @@ class SignalProcessor:
                 # A stateful decoder or trial publisher may already have
                 # mutated state. A retry must not silently discard that failure.
                 self._drain_failure = str(exc)
+                self.record_epoch_processed("error", "error", error=str(exc))
             logger.exception("Stream drain failed: %s", exc)
             self._emit_drain_result(barrier, ok=False, error_code="STREAM_DRAIN_FAILED", message=str(exc))
 
@@ -223,7 +271,11 @@ class SignalProcessor:
                 if self._should_stop:
                     break
                 await self._current_state.run()
+        except Exception as exc:
+            self.record_epoch_processed("error", "error", error=str(exc))
+            raise
         finally:
+            self.record_epoch_processed("interrupted", "processor_stop")
             self._cancel_pending_configuration("Signal Processing stopped before the trial boundary")
 
     def _execute(self, item) -> None:

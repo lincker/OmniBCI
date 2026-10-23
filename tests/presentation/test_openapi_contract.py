@@ -54,6 +54,7 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/stimulation/trial/start", "post"),
     # Current decoded results
     ("/api/v1/results", "get"),
+    ("/api/v1/results/epochs", "get"),
     # Host configuration.
     ("/api/v1/config", "get"),
     ("/api/v1/config", "patch"),

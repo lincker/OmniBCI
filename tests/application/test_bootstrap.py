@@ -109,22 +109,24 @@ class TestRegisterListeners:
         extra = [(EventType.TrialCompleted, broadcaster_handler)]
         count = register_engine_listeners(container, extra)
 
-        assert count == 4
+        assert count == 5
         registered_types = [t for t, _ in engine.subscriptions]
         assert registered_types == [
             EventType.CommandResult,
             EventType.TrialCompleted,
+            EventType.EpochProcessed,
             EventType.AcquisitionState,
             EventType.TrialCompleted,
         ]
         assert engine.subscriptions[1][1] == container.results_service.on_trial_completed
-        assert engine.subscriptions[2][1] == container.acquisition_service.on_acquisition_state
-        assert engine.subscriptions[3][1] is broadcaster_handler
+        assert engine.subscriptions[2][1] == container.results_service.on_epoch_processed
+        assert engine.subscriptions[3][1] == container.acquisition_service.on_acquisition_state
+        assert engine.subscriptions[4][1] is broadcaster_handler
 
     def test_default_subscriptions_without_extra(self):
         engine = FakeEngine(initialized=True, ready=False)
         count = register_engine_listeners(_container(engine))
-        assert count == 3
+        assert count == 4
 
     def test_noop_when_engine_not_initialized(self):
         engine = FakeEngine(initialized=False)

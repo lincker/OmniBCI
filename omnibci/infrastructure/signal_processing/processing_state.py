@@ -18,6 +18,15 @@ class ProcessingState:
     async def run(self) -> None:
         raise NotImplementedError
 
+    async def _run_chunk(self, *, collecting: bool) -> None:
+        try:
+            chunk = await self.context.next_chunk()
+            if chunk is not None and (collecting or self.context.detector is not None):
+                self._process_chunk(chunk, collecting=collecting)
+        except Exception as exc:
+            self.context.record_epoch_processed("error", "error", error=str(exc))
+            raise
+
     def _boundaries(self, chunk: SignalChunk):
         """Read every boundary using the detector's first-marker interface."""
         offset = 0
@@ -55,7 +64,11 @@ class ProcessingState:
             if collecting:
                 complete, classification = self.context.current_epoch.process_chunk(chunk)
                 if complete and classification is not None:
-                    self.context.complete_trial(classification)
+                    outcome = self.context.complete_trial(classification)
+                    self.context.record_epoch_processed(
+                        "decoded", "prediction", classification=classification,
+                        trial_number=outcome.trial_number,
+                    )
                     self.context.transition_to_awaiting()
             self.context.pretrigger.push(chunk.data)
             return
@@ -68,8 +81,15 @@ class ProcessingState:
                 if not opened:
                     self.context.current_epoch.append_until_index(chunk, index)
                 _, classification = self.context.current_epoch.force_decode_at_boundary()
+                outcome = None
                 if classification is not None:
-                    self.context.complete_trial(classification)
+                    outcome = self.context.complete_trial(classification)
+                self.context.record_epoch_processed(
+                    "decoded" if classification is not None else "no_result",
+                    "next_start" if starts_epoch else "end_marker",
+                    classification=classification,
+                    trial_number=outcome.trial_number if outcome is not None else None,
+                )
                 self.context.current_epoch = None
                 collecting = False
 
@@ -81,7 +101,10 @@ class ProcessingState:
                 # not. A simultaneous end/start closes the old epoch first.
                 end = boundaries[position + 1][0] if position + 1 < len(boundaries) else chunk.raw_data.shape[1]
                 segment = chunk if end == chunk.raw_data.shape[1] else replace(chunk, raw_data=chunk.raw_data[:, :end])
-                self.context.current_epoch = self.context.new_epoch_processor()
+                try:
+                    self.context.current_epoch = self.context.new_epoch_processor()
+                finally:
+                    self.context.record_epoch_started(event_id, chunk.data.shape[0])
                 self.context.current_epoch.initialize_epoch(segment, index, event_id, pre_trigger_data=pre_trigger_data)
                 collecting = True
                 opened = True
@@ -98,15 +121,11 @@ class AwaitingEpochState(ProcessingState):
     """Idle state: drain the data queue and watch for a start trigger."""
 
     async def run(self) -> None:
-        chunk = await self.context.next_chunk()
-        if chunk is not None and self.context.detector is not None:
-            self._process_chunk(chunk, collecting=False)
+        await self._run_chunk(collecting=False)
 
 
 class AssemblingEpochState(ProcessingState):
     """Active state: accumulate chunks and record completed trials."""
 
     async def run(self) -> None:
-        chunk = await self.context.next_chunk()
-        if chunk is not None:
-            self._process_chunk(chunk, collecting=True)
+        await self._run_chunk(collecting=True)

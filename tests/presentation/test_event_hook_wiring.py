@@ -82,11 +82,13 @@ def test_lifespan_registers_engine_listeners(monkeypatch):
 
     registered_types = [t for t, _ in engine.subscriptions]
 
-    assert len(engine.subscriptions) == 5
+    assert len(engine.subscriptions) == 6
     assert EventType.CommandResult in registered_types
     assert EventType.AcquisitionState in registered_types
     assert registered_types.count(EventType.TrialCompleted) == 2
+    assert registered_types.count(EventType.EpochProcessed) == 1
     assert EventType.StimulationAck in registered_types
     handlers = [handler for _, handler in engine.subscriptions]
     assert container.results_service.on_trial_completed in handlers
+    assert container.results_service.on_epoch_processed in handlers
     assert container.acquisition_service.on_acquisition_state in handlers

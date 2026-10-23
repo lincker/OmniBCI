@@ -47,6 +47,7 @@ class EventType(IntEnum):
     ActuationFault = 404    # actuation → engine: device fault (triggers safety)
     SettleActuation = 405   # correlated mailbox cancellation and device quiescence
     TrialCompleted = 501   # payload: TrialOutcome (generation + trial_number + Classification)
+    EpochProcessed = 502   # local inspection only; never forwarded to output peers
 
 
 class Event:
@@ -55,6 +56,7 @@ class Event:
     Payload contracts:
 
       TrialCompleted   application.events.TrialOutcome
+      EpochProcessed   application.events.EpochProcessed
       StartStimulation str|None (paradigm)
       StartStimTrial   dict {"n_trials": int, "trial_params": list|None}
       AcquisitionState application.events.AcquisitionSnapshot

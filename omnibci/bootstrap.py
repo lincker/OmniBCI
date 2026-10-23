@@ -285,6 +285,7 @@ def register_engine_listeners(
             else ()
         ),
         (EventType.TrialCompleted, container.results_service.on_trial_completed),
+        (EventType.EpochProcessed, container.results_service.on_epoch_processed),
         (EventType.AcquisitionState, container.acquisition_service.on_acquisition_state),
         *extra_subscriptions,
     ]

@@ -2235,6 +2235,122 @@
         }
       }
     },
+    "/api/v1/results/epochs": {
+      "get": {
+        "tags": [
+          "Results"
+        ],
+        "summary": "List all processed epochs in the current engine run",
+        "operationId": "get_epochs_api_v1_results_epochs_get",
+        "parameters": [
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 25,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_EpochListResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/config": {
       "get": {
         "tags": [
@@ -5805,6 +5921,32 @@
         "type": "object",
         "title": "ApiResponse[EngineStatusResponse]"
       },
+      "ApiResponse_EpochListResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EpochListResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[EpochListResponse]"
+      },
       "ApiResponse_NodeConfigurationPublicationResponse_": {
         "properties": {
           "success": {
@@ -6690,6 +6832,218 @@
           "stimulation_connected"
         ],
         "title": "EngineStatusResponse"
+      },
+      "EpochListResponse": {
+        "properties": {
+          "generation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "epochs": {
+            "items": {
+              "$ref": "#/components/schemas/EpochSummary"
+            },
+            "type": "array",
+            "title": "Epochs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "generation",
+          "total",
+          "offset",
+          "limit",
+          "epochs"
+        ],
+        "title": "EpochListResponse"
+      },
+      "EpochResult": {
+        "properties": {
+          "target_id": {
+            "type": "integer",
+            "title": "Target Id"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "forced": {
+            "type": "boolean",
+            "title": "Forced"
+          }
+        },
+        "type": "object",
+        "required": [
+          "target_id",
+          "forced"
+        ],
+        "title": "EpochResult"
+      },
+      "EpochSummary": {
+        "properties": {
+          "generation": {
+            "type": "string",
+            "title": "Generation"
+          },
+          "epoch_number": {
+            "type": "integer",
+            "title": "Epoch Number"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "config_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Revision"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "decoded",
+              "no_result",
+              "interrupted",
+              "error"
+            ],
+            "title": "Status"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "prediction",
+              "end_marker",
+              "next_start",
+              "stream_stop",
+              "processor_stop",
+              "error"
+            ],
+            "title": "Reason"
+          },
+          "sample_rate": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Rate"
+          },
+          "channel_count": {
+            "type": "integer",
+            "title": "Channel Count"
+          },
+          "sample_count": {
+            "type": "integer",
+            "title": "Sample Count"
+          },
+          "pre_trigger_samples": {
+            "type": "integer",
+            "title": "Pre Trigger Samples"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Completed At"
+          },
+          "trial_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trial Number"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EpochResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "generation",
+          "epoch_number",
+          "event_id",
+          "config_revision",
+          "status",
+          "reason",
+          "sample_rate",
+          "channel_count",
+          "sample_count",
+          "pre_trigger_samples",
+          "started_at",
+          "completed_at",
+          "trial_number",
+          "result",
+          "error"
+        ],
+        "title": "EpochSummary"
       },
       "ErrorCode": {
         "type": "string",

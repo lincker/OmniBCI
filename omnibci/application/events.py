@@ -1,5 +1,6 @@
 """Pickle-safe EventBus payload contracts owned by the application layer."""
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Any, Mapping
 
@@ -13,6 +14,27 @@ class TrialOutcome:
     trial_number: int
     classification: Classification
     config_revision: str | None = None
+
+
+@dataclass(frozen=True)
+class EpochProcessed:
+    """One terminal epoch record for local inspection, separate from output commands."""
+
+    generation: str
+    epoch_number: int
+    event_id: int | None
+    config_revision: str | None
+    sample_rate: int | None
+    channel_count: int
+    sample_count: int
+    pre_trigger_samples: int
+    started_at: datetime
+    completed_at: datetime
+    status: str
+    reason: str
+    classification: Classification | None = None
+    trial_number: int | None = None
+    error: str | None = None
 
 
 @dataclass(frozen=True)

@@ -198,7 +198,9 @@ async def test_barrier_finishes_first_chunk_when_ready_without_forcing_partial_d
     assert decoder.calls == 1
     assert processor.completed_trials == 1
     events = processor.event_bus.events
-    assert [event.type for event in events] == [EventType.TrialCompleted, EventType.CommandResult]
+    assert [event.type for event in events] == [
+        EventType.TrialCompleted, EventType.EpochProcessed, EventType.CommandResult,
+    ]
     assert events[0].data.classification.forced is False
     receipt = StreamDrainReceipt.from_value(events[-1].data.data)
     assert receipt.completed_trials == 1
