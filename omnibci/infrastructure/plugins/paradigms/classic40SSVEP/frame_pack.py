@@ -10,7 +10,8 @@ from zipfile import BadZipFile, ZipFile
 import numpy as np
 
 
-_SCHEMA = "omnibci.frame-pack/v1"
+_SCHEMA = "omnibci.frame-pack/v2"
+_LEGACY_SCHEMA = "omnibci.frame-pack/v1"
 _WIDTH = 1920
 _HEIGHT = 990
 _ORIENTATION = "bottom-up"
@@ -18,11 +19,13 @@ _GROUPS = {
     "idle": (1, "L8", 1),
     "stimulation": (240, "L8", 1),
     "cue": (40, "RGB8", 3),
+    "result": (40, "RGB8", 3),
 }
 _ENTRY_PATTERNS = {
     "idle": "frames/idle/{index:03d}.l8",
     "stimulation": "frames/stimulation/{index:03d}.l8",
     "cue": "frames/cue/{index:03d}.rgb8",
+    "result": "frames/result/{index:03d}.rgb8",
 }
 
 
@@ -51,8 +54,10 @@ class _FrameDescriptor:
 
 
 class FramePack:
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Path | str, *, allow_legacy: bool = False) -> None:
+        """Read v2 assets; only the offline builder opts into legacy migration."""
         self._path = Path(path)
+        self._allow_legacy = allow_legacy
         try:
             self._archive = ZipFile(self._path, "r")
         except (OSError, BadZipFile) as exc:
@@ -87,6 +92,12 @@ class FramePack:
         for descriptor in self._frames["cue"]:
             yield self._read_frame(descriptor)
 
+    def iter_result_frames(self) -> Iterator[np.ndarray]:
+        # Legacy cue frames are solid red and become v2 result frames.
+        group = "result" if "result" in self._frames else "cue"
+        for descriptor in self._frames[group]:
+            yield self._read_frame(descriptor)
+
     def _load_manifest(self) -> dict[str, tuple[_FrameDescriptor, ...]]:
         archive_names = self._archive.namelist()
         if len(archive_names) != len(set(archive_names)):
@@ -104,8 +115,11 @@ class FramePack:
 
         if not isinstance(manifest, dict):
             raise FramePackFormatError("Frame pack manifest must be an object")
-        if manifest.get("schema") != _SCHEMA:
+        schema = manifest.get("schema")
+        legacy = self._allow_legacy and schema == _LEGACY_SCHEMA
+        if schema != _SCHEMA and not legacy:
             raise FramePackFormatError("Unsupported frame pack schema")
+        groups = {name: spec for name, spec in _GROUPS.items() if not legacy or name != "result"}
         if manifest.get("width") != _WIDTH or manifest.get("height") != _HEIGHT:
             raise FramePackFormatError(
                 f"Frame pack dimensions must be {_WIDTH}x{_HEIGHT}"
@@ -120,7 +134,7 @@ class FramePack:
             raise FramePackFormatError("Frame pack manifest frames must be a list")
 
         grouped: dict[str, list[_FrameDescriptor]] = {
-            group: [] for group in _GROUPS
+            group: [] for group in groups
         }
         for raw_descriptor in raw_frames:
             descriptor = self._parse_descriptor(raw_descriptor)
@@ -132,7 +146,7 @@ class FramePack:
 
         expected_entries = {"manifest.json"}
         validated: dict[str, tuple[_FrameDescriptor, ...]] = {}
-        for group, (count, pixel_format, channels) in _GROUPS.items():
+        for group, (count, pixel_format, channels) in groups.items():
             descriptors = sorted(grouped[group], key=lambda item: item.index)
             if [item.index for item in descriptors] != list(range(count)):
                 raise FramePackFormatError(

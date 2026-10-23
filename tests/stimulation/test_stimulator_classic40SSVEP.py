@@ -10,7 +10,7 @@ All OpenGL / filesystem dependencies are mocked:
 from __future__ import annotations
 
 from contextlib import nullcontext
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import numpy as np
 import pytest
@@ -19,6 +19,7 @@ from omnibci.infrastructure.plugins.paradigms.classic40SSVEP.ssvep import (
     Classic40SSVEP_2,
     _CUE_FRAMES,
     _RESULT_FRAMES,
+    _STIM_RECT,
     _State,
 )
 from omnibci.sdk import TextureHandle
@@ -27,9 +28,10 @@ from omnibci.sdk import TextureHandle
 # Constants matching the fake frame pack
 # ---------------------------------------------------------------------------
 _N_STIM_FRAMES = 5
-_N_CUE_FRAMES  = 3
-# total uploads: 1 init + _N_STIM_FRAMES stim + _N_CUE_FRAMES cue + 1 text
-_TOTAL_UPLOADS = 1 + _N_STIM_FRAMES + _N_CUE_FRAMES + 1
+_N_CUE_FRAMES  = 40
+_N_RESULT_FRAMES = 40
+# total uploads: 1 init + stimulation + cue + result + 1 text
+_TOTAL_UPLOADS = 1 + _N_STIM_FRAMES + _N_CUE_FRAMES + _N_RESULT_FRAMES + 1
 
 _IDLE_FRAME = np.zeros((10, 10, 1), dtype=np.uint8)
 _STIM_FRAMES = [
@@ -39,6 +41,10 @@ _STIM_FRAMES = [
 _CUE_FRAME_DATA = [
     np.full((10, 10, 3), i + 1, dtype=np.uint8)
     for i in range(_N_CUE_FRAMES)
+]
+_RESULT_FRAME_DATA = [
+    np.full((10, 10, 3), i + 101, dtype=np.uint8)
+    for i in range(_N_RESULT_FRAMES)
 ]
 
 
@@ -79,6 +85,7 @@ def _mock_frame_pack():
         pack.idle_frame = _IDLE_FRAME
         pack.iter_stimulation_frames.side_effect = lambda: iter(_STIM_FRAMES)
         pack.iter_cue_frames.side_effect = lambda: iter(_CUE_FRAME_DATA)
+        pack.iter_result_frames.side_effect = lambda: iter(_RESULT_FRAME_DATA)
         yield pack
 
 
@@ -97,7 +104,8 @@ class TestSetup:
 
     def test_uploads_frame_pack_in_order(self, paradigm, renderer):
         paradigm.setup(renderer)
-        frames = [_IDLE_FRAME, *_STIM_FRAMES, *_CUE_FRAME_DATA]
+        frames = [_IDLE_FRAME, *_STIM_FRAMES, *_CUE_FRAME_DATA, *_RESULT_FRAME_DATA]
+        assert renderer.upload_texture.call_count == len(frames) + 1
         for upload, frame in zip(renderer.upload_texture.call_args_list, frames):
             assert upload.args[0] is frame
 
@@ -118,6 +126,7 @@ class TestSetup:
     def test_initial_state_is_idle(self, paradigm, renderer):
         paradigm.setup(renderer)
         assert paradigm._state == _State.IDLE
+        assert paradigm._result_target_id == 0
 
     def test_stim_textures_populated(self, paradigm, renderer):
         paradigm.setup(renderer)
@@ -126,6 +135,10 @@ class TestSetup:
     def test_cue_textures_populated(self, paradigm, renderer):
         paradigm.setup(renderer)
         assert len(paradigm._cue_textures) == _N_CUE_FRAMES
+
+    def test_result_textures_populated(self, paradigm, renderer):
+        paradigm.setup(renderer)
+        assert len(paradigm._result_textures) == _N_RESULT_FRAMES
 
 
 class TestTeardown:
@@ -139,7 +152,8 @@ class TestTeardown:
         paradigm.setup(renderer)
         paradigm.teardown(renderer)
         assert paradigm._stim_textures == []
-        assert paradigm._cue_textures  == []
+        assert paradigm._cue_textures == []
+        assert paradigm._result_textures == []
 
     def test_clears_renderer_reference(self, paradigm, renderer):
         paradigm.setup(renderer)
@@ -195,9 +209,23 @@ class TestRenderFrameTransitions:
     def test_cue_transitions_to_stim_after_countdown(self, paradigm, renderer, trigger):
         paradigm.setup(renderer)
         paradigm.trial_stimulus_present(1)
-        self._tick(paradigm, _CUE_FRAMES)
+        self._tick(paradigm, _CUE_FRAMES - 1)
+        assert paradigm._state == _State.CUE
+        trigger.send.assert_not_called()
+        renderer.reset_mock()
+        self._tick(paradigm)
+        assert renderer.draw_texture.call_args_list[0] == call(
+            paradigm._cue_textures[0], _STIM_RECT
+        )
+        renderer.draw_rect.assert_not_called()
         assert paradigm._state == _State.STIM
         trigger.send.assert_called_once_with(1)
+        renderer.reset_mock()
+        self._tick(paradigm)
+        renderer.draw_rect.assert_not_called()
+        assert renderer.draw_texture.call_args_list[0] == call(
+            paradigm._stim_textures[0], _STIM_RECT
+        )
 
     def test_stim_plays_all_frames(self, paradigm, renderer):
         paradigm.setup(renderer)
@@ -222,8 +250,22 @@ class TestRenderFrameTransitions:
         paradigm.setup(renderer)
         paradigm.trial_result_present(1)            # 1-based: target 1 = 'A'
         assert paradigm._state == _State.RESULT
-        self._tick(paradigm, _RESULT_FRAMES)
+        self._tick(paradigm, _RESULT_FRAMES - 1)
+        assert paradigm._state == _State.RESULT
+        assert paradigm._result_target_id == 1
+        renderer.reset_mock()
+        self._tick(paradigm)
+        assert renderer.draw_texture.call_args_list[0] == call(
+            paradigm._result_textures[0], _STIM_RECT
+        )
         assert paradigm._state == _State.IDLE
+        assert paradigm._result_target_id == 0
+        renderer.reset_mock()
+        self._tick(paradigm)
+        assert renderer.draw_texture.call_args_list[0] == call(
+            paradigm._init_tex, _STIM_RECT
+        )
+        renderer.draw_rect.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +341,70 @@ class TestRenderFrameDrawing:
         paradigm.render_frame(0.0)
         renderer.clear.assert_called_once()
         renderer.draw_texture.assert_called()
+
+    @pytest.mark.parametrize("target_id", [1, 8, 9, 40])
+    def test_cue_draws_target_frame_from_pack(self, paradigm, renderer, target_id):
+        paradigm.setup(renderer)
+        paradigm.trial_stimulus_present(target_id)
+        renderer.reset_mock()
+        paradigm.render_frame()
+
+        assert renderer.draw_texture.call_args_list == [
+            call(paradigm._cue_textures[target_id - 1], _STIM_RECT),
+            call(paradigm._text_view._tex, paradigm._text_view._rect),
+        ]
+        renderer.draw_rect.assert_not_called()
+
+    @pytest.mark.parametrize(("result_id", "text"), [(8, "AH"), (40, "")])
+    def test_result_highlights_recognized_target_instead_of_cue(
+        self, paradigm, renderer, result_id, text
+    ):
+        paradigm.setup(renderer)
+        paradigm.trial_result_present(1)
+        paradigm.trial_stimulus_present(1)
+        paradigm.render_frame()
+        paradigm.trial_result_present(result_id)
+        renderer.reset_mock()
+        paradigm.render_frame()
+
+        assert paradigm._current_event == 1
+        assert paradigm._result_target_id == result_id
+        assert paradigm._text_view._content == text
+        assert renderer.draw_texture.call_args_list == [
+            call(paradigm._result_textures[result_id - 1], _STIM_RECT),
+            call(paradigm._text_view._tex, paradigm._text_view._rect),
+        ]
+        renderer.draw_rect.assert_not_called()
+
+    def test_new_trial_clears_result_and_moves_cue(self, paradigm, renderer):
+        paradigm.setup(renderer)
+        paradigm.trial_stimulus_present(1)
+        paradigm.render_frame()
+        paradigm.trial_result_present(40)
+        paradigm.render_frame()
+        paradigm.trial_stimulus_present(9)
+        renderer.reset_mock()
+        paradigm.render_frame()
+
+        assert paradigm._result_target_id == 0
+        assert renderer.draw_texture.call_args_list[0] == call(
+            paradigm._cue_textures[8], _STIM_RECT
+        )
+        renderer.draw_rect.assert_not_called()
+
+    @pytest.mark.parametrize("target_id", [None, 0, 99])
+    def test_no_cue_mode_draws_stimulation_without_border(self, paradigm, renderer, target_id):
+        paradigm.setup(renderer)
+        paradigm.trial_result_present(1)
+        paradigm.trial_stimulus_present(target_id)
+        renderer.reset_mock()
+        paradigm.render_frame()
+
+        assert paradigm._result_target_id == 0
+        assert renderer.draw_texture.call_args_list[0] == call(
+            paradigm._stim_textures[0], _STIM_RECT
+        )
+        renderer.draw_rect.assert_not_called()
 
     def test_render_frame_noop_without_renderer(self, paradigm):
         # should not raise
