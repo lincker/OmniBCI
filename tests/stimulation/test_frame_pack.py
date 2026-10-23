@@ -7,6 +7,8 @@ import numpy as np
 import pytest
 
 from omnibci.infrastructure.plugins.paradigms.classic40SSVEP.frame_pack import FramePack
+from omnibci.infrastructure.plugins.paradigms.classic40SSVEP.feedback_display import FeedbackDisplay
+from omnibci.infrastructure.plugins.paradigms.classic40SSVEP.ssvep import _STIM_RECT, _WIN_H, _WIN_W
 
 
 @pytest.mark.integration
@@ -30,6 +32,28 @@ def test_bundled_frame_pack_is_complete_and_readable():
                 assert frame.dtype == np.uint8
                 count += 1
             assert count == expected_count
+
+
+@pytest.mark.integration
+def test_bundled_frames_keep_square_pixels_and_fit_below_feedback():
+    resource = resources.files(
+        "omnibci.infrastructure.plugins.paradigms.classic40SSVEP"
+    ).joinpath("resource", "classic40_ssvep.ofp")
+
+    with resources.as_file(resource) as path, FramePack(path) as pack:
+        height, width, _ = pack.idle_frame.shape
+
+    horizontal_scale = _STIM_RECT.w * _WIN_W / 2 / width
+    vertical_scale = _STIM_RECT.h * _WIN_H / 2 / height
+    assert horizontal_scale == pytest.approx(vertical_scale)
+    assert horizontal_scale == pytest.approx(1)
+    assert (_STIM_RECT.x, _STIM_RECT.y) == pytest.approx((-1, -1))
+    assert _STIM_RECT.x + _STIM_RECT.w == pytest.approx(1)
+
+    feedback = FeedbackDisplay()._rect
+    assert _STIM_RECT.y + _STIM_RECT.h == pytest.approx(feedback.y)
+    assert feedback.y + feedback.h == pytest.approx(1)
+    assert feedback.h * _WIN_H / 2 == pytest.approx(90)
 
 
 @pytest.mark.integration

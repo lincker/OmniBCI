@@ -55,8 +55,8 @@ def _center_rect(cx_px: int, cy_px: int, w_px: int, h_px: int) -> Rect:
     return Rect(x=cx - hw, y=cy - hh, w=hw * 2, h=hh * 2)
 
 
-# Matches original StimImage(position=(0, -45)) for a 1920×1080 image
-_STIM_RECT: Rect = _center_rect(0, -45, _WIN_W, _WIN_H)
+# Preserve the 1920×990 frame pack's aspect ratio below the 90-pixel feedback area.
+_STIM_RECT: Rect = _center_rect(0, -45, _WIN_W, 990)
 
 
 # ---------------------------------------------------------------------------
