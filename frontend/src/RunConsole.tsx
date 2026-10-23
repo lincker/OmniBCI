@@ -4,7 +4,7 @@ import { useAction } from "./hooks/useAction";
 import { usePoll } from "./hooks/usePoll";
 import type { ResultsFeed } from "./hooks/useResultsFeed";
 import { translateControlLabel, translatePluginName, useI18n, type TranslationKey, type TranslationParams } from "./i18n";
-import { TrialResults } from "./TrialResults";
+import { EpochProcessing } from "./EpochProcessing";
 import { AcquisitionPreview } from "./AcquisitionPreview";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
 import { pluginConfigApi, selectionKey, type Activation, type PluginProfile, type PluginDefinition } from "./api/plugin-config";
@@ -231,8 +231,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
     {(actionError || trialError) && <p className="inline-message error" role="alert">{trialError === "count" ? t("run.invalidTrialCount") : trialError
       ? t("run.invalidControl", { label: translateControlLabel(trialError.name, trialError.label, t) }) : actionError}</p>}
     {feed.error && <p className="error" role="alert">{feed.error}</p>}
-    <section className="card"><h2>{t("run.recentResults")} <button className="text-button" disabled={busy} onClick={onResults}>{t("run.viewAllResults")} <Icon name="chevron" /></button></h2>
-      <TrialResults trials={feed.trials.slice(-3)} /></section>
+    <EpochProcessing onResults={onResults} disabled={busy} />
     <details className="ack-panel"><summary>{t("run.acknowledgements")} <span className="count">{feed.acks.length}</span></summary>
       {!feed.acks.length ? <p className="meta">{t("run.acknowledgementsHelp")}</p> : <ul className="acks">
         {feed.acks.map((ack, index) => <li key={index}><code>{ack.command}</code>

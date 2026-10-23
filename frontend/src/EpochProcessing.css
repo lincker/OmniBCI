@@ -1,0 +1,5 @@
+.epoch-processing > .meta { margin-top: 0; }
+.epoch-toolbar, .epoch-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.epoch-toolbar { justify-content: space-between; }
+.epoch-pagination { margin-top: 0.75rem; font-size: 0.75rem; }
+.epoch-error { display: block; max-width: 32rem; white-space: normal; overflow-wrap: anywhere; }

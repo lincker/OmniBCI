@@ -18,6 +18,7 @@ export type PreviewSelection = S["AcquisitionPreviewSelectionModel"];
 export type PreviewLimits = S["AcquisitionPreviewLimitsModel"];
 export type Trial = S["TrialResponse"];
 export type ResultsSnapshot = S["ResultsResponse"];
+export type EpochList = S["EpochListResponse"];
 export type ConfigEntry = S["ConfigEntry"];
 export type ConfigData = S["ConfigResponse"];
 export type PatchConfigResult = S["PatchConfigResponse"];
@@ -77,6 +78,8 @@ export const api = {
   stimulationStatus: () => get<StimulationStatus>("/api/v1/stimulation/status"),
 
   results: () => get<ResultsSnapshot>("/api/v1/results"),
+  epochs: (offset = 0, limit = 25) =>
+    get<EpochList>(`/api/v1/results/epochs?${new URLSearchParams({ offset: String(offset), limit: String(limit) })}`),
 
   // ---- control actions (stage 2, lock-free) ------------------------------
   engineStart: () => post("/api/v1/engine/start"),

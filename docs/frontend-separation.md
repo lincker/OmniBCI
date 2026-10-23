@@ -59,6 +59,7 @@ operations are:
 | POST | `/stimulation/stop` | Stop stimulation |
 | POST | `/stimulation/trial/start` | Request trials using the selected paradigm controls |
 | GET | `/results` | Read current live decoded results |
+| GET | `/results/epochs` | Page through every processed epoch in the current engine run |
 
 `GET /results` returns `data: {generation: string | null, trials: TrialResponse[]}`.
 Both keys are always present. Each trial contains `generation`, `trial_number`,
@@ -66,6 +67,22 @@ Both keys are always present. Each trial contains `generation`, `trial_number`,
 `config_revision`. Results are held in memory for the current engine generation,
 limited to the latest 200 trials. Restarting the engine clears them. This is not a
 persistent history or export API.
+
+The Run page's **Epoch processing** card separately shows every closed epoch,
+including decoded, no-result, interrupted and failed processing. Epoch numbers
+count all opened epochs; trial numbers still count decoded results only. The
+card refreshes once per second and pages through the whole run, rather than
+retaining only the latest 200 entries. A new engine generation clears this
+history. An epoch appears when it closes; the currently collecting epoch has no
+terminal record yet.
+
+`GET /results/epochs?offset=0&limit=25` returns `generation`, `total`, `offset`,
+`limit` and `epochs` in descending epoch-number order. The page limit is 100.
+Each record includes its status, closing reason, signal counts, processing times,
+configuration revision and optional classification. Records contain no signal
+matrices, and there is no epoch-data detail endpoint. The internal
+`EpochProcessed` event is separate from `TrialCompleted` and is not forwarded to
+stimulation or actuation.
 
 The previous session and recording-control endpoints have been removed. External
 clients must use Acquisition stream controls and `/results`.
