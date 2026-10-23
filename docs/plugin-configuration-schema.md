@@ -91,8 +91,8 @@ backend.
 
 ## Acquisition source context
 
-Source schemas retain `sample_rate` and `channel_number` so Profiles can record
-expected experiment parameters. `channel_number` counts all adapter output rows,
+Source schemas retain `sample_rate` and `channel_count` so Profiles can record
+expected experiment parameters. `channel_count` counts all adapter output rows,
 including the final event row. Declared values must be positive integers and
 satisfy plugin-specific bounds.
 

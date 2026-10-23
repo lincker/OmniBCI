@@ -10,13 +10,13 @@ from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 
 def test_settings_snapshot_is_isolated_and_does_not_fall_back_to_disk(tmp_path):
     path = tmp_path / "settings.toml"
-    path.write_text('[ACQUISITION]\nsample_rate = 1000\nchannel_number = 10\n')
+    path.write_text('[ACQUISITION]\nsample_rate = 1000\nchannel_count = 10\n')
     settings = OmniBCISettings(path)
     snapshot = {"ACQUISITION.sample_rate": 250, "ALGORITHM.filters": ["example"]}
     settings.use_snapshot(snapshot)
     snapshot["ACQUISITION.sample_rate"] = 500
     assert settings.get("ACQUISITION.sample_rate") == 250
-    assert settings.get("ACQUISITION.channel_number", None) is None
+    assert settings.get("ACQUISITION.channel_count", None) is None
     settings.get("ALGORITHM.filters").append("other")
     assert settings.get("ALGORITHM.filters") == ["example"]
     assert OmniBCISettings(path).get("ACQUISITION.sample_rate") == 1000

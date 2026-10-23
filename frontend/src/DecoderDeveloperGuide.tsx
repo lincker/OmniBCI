@@ -47,7 +47,7 @@ export function DecoderDeveloperGuide() {
       <ul>
         <li><code>should_decode(window)</code>{t("guide.readinessCheck")}</li>
         <li><code>decode(window, latest_samples)</code>{t("guide.returns")}<code>Prediction(target_id=…)</code>{t("guide.or")}<code>None</code>{t("guide.predictionOutcome")}</li>
-        <li>{t("guide.arrayShape")}<code>context.input_signal.channels</code>{t("guide.mappedRows")}<code>context.channel_names</code>{t("guide.originalAcquisition")}</li>
+        <li>{t("guide.arrayShape")}<code>context.input_signal.channels</code>{t("guide.mappedRows")}<code>context.acquired_signal.channels</code>{t("guide.originalAcquisition")}</li>
         <li><code>window</code>{t("guide.orderedFilters")}<code>latest_samples</code>{t("guide.latestSamples")}</li>
         <li>{t("guide.latestRequired")}<code>latest_samples</code>{t("guide.emptyFragment")}<code>(signal_channels, 0)</code>{t("guide.noFallback")}</li>
         <li>{t("guide.boundaryAndDrain")}</li>

@@ -26,12 +26,20 @@
       "x-apply": "module",
       "minimum": 1
     },
-    "channel_number": {
+    "channel_count": {
       "type": "integer",
       "title": "Expected output rows including event row",
       "x-scope": "portable",
       "x-apply": "module",
       "minimum": 2
+    },
+    "channel_labels": {
+      "type": "array",
+      "title": "Channel labels including event row",
+      "description": "Native channel labels in output row order, including the final trigger row.",
+      "items": {"type": "string"},
+      "x-scope": "portable",
+      "x-apply": "module"
     }
   },
   "required": [

@@ -36,7 +36,7 @@ class MetadataCatalog:
             properties = {}
             if kind == "acquisition":
                 properties = {"sample_rate": {"type": "integer", "default": 500},
-                              "channel_number": {"type": "integer", "default": 2}}
+                              "channel_count": {"type": "integer", "default": 2}}
             elif kind in {"paradigm", "effector"}:
                 properties = {"gain": {"type": "number", "default": 1.0}}
             self.definitions[kind] = PluginConfiguration(

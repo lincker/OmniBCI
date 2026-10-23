@@ -8792,7 +8792,7 @@
           "sample_rate": {
             "$ref": "#/components/schemas/SourceParameterComparisonModel"
           },
-          "channel_number": {
+          "channel_count": {
             "$ref": "#/components/schemas/SourceParameterComparisonModel"
           }
         },
@@ -8800,7 +8800,7 @@
         "required": [
           "status",
           "sample_rate",
-          "channel_number"
+          "channel_count"
         ],
         "title": "SourceExpectationsModel"
       },

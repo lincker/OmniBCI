@@ -143,10 +143,12 @@ describes every field, with comments in the executable starter manifest.
 
 Both prepared input contracts add `acquired_signal` and `input_signal` to the
 context, as immutable `SignalInfo` values.
-`channel_names` retains the original acquired-channel meaning; the ordered
-`input_signal.channels` describes the actual decoder/filter/detector input,
+Use `acquired_signal.channels` for the original Acquisition channels and the
+ordered `input_signal.channels` for the actual decoder/filter/detector input,
 including source channel IDs, signal types and optional units. The final trigger
-row remains separate. Channel mapping selects and orders rows without changing
+row remains separate. `PluginContext.channel_names` remains compatible with its
+original acquired-channel meaning but is deprecated for new plugin code.
+Channel mapping selects and orders rows without changing
 sample values. Undeclared plugins retain the legacy identity path and reject
 changed input before streaming. The bundled CCA
 and FBCCA declare contract 2 with flexible EEG input and no mandatory electrode

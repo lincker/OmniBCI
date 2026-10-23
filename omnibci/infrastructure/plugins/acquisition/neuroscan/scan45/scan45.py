@@ -124,10 +124,10 @@ class Scan45DataReader(SignalSource):
         super().__init__()
         self.data_provider_ip = parameters.get("DATA_PROVIDER_IP", "127.0.0.1")
         self.data_provider_port = parameters.get("DATA_PROVIDER_PORT", 4000)
-        self.channel_number = parameters.get("channel_number", 10)
+        self.channel_count = parameters.get("channel_count", 10)
         self._sample_rate = parameters.get("sample_rate", context.sample_rate if context else None)
-        if type(self.channel_number) is not int or self.channel_number < 2:
-            raise ValueError("channel_number must be an integer >= 2, including the event channel")
+        if type(self.channel_count) is not int or self.channel_count < 2:
+            raise ValueError("channel_count must be an integer >= 2, including the event channel")
         self.reader = None
         self.writer = None
         self._pending_header = None
@@ -176,7 +176,7 @@ class Scan45DataReader(SignalSource):
         """Describe the configured stream until device querying is implemented."""
         return acquisition_descriptor(
             source_id=source_id, connection_id=connection_id,
-            signal_channel_count=self.channel_number - 1,
+            signal_channel_count=self.channel_count - 1,
             sample_rate=self._sample_rate,
             native_event="final-row", provenance="user-declared",
         )
@@ -239,7 +239,7 @@ class Scan45DataReader(SignalSource):
         raise ValueError(f"Unsupported Scan45 data format: {header.request}")
 
     def _unpack_int32_eeg(self, data: bytes):
-        n_channels = self.channel_number
+        n_channels = self.channel_count
         if not data or len(data) % (4 * n_channels):
             raise ValueError(f"Scan45 packet must contain complete samples of {n_channels} channels")
         int32_count = len(data) // 4

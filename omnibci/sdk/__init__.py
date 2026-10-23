@@ -40,8 +40,7 @@ AcquisitionDescriptor = SignalInfo
 class PluginContext:
     """Immutable metadata that can cross a multiprocessing spawn boundary.
 
-    ``sample_rate`` and ``channel_names`` describe the acquired signal, with
-    channel names excluding the event/trigger row. They can be absent before a
+    ``sample_rate`` describes the acquired signal and can be absent before a
     source connects. ``config_revision`` identifies the host's applied snapshot.
     ``resource_root`` is the trusted asset directory of the selected package,
     supplied as an absolute string path by the host; no filesystem access occurs
@@ -49,8 +48,13 @@ class PluginContext:
 
     ``acquired_signal`` describes normalized acquisition rows. ``input_signal``
     describes the channel IDs, names, types and units supplied to this processing
-    plugin after channel selection and ordering. Both are absent
-    in the legacy path; ``channel_names`` keeps its acquired-channel meaning.
+    plugin after channel selection and ordering. Their ``channels`` exclude the
+    event/trigger row. Both are absent in the legacy path.
+
+    ``channel_names`` is deprecated and retained for existing plugins. Prepared
+    contexts populate it from ``acquired_signal.channels`` for compatibility;
+    it never describes mapped input rows. New plugins should read channel
+    records from ``acquired_signal`` or ``input_signal`` as appropriate.
     """
 
     sample_rate: float | None = None

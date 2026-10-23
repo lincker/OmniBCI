@@ -14,7 +14,7 @@ from omnibci.infrastructure.plugins import node_client
 def configuration(*, generation="run-1"):
     return NodeConfiguration(
         "actuation", "a" * 64, generation,
-        {"ACQUISITION.sample_rate": 250, "ACQUISITION.channel_number": 2,
+        {"ACQUISITION.sample_rate": 250, "ACQUISITION.channel_count": 2,
          "ACTUATION.enabled": True},
         (ProfileBinding("actuation.effector", "effector", None,
                         PluginSelection("test.effector", "logger", "1.0.0"), {}),),

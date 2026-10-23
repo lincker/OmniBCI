@@ -2,8 +2,8 @@
 
 Acquisition adapts external data sources into a common signal stream and a
 `SignalInfo`. Its `descriptor` describes the adapter output; source
-`metadata` is opaque display text. Neither is an editable
-Plugin Profile parameter.
+`metadata` is inspection text. The descriptor and full metadata payload are not
+editable Plugin Profile parameters.
 
 The domain type is `SignalInfo` in `omnibci.domain.signal_info`, also exported by
 `omnibci.sdk`. The former `AcquisitionDescriptor` import and
@@ -59,7 +59,7 @@ showing conflicting provided parameters in red. The response is:
   "comparison": {
     "status": "matched",
     "sample_rate": {"expected": 1000, "actual": 1000},
-    "channel_number": {"expected": 3, "actual": 3}
+    "channel_count": {"expected": 3, "actual": 3}
   }
 }
 ```
@@ -85,9 +85,14 @@ event row are not inserted into that source text.
 
 `SignalSource.describe_output(...) -> SignalInfo` describes the
 adapter's normalized output from the same observation, without querying again.
-The runtime, application and Signal Processing never parse the display text. Plugins
-without a valid descriptor can still show metadata, but cannot prepare channel
-mapping.
+The backend runtime, application and Signal Processing never parse the display
+text. The Acquisition UI reads Curry8's native JSON `channel_labels` to fill an
+optional Profile parameter with every native row label in order, including the
+final `Trigger` row. New drafts receive these labels with Get Metadata; saved
+Profiles require explicit adoption into the draft or a new Profile and saving.
+Saved labels do not replace the live descriptor's signal-only channel list.
+Plugins without a valid descriptor can still show metadata, but cannot prepare
+channel mapping.
 
 The shared `signal_info()` builder accepts explicit keyword arguments:
 `source_id`, `connection_id`, `sample_rate`, and `signal_channel_count` are
@@ -111,8 +116,8 @@ current source metadata.
 
 ### Experiment expectations
 
-The source Profile retains `sample_rate` and `channel_number` as expected
-experiment parameters. `channel_number` includes the event row and is compared
+The source Profile retains `sample_rate` and `channel_count` as expected
+experiment parameters. `channel_count` includes the event row and is compared
 with `SignalInfo.output_row_count`, not `signal_channel_count`. For Curry8 and
 File Reader, new drafts have neither value until Get Metadata fills them from the
 source; their schemas retain both fields without defaults. Saving remains an

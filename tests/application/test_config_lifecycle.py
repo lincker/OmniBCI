@@ -16,7 +16,7 @@ from omnibci.conf import OmniBCISettings
 def application_config(tmp_path):
     path = tmp_path / "settings.toml"
     path.write_text('[ACQUISITION]\nsignal_source = "file_reader"\nsample_rate = 1000\n'
-                    'channel_number = 10\ndata_file_path = "recordings/demo.cnt"\n'
+                    'channel_count = 10\ndata_file_path = "recordings/demo.cnt"\n'
                     'file_reader_chunk_size = 100\ntrigger = ""\n'
                     '[ALGORITHM]\ndecoder = "THUBCI_SSVEP_classic40FBCCA"\n'
                     'epoch_detector = "DEFAULT_EPOCH_DETECTOR"\nfilters = []\nbaseline_duration = 1.0\n'
@@ -116,7 +116,7 @@ async def test_bootstrap_shares_pinned_plugin_selection_between_status_and_engin
         selected = profiles.create("acquisition", profiles.catalog.legacy(
             "acquisition", "neuroscan_scan45_reader").selection, "Lab", {
                 "DATA_PROVIDER_IP": "192.168.0.3", "DATA_PROVIDER_PORT": 4000,
-                "sample_rate": 500, "channel_number": 10,
+                "sample_rate": 500, "channel_count": 10,
             })
         bindings = [{"slot": "acquisition.source", "profile_id": selected.profile_id}]
         for slot, kind, alias in (

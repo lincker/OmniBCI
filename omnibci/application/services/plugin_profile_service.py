@@ -26,7 +26,7 @@ def _validate_source_parameters(binding: ProfileBinding) -> None:
     """Validate experiment expectations when the source profile declares them."""
     if binding.slot != "acquisition.source":
         return
-    for key in ("sample_rate", "channel_number"):
+    for key in ("sample_rate", "channel_count"):
         if key not in binding.parameters:
             continue
         value = binding.parameters.get(key)

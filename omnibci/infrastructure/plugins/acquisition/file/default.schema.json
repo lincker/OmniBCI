@@ -26,7 +26,7 @@
       "x-apply": "module",
       "minimum": 1
     },
-    "channel_number": {
+    "channel_count": {
       "type": "integer",
       "title": "Expected output rows including event row",
       "x-scope": "portable",

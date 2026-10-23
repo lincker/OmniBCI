@@ -42,7 +42,6 @@ def _snapshot(plan):
         "CONFIG.revision": plan.config_revision, "CONFIG.generation": "generation-one",
         "ACQUISITION.sample_rate": plan.source.sample_rate,
         "ACQUISITION.signal_source": plan.source.source_id,
-        "ACQUISITION.channel_names": [c.name for c in plan.source.channels],
         "ALGORITHM.baseline_duration": 0.008,
         "PLUGINS.bindings": [ProfileBinding("processing.decoder", "decoder", None,
             PluginSelection("test.decoder", "default", "1"), {},
@@ -426,13 +425,33 @@ async def test_stream_barrier_bypasses_signal_transform(monkeypatch):
     assert processor.event_bus.put_event.call_args.args[0].data.ok
 
 
-def test_input_context_preserves_acquired_names_and_describes_ordered_outputs():
+@pytest.mark.parametrize("duplicate_names", [False, True])
+def test_input_context_preserves_live_channels_and_describes_ordered_aliases(duplicate_names):
     plan = _plan()
-    context = signal_configuration.signal_context(_snapshot(plan), plan)
-    assert context.channel_names == ("O1", "O2", "M1")
-    assert tuple(c.name for c in context.input_signal.channels) == ("O2", "O1")
+    source = plan.source
+    if duplicate_names:
+        source = replace(source, channels=tuple(
+            replace(channel, name="O1") if channel.index == 1 else channel
+            for channel in source.channels))
+    plan = compile_processing_plan(source, ProcessingInput(outputs=(
+        ChannelBinding("posterior-right", "channel-1"), ChannelBinding("posterior-left", "channel-0"))),
+        config_revision=plan.config_revision)
+    snapshot = {**_snapshot(plan), "ACQUISITION.channel_labels": ["stale-1", "stale-2", "stale-3", "Trigger"],
+                "ACQUISITION.channel_names": ["legacy-1", "legacy-2", "legacy-3"]}
+    context = signal_configuration.signal_context(snapshot, plan)
+    assert tuple(c.name for c in context.acquired_signal.channels) == (
+        "O1", "O1" if duplicate_names else "O2", "M1")
+    assert tuple(c.channel_id for c in context.acquired_signal.channels) == ("channel-0", "channel-1", "channel-2")
+    assert tuple(c.name for c in context.input_signal.channels) == ("posterior-right", "posterior-left")
+    assert tuple(c.channel_id for c in context.input_signal.channels) == ("channel-1", "channel-0")
+    assert tuple(c.index for c in context.input_signal.channels) == (0, 1)
+    assert context.input_signal.source_id == context.acquired_signal.source_id == "test-source"
+    assert context.input_signal.signal_channel_count == 2
     assert context.input_signal.trigger_row_index == 2
-    assert context.acquired_signal == plan.source
+    assert context.acquired_signal.signal_channel_count == 3
+    assert context.acquired_signal.trigger_row_index == 3
+    assert context.acquired_signal is source
+    assert context.channel_names == tuple(c.name for c in source.channels)
     assert context.sample_rate == 250
 
 

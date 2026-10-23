@@ -158,7 +158,7 @@ def modern_binding(service, metadata, *, profile_id="source-a", outputs=("O1",))
     from omnibci.domain.channel_mapping import ProcessingInput
     source = {"slot": "acquisition.source", "profile_id": profile_id,
               "profile_revision": 1, "selection": {"plugin_id": "test.source"},
-              "parameters": {"sample_rate": 500, "channel_number": 3}}
+              "parameters": {"sample_rate": 500, "channel_count": 3}}
     snapshot = {**service.engine.applied_snapshot,
                 "PLUGINS.bindings": [source, {"slot": "processing.decoder",
                     "selection": {"package_id": "test.decoder", "contribution_id": "default", "version": "1"},
@@ -382,7 +382,7 @@ def test_invalid_decoder_input_does_not_hide_connected_source(signal_service, va
 
 
 @pytest.mark.parametrize("parameters,error", [
-    ({"sample_rate": 1000, "channel_number": 3}, "differs from the experiment profile"),
+    ({"sample_rate": 1000, "channel_count": 3}, "differs from the experiment profile"),
     ({"sample_rate": 1000}, "differs from the experiment profile"),
 ])
 def test_reported_source_expectations_gate_prepare_without_hiding_actual_info(signal_service, parameters, error):
@@ -399,7 +399,7 @@ def test_reported_source_expectations_gate_prepare_without_hiding_actual_info(si
 
 
 @pytest.mark.parametrize("provenance", ["device-reported", "file-reported"])
-@pytest.mark.parametrize("parameters", [{}, {"sample_rate": 500}, {"channel_number": 3}])
+@pytest.mark.parametrize("parameters", [{}, {"sample_rate": 500}, {"channel_count": 3}])
 def test_prepare_uses_observed_metadata_when_expectations_are_optional(signal_service, provenance, parameters):
     service, metadata, _, calls = signal_service
     source = replace(metadata, provenance=provenance)

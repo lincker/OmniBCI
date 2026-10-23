@@ -225,7 +225,7 @@ def test_profile_crud_and_compare_and_swap(client):
 
 def test_legacy_montage_is_not_exposed_by_profile_or_activation_responses(client):
     http, service, _ = client
-    data = create(client, parameters={"sample_rate": 500, "channel_number": 3})
+    data = create(client, parameters={"sample_rate": 500, "channel_count": 3})
     profile = service.repository.get_profile(data["profile_id"])
     metadata = manual_montage()
     legacy = service.repository.save_profile(
@@ -455,7 +455,7 @@ def test_saving_active_profile_does_not_change_selected_values(client, include_h
 @pytest.mark.parametrize("include_host_settings", [None, False, True])
 def test_plan_and_direct_selection_use_the_same_candidate(client, include_host_settings):
     http, service, state = client
-    source = create(client, parameters={"sample_rate": 1000, "channel_number": 10})
+    source = create(client, parameters={"sample_rate": 1000, "channel_count": 10})
     decoder = create(client, "decoder", "THUBCI_SSVEP_classic40CCA")
     bindings = complete_profiles(client, [("acquisition.source", source), ("processing.decoder", decoder)])
     before = accept(http, bindings).json()["data"]

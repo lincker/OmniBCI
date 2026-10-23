@@ -10,7 +10,7 @@ from omnibci.application.plugin_profiles import ProfileBinding
 from omnibci.infrastructure.plugins.loader import PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginNotFoundError
 from omnibci.infrastructure.plugins.runtime_configuration import (
-    configured_bindings, load_configured_plugin,
+    configured_bindings, load_configured_plugin, plugin_context,
 )
 from omnibci.sdk import SignalSource
 
@@ -18,6 +18,22 @@ from omnibci.sdk import SignalSource
 def source_binding():
     descriptor = PluginCatalog().resolve("acquisition", "file_reader")
     return ProfileBinding("acquisition.source", "acquisition", None, descriptor.selection, {})
+
+
+@pytest.mark.parametrize("names", [["obsolete", "names"], None, 42])
+def test_runtime_context_ignores_retired_flat_channel_names(names):
+    context = plugin_context({
+        "ACQUISITION.sample_rate": 500,
+        "ACQUISITION.channel_names": names,
+        "ACQUISITION.channel_labels": ["C3", "Trigger"],
+        "CONFIG.revision": "current-revision",
+    })
+
+    assert context.sample_rate == 500
+    assert context.config_revision == "current-revision"
+    assert context.channel_names == ()
+    assert context.acquired_signal is None
+    assert context.input_signal is None
 
 
 def test_missing_selected_version_never_falls_back_to_alias():

@@ -31,11 +31,26 @@ const slots: Record<Module, Slot[]> = {
 type Editor = { profile: PluginProfile | null; plugin: string; name: string; parameters: Record<string, unknown>; processingInput: DecoderInput | null };
 type FilterInstance = BindingSelection & { plugin: string };
 const emptyEditor: Editor = { profile: null, plugin: "", name: "", parameters: {}, processingInput: null };
+const observedFields = new Set(["sample_rate", "channel_count", "channel_labels"]);
 const connectionParameters = (parameters: Record<string, unknown>) => Object.fromEntries(
-  Object.entries(parameters).filter(([key]) => key !== "sample_rate" && key !== "channel_number"));
+  Object.entries(parameters).filter(([key]) => !observedFields.has(key)));
 const filterInstances = (activation: Activation | null): FilterInstance[] => activation?.bindings
   .filter((item) => item.kind === "filter").map((item) => ({ slot: item.slot,
     profile_id: item.profile_id ?? "", plugin: selectionKey(item.selection) })) ?? [];
+
+function observedParameters(metadata: DataSourceMetadata, pluginType: string | undefined): Record<string, unknown> {
+  const output = metadata.descriptor!;
+  const parameters: Record<string, unknown> = { sample_rate: output.sample_rate, channel_count: output.output_row_count };
+  if (pluginType === "neuroscan_curry8_reader") {
+    try {
+      const labels: unknown = JSON.parse(metadata.metadata)?.channel_labels;
+      if (Array.isArray(labels) && labels.length === output.output_row_count && labels.every((label) => typeof label === "string")) {
+        parameters.channel_labels = labels;
+      }
+    } catch { /* Source text without valid JSON has no importable labels. */ }
+  }
+  return parameters;
+}
 
 function editorFor(profile: PluginProfile | undefined, definitions: PluginDefinition[], plugin?: string): Editor {
   if (profile) return { profile, plugin: selectionKey(profile.selection), name: profile.name,
@@ -131,7 +146,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     metadataGeneration.current += 1;
     setSourceMetadata(null);
     if (sourceMode === "new" && reportedSource) {
-      setEditor((current) => current.profile || !("sample_rate" in current.parameters || "channel_number" in current.parameters)
+      setEditor((current) => current.profile || !Object.keys(current.parameters).some((key) => observedFields.has(key))
         ? current : { ...current, parameters: connectionParameters(current.parameters) });
       setNotice((current) => current === "profiles.observedDraftFilled" ? null : current);
     }
@@ -294,8 +309,8 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
           && ["device-reported", "file-reported"].includes(output.provenance)
           && metadata.connection_id === sourceStatus?.connection_id
           && output.connection_id === metadata.connection_id && output.source_id === metadata.source_id) {
-        setEditor((current) => ({ ...current, parameters: { ...current.parameters,
-          sample_rate: output.sample_rate, channel_number: output.output_row_count } }));
+        setEditor((current) => ({ ...current, parameters: { ...connectionParameters(current.parameters),
+          ...observedParameters(metadata, definition?.plugin_type) } }));
         setNotice("profiles.observedDraftFilled");
       }
       await onAcquisitionChange?.();
@@ -307,16 +322,14 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   };
   const useObservedValues = () => {
     if (busy || !canUseObserved || metadataRevision !== metadataGeneration.current) return;
-    const output = sourceMetadata!.descriptor!;
-    setEditor((current) => ({ ...current, parameters: { ...current.parameters,
-      sample_rate: output.sample_rate, channel_number: output.output_row_count } }));
+    setEditor((current) => ({ ...current, parameters: { ...connectionParameters(current.parameters),
+      ...observedParameters(sourceMetadata!, definition?.plugin_type) } }));
     setNotice("profiles.observedValuesCopied");
   };
   const saveObservedProfile = () => {
     if (busy || !canUseObserved || !definition || metadataRevision !== metadataGeneration.current) return;
-    const output = sourceMetadata!.descriptor!;
-    const parameters = { ...structuredClone(editor.parameters),
-      sample_rate: output.sample_rate, channel_number: output.output_row_count };
+    const parameters = { ...connectionParameters(structuredClone(editor.parameters)),
+      ...observedParameters(sourceMetadata!, definition.plugin_type) };
     setDialog({ title: t("metadata.saveObservedProfile"), message: t("profiles.saveObservedProfileMessage"),
       confirmLabel: t("profiles.save"),
       initialValue: t("profiles.copyName", { name: editor.name || definition.label }).slice(0, 64),
@@ -332,13 +345,12 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
         }, "profiles.observedProfileSaved", true);
       } });
   };
-  const dimensionFields = new Set(["sample_rate", "channel_number"]);
   const sourceSchema = slot.kind === "acquisition" && definition?.schema
     ? { ...definition.schema, properties: Object.fromEntries(Object.entries(definition.schema.properties ?? {})
-      .filter(([key]) => !dimensionFields.has(key))) } : definition?.schema;
+      .filter(([key]) => !observedFields.has(key))) } : definition?.schema;
   const dimensionSchema = slot.kind === "acquisition" && definition?.schema
     ? { ...definition.schema, properties: Object.fromEntries(Object.entries(definition.schema.properties ?? {})
-      .filter(([key]) => dimensionFields.has(key))) } : null;
+      .filter(([key]) => observedFields.has(key))) } : null;
   const pluginOptions = <>
     {slot.kind === "trigger" ? <option value="">{t("profiles.noTrigger")}</option>
       : !definitions.length && !missingPlugins.length && <option value="">{t("profiles.noPlugins")}</option>}
@@ -444,7 +456,9 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
           <p className="setting-description">{t(reportedSource ? sourceMode === "new" ? "profiles.newSourceHint" : "profiles.expectedParametersHint" : "profiles.dimensionDefaultsHint")}</p>
           {reportedSource ? <dl className="expected-source-parameters">
             <div><dt>{t("metadata.sampleRate")}</dt><dd>{String(editor.parameters.sample_rate ?? t("metadata.notConfirmed"))}</dd></div>
-            <div><dt>{t("metadata.outputRows")}</dt><dd>{String(editor.parameters.channel_number ?? t("metadata.notConfirmed"))}</dd></div>
+            <div><dt>{t("metadata.outputRows")}</dt><dd>{String(editor.parameters.channel_count ?? t("metadata.notConfirmed"))}</dd></div>
+            {definition?.plugin_type === "neuroscan_curry8_reader" && <div><dt>{t("metadata.channelLabels")}</dt>
+              <dd>{Array.isArray(editor.parameters.channel_labels) ? editor.parameters.channel_labels.join(", ") : t("metadata.notConfirmed")}</dd></div>}
           </dl> : <SchemaForm schema={dimensionSchema} value={editor.parameters} disabled={busy} onChange={changeParameters} />}
         </details>}
         {slot.kind === "acquisition" && definition && <><div className="setting-group">
@@ -508,7 +522,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
             resetEditor(structuredClone(baseline)); setChain(savedChain);
           }}>{t("profiles.discard")}</button>
           <button className="primary" disabled={busy || !definition?.schema || errors.length > 0 || !editor.name.trim() || (!dirty && !!editor.profile)
-            || (slot.kind === "acquisition" && sourceMode === "new" && reportedSource && (!editor.parameters.sample_rate || !editor.parameters.channel_number))}
+            || (slot.kind === "acquisition" && sourceMode === "new" && reportedSource && (!editor.parameters.sample_rate || !editor.parameters.channel_count))}
             onClick={() => save()}>{t("profiles.save")}</button></>}
         </div>
       </footer>

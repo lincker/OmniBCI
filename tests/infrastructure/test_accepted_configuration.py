@@ -18,7 +18,7 @@ def profiles(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
     seed = {
         "ACQUISITION.signal_source": "file_reader", "ACQUISITION.sample_rate": 500,
-        "ACQUISITION.channel_number": 10, "ACQUISITION.trigger": "",
+        "ACQUISITION.channel_count": 10, "ACQUISITION.trigger": "",
         "ALGORITHM.decoder": "THUBCI_SSVEP_classic40CCA",
         "ALGORITHM.epoch_detector": "DEFAULT_EPOCH_DETECTOR", "ALGORITHM.filters": [],
         "STIMULATION.paradigm": "STIMULATION_THUBCI_SSVEP_classic40",
@@ -28,7 +28,7 @@ def profiles(tmp_path, monkeypatch):
     service = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
                                    CatalogConfigurationAdapter(), settings_source=lambda: seed)
     accept_profiles(service, (
-        ("acquisition.source", "acquisition", "file_reader", {"sample_rate": 500, "channel_number": 10}),
+        ("acquisition.source", "acquisition", "file_reader", {"sample_rate": 500, "channel_count": 10}),
         ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA", {}),
         ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
         ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40", {}),

@@ -36,7 +36,7 @@ def test_lists_only_saved_host_settings(svc):
 @pytest.mark.parametrize("key,value", [
     ("ACQUISITION.signal_source", "neuroscan_scan45_reader"),
     ("ACQUISITION.sample_rate", 500),
-    ("ACQUISITION.channel_number", 32),
+    ("ACQUISITION.channel_count", 32),
     ("ACQUISITION.data_file_path", "recording.cnt"),
     ("ACQUISITION.parallel_port_address", "0x378"),
     ("ALGORITHM.decoder", "other"),

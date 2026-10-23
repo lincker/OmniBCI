@@ -183,7 +183,7 @@ class TestAcquisitionStatus:
 
     def test_configured_dimensions_are_not_reported_as_source_metadata(self):
         service = AcquisitionAppService(MagicMock(), settings={
-            "ACQUISITION.signal_source": "test", "ACQUISITION.channel_number": 9,
+            "ACQUISITION.signal_source": "test", "ACQUISITION.channel_count": 9,
             "ACQUISITION.sample_rate": 1000,
         })
         status = service.handle_get_status(GetAcquisitionStatusQuery())
@@ -211,7 +211,7 @@ def _metadata_service():
     service = AcquisitionAppService(executor)
     binding = ProfileBinding("acquisition.source", "acquisition",
         "00000000-0000-0000-0000-000000000001", PluginSelection("test.source", "default", "1"),
-        {"sample_rate": 250, "channel_number": 2}, profile_revision=1)
+        {"sample_rate": 250, "channel_count": 2}, profile_revision=1)
     provider = MagicMock(return_value=binding.to_dict())
     service.set_metadata_binding(provider)
     return service, executor, provider, binding, metadata, response
@@ -228,7 +228,7 @@ def test_metadata_preserves_opaque_plugin_text_and_exposes_acquisition_descripto
     assert value == {
         **{key: response[key] for key in ("source_id", "connection_id", "metadata", "descriptor")},
         "comparison": {"status": "matched", "sample_rate": {"expected": 250, "actual": 250},
-                       "channel_number": {"expected": 2, "actual": 2}},
+                       "channel_count": {"expected": 2, "actual": 2}},
     }
     assert value["metadata"] == raw
     value["metadata"] = "changed by caller"
@@ -375,17 +375,17 @@ def test_connect_waits_for_an_explicit_metadata_request():
 def test_metadata_comparison_uses_the_pinned_profile_without_replacing_its_expectations():
     from dataclasses import replace
     service, _, provider, binding, _, response = _metadata_service()
-    changed = replace(binding, parameters={"sample_rate": 1000, "channel_number": 65}).to_dict()
+    changed = replace(binding, parameters={"sample_rate": 1000, "channel_count": 65}).to_dict()
     provider.return_value = changed
-    response["metadata"] = '{"sample_rate": 1000, "channel_number": 65}'
+    response["metadata"] = '{"sample_rate": 1000, "channel_count": 65}'
     result = service.get_metadata()
     assert result["comparison"] == {
         "status": "mismatched",
         "sample_rate": {"expected": 1000, "actual": 250},
-        "channel_number": {"expected": 65, "actual": 2},
+        "channel_count": {"expected": 65, "actual": 2},
     }
     result["comparison"]["sample_rate"]["expected"] = 250
-    assert changed["parameters"] == {"sample_rate": 1000, "channel_number": 65}
+    assert changed["parameters"] == {"sample_rate": 1000, "channel_count": 65}
     assert service._raw_metadata["comparison"]["sample_rate"]["expected"] == 1000
 
 

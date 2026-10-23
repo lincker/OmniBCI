@@ -365,7 +365,7 @@ Disposition vocabulary: **Keep** means there is a current runtime, plugin-contra
 - **E7 — file replay tests:** [test_file_reader.py:43](/Users/lincker/workspace/OmniBCI/tests/infrastructure/test_file_reader.py:43) covers lifecycle. [test_file_reader_checkpoint.py:46](/Users/lincker/workspace/OmniBCI/tests/infrastructure/test_file_reader_checkpoint.py:46) covers no-repeat/no-skip resume; lines 78, 108, 124, 138, 167, and 194 cover cancellation, stopped-state requirements, different/aliased/changed files, and malformed cursors.
 - **E8 — protocol tests:** [test_scan45_channels.py:13](/Users/lincker/workspace/OmniBCI/tests/infrastructure/test_scan45_channels.py:13) covers configured metadata, frame width, events, invalid framing, and formats. [test_neuroscan_curry8.py:215](/Users/lincker/workspace/OmniBCI/tests/infrastructure/test_neuroscan_curry8.py:215) covers header layout; lines 230, 259, 299, 325, 337, 362, 373, and 397 exercise native event rows, metadata refresh, cached inspection, queued packets, invalid/missing replies, lifecycle, and rejected compression.
 - **E9 — trigger tests:** [test_neuroscan_plugins.py:47](/Users/lincker/workspace/OmniBCI/tests/infrastructure/test_neuroscan_plugins.py:47) checks Scan45 driver loading and send/clear sequencing. [test_neuroscan_curry8_trigger.py:28](/Users/lincker/workspace/OmniBCI/tests/infrastructure/test_neuroscan_curry8_trigger.py:28) covers bitness, event/address validation, unsupported platforms, unavailable drivers, write errors, and actual selected-trigger integration with mocked hardware.
-- **E10 — expected dimensions are used by the host:** [source_expectations.py:5](/Users/lincker/workspace/OmniBCI/omnibci/application/source_expectations.py:5) compares saved `sample_rate` and `channel_number` to observed output; lines 23–36 reject mismatches. [signal_setup_service.py:172](/Users/lincker/workspace/OmniBCI/omnibci/application/services/signal_setup_service.py:172) invokes validation. [test_plugin_schemas.py:47](/Users/lincker/workspace/OmniBCI/tests/infrastructure/test_plugin_schemas.py:47) preserves optional expectations for FileReader/Curry8, and lines 58–64 preserve required Scan45 dimensions.
+- **E10 — expected dimensions are used by the host:** [source_expectations.py:5](/Users/lincker/workspace/OmniBCI/omnibci/application/source_expectations.py:5) compares saved `sample_rate` and `channel_count` to observed output; lines 23–36 reject mismatches. [signal_setup_service.py:172](/Users/lincker/workspace/OmniBCI/omnibci/application/services/signal_setup_service.py:172) invokes validation. [test_plugin_schemas.py:47](/Users/lincker/workspace/OmniBCI/tests/infrastructure/test_plugin_schemas.py:47) preserves optional expectations for FileReader/Curry8, and lines 58–64 preserve required Scan45 dimensions.
 
 ### Proposed deletions and conditional decisions
 
@@ -445,7 +445,7 @@ No whole plugin file is proposed for deletion. Dates, old spelling, and support 
 | `data_file_path` | 5 | Keep | `FileReader.__init__` at `reader.py:31–34`; machine-scoped file-picker metadata is configuration UI data. Empty saved defaults permit an unconfigured profile; execution rejects an empty path. |
 | `file_reader_chunk_size` | 14 | Keep | `reader.py:30,83` controls sample slicing. |
 | `sample_rate` | 22 | Keep | Optional saved expectation consumed by host validation E10, not a device-reported override. |
-| `channel_number` | 29 | Keep | Optional expected output row count consumed by E10, including event row. |
+| `channel_count` | 29 | Keep | Optional expected output row count consumed by E10, including event row. |
 | `required` | 37 | Keep | Ensures the explicit path/chunk-size parameter shape; validated through the loader and `test_plugin_schemas.py:34`. |
 
 ### File 6 — `neuroscan/scan45/scan45.py`
@@ -514,7 +514,7 @@ Non-function definitions: keep `Scan45Message`, nested `Header`, `ControlCode`, 
 | `DATA_PROVIDER_IP` | 5 | Keep | `Scan45DataReader.__init__` at `scan45.py:147`; network connection at 178. |
 | `DATA_PROVIDER_PORT` | 13 | Keep | Constructor at 148; network connection at 178. |
 | `sample_rate` | 22 | Keep | Configured output description at `scan45.py:150,205`; native metadata is unavailable. |
-| `channel_number` | 30 | Keep | Framing at `scan45.py:149,279` and output description at 204; includes the event channel. |
+| `channel_count` | 30 | Keep | Framing at `scan45.py:149,279` and output description at 204; includes the event channel. |
 | `required` | 40 | Keep | All four required fields have valid defaults; E10 specifically protects required dimensions for this source. |
 
 ### File 10 — `neuroscan/scan45/trigger.schema.json`
@@ -575,7 +575,7 @@ Non-function definitions: keep the protocol error, enum classes, struct layouts,
 | `DATA_PROVIDER_IP` | 5 | Keep | Constructor at `curry8.py:180`, connection at 208. |
 | `DATA_PROVIDER_PORT` | 13 | Keep | Constructor at `curry8.py:181–184`, connection at 209. |
 | `sample_rate` | 22 | Keep | Optional experiment expectation checked against device observation by E10. |
-| `channel_number` | 29 | Keep | Optional experiment output-row expectation checked by E10. |
+| `channel_count` | 29 | Keep | Optional experiment output-row expectation checked by E10. |
 | `required` | 37 | Keep | Endpoint fields have defaults; expected dimensions deliberately have no invented defaults, tested by `test_plugin_schemas.py:47`. |
 
 ### File 15 — `neuroscan/curry8/trigger.schema.json`
@@ -703,7 +703,7 @@ Six Pydantic models, no explicitly declared methods. KEEP all six; these partici
 | `ChannelDescriptorModel` (5) | KEEP | Nested in SignalInfoModel channels at 21. Fields: channel_id, index, name, signal_type, unit, name_provenance. Mirrors per-channel identity/type/unit and generated-name provenance. |
 | `SignalInfoModel` (16) | KEEP | Nested in AcquisitionMetadataResponse at 45; reused outside acquisition by `presentation/schemas/signal_setup.py:8`, `:57`. Fields: source_id, sample_rate, channels, trigger_row_index, connection_id, native_event, provenance, signal_channel_count, output_row_count. Although counts are derived, frontend explicitly displays both (`frontend/src/AcquisitionMetadata.tsx:24`, `:25`) and uses output_row_count for confirmed source parameters (`frontend/src/PluginProfiles.tsx:298`, `:312`). |
 | `SourceParameterComparisonModel` (30) | KEEP | Nested twice in SourceExpectationsModel at 37/38. expected and actual distinguish profile expectations from source observation; comparison table at `frontend/src/AcquisitionMetadata.tsx:40`. |
-| `SourceExpectationsModel` (35) | KEEP | Nested in AcquisitionMetadataResponse at 46; fields status, sample_rate, channel_number. UI uses comparison status at AcquisitionMetadata 39 and PluginProfiles 124. |
+| `SourceExpectationsModel` (35) | KEEP | Nested in AcquisitionMetadataResponse at 46; fields status, sample_rate, channel_count. UI uses comparison status at AcquisitionMetadata 39 and PluginProfiles 124. |
 | `AcquisitionMetadataResponse` (41) | KEEP | Response type on GET/POST metadata routes at router 137/145; frontend DataSourceMetadata alias at `frontend/src/api/client.ts:14`. Raw metadata and normalized descriptor are intentionally both exposed. |
 | `AcquisitionStatusResponse` (49) | KEEP | GET status route response at router 106/112; frontend AcquisitionStatus alias at client 13. Keep metadata_available/metadata_provenance for interpreting the requested diagnostic view. |
 

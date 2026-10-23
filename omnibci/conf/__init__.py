@@ -91,6 +91,7 @@ class OmniBCISettings:
         document = self._parse(content, path) if content is not None else tomlkit.document()
         overrides = self._flatten(document)
         if self._explicit_path is None:
+            # Retired values may remain on disk but are excluded from activation.
             self._validate_host_keys({key: value for key, value in overrides.items()
                                       if key not in {"SIGNAL.setup", "ACQUISITION.channel_names",
                                                      "ACQUISITION.manual_montage"}})

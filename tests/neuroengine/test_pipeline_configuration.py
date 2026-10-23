@@ -25,12 +25,12 @@ def selected_snapshot(revision="old"):
     return {"CONFIG.revision": revision, "CONFIG.generation": "run",
             "ACQUISITION.signal_source": "file_reader",
             "ACQUISITION.sample_rate": 250, "ALGORITHM.baseline_duration": 0.2,
-            "ACQUISITION.channel_names": ["O1", "O2"], "PLUGINS.bindings": bindings}
+            "PLUGINS.bindings": bindings}
 
 
 def _build(before, after):
     channels = tuple(ChannelDescriptor(index, name, signal_type="eeg", unit="V")
-                     for index, name in enumerate(before["ACQUISITION.channel_names"]))
+                     for index, name in enumerate(("O1", "O2")))
     source = SignalInfo(before["ACQUISITION.signal_source"], before["ACQUISITION.sample_rate"],
                             channels, len(channels), connection_id="test-connection")
     plan = compile_processing_plan(source, ProcessingInput.from_dict(
@@ -60,7 +60,7 @@ def test_bundle_uses_new_parameters_and_ordered_distinct_filter_instances():
 @pytest.mark.parametrize("provenance", ["device-reported", "file-reported"])
 def test_trial_update_uses_prepared_source_rate_instead_of_legacy_flat_mirror(provenance):
     before = selected_snapshot()
-    before["PLUGINS.bindings"][0]["parameters"].update(sample_rate=500, channel_number=3)
+    before["PLUGINS.bindings"][0]["parameters"].update(sample_rate=500, channel_count=3)
     after = deepcopy(before)
     after["CONFIG.revision"] = "new"
     after["PLUGINS.bindings"][1]["parameters"]["window_duration"] = 1.5
@@ -110,7 +110,7 @@ def test_filter_can_be_applied_before_selecting_a_decoder(monkeypatch):
 
 
 @pytest.mark.parametrize("key,value", [
-    ("ACQUISITION.sample_rate", 500), ("ACQUISITION.channel_names", ["Cz"]),
+    ("ACQUISITION.sample_rate", 500), ("ACQUISITION.channel_labels", ["Cz", "Trigger"]),
     ("ALGORITHM.baseline_duration", 0.3), ("CONFIG.generation", "another-run"),
 ])
 def test_host_context_changes_require_restart(key, value):

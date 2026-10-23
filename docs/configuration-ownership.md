@@ -155,7 +155,8 @@ application limits.
 | Existing flat key | Owner and Profile parameter | Scope | Runtime boundary |
 | --- | --- | --- | --- |
 | `ACQUISITION.sample_rate` | Selected source: expected `sample_rate` | Portable | Engine rebuild and comparison with observed source |
-| `ACQUISITION.channel_number` | Selected source: expected `channel_number`, including event row | Portable | Engine rebuild and comparison with observed source |
+| `ACQUISITION.channel_count` | Selected source: expected `channel_count`, including event row | Portable | Engine rebuild and comparison with observed source |
+| `ACQUISITION.channel_labels` | Selected Curry8 source: optional ordered `channel_labels`, including the final trigger row | Portable | Engine rebuild; saved labels do not override observed `SignalInfo` |
 | `ACQUISITION.DATA_PROVIDER_IP` | Scan45 or Curry8 source: `DATA_PROVIDER_IP` | Machine | Engine rebuild |
 | `ACQUISITION.DATA_PROVIDER_PORT` | Scan45 or Curry8 source: `DATA_PROVIDER_PORT` | Machine | Engine rebuild |
 | `ACQUISITION.data_file_path` | File Reader: `data_file_path` | Machine | Engine rebuild |
@@ -177,7 +178,7 @@ Important boundaries:
   corrected or observed values are explicitly saved and applied. Actual
   `SignalInfo` supplies Signal Processing context; metadata reads do not rewrite saved
   values. The adapter output includes one final trigger row, separate from the
-  signal count; the expected `channel_number` includes that row.
+  signal count; the expected `channel_count` includes that row.
 - Scan45 returns text explaining that device metadata querying is not implemented.
   Its output descriptor is separate and marked `user-declared`; configured
   dimensions are not reported as observed device information.
@@ -214,9 +215,9 @@ worker generation, without LRU eviction; they do not survive a worker restart.
 
 | Schema, relative to `omnibci/infrastructure/plugins/` | Declared parameters |
 | --- | --- |
-| `acquisition/file/default.schema.json` | `data_file_path`, `file_reader_chunk_size`, `sample_rate`, `channel_number` |
-| `acquisition/neuroscan/scan45/default.schema.json` | `DATA_PROVIDER_IP`, `DATA_PROVIDER_PORT`, `sample_rate`, `channel_number` |
-| `acquisition/neuroscan/curry8/default.schema.json` | `DATA_PROVIDER_IP`, `DATA_PROVIDER_PORT`, `sample_rate`, `channel_number` |
+| `acquisition/file/default.schema.json` | `data_file_path`, `file_reader_chunk_size`, `sample_rate`, `channel_count` |
+| `acquisition/neuroscan/scan45/default.schema.json` | `DATA_PROVIDER_IP`, `DATA_PROVIDER_PORT`, `sample_rate`, `channel_count` |
+| `acquisition/neuroscan/curry8/default.schema.json` | `DATA_PROVIDER_IP`, `DATA_PROVIDER_PORT`, `sample_rate`, `channel_count`, `channel_labels` |
 | `acquisition/neuroscan/scan45/trigger.schema.json` | `parallel_port_address` |
 | `algorithms/decoders/classic40_cca/default.schema.json` | `window_duration`, `offset_time` |
 | `algorithms/decoders/classic40_fbcca/default.schema.json` | `window_duration`, `offset_time` |
@@ -323,8 +324,8 @@ separate from removing the editor and does not rewrite the accepted activation.
 
 New activations omit the 19 flat plugin selection and parameter keys listed in
 sections 1 and 2 from host settings. They retain host-owned values such as
-`ALGORITHM.baseline_duration`, optional `ACQUISITION.channel_names`, and output
-deployment settings. Plugin parameters remain in their selected bindings;
+`ALGORITHM.baseline_duration` and output deployment settings. Plugin parameters
+remain in their selected bindings;
 Profile edits cannot change the pinned values until explicitly refreshed.
 
 Existing accepted activations are read without changing their stored contents,
@@ -343,7 +344,7 @@ is generated for them. This preserves existing trial-boundary decoder updates
 and output-module changes. Revision and serialized bindings remain generated
 runtime fields.
 
-Source Profiles retain `sample_rate` and `channel_number`; provided values must
+Source Profiles retain `sample_rate` and `channel_count`; provided values must
 be positive integers. Curry8 and File Reader can connect without expectations
 using an unsaved source binding. Get Metadata fills those values into new drafts;
 Save and Apply establishes a named experiment baseline. Existing Profiles keep
@@ -380,9 +381,9 @@ its explicit slot refresh behavior. Direct activation remains idle-only, while
 Review/Apply retains its pinned plan and runtime acknowledgement requirements.
 
 The shared configuration service reads the selected host source once when
-constructing a candidate. Its runtime host key set is the 15 existing inputs
-listed in sections 3 and 5, including `ACQUISITION.channel_names` and
-`NEUROENGINE.startup_timeout_s`. Existing `ACTUATION.enabled` and both
+constructing a candidate. Its runtime host key set covers the inputs listed in
+sections 3 and 5, including `NEUROENGINE.startup_timeout_s`, and excludes retired
+keys such as `ACQUISITION.channel_names`. Existing `ACTUATION.enabled` and both
 `auto_spawn` settings remain runtime topology/deployment inputs. They still
 require the current managed-process and external-peer checks.
 
@@ -616,7 +617,7 @@ These are outside the 38-key file inventory but must have an explicit boundary.
 | Input | Owner and treatment |
 | --- | --- |
 | `NEUROENGINE.startup_timeout_s` | Existing host runtime input, absent from the file; engine rebuild. Consolidate declared and fallback defaults before exposing it |
-| `ACQUISITION.channel_names` | Currently an optional flat input passed into `PluginContext`; no bundled source schema declares it. Keep the current optional context behavior in this batch, add no editor, and review its source contract with future channel-layout work |
+| `ACQUISITION.channel_names` | Retired configuration key; ignored in old settings and snapshots and omitted from node transport. Original signal channels come from live `SignalInfo`; Curry8's optional `channel_labels` snapshot and processing channel mapping remain separate |
 | `PLUGINS.bindings` | Derived serialization of accepted bindings; never an editable host setting |
 | `CONFIG.revision`, `CONFIG.generation` | Generated accepted revision and process generation; never user-entered settings |
 | `CONFIG.initialization_warnings` | Initialization diagnostics; read-only metadata. Exclude diagnostics from future runtime change detection |

@@ -82,7 +82,7 @@ def test_version_proposal_serializes_channel_configuration(client, monkeypatch, 
     definition = svc.profiles.catalog.legacy(kind, alias)
     values = ({"processing_input": ProcessingInput(outputs=(ChannelBinding("O2", "channel-1", "eeg"), ChannelBinding("O1", "channel-0", "eeg")))} if kind == "decoder" else {
         "manual_montage": {"source_id": "file_reader", "sample_rate": 500, "channels": [{"index": 0, "name": "O1"}]}})
-    parameters = {} if kind == "decoder" else {"sample_rate": 500, "channel_number": 2}
+    parameters = {} if kind == "decoder" else {"sample_rate": 500, "channel_count": 2}
     source = svc.profiles.create(kind, definition.selection, "Versioned profile", parameters,
                                  **(values if kind == "decoder" else {}))
     if kind == "acquisition":

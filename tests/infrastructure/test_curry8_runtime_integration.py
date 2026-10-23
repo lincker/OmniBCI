@@ -91,7 +91,8 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
             await writer.wait_closed()
 
     server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
-    parameters = {"DATA_PROVIDER_IP": "127.0.0.1", "DATA_PROVIDER_PORT": server.sockets[0].getsockname()[1]}
+    parameters = {"DATA_PROVIDER_IP": "127.0.0.1", "DATA_PROVIDER_PORT": server.sockets[0].getsockname()[1],
+                  "channel_labels": [f"Saved row {index}" for index in range(len(labels))]}
     catalog = PluginCatalog()
     inputs = ProcessingInput(outputs=(
         ChannelBinding("O2", "channel-3", "eeg"),
@@ -156,6 +157,7 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
         assert descriptor.output_row_count == len(labels)
         assert [channel.name for channel in descriptor.channels] == list(labels[:-1])
         assert all(channel.signal_type == "unknown" for channel in descriptor.channels)
+        assert json.loads(metadata["metadata"])["channel_labels"] == list(labels)
         assert "channel_types" not in json.loads(metadata["metadata"])
         plan = compile_processing_plan(descriptor, inputs, config_revision="curry-revision")
         receipt = {

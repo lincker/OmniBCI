@@ -37,7 +37,7 @@ def runtime(tmp_path, monkeypatch):
         ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40"),
     ):
         definition = profiles.catalog.legacy(kind, alias)
-        parameters = {"sample_rate": 1000, "channel_number": 10} if kind == "acquisition" else {}
+        parameters = {"sample_rate": 1000, "channel_count": 10} if kind == "acquisition" else {}
         profile = profiles.create(kind, definition.selection, alias, parameters)
         selections.append({"slot": slot, "profile_id": profile.profile_id})
     snapshot = profiles.propose(selections)
@@ -94,7 +94,7 @@ def test_source_draft_is_pinned_without_saving_or_changing_profiles(runtime):
     assert source.profile_revision == 0
     assert source.parameters["data_file_path"] == "/tmp/experiment.fif"
     assert "sample_rate" not in source.parameters
-    assert "channel_number" not in source.parameters
+    assert "channel_count" not in source.parameters
     assert service.profiles.repository.list_profiles() == profiles
     assert service.profiles.repository.get_activation() == before
 
@@ -138,7 +138,7 @@ def test_scan45_connect_plan_does_not_use_legacy_decoder_input(runtime, saved_so
     service.engine.is_engine_ready = False
     definition = profiles.catalog.legacy("acquisition", "neuroscan_scan45_reader")
     parameters = {"DATA_PROVIDER_IP": "192.168.1.10", "DATA_PROVIDER_PORT": 4000,
-                  "sample_rate": 1000, "channel_number": 65}
+                  "sample_rate": 1000, "channel_count": 65}
     if saved_source:
         source = profiles.create("acquisition", definition.selection, "Scan45", parameters)
         requested_source = {"slot": "acquisition.source", "profile_id": source.profile_id}
@@ -482,7 +482,8 @@ def test_external_mode_transitions_check_both_current_and_target(runtime, module
 
 LEGACY_PLUGIN_VALUES = {
     "ACQUISITION.sample_rate": 125,
-    "ACQUISITION.channel_number": 99,
+    "ACQUISITION.channel_count": 99,
+    "ACQUISITION.channel_names": ["legacy-1", "legacy-2"],
     "ACQUISITION.parallel_port_address": "0x378",
     "ALGORITHM.decoder": "obsolete_decoder",
     "ALGORITHM.window_duration": 7.0,
@@ -502,7 +503,7 @@ def accept_historical_settings(runtime, legacy_values):
     service.profiles.settings_source = lambda: {
         **accepted.settings,
         "ACQUISITION.sample_rate": 2000,
-        "ACQUISITION.channel_number": 64,
+        "ACQUISITION.channel_count": 64,
         "ACQUISITION.parallel_port_address": "0x3100",
         "ALGORITHM.decoder": "another_obsolete_decoder",
         "ALGORITHM.window_duration": 12.0,
@@ -551,7 +552,7 @@ def test_source_context_and_decoder_use_pinned_values_until_explicit_refresh(run
                                       context=signal_context(snapshot, plan))
 
     service, selections, before = runtime
-    edit(runtime, "acquisition.source", {"sample_rate": 500, "channel_number": 3})
+    edit(runtime, "acquisition.source", {"sample_rate": 500, "channel_count": 3})
     decoder_profile = service.profiles.create(
         "decoder", service.profiles.catalog.legacy("decoder", decoder_alias).selection,
         "Selected decoder", {"window_duration": 1.5, "offset_time": 0.1},
@@ -564,7 +565,6 @@ def test_source_context_and_decoder_use_pinned_values_until_explicit_refresh(run
     service.profiles.settings_source = lambda: {
         **LEGACY_PLUGIN_VALUES,
         "ALGORITHM.baseline_duration": 0.2,
-        "ACQUISITION.channel_names": ["O1", "O2"],
     }
     accepted = service.profiles.propose(selections, include_host_settings=True)
     service.profiles.accept(accepted, expected_revision=before.revision)
@@ -575,19 +575,22 @@ def test_source_context_and_decoder_use_pinned_values_until_explicit_refresh(run
 
     assert not set(LEGACY_PLUGIN_VALUES) & accepted.settings.keys()
     assert materialized["ACQUISITION.sample_rate"] == source.parameters["sample_rate"] == 500
-    assert materialized["ACQUISITION.channel_number"] == source.parameters["channel_number"] == 3
+    assert materialized["ACQUISITION.channel_count"] == source.parameters["channel_count"] == 3
     assert not hasattr(NeuroEngineConfig.from_settings(materialized), "sample_rate")
     assert context.sample_rate == 500
-    assert context.channel_names == ()
-    assert signal_context(materialized, prepared_signal_plan(
-        materialized, sample_rate=500, signal_channel_count=2)).channel_names == ("EEG1", "EEG2")
+    assert context.acquired_signal is None and context.input_signal is None
+    assert "ACQUISITION.channel_names" not in materialized
+    prepared = signal_context(materialized, prepared_signal_plan(
+        materialized, sample_rate=500, signal_channel_count=2))
+    assert tuple(channel.name for channel in prepared.acquired_signal.channels) == ("EEG1", "EEG2")
+    assert prepared.input_signal is prepared.acquired_signal
     assert context.config_revision == accepted.revision
     assert (decoder.SAMPLE_RATE, decoder.SAMPLE_COUNT, decoder.OFFSET_LENGTH) == (500, 750, 50)
     assert "ALGORITHM.window_duration" not in materialized
     assert "ssvep.duration" not in materialized
     assert "ACQUISITION.parallel_port_address" not in materialized
 
-    edit((service, selections, accepted), "acquisition.source", {"sample_rate": 250, "channel_number": 4})
+    edit((service, selections, accepted), "acquisition.source", {"sample_rate": 250, "channel_count": 4})
     edit((service, selections, accepted), "processing.decoder", {"window_duration": 2.5})
 
     assert service.profiles.propose(selections, refresh_slots=[]) == accepted
@@ -599,7 +602,7 @@ def test_source_context_and_decoder_use_pinned_values_until_explicit_refresh(run
     )
     refreshed_settings = service.profiles.materialize(refreshed)
     refreshed_decoder = load_prepared(refreshed_settings, 250, 3)
-    assert refreshed_settings["ACQUISITION.channel_number"] == 4
+    assert refreshed_settings["ACQUISITION.channel_count"] == 4
     assert (refreshed_decoder.SAMPLE_RATE, refreshed_decoder.SAMPLE_COUNT) == (250, 625)
     assert service.profiles.repository.get_activation() == accepted
 

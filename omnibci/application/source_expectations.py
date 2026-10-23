@@ -6,7 +6,7 @@ def compare_source_expectations(binding: dict | None, info: SignalInfo) -> dict:
     parameters = (binding or {}).get("parameters", {})
     values = {
         "sample_rate": {"expected": parameters.get("sample_rate"), "actual": info.sample_rate},
-        "channel_number": {"expected": parameters.get("channel_number"), "actual": info.output_row_count},
+        "channel_count": {"expected": parameters.get("channel_count"), "actual": info.output_row_count},
     }
     if info.provenance not in {"device-reported", "file-reported"}:
         status = "unverified"
@@ -27,7 +27,7 @@ def validate_source_expectations(snapshot: dict, info: SignalInfo) -> None:
     if comparison["status"] == "mismatched":
         differences = []
         for key, label in (("sample_rate", "sample rate (Hz)"),
-                           ("channel_number", "output rows (including event row)")):
+                           ("channel_count", "output rows (including event row)")):
             value = comparison[key]
             if value["expected"] is not None and value["expected"] != value["actual"]:
                 differences.append(f"{label}: expected {value['expected']}, observed {value['actual']}")

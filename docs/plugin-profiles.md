@@ -20,7 +20,18 @@ enter the address/port or recording path, and Connect. For Curry8 and File Reade
 Get Metadata automatically fills the observed sample rate and total output rows
 into that draft. **Save profile** persists it; Connect then applies the saved
 baseline for comparison. Changing the draft's connection parameters clears its
-previously observed dimensions.
+previously observed dimensions and Curry8 labels.
+
+For Curry8, Get Metadata also fills the optional `channel_labels` list from the
+native metadata JSON into a new draft. The list preserves the complete native
+row order, including the final `Trigger` row, blank labels and duplicates.
+For a saved Profile, **Use observed
+values** adopts the labels into the current draft, and **Save observed values as
+new profile** includes them in the new Profile. **Save profile** persists the
+labels through the normal Profile file save. Adopting unavailable or invalid
+labels removes stale labels from the draft. This optional snapshot does not add
+an expectation check or change channel mapping; the live `SignalInfo` remains
+authoritative for Signal Processing and contains only signal channels.
 
 **New profile** starts with the selected plugin's defaults. **Duplicate profile**
 saves an independent named copy of the displayed parameters. Browsing another
@@ -66,11 +77,19 @@ cross-platform. On macOS, select **None (no trigger output)** for a visual previ
 or run stimulation on a Windows host. Selecting a CURRY reader does not
 automatically select its trigger.
 
-For Scan45, `channel_number` is the total number of channels in each incoming
+For Scan45, `channel_count` is the total number of channels in each incoming
 sample, including the final event channel. The default is 10 (9 EEG + 1 event),
 and any integer of at least 2 is accepted. For 32 EEG channels and one event
 channel, enter 33. This value must match the device's stream; the driver does not
 automatically discover its channel layout.
+
+Acquisition now uses `channel_count` in place of `channel_number`; it still
+includes the final trigger/event row. Schema versions are unchanged. Existing
+profiles and accepted activation bindings are not migrated automatically, and
+the old parameter name is not supported. Rename the saved parameter and remove
+the old key, then save and reapply the profile to replace its accepted binding.
+If the old key remains in the UI, recreate and apply the profile. Update inline
+acquisition bindings to use `channel_count` before applying them.
 
 ## Local storage
 

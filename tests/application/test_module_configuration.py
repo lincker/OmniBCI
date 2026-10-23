@@ -31,7 +31,7 @@ def source_request(profiles):
     definition = profiles.catalog.legacy("acquisition", "neuroscan_scan45_reader")
     return {"slot": "acquisition.source", "selection": definition.selection.to_dict(),
             "parameters": {"DATA_PROVIDER_IP": "127.0.0.1", "DATA_PROVIDER_PORT": 4000,
-                           "sample_rate": 1000, "channel_number": 65}}
+                           "sample_rate": 1000, "channel_count": 65}}
 
 
 def stopped_runtime(profiles):

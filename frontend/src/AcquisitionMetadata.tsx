@@ -40,7 +40,7 @@ export function AcquisitionMetadata({ value, busy, canRead, readHint, onRead, ca
         <table aria-label={t("metadata.comparison")}>
           <thead><tr><th>{t("metadata.parameter")}</th><th>{t("metadata.expected")}</th>
             <th>{t(comparison.status === "unverified" ? "metadata.declared" : "metadata.observed")}</th></tr></thead>
-          <tbody>{([["sample_rate", "metadata.sampleRate"], ["channel_number", "metadata.outputRows"]] as const).map(([key, label]) =>
+          <tbody>{([["sample_rate", "metadata.sampleRate"], ["channel_count", "metadata.outputRows"]] as const).map(([key, label]) =>
             <tr key={key} className={mismatched && comparison[key].expected != null && comparison[key].expected !== comparison[key].actual ? "source-mismatch" : undefined}><th scope="row">{t(label)}</th>
               <td>{comparison[key].expected ?? t("metadata.notConfirmed")}</td><td>{comparison[key].actual}</td></tr>)}</tbody>
         </table>

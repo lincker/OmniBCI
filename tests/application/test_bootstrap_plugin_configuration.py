@@ -22,7 +22,7 @@ def bootstrap_settings(tmp_path, monkeypatch):
 signal_source = "file_reader"
 data_file_path = "recordings/custom.cnt"
 sample_rate = 256
-channel_number = 5
+channel_count = 5
 file_reader_chunk_size = 17
 trigger = ""
 [ALGORITHM]
@@ -61,7 +61,7 @@ def _configure(container):
     return accept_profiles(container.plugin_profile_service, (
         ("acquisition.source", "acquisition", "file_reader", {
             "data_file_path": "recordings/custom.cnt", "sample_rate": 256,
-            "channel_number": 5, "file_reader_chunk_size": 17,
+            "channel_count": 5, "file_reader_chunk_size": 17,
         }),
         ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40FBCCA", {
             "window_duration": 4.25, "offset_time": 0.15,
@@ -232,7 +232,7 @@ async def test_existing_activation_keeps_its_revision_and_pinned_inputs(bootstra
     runtime = restarted.engine_service._snapshot_provider()
     assert runtime["CONFIG.revision"] == historical.revision
     assert runtime["ACQUISITION.sample_rate"] == 256
-    assert runtime["ACQUISITION.channel_number"] == 5
+    assert runtime["ACQUISITION.channel_count"] == 5
     assert not {"ALGORITHM.window_duration", "ssvep.duration",
                 "ACQUISITION.parallel_port_address"} & runtime.keys()
     decoder = next(binding for binding in runtime["PLUGINS.bindings"]

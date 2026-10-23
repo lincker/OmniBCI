@@ -102,6 +102,25 @@ def test_retired_signal_setup_remains_readable_without_accepting_new_writes(host
     assert OmniBCISettings(defaults_file=defaults).get("SIGNAL.setup") == setup
 
 
+def test_retired_channel_names_are_ignored_without_rewriting_saved_settings(host_files):
+    from omnibci.application.activation_settings import activation_host_settings
+    from omnibci.infrastructure.plugins.runtime_configuration import plugin_context
+
+    defaults, user_file = host_files
+    user_file.parent.mkdir()
+    content = '[ACQUISITION]\nchannel_names = ["Stale", "Trigger"]\n'
+    user_file.write_text(content, encoding="utf-8")
+    settings = OmniBCISettings(defaults_file=defaults)
+    saved, revision = settings.read_saved()
+
+    assert "ACQUISITION.channel_names" not in activation_host_settings(saved)
+    assert plugin_context(saved).channel_names == ()
+    with pytest.raises(ConfigProfileValidationError, match="ACQUISITION.channel_names"):
+        settings.update({"ACQUISITION.channel_names": ["O1", "O2"]}, expected_revision=revision)
+    assert settings.read_saved() == (saved, revision)
+    assert user_file.read_text(encoding="utf-8") == content
+
+
 @pytest.mark.parametrize("line_ending", ["\n", "\r\n"], ids=["lf", "crlf"])
 def test_saved_revision_matches_disk_with_windows_text_writes(host_files, monkeypatch, line_ending):
     from omnibci.conf import storage

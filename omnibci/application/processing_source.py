@@ -55,7 +55,7 @@ def validate_source_binding(snapshot, metadata):
     expected_rate = snapshot.get("ACQUISITION.sample_rate")
     if expected_rate is not None and expected_rate != metadata.sample_rate:
         raise ValueError(f"Configured sample rate {expected_rate} differs from source rate {metadata.sample_rate}")
-    expected_rows = snapshot.get("ACQUISITION.channel_number")
+    expected_rows = snapshot.get("ACQUISITION.channel_count")
     if expected_rows is not None and expected_rows != metadata.output_row_count:
         raise ValueError("Source channel count differs from the selected acquisition profile")
 

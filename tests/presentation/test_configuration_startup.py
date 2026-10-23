@@ -58,7 +58,7 @@ def startup_environment(tmp_path, monkeypatch):
 signal_source = "file_reader"
 data_file_path = "recordings/startup.cnt"
 sample_rate = 256
-channel_number = 5
+channel_count = 5
 file_reader_chunk_size = 17
 trigger = ""
 [ALGORITHM]
@@ -100,7 +100,7 @@ def _select_profiles(client):
     return accept_profiles(client.app.state.container.plugin_profile_service, [
         ("acquisition.source", "acquisition", "file_reader", {
             "data_file_path": "recordings/startup.cnt", "sample_rate": 256,
-            "channel_number": 5, "file_reader_chunk_size": 17,
+            "channel_count": 5, "file_reader_chunk_size": 17,
         }),
         ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40FBCCA", {
             "window_duration": 4.25, "offset_time": 0.15,
@@ -164,7 +164,7 @@ def test_invalid_initial_settings_can_be_repaired_without_restarting_backend(
         selections = (
             ("acquisition.source", "acquisition", "file_reader", {
                 "data_file_path": "recordings/repaired.cnt", "sample_rate": 250,
-                "channel_number": 9, "file_reader_chunk_size": 32,
+                "channel_count": 9, "file_reader_chunk_size": 32,
             }),
             ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40FBCCA", {
                 "window_duration": 3.0, "offset_time": 0.14,
@@ -212,7 +212,7 @@ def test_invalid_initial_settings_can_be_repaired_without_restarting_backend(
         snapshot = environment.builder.call_args.kwargs["settings_snapshot"]
         assert snapshot["CONFIG.revision"] == accepted["revision"]
         assert snapshot["ACQUISITION.sample_rate"] == 250
-        assert snapshot["ACQUISITION.channel_number"] == 9
+        assert snapshot["ACQUISITION.channel_count"] == 9
         assert _data(client, "/config/runtime")["applied_revision"] == accepted["revision"]
         assert _data(client, "/engine/status")["running"] is True
         source_status = _data(client, "/acquisition/status")

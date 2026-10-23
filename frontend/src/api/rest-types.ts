@@ -2224,7 +2224,7 @@ export interface components {
              */
             status: "unconfirmed" | "matched" | "mismatched" | "unverified";
             sample_rate: components["schemas"]["SourceParameterComparisonModel"];
-            channel_number: components["schemas"]["SourceParameterComparisonModel"];
+            channel_count: components["schemas"]["SourceParameterComparisonModel"];
         };
         /** SourceParameterComparisonModel */
         SourceParameterComparisonModel: {
