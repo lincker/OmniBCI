@@ -193,6 +193,10 @@ button.explorer-item:active:not(:disabled) { background: var(--press-bg); }
 .btn-group-title { color: var(--muted); font-size: 11px; margin-bottom: 2px; }
 .btn-group button { width: 100%; }
 .trial-controls { align-items: flex-end; margin-top: 20px; }
+.trial-sequence { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.5rem; width: 100%; }
+.trial-sequence label { flex: 1 1 180px; min-width: 0; }
+.trial-sequence .meta { margin-bottom: 0; }
+.trial-sequence > p, .trial-sequence-summary { flex-basis: 100%; margin: 0; }
 .empty-results { text-align: center; padding: 15px 0 24px; color: var(--muted); }
 .empty-results .workbench-icon { width: 28px; height: 28px; opacity: 0.5; margin-bottom: 10px; }
 .empty-results p { margin: 0 0 5px; font-size: 12px; }

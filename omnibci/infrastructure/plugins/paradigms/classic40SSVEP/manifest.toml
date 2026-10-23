@@ -40,6 +40,7 @@ field = "n_trials"
 label = "Target cue"
 type = "int"
 default = 1
+default_sequence = "1-40"
 min = 0
 max = 40
 field = "trial_params"

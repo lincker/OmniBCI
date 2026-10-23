@@ -134,6 +134,49 @@ def test_correlated_result_is_emitted_only_after_trial_enters_renderer():
     asyncio.run(scenario())
 
 
+def test_trial_sequence_preserves_order_and_repetitions_while_waiting_for_renderer():
+    class BusyStimulator(_FakeStimulator):
+        is_presenting = False
+
+        def present_trial(self, event_id):
+            super().present_trial(event_id)
+            self.is_presenting = True
+
+    async def scenario():
+        s = _make(BusyStimulator())
+        sequence = [1, 3, 5, 1, 3, 5]
+        request = CommandRequest(
+            command_id="sequence",
+            payload={"n_trials": len(sequence), "trial_params": sequence},
+        )
+        s._put_stim_command_queue(Event(EventType.StartStimTrial, request))
+        assert s.event_bus.published == []
+
+        for index in range(len(sequence)):
+            s.stimulator.is_presenting = False
+            await s.execute_command()
+            assert s.stimulator.presented == sequence[:index + 1]
+
+            await s.execute_command()
+            await s.execute_command()
+            assert s.stimulator.presented == sequence[:index + 1]
+            assert s.stim_command_queue.qsize() == len(sequence) - index - 1
+
+        results = [
+            event.data for event in s.event_bus.published
+            if event.type == EventType.CommandResult
+        ]
+        assert len(results) == 1
+        assert results[0].command_id == "sequence"
+        assert results[0].ok is True
+        assert [
+            event.data["target_index"] for event in s.event_bus.published
+            if event.type == EventType.StimulationAck
+        ] == sequence
+
+    asyncio.run(scenario())
+
+
 def test_correlated_result_rejects_closed_window():
     async def scenario():
         s = _make(_FakeStimulator(), render_done=True)
