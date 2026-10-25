@@ -7,7 +7,7 @@ import { createServer } from "vite";
 
 const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
 after(() => server.close());
-const { RuntimeConfigurationReview, RuntimeConfigurationStatus } = await server.ssrLoadModule("/src/RuntimeConfiguration.tsx");
+const { RuntimeConfigurationReview, RuntimeConfigurationStatus, RuntimeConfigurationProgress, runtimeBlockReason } = await server.ssrLoadModule("/src/RuntimeConfiguration.tsx");
 const { RunConsole } = await server.ssrLoadModule("/src/RunConsole.tsx");
 const { I18nProvider, translate } = await server.ssrLoadModule("/src/i18n.tsx");
 const english = { language: "en", t: (key, params) => translate("en", key, params) };
@@ -38,9 +38,39 @@ test("review presents the impact before Apply and blocks invalid plans", () => {
   assert.equal(buttonDisabled(invalid, "Apply configuration"), true);
   const rebuild = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan, strategy: "rebuild" } } });
   assert.match(rebuild, /Pause and rebuild the engine/);
+  assert.match(rebuild, /Acquisition or an in-progress epoch may be interrupted/);
+  const nextStart = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan, strategy: "select_on_start" } } });
+  assert.match(nextStart, /It does not start the engine/);
   const channels = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan,
     signal_summary: "Channels: C4, C3; types: EEG" } } });
   assert.match(channels, /Channels: C4, C3; types: EEG/);
+});
+
+test("routine apply progress is local and never reports success before completion", () => {
+  assert.equal(render(RuntimeConfigurationProgress, { runtime: baseRuntime }), "");
+  const waiting = render(RuntimeConfigurationProgress, { runtime: { ...baseRuntime,
+    operation: { status: "applying", stage: "waiting_for_trial_boundary" } } });
+  assert.match(waiting, /Waiting for the current trial to finish/);
+  assert.match(waiting, /role="status"/);
+  const uncertain = render(RuntimeConfigurationProgress, { runtime: { ...baseRuntime, uncertain: true,
+    operation: { status: "succeeded", stage: "complete" } } });
+  assert.match(uncertain, /Confirming the last operation/);
+  assert.doesNotMatch(uncertain, /succeeded|successfully/);
+});
+
+test("blocked reviews explain whether to wait, reconnect, or recover", () => {
+  for (const [overrides, expected] of [
+    [{ uncertain: true, inProgress: true }, "feedback.confirming"],
+    [{ inProgress: true }, "feedback.applying"],
+    [{ recoveryRequired: true }, "feedback.recovery"],
+    [{ status: null }, "feedback.runtimeUnavailable"],
+  ]) {
+    const runtime = { ...baseRuntime, blocked: true, ...overrides };
+    assert.equal(runtimeBlockReason(runtime), expected);
+    const html = render(RuntimeConfigurationReview, { runtime });
+    assert.match(html, /id="configuration-review-blocked"/);
+    assert.equal(buttonDisabled(html, "Apply configuration"), true);
+  }
 });
 
 for (const [field, value] of [["accepted_revision", "changed"], ["applied_revision", "changed"], ["generation", "changed"], ["running", false]]) {

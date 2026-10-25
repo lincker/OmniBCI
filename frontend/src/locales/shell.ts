@@ -1,4 +1,5 @@
 export const en = {
+  "app.skipToEditor": "Skip to editor",
   "app.console": "Console",
   "app.workspace": "BCI workspace",
   "app.setup": "Setup",
@@ -48,8 +49,9 @@ export const en = {
   "app.channels": "{count} channels",
   "app.working": "Working…",
   "app.unsaved": "Unsaved changes",
-  "app.discardQuestion": "Discard unsaved configuration changes?",
+  "app.discardQuestion": "Leave this page and discard unsaved edits? Return to the editor to save them first. Nothing will be saved or applied automatically.",
   "app.discard": "Discard changes",
+  "app.keepEditing": "Keep editing",
   "desktop.connectTitle": "Connect your workspace",
   "desktop.connectDescription": "Run on this computer or connect to a backend in your laboratory.",
   "desktop.location": "Run location",
@@ -72,6 +74,7 @@ export const en = {
 } as const;
 
 export const zh: Record<keyof typeof en, string> = {
+  "app.skipToEditor": "Skip to editor",
   "app.console": "控制台",
   "app.workspace": "脑机接口工作区",
   "app.setup": "配置",
@@ -121,8 +124,9 @@ export const zh: Record<keyof typeof en, string> = {
   "app.channels": "{count} 个通道",
   "app.working": "正在处理…",
   "app.unsaved": "未保存的更改",
-  "app.discardQuestion": "放弃未保存的配置更改？",
+  "app.discardQuestion": "Leave this page and discard unsaved edits? Return to the editor to save them first. Nothing will be saved or applied automatically.",
   "app.discard": "放弃更改",
+  "app.keepEditing": "Keep editing",
   "desktop.connectTitle": "连接工作区",
   "desktop.connectDescription": "在本机运行，或连接到实验室的后端服务。",
   "desktop.location": "运行位置",

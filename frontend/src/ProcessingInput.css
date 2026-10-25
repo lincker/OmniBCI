@@ -1,13 +1,23 @@
-.processing-input .input-source, .processing-input .channel-requirements { margin: 1rem 0; color: var(--muted); font-size: 0.75rem; }
+.processing-input .mapping-content { padding: 1rem; }
+.processing-input .input-context { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; margin: 1rem 0; }
+.processing-input .input-source, .processing-input .channel-requirements { min-width: 0; padding: 0.75rem; border: 1px solid var(--border-soft); border-radius: 0.375rem; color: var(--muted); font-size: 0.75rem; overflow-wrap: anywhere; }
+.processing-input .input-context h3 { margin: 0 0 0.5rem; color: var(--heading); font-size: 0.75rem; font-weight: 600; }
 .processing-input .input-source p, .processing-input .channel-requirements p { margin: 0.375rem 0; }
+.processing-input .input-source button { margin-top: 0.375rem; }
+.processing-input .inline-message { margin: 0.75rem 0; }
 .processing-input .processing-flow { display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 0; margin: 1rem 0; list-style: none; font-size: 0.75rem; }
-.processing-input .processing-flow li { display: flex; align-items: center; gap: 0.5rem; }
+.processing-input .processing-flow li { display: flex; align-items: center; gap: 0.5rem; color: var(--muted); }
+.processing-input .processing-flow strong { padding: 0.25rem 0.5rem; border-radius: 0.25rem; color: var(--accent); background: var(--accent-soft); font-weight: 600; }
 .processing-input .processing-flow li:not(:last-child)::after { content: "→"; color: var(--muted); }
 .processing-input .processing-flow small { color: var(--muted); }
 .processing-input .mapping-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 1rem 0; font-size: 0.75rem; }
-.processing-input .mapping-table { overflow-x: auto; margin: 1rem 0; }
-.processing-input table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+.processing-input .mapping-scroll-help { color: var(--muted); font-size: 0.75rem; margin: 0.75rem 0 0.375rem; line-height: 1.5; }
+.processing-input .mapping-table { overflow: auto; max-height: 26rem; margin: 0 0 1rem; border: 1px solid var(--border-soft); border-radius: 0.375rem; overscroll-behavior-inline: contain; }
+.processing-input .mapping-table:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.processing-input table { width: 100%; min-width: 42rem; border-collapse: collapse; font-size: 0.75rem; }
 .processing-input th, .processing-input td { padding: 0.5rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border-soft); }
+.processing-input thead th { position: sticky; top: 0; z-index: 1; background: var(--sidebar-bg); }
+.processing-input tbody th { font-weight: 400; color: var(--muted); }
 .processing-input td input, .processing-input td select { width: 100%; min-width: 8rem; }
 .processing-input td small { display: block; color: var(--muted); margin-top: 0.25rem; }
 .processing-input .mapping-row-actions { display: flex; gap: 0.25rem; white-space: nowrap; }
@@ -15,3 +25,6 @@
 .processing-input .mapping-add { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: 0.75rem; }
 .processing-input .channel-error { color: var(--err); font-size: 0.75rem; margin: 0.5rem 0 0; }
 .processing-input .mapping-preview { margin-top: 1rem; font-size: 0.75rem; }
+@media (max-width: 1000px) {
+  .processing-input .input-context { grid-template-columns: 1fr; }
+}

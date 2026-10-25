@@ -1,4 +1,7 @@
 export const en = {
+  "processing.sourceContext": "Source channels",
+  "processing.decoderContext": "Decoder requirements",
+  "processing.scrollHelp": "Focus the table to scroll with arrow keys. Tab moves through channel fields and reorder buttons.",
   "metadata.channelId": "Channel ID",
   "metadata.channelType": "Type",
   "metadata.unit": "Unit",
@@ -131,6 +134,9 @@ export const en = {
   "market.configureRepository": "An operator can configure a trusted signed repository for this console.",
   "market.localZip": "You can install a trusted local ZIP from this page.",
   "market.zipLabel": "Choose plugin ZIP",
+  "market.clearSearch": "Clear search",
+  "market.installedCount": "Showing {shown} of {total} installed versions.",
+  "market.repositoryCount": "Showing {shown} of {total} repository versions.",
   "market.searchLabel": "Search plugins",
   "market.searchPlaceholder": "Search names, versions or capabilities",
   "market.closeEditor": "Close version profile editor",
@@ -183,6 +189,9 @@ export const en = {
 } as const;
 
 export const zh: Record<keyof typeof en, string> = {
+  "processing.sourceContext": "Source channels",
+  "processing.decoderContext": "Decoder requirements",
+  "processing.scrollHelp": "Focus the table to scroll with arrow keys. Tab moves through channel fields and reorder buttons.",
   "metadata.channelId": "Channel ID",
   "metadata.channelType": "Type",
   "metadata.unit": "Unit",
@@ -315,6 +324,9 @@ export const zh: Record<keyof typeof en, string> = {
   "market.configureRepository": "管理员可以为此控制台配置可信的签名仓库。",
   "market.localZip": "您可以在此页面安装可信的本地 ZIP 文件。",
   "market.zipLabel": "选择插件 ZIP",
+  "market.clearSearch": "Clear search",
+  "market.installedCount": "Showing {shown} of {total} installed versions.",
+  "market.repositoryCount": "Showing {shown} of {total} repository versions.",
   "market.searchLabel": "搜索插件",
   "market.searchPlaceholder": "搜索名称、版本或功能",
   "market.closeEditor": "关闭版本配置编辑器",

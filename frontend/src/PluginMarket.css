@@ -1,6 +1,6 @@
 .plugin-market .market-body { padding: 0 32px 32px; overflow: auto; min-height: 0; }
-.plugin-market .market-toolbar { display: flex; gap: 12px; margin-bottom: 12px; }
-.plugin-market .market-search { display: flex; align-items: center; gap: 8px; flex: 1; border: 1px solid var(--border); background: var(--control-bg); padding-left: 9px; }
+.plugin-market .market-toolbar { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+.plugin-market .market-search { display: flex; align-items: center; gap: 8px; flex: 1 1 12rem; min-width: 0; border: 1px solid var(--border); background: var(--control-bg); padding-left: 9px; }
 .plugin-market .market-search input { width: 100%; border: 0; }
 .plugin-market .market-search .workbench-icon { width: 15px; color: var(--muted); }
 .plugin-market .market-banner { border-left: 2px solid var(--accent); background: var(--accent-soft); padding: 10px 12px; font-size: 12px; }

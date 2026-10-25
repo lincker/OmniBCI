@@ -11,6 +11,27 @@ const strategies: Record<string, TranslationKey> = {
   rebuild: "runtime.strategy.rebuild",
 };
 
+export function runtimeBlockReason(runtime: RuntimeConfiguration): TranslationKey | null {
+  if (!runtime.blocked) return null;
+  if (runtime.uncertain) return "feedback.confirming";
+  if (runtime.inProgress) return "feedback.applying";
+  if (runtime.recoveryRequired) return "feedback.recovery";
+  return "feedback.runtimeUnavailable";
+}
+
+/** Routine feedback stays beside the editor actions; failures use the global status. */
+export function RuntimeConfigurationProgress({ runtime }: { runtime: RuntimeConfiguration }) {
+  const { t } = useI18n();
+  const operation = runtime.operation;
+  const key = runtime.uncertain ? "feedback.confirming"
+    : runtime.submitting ? "feedback.submitting"
+    : operation?.status === "queued" ? "feedback.queued"
+    : operation?.status === "applying" ? operation.stage === "waiting_for_trial_boundary"
+      ? "feedback.waitingForTrial" : "feedback.applying"
+    : runtime.reviewing ? "feedback.reviewing" : null;
+  return key ? <p className="action-help" role="status">{t(key)}</p> : null;
+}
+
 export function RuntimeConfigurationStatus({ runtime }: { runtime: RuntimeConfiguration }) {
   const { t } = useI18n();
   const operation = runtime.operation;
@@ -35,9 +56,17 @@ export function RuntimeConfigurationReview({ runtime }: { runtime: RuntimeConfig
   const stale = runtime.status !== null && (plan.expected_revision !== runtime.status.accepted_revision
     || plan.running !== runtime.status.running || plan.applied_revision !== runtime.status.applied_revision
     || plan.generation !== runtime.status.generation);
+  const blockedReason = runtimeBlockReason(runtime);
+  const impact: Record<string, TranslationKey> = {
+    select_on_start: "feedback.impactNextStart", no_change: "feedback.impactNoChange",
+    trial_boundary: "feedback.impactTrial", module: "feedback.impactModule", rebuild: "feedback.impactRebuild",
+  };
   return <dialog ref={dialog} className="config-dialog configuration-review" aria-labelledby="configuration-review-title"
+    aria-describedby="configuration-review-impact"
     onCancel={(event) => { event.preventDefault(); if (!runtime.submitting) runtime.dismissPlan(); }}>
     <h3 id="configuration-review-title">{t("runtime.reviewTitle")}</h3>
+    <p id="configuration-review-impact">{t(Object.prototype.hasOwnProperty.call(impact, plan.strategy)
+      ? impact[plan.strategy] : "feedback.impactUnknown")}</p>
     <dl>
       <dt>{t("runtime.applyMethod")}</dt><dd>{Object.prototype.hasOwnProperty.call(strategies, plan.strategy) ? t(strategies[plan.strategy]) : plan.strategy}</dd>
       <dt>{t("runtime.affectedModules")}</dt><dd>{plan.changed_slots.length ? plan.changed_slots.join(", ") : t("runtime.noPluginChanges")}</dd>
@@ -47,8 +76,10 @@ export function RuntimeConfigurationReview({ runtime }: { runtime: RuntimeConfig
     </dl>
     {plan.errors.length > 0 && <ul className="error" role="alert">{plan.errors.map((error) => <li key={error}>{error}</li>)}</ul>}
     {stale && <p className="error" role="alert">{t("runtime.stalePlan")}</p>}
+    {blockedReason && <p id="configuration-review-blocked" role="status">{t(blockedReason)}</p>}
     <div className="actions"><button disabled={runtime.submitting} onClick={runtime.dismissPlan}>{t("runtime.cancel")}</button>
       <button className="primary" disabled={runtime.blocked || stale || plan.errors.length > 0}
+        aria-describedby={blockedReason ? "configuration-review-blocked" : "configuration-review-impact"}
         onClick={() => void runtime.apply()}>{runtime.submitting ? t("runtime.submitting") : t("runtime.applyConfiguration")}</button></div>
   </dialog>;
 }

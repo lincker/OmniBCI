@@ -1,6 +1,80 @@
 .plugin-profiles { min-height: 0; }
+.plugin-profiles .settings-editor { container-type: inline-size; }
+.plugin-profiles .settings-scroll { padding-top: 0; scroll-padding-block: 1rem; }
+.plugin-profiles .editor-heading { padding-inline: 0; gap: 1rem; }
+.plugin-profiles .editor-action { flex: 0 1 23rem; }
+.plugin-profiles .settings-scroll > .inline-message { margin-inline: 0; }
+.plugin-profiles .binding-summary { margin-bottom: 1rem; }
+.profile-library { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.profile-library-toggle { display: none; }
+.profile-search { padding: 0 0.75rem 0.5rem; }
+.profile-search input { width: 100%; min-width: 0; font-size: 0.75rem; }
+.profile-search p, .profile-list-empty { font-size: 0.6875rem; line-height: 1.5; color: var(--muted); margin-block: 0.5rem 0; }
+.profile-search .text-button { font-size: 0.6875rem; padding: 0; }
+.profile-list-empty { padding-inline: 0.75rem; }
+.processing-navigation { display: flex; flex-wrap: wrap; gap: 0.375rem; margin-bottom: 1rem; padding-block: 0.5rem; border-bottom: 1px solid var(--border-soft); position: sticky; top: 0; z-index: 2; background: var(--bg); }
+.module-processing .settings-scroll { scroll-padding-top: 6rem; }
+.processing-navigation button { flex: 1 1 auto; font-size: 0.75rem; }
+.plugin-profiles .profile-selectors > h2 { grid-column: 1 / -1; }
+.plugin-profiles .profile-selectors > .setting-description, .plugin-profiles .profile-tools { grid-column: 1 / -1; }
+.plugin-profiles .setting-group > .setting-description,
+.plugin-profiles .setting-group > .action-help,
+.plugin-profiles .setting-group > .actions,
+.plugin-profiles .setting-group > dl { margin-inline: 1rem; }
+.plugin-profiles .setting-group > .setting-description:last-child { margin-bottom: 1rem; }
+.plugin-profiles .setting-group > summary { padding: 0.75rem 1rem; cursor: pointer; color: var(--heading); font-weight: 500; }
+.plugin-profiles .source-connection > p[role="status"] { padding: 0 1rem 0.75rem; font-size: 0.75rem; }
+.plugin-profiles .acquisition-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 1.25rem; align-items: start; }
+.plugin-profiles .profile-fields, .plugin-profiles .acquisition-observations { min-width: 0; }
+.plugin-profiles .profile-fields { container-type: inline-size; }
+.plugin-profiles .profile-parameters:focus-visible,
+.plugin-profiles #processing-channel-mapping:focus-visible,
+.plugin-profiles #processing-filter-chain:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+@container (min-width: 540px) {
+  .plugin-profiles .profile-selectors { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .plugin-profiles .profile-selectors .setting-row select { max-width: none; }
+  .plugin-profiles .profile-identity .setting-row { display: grid; grid-template-columns: 10rem minmax(0, 1fr); align-items: center; gap: 1rem; }
+  .plugin-profiles .profile-identity .setting-row input { margin-top: 0; }
+  .plugin-profiles .profile-parameters > .schema-group > .schema-property > .setting-row { display: grid; grid-template-columns: minmax(9rem, 1fr) minmax(10rem, 1fr); gap: 0.375rem 1rem; }
+  .plugin-profiles .profile-parameters .setting-row > .setting-label,
+  .plugin-profiles .profile-parameters .setting-row > .setting-description { grid-column: 1; }
+  .plugin-profiles .profile-parameters .setting-row > input,
+  .plugin-profiles .profile-parameters .setting-row > select,
+  .plugin-profiles .profile-parameters .setting-row > .file-path-field { grid-column: 2; grid-row: 1 / span 2; margin-top: 0; }
+  .plugin-profiles .profile-parameters .setting-row > .setting-detail,
+  .plugin-profiles .profile-parameters .setting-row > .error { grid-column: 2; margin-top: 0; }
+}
+@container (min-width: 820px) {
+  .plugin-profiles .acquisition-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  .plugin-profiles.settings-workspace { flex-direction: column; height: 100%; min-height: 0; }
+  .plugin-profiles.settings-workspace > .profile-explorer { width: 100%; flex: none; border-right: 0; border-bottom: 1px solid var(--border-soft); overflow: visible; }
+  .plugin-profiles .workspace-navigation { display: flex; flex-wrap: wrap; padding: 0.25rem; border-bottom: 0; }
+  .plugin-profiles .workspace-navigation .explorer-item { width: auto; flex: 1 1 auto; justify-content: center; padding: 0.375rem 0.5rem; font-size: 0.75rem; }
+  .plugin-profiles .profile-explorer > .explorer-heading { display: none; }
+  .profile-library-toggle { display: flex; width: 100%; justify-content: space-between; padding: 0.5rem 1rem; border: 0; border-top: 1px solid var(--border-soft); border-radius: 0; background: var(--sidebar-bg); font-size: 0.75rem; }
+  .profile-library { display: none; }
+  .profile-library.expanded { display: flex; max-height: 35dvh; overflow-y: auto; }
+  .plugin-profiles .profile-list { max-height: none; overflow: visible; }
+  .plugin-profiles .explorer-footer { display: none; }
+  .plugin-profiles .settings-editor { min-height: 0; }
+  .plugin-profiles .settings-scroll { overflow-y: auto; }
+  .plugin-profiles .editor-heading { padding-block: 1rem; }
+  .plugin-profiles .editor-action { flex-basis: 100%; max-width: none; text-align: left; }
+  .plugin-profiles .editor-footer { padding: 0.625rem 1rem; gap: 0.5rem; }
+  .plugin-profiles .editor-feedback { flex-basis: 100%; }
+  .plugin-profiles .editor-footer .actions { width: 100%; justify-content: flex-start; margin-left: 0; }
+}
+@media (max-height: 560px) {
+  .plugin-profiles.settings-workspace { height: auto; min-height: 100%; }
+  .plugin-profiles .settings-scroll { overflow: visible; }
+  .plugin-profiles .profile-library.expanded { max-height: 8rem; }
+  .plugin-profiles .processing-navigation { position: static; }
+}
 .plugin-profiles .profile-tools { padding: 0.5rem 1rem 1rem; flex-wrap: wrap; }
-.plugin-profiles .binding-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 0.75rem var(--page-gutter); font-size: 0.75rem; border-bottom: 1px solid var(--border-soft); }
+.plugin-profiles .binding-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 0.75rem 0; font-size: 0.75rem; border-bottom: 1px solid var(--border-soft); }
 .plugin-profiles .binding-summary button { font-size: 12px; }
 .plugin-profiles .filter-chain .setting-label { display: block; margin: 8px 0 4px; }
 .plugin-profiles .schema-group { border: 1px solid var(--border-soft); border-radius: 0.5rem; margin: 0 0 var(--section-gap); padding: 0.75rem; min-width: 0; }

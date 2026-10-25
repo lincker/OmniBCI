@@ -54,6 +54,8 @@ h2 { color: var(--heading); font-size: 1rem; line-height: 1.4; font-weight: 600;
 
 /* Workbench chrome: title, activity bar, and status bar. */
 .workbench { height: 100dvh; min-height: 360px; display: flex; flex-direction: column; overflow: hidden; }
+.skip-link { position: fixed; top: 8px; left: 12px; z-index: 100; padding: 10px 16px; border: 1px solid var(--accent); border-radius: var(--control-radius); background: var(--bg); color: var(--heading); transform: translateY(-200%); }
+.skip-link:focus-visible { transform: none; outline: 2px solid var(--accent); outline-offset: 2px; }
 .title-bar { height: 36px; flex: none; background: var(--title-bg); border-bottom: 1px solid var(--border-soft); display: flex; align-items: center; justify-content: space-between; padding: 0 14px; gap: 16px; font-size: 12px; }
 .wordmark { display: flex; align-items: center; gap: 10px; width: 190px; font-weight: 500; }
 .brand-mark { color: var(--accent); font-size: 22px; line-height: 1; font-family: Georgia, serif; }
@@ -138,6 +140,15 @@ button.explorer-item:active:not(:disabled) { background: var(--press-bg); }
 .editor-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.875rem var(--page-gutter); border-top: 1px solid var(--border-soft); background: var(--bg); flex: none; }
 .save-state { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; color: var(--muted); }
 .editor-footer .actions { margin: 0; }
+.editor-action { max-width: 26rem; text-align: right; }
+.action-help { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
+.editor-feedback { flex: 1 1 18rem; min-width: 0; }
+.editor-feedback .save-state { flex-wrap: wrap; }
+.pending-state { border-left: 1px solid var(--border); padding-left: 8px; color: var(--heading); }
+.control-feedback { min-width: 0; }
+.engine-card .control-feedback { max-width: 28rem; }
+.action-reasons { margin-top: 8px; }
+.action-reasons p { margin: 4px 0 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
 .inline-message { margin: 0 32px 13px; padding: 9px 12px; background: var(--sidebar-bg); border-left: 2px solid var(--accent); font-size: 12px; line-height: 1.65; flex: none; overflow-wrap: anywhere; }
 .inline-message.error { border-color: var(--err); }
 .inline-message.success { border-color: var(--ok); }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api/client";
 import { usePoll } from "./hooks/usePoll";
 import { useResultsFeed } from "./hooks/useResultsFeed";
@@ -47,6 +47,13 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
     try { const value = localStorage.getItem("omnibci-appearance"); return value === "light" || value === "dark" ? value : "system"; }
     catch { return "system"; }
   });
+  const main = useRef<HTMLElement>(null);
+  const previousView = useRef(view);
+  const focusEditor = () => {
+    const heading = main.current?.querySelector<HTMLElement>(".settings-editor h1, .runtime-content h1");
+    if (heading) { heading.setAttribute("tabindex", "-1"); heading.focus(); }
+    else main.current?.focus();
+  };
   const feed = useResultsFeed();
   const engine = usePoll(api.engineStatus);
   const acquisition = usePoll(api.acquisitionStatus);
@@ -63,13 +70,14 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
   useEffect(() => {
     window.history.replaceState(null, "", `#${view}`);
     if (setupPages.some(([page]) => page === view)) setLastSetup(view as SetupPage);
+    if (previousView.current !== view) { previousView.current = view; focusEditor(); }
   }, [view]);
   useEffect(() => {
-    if (desktopBridge() || (!dirty && !busy)) return;
+    if (desktopBridge() || (!dirty && !busy && !runtime.inProgress)) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty, busy]);
+  }, [dirty, busy, runtime.inProgress]);
 
   useEffect(() => {
     desktopBridge()?.setEditorState({ dirty, busy: busy || runtime.inProgress });
@@ -109,8 +117,12 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
   </div>;
 
   return <div className="workbench" onKeyDown={(event) => {
+    if (event.defaultPrevented || (event.target as HTMLElement).closest?.("dialog")) return;
     if ((event.ctrlKey || event.metaKey) && event.key === ",") { event.preventDefault(); navigate("general"); }
   }}>
+    <a className="skip-link" href="#editor-content" onClick={(event) => {
+      event.preventDefault(); focusEditor();
+    }}>{t("app.skipToEditor")}</a>
     <header className="title-bar">
       <span className="wordmark"><span className="brand-mark">Ω</span>OmniBCI</span>
       <div className="workspace-title"><Icon name="folder" /><span>{t("app.console")}</span><span className="title-separator">/</span><span>{t(space)}</span></div>
@@ -125,7 +137,7 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
           aria-label={t("app.settings")} title={t("app.settings")} aria-current={isSettings ? "page" : undefined} disabled={busy}
           onClick={() => navigate("general")}><Icon name="gear" /></button></div>
       </nav>
-      <main className="editor-workspace">
+      <main className="editor-workspace" ref={main} id="editor-content" tabIndex={-1}>
         <RuntimeConfigurationStatus runtime={runtime} />
         <fieldset className="desktop-control-guard" disabled={!!desktopConnection && desktopConnection.status !== "ready"}>
         <div className="editor-viewport">
@@ -142,7 +154,8 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
                 <p>{t("app.resultsDescription")}</p></div>
                 <button onClick={() => navigate("run")}><Icon name="play" />{t("app.openRun")}</button></header>
               {feed.error && <p className="error" role="alert">{feed.error}</p>}
-              <section className="card"><h2>{t("app.results")} <span className="count">{feed.trials.length}</span></h2><TrialResults trials={feed.trials} /></section>
+              <section className="card"><h2>{t("app.results")} <span className="count">{feed.trials.length}</span></h2>
+                <TrialResults trials={feed.trials} generation={feed.generation} stale={!!feed.error} /></section>
             </div>
             : view === "logs" ? <BackendLogs navigation={navigation} />
             : <ConfigCard navigation={navigation}
@@ -157,12 +170,12 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
         {feed.connection === "open" ? t("app.connected") : feed.connection === "connecting" ? t("app.connecting") : t("app.disconnected")}</span>
       <span>{engine.error ? t("app.engineUnavailable") : !engine.data ? t("app.checkingEngine") : engineRunning ? t("app.engineRunning") : t("app.engineStopped")}</span>
       <span className="status-spacer" />
-      {acquisition.data?.sample_rate != null && <span>{acquisition.data.sample_rate} Hz</span>}
-      {acquisition.data?.channel_count != null && <span className="status-source">{t("app.channels", { count: acquisition.data.channel_count })}</span>}
+      {!engine.error && !acquisition.error && acquisition.data?.sample_rate != null && <span>{acquisition.data.sample_rate} Hz</span>}
+      {!engine.error && !acquisition.error && acquisition.data?.channel_count != null && <span className="status-source">{t("app.channels", { count: acquisition.data.channel_count })}</span>}
       <span className="status-context">{busy ? t("app.working") : dirty ? t("app.unsaved") : t(space)}</span>
     </footer>
     {pendingView && <ConfigDialog title={t("app.unsaved")} message={t("app.discardQuestion")}
-      confirmLabel={t("app.discard")} onCancel={() => setPendingView(null)} onConfirm={() => {
+      confirmLabel={t("app.discard")} cancelLabel={t("app.keepEditing")} onCancel={() => setPendingView(null)} onConfirm={() => {
         setDirty(false); setView(pendingView); setPendingView(null);
       }} />}
     <RuntimeConfigurationReview runtime={runtime} />

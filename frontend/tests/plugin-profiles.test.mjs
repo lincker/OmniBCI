@@ -153,6 +153,8 @@ function control(harness, label, type = "select") {
 const options = (select) => elements(select).filter((item) => item.type === "option").map((item) => ({ value: item.props.value, label: text(item) }));
 const form = (harness) => elements(harness.tree).find((item) => item.type.name === "SchemaForm");
 const input = (harness) => elements(harness.tree).find((item) => item.type.name === "ProcessingInput");
+const listedProfiles = (harness) => elements(harness.tree).filter((item) => item.type === "button"
+  && item.props.className?.includes("profile-item"));
 const metadata = (harness) => elements(harness.tree).find((item) => item.type.name === "AcquisitionMetadata");
 const dialog = (harness) => elements(harness.tree).find((item) => item.type.name === "ConfigDialog");
 const filterRows = (harness) => elements(harness.tree).filter((item) => item.type === "ol" && item.props.className === "filter-chain")
@@ -168,6 +170,47 @@ async function change(harness, label, value, type = "select") {
   assert.equal(!!target.props.disabled, false, `${label} should be enabled`);
   await target.props.onChange({ target: { value } }); await harness.settle();
 }
+
+async function saveShortcut(harness, overrides = {}) {
+  let prevented = false;
+  harness.tree.props.onKeyDown({ key: "s", ctrlKey: true, metaKey: false, altKey: false,
+    repeat: false, defaultPrevented: false, nativeEvent: {}, preventDefault() { prevented = true; }, ...overrides });
+  await harness.settle();
+  return prevented;
+}
+
+test("profile search keeps a hidden draft open and searches only the selected plugin version", async () => {
+  await withProfiles("acquisition", async (harness, calls) => {
+    await change(harness, "Name", "Unsaved experiment", "input");
+    await change(harness, "Search saved profiles", "  LAB B  ", "input");
+    assert.deepEqual(listedProfiles(harness).map(text), ["Lab B"]);
+    assert.match(text(harness.tree), /Showing 1 of 2 profiles/);
+    assert.match(text(harness.tree), /The open profile is hidden by this search/);
+    assert.equal(control(harness, "Name", "input").props.value, "Unsaved experiment");
+    assert.equal(control(harness, "Profile").props.value, "lab-a");
+    assert.equal(dialog(harness), undefined);
+    await click(harness, "Clear search");
+    assert.equal(listedProfiles(harness).length, 2);
+    assert.doesNotMatch(text(harness.tree), /The open profile is hidden by this search/);
+    await change(harness, "Search saved profiles", "lab-a", "input");
+    assert.equal(listedProfiles(harness).length, 1);
+    assert.equal(listedProfiles(harness)[0].props["aria-current"], "true");
+    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
+  });
+});
+
+test("profile lists distinguish no search matches from no saved profiles", async () => {
+  await withProfiles("acquisition", async (harness) => {
+    await change(harness, "Search saved profiles", "Version 2", "input");
+    assert.equal(listedProfiles(harness).length, 0);
+    assert.match(text(harness.tree), /No profiles match this search/);
+    await change(harness, "Search saved profiles", "   ", "input");
+    assert.equal(listedProfiles(harness).length, 2);
+    await change(harness, "Plugin and version", selectionKey(unsavedPlugin));
+    assert.match(text(harness.tree), /No saved profiles for this plugin version/);
+    assert.doesNotMatch(text(harness.tree), /No profiles match this search/);
+  });
+});
 
 async function withProfiles(module, action, { engineRunning = false, streaming = false, applySucceeds = true, configure } = {}) {
   const originalApi = { ...api };
@@ -247,6 +290,99 @@ test("the profile selector is scoped to the selected plugin and exact version", 
     assert.equal(control(harness, "Profile").props.value, "lab-a", "Return to the bound profile before the first saved profile");
     assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
   });
+});
+
+for (const modifiers of [{ ctrlKey: true }, { ctrlKey: false, metaKey: true, key: "S" }]) {
+  test(`the profile save shortcut saves only the draft (${JSON.stringify(modifiers)})`, async () => {
+    await withProfiles("processing", async (harness, calls) => {
+      await change(harness, "Name", "Keyboard edit", "input");
+      assert.equal(await saveShortcut(harness, modifiers), true);
+      assert.equal(calls.update.length, 1);
+      assert.equal(calls.update[0].name, "Keyboard edit");
+      assert.equal(calls.review.length, 0);
+      assert.equal(calls.apply.length, 0);
+    });
+  });
+}
+
+test("save shortcuts respect validation, dialogs, key repeats and composition", async () => {
+  await withProfiles("processing", async (harness, calls) => {
+    await change(harness, "Name", "", "input");
+    await saveShortcut(harness);
+    assert.equal(calls.update.length, 0);
+    await change(harness, "Name", "Keep this draft", "input");
+    await saveShortcut(harness, { repeat: true });
+    await saveShortcut(harness, { nativeEvent: { isComposing: true } });
+    await saveShortcut(harness, { defaultPrevented: true });
+    assert.equal(await saveShortcut(harness, { shiftKey: true }), false);
+    await click(harness, "New profile");
+    assert.ok(dialog(harness));
+    await saveShortcut(harness);
+    assert.equal(calls.update.length, 0);
+    dialog(harness).props.onCancel(); await harness.settle();
+    assert.equal(control(harness, "Name", "input").props.value, "Keep this draft");
+  });
+});
+
+test("keyboard saving restores the edited field after busy controls are enabled again", async () => {
+  const originalDocument = globalThis.document;
+  let restored = 0;
+  globalThis.document = { activeElement: { isConnected: true, getClientRects: () => [{}], focus: () => { restored += 1; } } };
+  try {
+    await withProfiles("processing", async (harness) => {
+      await change(harness, "Name", "Continue editing here", "input");
+      await saveShortcut(harness);
+      assert.equal(restored, 1);
+      assert.equal(control(harness, "Name", "input").props.disabled, false);
+    });
+  } finally { if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument; }
+});
+
+test("processing stage navigation retains the decoder draft and guards cross-profile changes", async () => {
+  await withProfiles("processing", async (harness, calls) => {
+    await change(harness, "Name", "Unfinished decoder", "input");
+    input(harness).props.onChange(decoderInput(["C4"])); await harness.settle();
+    await click(harness, "Channel mapping");
+    assert.equal(dialog(harness), undefined);
+    assert.equal(control(harness, "Name", "input").props.value, "Unfinished decoder");
+    assert.deepEqual(input(harness).props.value, decoderInput(["C4"]));
+    await click(harness, "Epoching");
+    assert.ok(dialog(harness));
+    dialog(harness).props.onCancel(); await harness.settle();
+    assert.deepEqual(input(harness).props.value, decoderInput(["C4"]));
+    await click(harness, "Epoching");
+    dialog(harness).props.onConfirm(""); await harness.settle();
+    assert.equal(input(harness), undefined);
+    assert.equal(calls.create.length + calls.update.length + calls.review.length + calls.apply.length, 0);
+  });
+});
+
+test("processing anchors align the focused section at the top and library expansion does not select a profile", async () => {
+  const originalDocument = globalThis.document;
+  const focused = [], scrolled = [];
+  globalThis.document = { getElementById: (id) => ({
+    focus(options) { focused.push([id, options]); }, scrollIntoView(options) { scrolled.push([id, options]); },
+  }) };
+  try {
+    await withProfiles("processing", async (harness, calls) => {
+      const toggle = button(harness, "Profiles & tools +");
+      assert.equal(toggle.props["aria-expanded"], false);
+      toggle.props.onClick(); await harness.settle();
+      assert.equal(button(harness, "Profiles & tools −").props["aria-expanded"], true);
+      await click(harness, "Channel mapping");
+      assert.deepEqual(focused.at(-1), ["processing-channel-mapping", { preventScroll: true }]);
+      assert.deepEqual(scrolled.at(-1), ["processing-channel-mapping", { block: "start" }]);
+      let finishCatalog;
+      api.catalog = () => new Promise((resolve) => { finishCatalog = resolve; });
+      const beforeLoad = focused.length;
+      await click(harness, "Epoching");
+      assert.equal(focused.length, beforeLoad, "Keep pending focus until the target editor finishes loading");
+      finishCatalog([]); await harness.settle();
+      assert.equal(focused.at(-1)[0], "processing-parameters");
+      assert.equal(calls.apply.length, 0);
+      assert.equal(calls.review.length, 0);
+    });
+  } finally { if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument; }
 });
 
 test("acquisition shows the plugin selector before its profiles on entry", async () => {
@@ -662,10 +798,13 @@ test("saving changed parameters keeps the old activation until an explicit revie
     const accepted = clone(data.activation);
     form(harness).props.onChange({ gain: 12, calibration: [3, 4] }); await harness.settle();
     assert.equal(!!button(harness, "Review and apply profile").props.disabled, true);
+    assert.match(text(harness.tree), /Save or discard this profile draft before reviewing a change/);
+    assert.equal(button(harness, "Review and apply profile").props["aria-describedby"], "profile-review-help");
     await click(harness, "Save profile");
     assert.equal(calls.update.length, 1); assert.equal(calls.create.length, 0);
     assert.equal(calls.review.length, 0); assert.equal(calls.apply.length, 0);
     assert.deepEqual(data.activation, accepted);
+    assert.match(text(harness.tree), /saved changes that are not selected/);
     await click(harness, "Review and apply profile");
     assert.equal(calls.review.length, 1);
     assert.deepEqual(calls.review[0].refresh_slots, ["acquisition.source"]);
@@ -674,6 +813,46 @@ test("saving changed parameters keeps the old activation until an explicit revie
     assert.equal("include_signal_setup" in calls.review[0], false);
     assert.equal(calls.apply.length, 0);
     assert.deepEqual(data.activation, accepted);
+  });
+});
+
+test("profile save failures preserve edits and keep review unavailable", async () => {
+  await withProfiles("processing", async (harness, calls) => {
+    api.update = async () => { throw new Error("Profile changed in another console"); };
+    input(harness).props.onChange(decoderInput(["C4"])); await harness.settle();
+    await click(harness, "Save profile");
+    assert.match(text(harness.tree), /Profile changed in another console/);
+    assert.match(text(harness.tree), /Unsaved changes/);
+    assert.deepEqual(input(harness).props.value.outputs, decoderInput(["C4"]).outputs);
+    assert.equal(button(harness, "Review and apply profile").props.disabled, true);
+    assert.equal(button(harness, "Save profile").props.disabled, false);
+    assert.equal(calls.apply.length, 0);
+  });
+});
+
+test("profile saving preserves and distinguishes unapplied filter order", async () => {
+  await withProfiles("processing", async (harness, calls) => {
+    await click(harness, "Filters");
+    await click(harness, "Move down", filterRows(harness)[0]);
+    await change(harness, "Name", "Renamed filter", "input");
+    await click(harness, "Save profile");
+    assert.match(text(harness.tree), /Profile saved/);
+    assert.match(text(harness.tree), /Filter order not applied/);
+    assert.equal(control(harness, "Filter 1 profile").props.value, "notch-a");
+    assert.equal(calls.review.length, 0);
+    assert.equal(calls.apply.length, 0);
+  });
+});
+
+test("new profiles explain validation and metadata prerequisites next to Save", async () => {
+  await withProfiles("acquisition", async (harness) => {
+    await click(harness, "New profile");
+    assert.match(text(harness.tree), /Enter a profile name before saving/);
+    assert.equal(button(harness, "Save profile").props["aria-describedby"], "profile-save-help");
+    assert.match(text(harness.tree), /Connect applies these draft parameters and starts the engine when needed/);
+    await change(harness, "Name", "Draft", "input");
+    assert.equal(button(harness, "Save profile").props.disabled, false);
+    assert.match(text(harness.tree), /Saves this profile only/);
   });
 });
 
@@ -757,6 +936,11 @@ test("discarding an editor change preserves pending filter order, while Discard 
     assert.equal(control(harness, "Filter 1 profile").props.value, "notch-a");
     assert.equal(control(harness, "Filter 2 profile").props.value, "band-a");
     await click(harness, "Discard");
+    assert.equal(dialog(harness).props.cancelLabel, "Keep editing");
+    dialog(harness).props.onCancel(); await harness.settle();
+    assert.equal(control(harness, "Filter 1 profile").props.value, "notch-a");
+    await click(harness, "Discard");
+    dialog(harness).props.onConfirm(""); await harness.settle();
     assert.equal(control(harness, "Filter 1 profile").props.value, "band-a");
     assert.equal(control(harness, "Filter 2 profile").props.value, "notch-a");
     assert.equal(!!button(harness, "Review and apply filter chain").props.disabled, true);
@@ -826,6 +1010,10 @@ test("discard and duplication keep channel input inside its decoder profile", as
   await withProfiles("processing", async (harness, calls) => {
     input(harness).props.onChange(decoderInput(["C4"])); await harness.settle();
     await click(harness, "Discard");
+    dialog(harness).props.onCancel(); await harness.settle();
+    assert.deepEqual(input(harness).props.value.outputs, decoderInput(["C4"]).outputs);
+    await click(harness, "Discard");
+    dialog(harness).props.onConfirm(""); await harness.settle();
     assert.deepEqual(input(harness).props.value.outputs, decoderInput(["C3", "C4"]).outputs);
     input(harness).props.onChange(decoderInput(["C4"])); await harness.settle();
     await click(harness, "Duplicate profile");
