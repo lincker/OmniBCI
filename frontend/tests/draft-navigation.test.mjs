@@ -173,6 +173,37 @@ test("settings shortcuts ignore handled events and keys inside dialogs", async (
   });
 });
 
+test("Open Run preserves draft protection and Change setup returns to Acquisition", async () => {
+  await withApp(async ({ h, listeners }) => {
+    component(h, "PluginProfiles").props.onDirtyChange(true); await h.settle();
+    component(h, "PluginProfiles").props.onRun(); await h.settle();
+    assert.equal(window.location.hash, "#acquisition");
+    component(h, "ConfigDialog").props.onCancel(); await h.settle();
+    component(h, "PluginProfiles").props.onDirtyChange(false); await h.settle();
+    window.location.hash = "#processing"; listeners.get("hashchange")(); await h.settle();
+    navigation(h, "Run").props.onClick(); await h.settle();
+    component(h, "RunConsole").props.onEditSetup(); await h.settle();
+    assert.equal(window.location.hash, "#acquisition", "Source setup must not depend on the last visited setup tab");
+  });
+});
+
+test("Run processing shortcut opens the relevant editor and respects busy navigation", async () => {
+  await withApp(async ({ h }) => {
+    navigation(h, "Run").props.onClick(); await h.settle();
+    component(h, "RunConsole").props.onEditProcessing(); await h.settle();
+    assert.equal(window.location.hash, "#processing");
+    assert.equal(component(h, "PluginProfiles").props.module, "processing");
+    navigation(h, "Run").props.onClick(); await h.settle();
+    component(h, "RunConsole").props.onBusyChange(true); await h.settle();
+    component(h, "RunConsole").props.onEditProcessing(); await h.settle();
+    assert.equal(window.location.hash, "#run", "A running operation keeps navigation blocked");
+    component(h, "RunConsole").props.onBusyChange(false); await h.settle();
+    component(h, "RunConsole").props.onEditProcessing(); await h.settle();
+    assert.equal(window.location.hash, "#processing");
+    assert.equal(component(h, "PluginProfiles").props.module, "processing");
+  });
+});
+
 test("browser refresh stays protected until an in-flight runtime application settles", async () => {
   await withApp(async ({ h, listeners, state }) => {
     const event = { prevented: false, preventDefault() { this.prevented = true; } };

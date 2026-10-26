@@ -143,11 +143,13 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
         <div className="editor-viewport">
           {isSetup ? <PluginProfiles key={view} module={view as SetupPage} engineRunning={engineRunning} engineAvailable={engine.data !== null && engine.error === null} navigation={navigation}
             runtime={runtime} acquisitionStatus={acquisition.error ? null : acquisition.data} onAcquisitionChange={acquisition.refresh}
-            onDirtyChange={setDirty} onBusyChange={setBusy} />
+            onDirtyChange={setDirty} onBusyChange={setBusy} onRun={() => navigate("run")} />
             : view === "extensions" ? <PluginMarket runtimeBusy={runtime.blocked}
               onBusyChange={setBusy} onDirtyChange={setDirty} onOpenSetup={() => navigate(lastSetup)} />
             : view === "run" ? <RunConsole engine={engine} acquisition={acquisition} feed={feed}
-              runtime={runtime} onBusyChange={setBusy} onEditSetup={() => navigate(lastSetup)} onResults={() => navigate("results")} />
+              runtime={runtime} onBusyChange={setBusy} onEditSetup={() => navigate("acquisition")}
+              onEditProcessing={() => navigate("processing")}
+              onResults={() => navigate("results")} />
             : view === "results" ? <div className="runtime-content">
               <div className="breadcrumbs">{t("app.results")} <Icon name="chevron" /> {t("app.liveResults")}</div>
               <header className="editor-heading"><div><p className="eyebrow">{t("app.liveData")}</p><h1>{t("app.trialResults")}</h1>

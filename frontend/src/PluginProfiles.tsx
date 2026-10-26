@@ -13,6 +13,7 @@ import { ProcessingInput, emptyProcessingInput, processingInputErrors } from "./
 import { api as controlApi, type AcquisitionStatus, type DataSourceMetadata } from "./api/client";
 import { runtimeConfigApi, type RuntimePlanRequest } from "./api/runtime-config";
 import { RuntimeConfigurationProgress, runtimeBlockReason } from "./RuntimeConfiguration";
+import { prepareSource, type SourceStage } from "./source-lifecycle";
 
 type Module = "acquisition" | "processing" | "stimulation" | "actuation";
 type Slot = { slot: string; kind: PluginKind; label: TranslationKey };
@@ -73,7 +74,7 @@ function editorFor(profile: PluginProfile | undefined, definitions: PluginDefini
 }
 
 export function PluginProfiles({ module, engineRunning, engineAvailable = true, navigation,
-  runtime, acquisitionStatus = null, onAcquisitionChange, onSelected, onDirtyChange, onBusyChange }: {
+  runtime, acquisitionStatus = null, onAcquisitionChange, onSelected, onDirtyChange, onBusyChange, onRun }: {
   module: Module;
   engineRunning: boolean;
   engineAvailable?: boolean;
@@ -84,6 +85,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   onSelected?: () => void;
   onDirtyChange?: (dirty: boolean) => void;
   onBusyChange?: (busy: boolean) => void;
+  onRun?: () => void;
 }) {
   const { t } = useI18n();
   const [slotName, setSlotName] = useState(slots[module][0].slot);
@@ -102,11 +104,14 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   const [sourceMetadata, setSourceMetadata] = useState<DataSourceMetadata | null>(null);
   const [libraryExpanded, setLibraryExpanded] = useState(false);
   const [profileQuery, setProfileQuery] = useState("");
+  const [sourceStage, setSourceStage] = useState<SourceStage | null>(null);
+  const [inspection, setInspection] = useState<{ revision: string; generation: string; connectionId: string } | null>(null);
   const pendingFocus = useRef<string | null>(null);
   const saveFocus = useRef<HTMLElement | null>(null);
   const editorHeading = useRef<HTMLHeadingElement>(null);
   const sourceMode = editor.profile ? "saved" : "new";
   const metadataGeneration = useRef(0);
+  const sourceOperation = useRef(false);
   const loadGeneration = useRef(0);
   const definition = definitions.find((item) => selectionKey(item.selection) === editor.plugin);
   const noTrigger = slot.kind === "trigger" && editor.plugin === "";
@@ -143,11 +148,12 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   const reportedSource = ["neuroscan_curry8_reader", "file_reader"].includes(definition?.plugin_type ?? "");
   const sourceParameters = sourceMode === "new" && reportedSource ? connectionParameters(editor.parameters) : editor.parameters;
   const sourceParameterKey = JSON.stringify(sourceParameters);
-  const sourceMatches = !!selectedBinding && (editor.profile ? selectedBinding.profile_id === editor.profile.profile_id
-    : sourceMode === "new" && !selectedBinding.profile_id)
+  const sourceSelected = !!selectedBinding && !!editor.profile && selectedBinding.profile_id === editor.profile.profile_id
+    && selectedBinding.profile_revision === editor.profile.revision
     && selectionKey(selectedBinding.selection) === editor.plugin
-    && sameParameters(selectedBinding.parameters, sourceParameters)
-    && runtime.status?.running === true && runtime.status.applied_revision === activation?.revision;
+    && sameParameters(selectedBinding.parameters, sourceParameters);
+  const sourceMatches = sourceSelected && runtime.status?.running === true
+    && runtime.status.applied_revision === activation?.revision;
   const canReadSource = !!sourceStatus?.connected && !sourceStatus.streaming && sourceMatches
     && !sourceParametersChanged && !runtime.blocked;
   const metadataRevision = metadataGeneration.current;
@@ -164,7 +170,6 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     if (sourceMode === "new" && reportedSource) {
       setEditor((current) => current.profile || !Object.keys(current.parameters).some((key) => observedFields.has(key))
         ? current : { ...current, parameters: connectionParameters(current.parameters) });
-      setNotice((current) => current === "profiles.observedDraftFilled" ? null : current);
     }
   }, [sourceMode, editor.plugin, editor.profile?.profile_id, sourceParameterKey, sourceStatus?.connected, sourceStatus?.connection_id, sourceStatus?.streaming, sourceMatches, runtime.status?.generation, runtime.blocked]);
 
@@ -177,7 +182,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
       onSelected?.();
     }).catch((cause) => { if (active) setError(String(cause)); });
     return () => { active = false; };
-  }, [runtime.status?.accepted_revision, onSelected]);
+  }, [runtime.status?.accepted_revision, runtime.operation?.operation_id, runtime.operation?.status, onSelected]);
 
   useEffect(() => { onDirtyChange?.(dirty || chainDirty); }, [dirty, chainDirty, onDirtyChange]);
   useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
@@ -286,76 +291,82 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     }, "profiles.saved", true);
   };
   const connectSource = async () => {
-    if (busy || runtime.blocked || !definition?.available || errors.length) return;
+    if (sourceOperation.current || connectReason || !activation) return;
+    sourceOperation.current = true;
     metadataGeneration.current += 1; setSourceMetadata(null);
-    if (sourceMode === "new" && reportedSource) setEditor((current) => ({ ...current, parameters: connectionParameters(current.parameters) }));
     setBusy(true); setError(""); setNotice(null);
+    let stage: SourceStage = "checking";
     try {
-      const current = await controlApi.acquisitionStatus();
-      if (!current) throw new Error(t("profiles.sourceUnavailable"));
-      if (current.streaming) throw new Error(t("profiles.stopBeforeConnect"));
-      const saved = editor.profile && dirty ? await persistProfile(false, editor.name.trim() || definition.label) : editor.profile;
-      if (saved) {
-        resetEditor(editorFor(saved, definitions));
-        setProfiles((previous) => [...previous.filter((item) => item.profile_id !== saved.profile_id), saved]);
-      }
-      const selected = await api.activation();
-      const sourceSelection = saved?.selection ?? definition.selection;
-      const parameters = saved?.parameters ?? sourceParameters;
-      const sourceBinding = saved ? { slot: "acquisition.source", profile_id: saved.profile_id }
-        : { slot: "acquisition.source" as const, selection: sourceSelection, parameters };
-      const applied = await runtime.applySelection({ module: "acquisition", bindings: [sourceBinding],
-        expected_revision: selected?.revision ?? null, refresh_slots: ["acquisition.source"], include_host_settings: false });
-      if (!applied) throw new Error(t("profiles.connectApplyFailed"));
-      if (!(await runtimeConfigApi.status()).running) await controlApi.engineStart();
-      const [confirmed, status] = await Promise.all([api.activation(), runtimeConfigApi.status()]);
-      const source = confirmed?.bindings.find((item) => item.slot === "acquisition.source");
-      if (!source || (source.profile_id ?? null) !== (saved?.profile_id ?? null) || selectionKey(source.selection) !== selectionKey(sourceSelection)
-          || !sameParameters(source.parameters, parameters)
-          || !status.running || status.recovery_required || status.accepted_revision !== confirmed?.revision
-          || status.applied_revision !== confirmed?.revision || ["queued", "applying"].includes(status.operation?.status ?? "")) {
-        throw new Error(t("profiles.sourceChanged"));
-      }
-      await controlApi.acqConnect();
-      setSourceStatus(await controlApi.acquisitionStatus());
-      if (saved) await reload(saved.profile_id, editor.plugin);
-      else setActivation(confirmed);
-      await onAcquisitionChange?.();
-      setNotice("profiles.sourceConnected");
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { await runtime.refresh(); setBusy(false); }
+      const prepared = await prepareSource(activation.revision, (next) => { stage = next; setSourceStage(next); });
+      setSourceStatus(prepared.acquisition);
+      if (prepared.acquisition.streaming) throw new Error(t("profiles.stopBeforeRead"));
+      await runtime.refresh();
+      setInspection({ revision: activation.revision, generation: prepared.runtime.generation!,
+        connectionId: prepared.acquisition.connection_id! });
+    } catch (cause) {
+      setError(t("profiles.prepareFailed", { stage: t(`profiles.stage.${stage}`),
+        error: cause instanceof Error ? cause.message : String(cause) }));
+      sourceOperation.current = false;
+      setSourceStage(null); setBusy(false);
+      await runtime.refresh(); await onAcquisitionChange?.();
+    }
   };
   const disconnectSource = async () => {
+    if (sourceOperation.current || disconnectReason) return;
+    sourceOperation.current = true;
     setBusy(true); setError(""); setNotice(null);
     try {
+      const [current, status] = await Promise.all([controlApi.acquisitionStatus(), runtimeConfigApi.status()]);
+      if (!current?.connected || current.streaming || current.connection_id !== sourceStatus?.connection_id
+          || status.generation !== runtime.status?.generation || status.accepted_revision !== activation?.revision
+          || status.applied_revision !== activation?.revision) throw new Error(t("profiles.sourceChanged"));
       await controlApi.acqDisconnect();
       setSourceStatus(await controlApi.acquisitionStatus());
       await onAcquisitionChange?.();
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { setBusy(false); }
+    finally { sourceOperation.current = false; setBusy(false); }
   };
-  const readSourceMetadata = async () => {
-    if (!canReadSource || busy) return;
+  const readSourceMetadata = async (prepared = false) => {
+    if (!canReadSource || (!prepared && (busy || sourceOperation.current))) return;
+    sourceOperation.current = true;
     const generation = ++metadataGeneration.current;
     setBusy(true); setError(""); setNotice(null); setSourceMetadata(null);
-    if (sourceMode === "new" && reportedSource) setEditor((current) => ({ ...current, parameters: connectionParameters(current.parameters) }));
+    setSourceStage("inspecting");
     try {
       const metadata = await controlApi.acqMetadata();
       if (generation !== metadataGeneration.current) return;
       setSourceMetadata(metadata);
-      const output = metadata?.descriptor;
-      if (sourceMode === "new" && reportedSource && metadata && output
-          && ["device-reported", "file-reported"].includes(output.provenance)
-          && metadata.connection_id === sourceStatus?.connection_id
-          && output.connection_id === metadata.connection_id && output.source_id === metadata.source_id) {
-        setEditor((current) => ({ ...current, parameters: { ...connectionParameters(current.parameters),
-          ...observedParameters(metadata, definition?.plugin_type) } }));
-        setNotice("profiles.observedDraftFilled");
-      }
+      if (prepared) setNotice("profiles.sourceInspected");
       await onAcquisitionChange?.();
-    } catch (cause) { if (generation === metadataGeneration.current) setError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { setBusy(false); }
+    } catch (cause) {
+      if (generation === metadataGeneration.current) setError(t("profiles.inspectFailed", {
+        error: cause instanceof Error ? cause.message : String(cause) }));
+    }
+    finally { sourceOperation.current = false; setSourceStage(null); setBusy(false); }
   };
+  useEffect(() => {
+    if (!inspection) return;
+    const abort = () => {
+      sourceOperation.current = false;
+      setInspection(null); setSourceStage(null); setBusy(false); setError(t("profiles.sourceChanged"));
+    };
+    if (runtime.blocked || runtime.error || runtime.status?.accepted_revision !== inspection.revision
+        || (runtime.status?.running && runtime.status.generation !== inspection.generation)
+        || sourceStatus?.streaming
+        || (sourceStatus?.connection_id && sourceStatus.connection_id !== inspection.connectionId)) {
+      abort();
+      return;
+    }
+    if (sourceMatches && sourceStatus?.connected && sourceStatus.connection_id === inspection.connectionId) {
+      setInspection(null);
+      void readSourceMetadata(true);
+      return;
+    }
+    // A parent status poll may still contain the stopped engine from before preparation.
+    const timeout = setTimeout(abort, 5000);
+    return () => clearTimeout(timeout);
+  }, [inspection, sourceMatches, sourceStatus?.connected, sourceStatus?.connection_id, sourceStatus?.streaming,
+    runtime.status?.accepted_revision, runtime.status?.generation, runtime.status?.running, runtime.blocked, runtime.error]);
   const changeParameters = (parameters: Record<string, unknown>) => {
     setEditor({ ...editor, parameters: sourceMode === "new" && reportedSource ? connectionParameters(parameters) : parameters }); setNotice(null);
   };
@@ -411,12 +422,14 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     : slot.kind !== "filter" ? !engineAvailable ? "feedback.runtimeUnavailable" : blockedReason : null;
   const saveReason = busy ? "feedback.busy" : !definition?.schema ? "profiles.schemaRequired"
     : errors.length > 0 ? "profiles.fixErrors" : !editor.name.trim() ? "profiles.nameRequired"
-    : !dirty && editor.profile ? "profiles.nothingToSave"
-    : slot.kind === "acquisition" && sourceMode === "new" && reportedSource
-      && (!editor.parameters.sample_rate || !editor.parameters.channel_count) ? "profiles.metadataBeforeSave" : null;
+    : !dirty && editor.profile ? "profiles.nothingToSave" : null;
   const connectReason = busy ? "feedback.busy" : blockedReason
     ?? (!engineAvailable ? "feedback.runtimeUnavailable" : !definition?.available ? "profiles.pluginUnavailable"
-      : errors.length > 0 ? "profiles.fixErrors" : sourceStatus?.streaming ? "profiles.stopBeforeConnect" : null);
+      : errors.length > 0 ? "profiles.fixErrors" : sourceStatus?.streaming ? "profiles.stopBeforeConnect"
+      : dirty || !editor.profile ? "profiles.saveBeforePrepare" : !sourceSelected ? "profiles.applyBeforePrepare" : null);
+  const disconnectReason = busy ? "feedback.busy" : blockedReason
+    ?? (!sourceStatus?.connected ? "profiles.sourceDisconnectedStatus" : sourceStatus.streaming ? "profiles.stopBeforeConnect"
+      : !sourceMatches ? "profiles.viewSourceBeforeDisconnect" : null);
   const chainReason = busy ? "feedback.busy" : !engineAvailable ? "feedback.runtimeUnavailable" : blockedReason
     ?? (!chainDirty ? "profiles.chainUnchanged" : chain.some((item) => !item.profile_id) ? "profiles.saveEveryProfile" : null);
   const profileAction = <div className="editor-action"><button className="primary" disabled={!!reviewReason}
@@ -589,13 +602,31 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
         </div>
         {slot.kind === "acquisition" && definition && <div className="acquisition-observations"><div className="setting-group source-connection">
           <h2>{t("profiles.connection")}</h2>
-          <p className="setting-description" id="source-connect-help">{t(sourceMode === "new" ? "profiles.connectDraft" : "profiles.connectSaves")}</p>
+          <dl className="source-preparation-summary">
+            <div><dt>{t("profiles.startupSource")}</dt><dd>{selectedBinding
+              ? `${selectedProfile?.name ?? selectedBinding.selection.package_id} · ${selectedBinding.selection.version} · ${t("profiles.revision", { revision: selectedBinding.profile_revision ?? 0 })}`
+              : t("run.none")}</dd></div>
+            <div><dt>{t("profiles.currentSource")}</dt><dd>{!runtime.status?.running ? t("run.engineStopped")
+              : runtime.status.applied_revision !== activation?.revision ? t("profiles.currentSourceUnknown")
+              : selectedBinding ? `${selectedProfile?.name ?? selectedBinding.selection.package_id} · ${t("profiles.revision", { revision: selectedBinding.profile_revision ?? 0 })}`
+              : t("run.none")}</dd></div>
+          </dl>
+          <p className="setting-description" id="source-connect-help">{t("profiles.prepareHelp")}</p>
           {connectReason && <p className="action-help" id="source-connect-blocked">{t(connectReason)}</p>}
+          {sourceStage && <p className="action-help" role="status">{t(`profiles.stage.${sourceStage}`)}</p>}
           <div className="actions"><button className="primary" disabled={!!connectReason}
             aria-describedby={connectReason ? "source-connect-blocked source-connect-help" : "source-connect-help"}
-            onClick={() => void connectSource()}>{t("run.connect")}</button>
-            <button disabled={busy || runtime.inProgress || !sourceStatus?.connected} onClick={() => void disconnectSource()}>{t("run.disconnect")}</button></div>
-          <p role="status">{t(sourceStatus?.connected && sourceMatches ? "profiles.sourceConnectedStatus" : "profiles.sourceDisconnectedStatus")}</p>
+            onClick={() => void connectSource()}>{t("profiles.prepareInspect")}</button>
+            <button disabled={!!disconnectReason} aria-describedby={disconnectReason
+              ? disconnectReason === "profiles.sourceDisconnectedStatus" ? "source-connection-status" : "source-disconnect-help" : undefined}
+              onClick={() => void disconnectSource()}>{t("profiles.disconnectSource")}</button></div>
+          {disconnectReason && disconnectReason !== "profiles.sourceDisconnectedStatus"
+            && <p className="action-help" id="source-disconnect-help">{t(disconnectReason)}</p>}
+          <p role="status" id="source-connection-status">{t(!sourceStatus ? "profiles.sourceUnavailable" : sourceStatus.streaming ? "profiles.sourceReading"
+            : sourceStatus.connected ? "profiles.currentSourceConnected" : "profiles.sourceDisconnectedStatus")}</p>
+          {reportedSource && (editor.parameters.sample_rate == null || editor.parameters.channel_count == null)
+            && <p className="setting-description">{t("profiles.expectationsUncaptured")}</p>}
+          {onRun && <button className="text-button" disabled={busy} onClick={() => changeEditor(onRun)}>{t("profiles.openRun")}</button>}
         </div><AcquisitionMetadata value={sourceMetadata} busy={busy} canRead={canReadSource}
           readHint={t(sourceStatus?.streaming ? "profiles.stopBeforeRead" : canReadSource ? "profiles.readReady" : "profiles.connectBeforeRead")}
           onRead={() => void readSourceMetadata()} canUseObserved={canUseObserved}

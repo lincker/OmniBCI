@@ -91,3 +91,8 @@
 .plugin-profiles .schema-errors { font-size: 12px; color: var(--err); padding-left: 20px; }
 .plugin-profiles details { margin: 12px 0; font-size: 12px; }
 .plugin-profiles pre { max-width: 100%; overflow: auto; font-size: 11px; background: var(--sidebar-bg); padding: 12px; }
+
+.source-preparation-summary { margin: 0.75rem 0; font-size: 0.75rem; }
+.source-preparation-summary > div { display: grid; gap: 0.25rem; margin-bottom: 0.75rem; }
+.source-preparation-summary dt { color: var(--muted); }
+.source-preparation-summary dd { margin: 0; overflow-wrap: anywhere; }
