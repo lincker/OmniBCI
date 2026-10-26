@@ -1,5 +1,16 @@
 .runtime-advanced > summary { cursor: pointer; color: var(--muted); font-size: 0.8125rem; }
 .runtime-advanced[open] > summary { margin-bottom: 1rem; }
 .runtime-advanced .runtime-disconnect { margin-top: 1rem; }
+.runtime-content .summary-items { flex-basis: 100%; }
 .runtime-content .summary-items small { display: block; margin-top: 0.3rem; overflow-wrap: anywhere; }
-.runtime-content .startup-title { width: 100%; margin: 0; font-size: 0.875rem; }
+.runtime-content .startup-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; width: 100%; }
+.runtime-content .startup-title { margin: 0; font-size: 0.875rem; }
+.startup-module { min-width: 0; }
+.startup-module > h3 { margin: 0 0 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border-soft); font-size: 0.8125rem; }
+.startup-module > div + div { margin-top: 1rem; }
+.startup-filters { margin: 0; padding-inline-start: 1.25rem; font-size: 0.75rem; }
+.startup-filters li + li { margin-top: 0.75rem; }
+
+@media (max-width: 580px) {
+  .runtime-content .summary-items { grid-template-columns: 1fr; }
+}

@@ -23,6 +23,24 @@ const sourceActivation = { ...activation, bindings: [...activation.bindings, {
   slot: "acquisition.source", kind: "acquisition", profile_id: "source-1", profile_revision: 2,
   selection: { package_id: "example.source", contribution_id: "main", version: "1.2.0" }, parameters: {},
 }] };
+const completeActivation = { revision, bindings: [
+  ["acquisition.source", "acquisition", "source", "source", 2],
+  ["processing.filter.z-last", "filter", "shared", "shared-filter", 3],
+  ["processing.epoch_detector", "epoch_detector", "detector", "detector", 4],
+  ["processing.decoder", "decoder", "decoder", "decoder", 5],
+  ["stimulation.paradigm", "paradigm", "paradigm", "paradigm", 6],
+  ["processing.filter.a-first", "filter", "middle", "middle-filter", 7],
+  ["stimulation.trigger", "trigger", "trigger", "trigger", 8],
+  ["actuation.effector", "effector", "effector", "effector", 9],
+  ["processing.filter.repeat", "filter", "shared", "shared-filter", 3],
+].map(([slot, kind, contribution, profile, profileRevision]) => ({
+  slot, kind, profile_id: profile, profile_revision: profileRevision, parameters: {},
+  selection: { package_id: `pinned.${kind}`, contribution_id: contribution, version: "1.2.3" },
+})) };
+const latestProfiles = [...new Map(completeActivation.bindings.map((binding) => [binding.profile_id, {
+  profile_id: binding.profile_id, name: `Saved ${binding.profile_id}`, revision: 99,
+  selection: { package_id: "latest.package", contribution_id: "new-contribution", version: "9.9.9" },
+}])).values()];
 const ready = { active: true, process_alive: true, engine_connected: true, paradigm: paradigm.plugin_type };
 const legacyControls = { cue: { type: "int", field: "trial_params", default: 2, min: 1, max: 4 } };
 const sequenceControls = {
@@ -186,8 +204,74 @@ test("startup summary displays pinned versions rather than the latest saved revi
   const tree = render({ selection: sourceActivation, profiles: [{ profile_id: "source-1", name: "Lab source",
     revision: 9, selection: { version: "9.9.9" } }] });
   const summary = elements(tree).find((element) => element.props["aria-label"] === "Startup configuration");
-  assert.match(text(summary), /Lab sourcePlugin 1\.2\.0 · Profile revision 2/);
+  assert.match(text(summary), /Lab source/);
+  assert.match(text(summary), /example\.source\/main/);
+  assert.match(text(summary), /Plugin 1\.2\.0/);
+  assert.match(text(summary), /Profile revision 2/);
   assert.doesNotMatch(text(summary), /9\.9\.9|Profile revision 9/);
+});
+
+test("startup summary includes every configured role and the pinned identity behind saved names", () => {
+  const tree = render({ selection: completeActivation, profiles: latestProfiles });
+  const summary = elements(tree).find((element) => element.props["aria-label"] === "Startup configuration");
+  for (const key of ["profiles.slotSource", "profiles.slotEpochDetector", "profiles.slotFilters",
+    "run.decoder", "run.paradigm", "profiles.slotTrigger", "profiles.slotEffector"]) {
+    const label = translate("en", key);
+    assert.ok(elements(summary).some((element) => text(element) === label), `Missing startup role: ${label}`);
+  }
+  for (const binding of completeActivation.bindings) {
+    assert.ok(text(summary).includes(`Saved ${binding.profile_id}`));
+    assert.ok(text(summary).includes(`${binding.selection.package_id}/${binding.selection.contribution_id}`));
+    assert.ok(text(summary).includes(`Profile revision ${binding.profile_revision}`));
+  }
+  assert.match(text(summary), /Plugin 1\.2\.3/);
+  assert.doesNotMatch(text(summary), /latest\.package|new-contribution|9\.9\.9|Profile revision 99/);
+});
+
+test("startup summary groups plugins into the four configuration modules", () => {
+  const tree = render({ selection: completeActivation, profiles: latestProfiles });
+  const summary = elements(tree).find((element) => element.props["aria-label"] === "Startup configuration");
+  const groups = elements(summary).filter((element) => element !== summary
+    && (element.type === "section" || element.props.role === "region"));
+  const labels = groups.map((group) => group.props["aria-label"]
+    ?? text(elements(summary).find((element) => element.props.id === group.props["aria-labelledby"])));
+  assert.deepEqual(labels, ["Acquisition", "Signal processing", "Stimulation", "Actuator"]);
+  ["acquisition", "processing", "stimulation", "actuation"].forEach((module, index) => {
+    for (const binding of completeActivation.bindings) {
+      const identity = `${binding.selection.package_id}/${binding.selection.contribution_id}`;
+      assert.equal(text(groups[index]).includes(identity), binding.slot.startsWith(`${module}.`),
+        `${labels[index]} must contain only its own plugins: ${identity}`);
+    }
+  });
+});
+
+test("startup filters preserve activation order and repeated use of the same profile", () => {
+  const tree = render({ selection: completeActivation, profiles: latestProfiles });
+  const summary = elements(tree).find((element) => element.props["aria-label"] === "Startup configuration");
+  const lists = elements(summary).filter((element) => element.type === "ol");
+  assert.equal(lists.length, 1, "The filter chain must communicate its order with an ordered list");
+  const items = elements(lists[0]).filter((element) => element.type === "li");
+  const filters = completeActivation.bindings.filter((binding) => binding.slot.startsWith("processing.filter."));
+  assert.equal(items.length, 3, "Repeated profiles represent separate filter instances");
+  filters.forEach((binding, index) => {
+    assert.ok(text(items[index]).includes(`Saved ${binding.profile_id}`));
+    assert.ok(text(items[index]).includes(`${binding.selection.package_id}/${binding.selection.contribution_id}`));
+    assert.ok(text(items[index]).includes("Plugin 1.2.3"));
+    assert.ok(text(items[index]).includes(`Profile revision ${binding.profile_revision}`));
+    assert.doesNotMatch(text(items[index]), /9\.9\.9|Profile revision 99/);
+  });
+});
+
+for (const [name, overrides, expected] of [
+  ["loading", { selection: null }, /Loading/],
+  ["stale", { selection: { ...completeActivation, revision: "outdated" } }, /Loading/],
+  ["failed", { loadError: "Activation unavailable" }, /Unavailable/],
+]) test(`startup summary suppresses old binding details while ${name}`, () => {
+  const tree = render({ selection: completeActivation, profiles: latestProfiles, ...overrides });
+  const summary = elements(tree).find((element) => element.props["aria-label"] === "Startup configuration");
+  assert.match(text(summary), expected);
+  assert.doesNotMatch(text(summary), /Saved |pinned\.|latest\.package|Plugin 1\.2\.3|Profile revision/);
+  assert.equal(elements(summary).filter((element) => element.type === "li").length, 0);
 });
 
 test("invalid paradigm controls do not prevent source-only acquisition", () => {

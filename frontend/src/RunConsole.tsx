@@ -14,6 +14,24 @@ import { runtimeBlockReason } from "./RuntimeConfiguration";
 import { startAcquisition, type SourceStage } from "./source-lifecycle";
 import "./RunConsole.css";
 
+const startupModules = [
+  { id: "acquisition", label: "run.acquisition", slots: [
+    ["acquisition.source", "profiles.slotSource"],
+  ] },
+  { id: "processing", label: "run.signalProcessing", slots: [
+    ["processing.epoch_detector", "profiles.slotEpochDetector"],
+    ["processing.filters", "profiles.slotFilters"],
+    ["processing.decoder", "run.decoder"],
+  ] },
+  { id: "stimulation", label: "run.stimulation", slots: [
+    ["stimulation.paradigm", "run.paradigm"],
+    ["stimulation.trigger", "profiles.slotTrigger"],
+  ] },
+  { id: "actuation", label: "run.actuator", slots: [
+    ["actuation.effector", "profiles.slotEffector"],
+  ] },
+] as const;
+
 function Dot({ on, label }: { on: boolean | undefined; label: string }) {
   const { t } = useI18n();
   return <span className={`dot ${on ? "dot-on" : "dot-off"}`}>{on === undefined ? "○" : "●"} {label}
@@ -97,19 +115,22 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
     && selection?.settings?.["STIMULATION.auto_spawn"] === false;
   const acquisitionStartLabel = t(acquisitionAvailable && connected ? "run.startReading" : "run.startAcquisition");
   const stimulationStartLabel = t(externalStimulation ? "run.enableStimulation" : "run.launchStimulation");
+  const selectedBindings = !configurationError && selection?.revision === runtime.status?.accepted_revision
+    ? selection?.bindings : undefined;
+  const emptySelection = t(configurationError ? "run.unavailable" : !selectedBindings ? "run.loading" : "run.none");
   const selectedName = (slot: string) => {
-    if (configurationError) return t("run.unavailable");
-    if (!selection || selection.revision !== runtime.status?.accepted_revision) return t("run.loading");
-    const binding = selection?.bindings.find((item) => item.slot === slot);
-    if (!binding) return t("run.none");
+    const binding = selectedBindings?.find((item) => item.slot === slot);
+    if (!binding) return emptySelection;
     return profiles.find((item) => item.profile_id === binding.profile_id)?.name
-      ?? `${binding.selection.package_id}/${binding.selection.contribution_id} · ${binding.selection.version}`;
+      ?? `${binding.selection.package_id}/${binding.selection.contribution_id} · ${binding.selection.version ?? t("profiles.unversioned")}`;
   };
-  const selectedVersion = (slot: string) => {
-    if (!selection || selection.revision !== runtime.status?.accepted_revision) return null;
-    const binding = selection.bindings.find((item) => item.slot === slot);
-    return binding && <small className="meta">{t("run.pinnedVersion", { version: binding.selection.version ?? t("profiles.unversioned") })}
-      {binding.profile_id && <> · {t("run.profileRevision", { revision: binding.profile_revision })}</>}</small>;
+  const selectedPlugin = (binding: Activation["bindings"][number]) => {
+    const name = profiles.find((item) => item.profile_id === binding.profile_id)?.name;
+    const identity = `${binding.selection.package_id}/${binding.selection.contribution_id}`;
+    return <><strong>{name ?? identity}</strong>
+      {name && <small className="meta">{identity}</small>}
+      <small className="meta">{t("run.pinnedVersion", { version: binding.selection.version ?? t("profiles.unversioned") })}
+        {binding.profile_id && <> · {t("run.profileRevision", { revision: binding.profile_revision })}</>}</small></>;
   };
   const missingRecording = recordingPathMissing(selection);
   const playback = selection?.bindings.some((item) => item.slot === "acquisition.source" && item.selection.package_id === "OmniBCI.file_reader");
@@ -275,14 +296,25 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
       </li>)}
     </ol>
     <section className="setup-summary" aria-label={t("run.selectedSetup")}>
-      <h2 className="startup-title">{t("run.selectedSetup")}</h2>
-      <div className="summary-items">
-        <div><span>{t("run.selectedAcquisition")}</span><strong>{selectedName("acquisition.source")}</strong>{selectedVersion("acquisition.source")}</div>
-        <div><span>{t("run.decoder")}</span><strong>{selectedName("processing.decoder")}</strong>{selectedVersion("processing.decoder")}</div>
-        <div><span>{t("run.paradigm")}</span><strong>{selectedName("stimulation.paradigm")}</strong>{selectedVersion("stimulation.paradigm")}</div>
-        <div><span>{t("run.actuation")}</span><strong>{selectedName("actuation.effector")}</strong>{selectedVersion("actuation.effector")}</div>
+      <div className="startup-heading"><h2 className="startup-title">{t("run.selectedSetup")}</h2>
+        <button className="text-button" disabled={busy} onClick={onEditSetup}>{t("run.editSetup")} <Icon name="chevron" /></button>
       </div>
-      <button className="text-button" disabled={busy} onClick={onEditSetup}>{t("run.editSetup")} <Icon name="chevron" /></button>
+      <div className="summary-items">
+        {startupModules.map((module) => <section className="startup-module" key={module.id}
+          aria-labelledby={`startup-${module.id}-title`}>
+          <h3 id={`startup-${module.id}-title`}>{t(module.label)}</h3>
+          {module.slots.map(([slot, label]) => {
+            const filters = slot === "processing.filters";
+            const bindings = selectedBindings?.filter((item) => filters ? item.kind === "filter" : item.slot === slot) ?? [];
+            return <div key={slot}><span>{t(label)}</span>
+              {!bindings.length ? <strong>{emptySelection}</strong>
+                : filters ? <ol className="startup-filters" aria-label={t(label)}>
+                  {bindings.map((binding) => <li key={binding.slot}>{selectedPlugin(binding)}</li>)}
+                </ol> : selectedPlugin(bindings[0])}
+            </div>;
+          })}
+        </section>)}
+      </div>
       <p className="meta">{t("run.selectedConfigurationHelp")}</p>
     </section>
     {missingRecording && <p className="inline-message" role="status">{t("run.missingRecording")}</p>}
