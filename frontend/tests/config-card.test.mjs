@@ -92,6 +92,12 @@ async function click(component, label) {
   await component.settle();
 }
 const dialog = (component) => elements(component.tree).find((item) => item.type.name === "ConfigDialog");
+async function saveShortcut(component, modifiers = {}) {
+  let prevented = false;
+  component.tree.props.onKeyDown({ ctrlKey: true, key: "s", preventDefault() { prevented = true; }, ...modifiers });
+  await component.settle();
+  return prevented;
+}
 
 async function withSettings(action, overrides = {}) {
   const cfg = { revision: "a".repeat(64), entries: [
@@ -153,6 +159,92 @@ for (const running of [false, true]) {
     }, { running });
   });
 }
+
+test("runtime recovery blocks Review but still permits saving the host draft with its own explanation", async () => {
+  await withSettings(async ({ component, applied, reviews }) => {
+    await change(component, "NEUROENGINE.queue_size", "64");
+    const save = button(component.tree, "Save settings");
+    const review = button(component.tree, "Review and apply host settings");
+    assert.equal(save.props.disabled, false);
+    assert.equal(review.props.disabled, true);
+    assert.notEqual(save.props["aria-describedby"], review.props["aria-describedby"]);
+    const saveHelp = elements(component.tree).find((item) => item.props.id === save.props["aria-describedby"]);
+    assert.match(text(saveHelp), /Saving host settings does not apply them/);
+    await click(component, "Save settings");
+    assert.equal(reviews.length, 0);
+    assert.equal(applied.length, 0);
+    assert.match(text(component.tree), /Recovery is required/);
+  }, { runtime: { blocked: true, recoveryRequired: true } });
+});
+
+for (const modifiers of [{ ctrlKey: true }, { ctrlKey: false, metaKey: true, key: "S" }]) {
+  test(`host save shortcuts preserve Save-only behavior during recovery (${JSON.stringify(modifiers)})`, async () => {
+    await withSettings(async ({ component, calls, reviews, applied }) => {
+      await change(component, "NEUROENGINE.queue_size", "64");
+      assert.equal(button(component.tree, "Save settings").props["aria-keyshortcuts"], "Control+s Meta+s");
+      assert.equal(await saveShortcut(component, modifiers), true);
+      assert.equal(calls.filter((call) => call.method === "PATCH").length, 1);
+      assert.deepEqual(reviews, []); assert.deepEqual(applied, []);
+    }, { runtime: { blocked: true, recoveryRequired: true } });
+  });
+}
+
+test("host save shortcuts ignore extra modifiers, handled keys, repeats, composition and open dialogs", async () => {
+  await withSettings(async ({ component, calls }) => {
+    await change(component, "NEUROENGINE.queue_size", "64");
+    for (const modifiers of [{ altKey: true }, { shiftKey: true }, { defaultPrevented: true }]) {
+      assert.equal(await saveShortcut(component, modifiers), false);
+    }
+    await saveShortcut(component, { repeat: true });
+    await saveShortcut(component, { nativeEvent: { isComposing: true } });
+    await click(component, "Discard");
+    await saveShortcut(component);
+    assert.equal(calls.filter((call) => call.method === "PATCH").length, 0);
+    dialog(component).props.onCancel(); await component.settle();
+    assert.equal(input(component, "NEUROENGINE.queue_size").props.value, "64");
+  });
+  await withSettings(async ({ component, calls }) => {
+    await change(component, "NEUROENGINE.queue_size", "64");
+    await saveShortcut(component);
+    assert.equal(calls.filter((call) => call.method === "PATCH").length, 0);
+  }, { runtime: { plan: { plan_id: "review-1" } } });
+});
+
+for (const available of [true, false]) {
+  test(`host keyboard saving restores the edited field or heading (field available=${available})`, async () => {
+    const originalDocument = globalThis.document;
+    let fieldFocus = 0, headingFocus = 0;
+    globalThis.document = { activeElement: { isConnected: available, getClientRects: () => available ? [{}] : [],
+      focus() { fieldFocus += 1; } } };
+    try {
+      await withSettings(async ({ component, calls }) => {
+        elements(component.tree).find((item) => item.type === "h1").ref.current = { focus() { headingFocus += 1; } };
+        await change(component, "NEUROENGINE.queue_size", "64");
+        await saveShortcut(component);
+        assert.equal(calls.filter((call) => call.method === "PATCH").length, 1);
+        assert.equal(fieldFocus, available ? 1 : 0);
+        assert.equal(headingFocus, available ? 0 : 1);
+      });
+    } finally { if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument; }
+  });
+}
+
+test("invalid host keyboard saves do not leave a delayed focus restoration behind", async () => {
+  const originalDocument = globalThis.document;
+  let focused = 0;
+  globalThis.document = { activeElement: { isConnected: true, getClientRects: () => [{}], focus() { focused += 1; } } };
+  try {
+    await withSettings(async ({ component, calls }) => {
+      await change(component, "NEUROENGINE.queue_size", "bad input");
+      await saveShortcut(component);
+      assert.equal(calls.filter((call) => call.method === "PATCH").length, 0);
+      await change(component, "NEUROENGINE.queue_size", "64");
+      await click(component, "Save settings");
+      assert.equal(calls.filter((call) => call.method === "PATCH").length, 1);
+      assert.equal(focused, 0);
+    });
+  } finally { if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument; }
+});
 
 test("Save sends host updates only and Review retains every selected plugin binding", async () => {
   await withSettings(async ({ component, calls, reviews, applied, dirty, busy }) => {

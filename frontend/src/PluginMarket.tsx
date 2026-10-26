@@ -23,7 +23,10 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
 }) {
   const { t } = useI18n();
   const [tab, setTab] = useState<"installed" | "repository" | "guide">("installed");
-  const [query, setQuery] = useState("");
+  const [queries, setQueries] = useState({ installed: "", repository: "" });
+  const searchTab = tab === "repository" ? "repository" : "installed";
+  const query = queries[searchTab];
+  const setQuery = (value: string) => setQueries((previous) => ({ ...previous, [searchTab]: value }));
   const [installed, setInstalled] = useState<InstalledPackage[]>([]);
   const [catalog, setCatalog] = useState<MarketPackage[]>([]);
   const [profiles, setProfiles] = useState<PluginProfile[]>([]);
@@ -122,17 +125,19 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
     return Object.prototype.hasOwnProperty.call(labels, scope) ? labels[scope] : scope.replace(/_/g, " ");
   };
   const matches = (text: string) => text.toLowerCase().includes(query.trim().toLowerCase());
-  const displayedInstalled = installed.filter((item) => matches(`${item.package_id} ${item.label} ${item.version} ${item.contributions.map((part) => `${part.kind} ${kindLabel(part.kind)}`).join(" ")}`));
-  const displayedCatalog = catalog.filter((item) => matches(`${item.package_id} ${item.display_name} ${item.version} ${item.description}`));
+  const capabilities = (item: InstalledPackage | MarketPackage) => item.contributions
+    .map((part) => `${part.kind} ${kindLabel(part.kind)} ${part.selection.contribution_id}`).join(" ");
+  const displayedInstalled = installed.filter((item) => matches(`${item.package_id} ${item.label} ${item.version} ${item.description ?? ""} ${capabilities(item)}`));
+  const displayedCatalog = catalog.filter((item) => matches(`${item.package_id} ${item.display_name} ${item.version} ${item.description ?? ""} ${capabilities(item)}`));
 
   return <div className="settings-workspace plugin-market">
     <aside className="explorer">
       <div className="explorer-heading">{t("market.extensions")}</div>
       <nav className="workspace-navigation" aria-label={t("market.library")}>
         <button className={`explorer-item ${tab === "installed" ? "selected" : ""}`} aria-current={tab === "installed" ? "page" : undefined}
-          onClick={() => { setTab("installed"); setQuery(""); }}><Icon name="plug" /><span>{t("market.installed")}</span><span className="count">{installed.length}</span></button>
+          onClick={() => setTab("installed")}><Icon name="plug" /><span>{t("market.installed")}</span><span className="count">{installed.length}</span></button>
         <button className={`explorer-item ${tab === "repository" ? "selected" : ""}`} aria-current={tab === "repository" ? "page" : undefined}
-          onClick={() => { setTab("repository"); setQuery(""); }}><Icon name="folder" /><span>{t("market.repository")}</span></button>
+          onClick={() => setTab("repository")}><Icon name="folder" /><span>{t("market.repository")}</span></button>
         <button className={`explorer-item ${tab === "guide" ? "selected" : ""}`} aria-current={tab === "guide" ? "page" : undefined}
           onClick={() => setTab("guide")}><Icon name="profile" /><span>{t("market.guide")}</span></button>
       </nav>
@@ -156,7 +161,12 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
         {tab === "guide" ? <DecoderDeveloperGuide /> : <>
         <div className="market-toolbar"><label className="market-search"><Icon name="search" /><input type="search" aria-label={t("market.searchLabel")}
           placeholder={t("market.searchPlaceholder")} value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+          {query && <button onClick={() => setQuery("")}>{t("market.clearSearch")}</button>}
           <button disabled={pending !== null || loading || catalogLoading} onClick={() => { void reload(); if (tab === "repository") void loadCatalog(); }}><Icon name="refresh" />{t("market.refresh")}</button></div>
+        {(tab === "installed" ? !loading && !inventoryError : catalogLoaded && !catalogLoading && !repositoryError) && <p className="meta" role="status">{t(tab === "installed" ? "market.installedCount" : "market.repositoryCount", {
+          shown: tab === "installed" ? displayedInstalled.length : displayedCatalog.length,
+          total: tab === "installed" ? installed.length : catalog.length,
+        })}</p>}
         <p className="meta">{t("market.trustHint")}</p>
         {runtimeBusy && <p className="market-banner" role="status">{t("market.runtimeBusy")}</p>}
         {pending && <p className="market-banner" role="status">{t(pending.key, pending.params)}</p>}
@@ -183,7 +193,7 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
         </section>}
         {tab === "installed" ? <div className="market-list" aria-busy={loading}>
           {loading && installed.length === 0 ? <p className="market-empty">{t("market.loading")}</p>
-            : !inventoryError && displayedInstalled.length === 0 && <p className="market-empty">{query ? t("market.noInstalledMatch") : t("market.noInstalled")}</p>}
+            : !inventoryError && displayedInstalled.length === 0 && <p className="market-empty">{installed.length ? t("market.noInstalledMatch") : t("market.noInstalled")}</p>}
           {displayedInstalled.map((item) => {
             const references = item.references ?? [];
             const blocked = references.length > 0;
@@ -206,7 +216,7 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
           {catalogLoading && <p className="market-empty">{t("market.verifying")}</p>}
           {!catalogLoading && repositoryDisabled ? <div className="market-empty"><h2>{t("market.repositoryUnavailable")}</h2><p>{t("market.configureRepository")}</p><p>{t("market.localZip")}</p><p className="meta">{repositoryError}</p></div>
             : repositoryError ? <p className="error" role="alert">{t("market.repositoryError", { error: repositoryError })}</p>
-            : !catalogLoading && displayedCatalog.length === 0 && <p className="market-empty">{query ? t("market.noRepositoryMatch") : t("market.noRepositoryPackages")}</p>}
+            : !catalogLoading && displayedCatalog.length === 0 && <p className="market-empty">{catalog.length ? t("market.noRepositoryMatch") : t("market.noRepositoryPackages")}</p>}
           {!repositoryError && displayedCatalog.map((item) => {
             const present = installed.some((local) => identity(local) === identity(item));
             return <article className="market-package" key={identity(item)}><div className="market-package-icon"><Icon name="folder" /></div><div className="market-package-detail">

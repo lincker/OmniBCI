@@ -11,6 +11,7 @@ import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
 import { pluginConfigApi } from "./api/plugin-config";
 import type { RuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
 import type { RuntimePlanRequest } from "./api/runtime-config";
+import { RuntimeConfigurationProgress, runtimeBlockReason } from "./RuntimeConfiguration";
 
 const fieldLabels: Record<string, TranslationKey> = {
   "ALGORITHM.baseline_duration": "settings.baselineDuration",
@@ -39,6 +40,8 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
   const [busy, setBusy] = useState(true);
   const [dialog, setDialog] = useState<Omit<ConfigDialogProps, "onCancel"> | null>(null);
   const request = useRef(0);
+  const saveFocus = useRef<HTMLElement | null>(null);
+  const editorHeading = useRef<HTMLHeadingElement>(null);
   const dirty = Object.keys(draft).length > 0;
 
   const reload = useCallback(async () => {
@@ -54,10 +57,18 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
   }, [reload]);
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => { onBusyChange(busy); }, [busy, onBusyChange]);
+  useEffect(() => {
+    if (busy || !saveFocus.current) return;
+    const field = saveFocus.current;
+    saveFocus.current = null;
+    if (field.isConnected && field.getClientRects().length) field.focus();
+    else editorHeading.current?.focus();
+  }, [busy]);
 
   const confirmDiscard = (action: () => void) => {
     if (!dirty) { action(); return; }
     setDialog({ title: t("settings.unsaved"), message: t("settings.discardPrompt"),
+      cancelLabel: t("profiles.keepEditing"),
       confirmLabel: t("settings.discardChanges"), onConfirm: () => { setDialog(null); action(); } });
   };
   const run = async (action: () => Promise<void>, success: TranslationKey) => {
@@ -74,7 +85,7 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
     }
     finally { setBusy(false); }
   };
-  const save = () => {
+  const save = (keepFocus = false) => {
     if (!config) return;
     const updates: Record<string, unknown> = {};
     try {
@@ -86,6 +97,7 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
         }
       }
     } catch (e) { setError(String(e)); return; }
+    if (keepFocus) saveFocus.current = typeof document === "undefined" ? null : document.activeElement as HTMLElement | null;
     void run(async () => { await api.patchConfig(updates, config.revision); },
       "settings.saved");
   };
@@ -108,6 +120,8 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
     finally { setBusy(false); }
   };
   const entries = (config?.entries ?? []).filter((entry) => fieldLabels[entry.key]);
+  const reviewReason = busy ? "feedback.busy" : dirty ? "settings.saveBeforeReview"
+    : runtimeBlockReason(runtime) ?? (!config ? "settings.unavailableError" : null);
   const renderEntry = (entry: ConfigEntry) => {
     const fieldId = `setting-${entry.key}`;
     const saved = String(entry.value ?? "");
@@ -127,8 +141,9 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
   };
 
   return <section className="settings-workspace" aria-label={t("settings.general")} onKeyDown={(event) => {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
-      event.preventDefault(); if (!busy && dirty && !dialog) save();
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "s" && !event.defaultPrevented) {
+      event.preventDefault();
+      if (!event.repeat && !event.nativeEvent?.isComposing && !busy && dirty && !dialog && !runtime.plan) save(true);
     }
   }}>
     <aside className="explorer">
@@ -138,7 +153,7 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
     </aside>
     <div className="settings-editor">
       <div className="breadcrumbs">{t("settings.settings")} <Icon name="chevron" /> {t("settings.generalShort")}</div>
-      <header className="editor-heading"><div><p className="eyebrow">{t("settings.preferences")}</p><h1>{t("settings.general")}</h1>
+      <header className="editor-heading"><div><p className="eyebrow">{t("settings.preferences")}</p><h1 ref={editorHeading} tabIndex={-1}>{t("settings.general")}</h1>
         <p>{t("settings.description")}</p></div><button className="icon-button" aria-label={t("settings.refresh")} title={t("settings.refresh")} disabled={busy}
           onClick={() => confirmDiscard(() => void run(async () => {}, "settings.refreshed"))}><Icon name="refresh" /></button></header>
       {notice && <p className="inline-message success" role="status">{t(notice)}</p>}
@@ -153,11 +168,17 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
             <h2>{t("settings.engine")}</h2>{entries.map(renderEntry)}</div>}
         </div>
       </div>
-      <footer className="editor-footer"><span className="save-state">{dirty ? <><span className="unsaved-dot" />{t("settings.unsavedCount", { count: Object.keys(draft).length })}</> : t("settings.allSaved")}</span>
+      <footer className="editor-footer"><div className="editor-feedback">
+        <span className="save-state" role="status">{dirty ? <><span className="unsaved-dot" />{t("settings.unsavedCount", { count: Object.keys(draft).length })}</>
+          : t(config ? "settings.savedOnly" : "settings.unavailable")}</span>
+        <p className="action-help" id="settings-save-help">{t(busy ? "feedback.busy" : dirty ? "settings.saveHelp" : "settings.noChanges")}</p>
+        <p className="action-help" id="settings-review-help">{t(reviewReason ?? "settings.applyHint")}</p>
+        <RuntimeConfigurationProgress runtime={runtime} />
+      </div>
         <div className="actions">
           <button disabled={busy || !dirty} onClick={() => confirmDiscard(() => setDraft({}))}>{t("settings.discard")}</button>
-          <button className="primary" disabled={busy || !dirty} onClick={save}>{t("settings.save")}</button>
-          <button disabled={busy || dirty || runtime.blocked || !config}
+          <button className="primary" disabled={busy || !dirty} aria-describedby="settings-save-help" aria-keyshortcuts="Control+s Meta+s" onClick={() => save()}>{t("settings.save")}</button>
+          <button disabled={!!reviewReason} aria-describedby="settings-review-help"
             onClick={() => void reviewHostSettings()}>{t("settings.review")}</button>
         </div>
       </footer>

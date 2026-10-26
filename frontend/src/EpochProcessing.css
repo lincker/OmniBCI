@@ -3,3 +3,4 @@
 .epoch-toolbar { justify-content: space-between; }
 .epoch-pagination { margin-top: 0.75rem; font-size: 0.75rem; }
 .epoch-error { display: block; max-width: 32rem; white-space: normal; overflow-wrap: anywhere; }
+.epoch-generation { overflow-wrap: anywhere; }

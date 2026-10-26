@@ -100,7 +100,8 @@ Curry8 and File Reader omit these values on a new Profile until the user reads
 metadata and explicitly adopts the observed values. Their schema fields are
 optional and have no defaults, allowing connection before confirmation. Get
 Metadata compares the pinned Profile expectations with actual `SignalInfo`.
-Missing expectations or differences block Processing preparation and streaming;
+Missing expectations are reported as unconfirmed; Processing uses the observed
+source values. Conflicting provided expectations block preparation and streaming;
 the user must correct the source or save and apply the observed values. The
 Acquisition panel can save these values as a new named Profile, preserving the
 original Profile and its experiment expectations.

@@ -148,6 +148,14 @@ test("missing descriptor never invents source channel labels", () => {
   assert.match(text(tree), /trigger/i);
 });
 
+test("matrix scope reports the selected rows and chunk-relative sample range without implying a timeline", () => {
+  const rendered = text(table(chunk()));
+  assert.match(rendered, /Rows 2, 4.*samples 5–7/);
+  assert.match(rendered, /Sample indices restart within each chunk/);
+  assert.match(rendered, /bounded sample preview/);
+  assert.match(text(table(chunk({ sample_count: 0, values: [[], []] }))), /no samples/);
+});
+
 test("sample text is inert and an empty retained selection creates no synthetic cells", () => {
   const html = renderToStaticMarkup(table(chunk({ values: [["<script>sample</script>", "NaN", 2], [0, 0, 1]] })));
   assert.doesNotMatch(html, /<script>/);
@@ -330,6 +338,18 @@ test("latest-capture polling preserves selection for new snapshots and resets it
   } finally { chunks?.dispose(); h.dispose(); panel.dispose(); preview.dispose(); polls.restore(); }
 });
 
+test("an empty preview does not present the no-sequence sentinel as observed data", async () => {
+  const { preview, panel } = await panelHarness();
+  const polls = polling([snapshot([])]);
+  const status = component(panel.tree, "PreviewStatus");
+  const h = previewHarness(status.type, status.props);
+  try {
+    await h.settle();
+    assert.match(text(h.tree), /No chunks observed yet/);
+    assert.doesNotMatch(text(h.tree), /Last sequence: -1/);
+  } finally { h.dispose(); panel.dispose(); preview.dispose(); polls.restore(); }
+});
+
 test("a temporary status polling failure does not unmount the selected live-window detail", async () => {
   const { preview, panel } = await panelHarness();
   const polls = polling([snapshot([summary(41)]), new Error("Temporary preview status failure"),
@@ -391,6 +411,22 @@ test("retained chunk points expose their sequence and samples and select the mat
 
     chunkButtons(h.tree)[0].props.onClick(); await h.settle();
     assert.deepEqual(chunkButtons(h.tree).map((item) => item.props["aria-pressed"]), [true, false]);
+    assert.equal(selectedDetail(h.tree).props.sequenceId, 41);
+  } finally { h.dispose(); }
+});
+
+test("retained window and frozen matrix scopes remain distinct as new chunks arrive", async () => {
+  const h = previewHarness(PreviewChunks, { snapshot: snapshot([summary(41), summary(43)]) });
+  try {
+    await h.settle();
+    assert.match(text(h.tree), /2 retained chunks.*#41–#43/);
+    assert.match(text(h.tree), /Gaps may exist/);
+    assert.match(text(h.tree), /Select a chunk to inspect/);
+    chunkButtons(h.tree)[0].props.onClick(); await h.settle();
+    assert.match(text(h.tree), /Selected chunk #41.*fixed/);
+    h.update({ snapshot: snapshot([summary(43), summary(48)]) }); await h.settle();
+    assert.match(text(h.tree), /2 retained chunks.*#43–#48/);
+    assert.match(text(h.tree), /Selected chunk #41.*fixed/);
     assert.equal(selectedDetail(h.tree).props.sequenceId, 41);
   } finally { h.dispose(); }
 });
@@ -746,6 +782,26 @@ async function setSearchScope(h, value = "all") {
   scope.props.onChange({ target: { value } });
   await h.settle();
 }
+
+test("retained-window scope uses the server limit and resets a channel absent from the current matrix", async () => {
+  const h = previewHarness(PreviewChunkTable, {
+    chunk: chunk(), snapshot: snapshot([summary(41), { ...summary(42), row_indices: [1, 4] }],
+      { limits: { ...limits, max_chunks: 8 } }), onSelectChunk() {},
+  });
+  try {
+    await h.settle();
+    assert.match(text(searchControl(h.tree, "Search scope")), /up to 8/);
+    assert.doesNotMatch(text(searchControl(h.tree, "Search scope")), /32/);
+    await setSearchScope(h);
+    searchControl(h.tree, "Search channel").props.onChange({ target: { value: "1" } }); await h.settle();
+    assert.equal(searchControl(h.tree, "Search channel").props.value, "1");
+    await setSearchScope(h, "current");
+    assert.equal(searchControl(h.tree, "Search channel").props.value, "all");
+    searchControl(h.tree, "Search channel").props.onChange({ target: { value: "2" } }); await h.settle();
+    await setSearchScope(h); await setSearchScope(h, "current");
+    assert.equal(searchControl(h.tree, "Search channel").props.value, "2");
+  } finally { h.dispose(); }
+});
 
 function matrixElement(h) {
   return elements(h.tree).find((item) => item.type === PreviewChunkTable);

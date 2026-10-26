@@ -19,7 +19,8 @@ other modules' pinned values without resolving their profiles, loading their
 plugins, or validating their parameters. A partial configuration can be selected;
 it does not need a complete experiment. Host settings remain a separate operation.
 
-Acquisition Connect validates and loads the acquisition source. Signal Processing
+Acquisition preparation uses the explicitly selected source configuration and
+establishes its connection without saving or applying editor changes. Signal Processing
 starts in standby without interpreting the decoder input. Preparing processing
 validates its channel mapping and loads Decoder, Epoch Detector and Filters using
 the observed source descriptor. Starting the stream prepares configured processing
@@ -38,7 +39,7 @@ repository or configuration archive.
 | Configuration | Authoritative source | Single editing location | Application |
 | --- | --- | --- | --- |
 | Plugin parameters | A named Plugin Profile for an exact contribution and version | Setup, under that plugin | Save preserves the running values; Review and Apply selects a pinned copy |
-| Acquisition metadata | Connected source plugin's raw metadata and `SignalInfo` | Setup / Acquisition / Get Metadata, read-only | New Profile drafts fill observed dimensions automatically; saved Profiles preserve expectations and show differences in red; Save and Apply establishes the baseline |
+| Acquisition metadata | Connected source plugin's raw metadata and `SignalInfo` | Setup / Acquisition / Prepare & inspect or Get Metadata, read-only | Profiles may omit expectations; adopting observations is explicit, and Save and Apply establishes the baseline |
 | Plugin selection and filter order | Activation bindings | Setup, plugin/profile selectors and filter chain | Review and Apply |
 | Shared runtime settings | Host settings, copied into the candidate activation | Settings / General, grouped by subsystem | Review and Apply at a supported runtime boundary |
 | Channel mapping and type declarations | Decoder Plugin Profile `processing_input`, pinned in its activation binding | Setup / Signal Processing / Decoder / Processing input | Profile Review and Apply; input changes rebuild and prepare processing before streaming |
@@ -345,9 +346,9 @@ and output-module changes. Revision and serialized bindings remain generated
 runtime fields.
 
 Source Profiles retain `sample_rate` and `channel_count`; provided values must
-be positive integers. Curry8 and File Reader can connect without expectations
-using an unsaved source binding. Get Metadata fills those values into new drafts;
-Save and Apply establishes a named experiment baseline. Existing Profiles keep
+be positive integers. Curry8 and File Reader can save and connect profiles without
+expectations. Metadata reads do not fill or save the profile automatically;
+adopting observed values followed by Save and Apply establishes a named experiment baseline. Existing Profiles keep
 their saved values and show conflicting provided parameters in red. Missing
 expectations use the observed source values. The comparison uses the pinned
 source binding, never old host copies or saved edits that have not been applied.

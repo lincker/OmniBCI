@@ -6,29 +6,39 @@ export type ConfigDialogProps = {
   title: string;
   message: string;
   confirmLabel: string;
+  cancelLabel?: string;
   initialValue?: string;
   onConfirm: (value: string) => void;
   onCancel: () => void;
 };
 
-export function ConfigDialog({ title, message, confirmLabel, initialValue, onConfirm, onCancel }: ConfigDialogProps) {
+export function ConfigDialog({ title, message, confirmLabel, cancelLabel, initialValue, onConfirm, onCancel }: ConfigDialogProps) {
   const { t } = useI18n();
   const dialog = useRef<HTMLDialogElement>(null);
+  const previousFocus = useRef(typeof document === "undefined" ? null : document.activeElement as HTMLElement | null);
   const titleId = useId();
+  const messageId = useId();
   const [value, setValue] = useState(initialValue ?? "");
-  useEffect(() => { dialog.current?.showModal(); }, []);
+  useEffect(() => {
+    const current = dialog.current;
+    current?.showModal();
+    return () => {
+      current?.close();
+      if (previousFocus.current?.isConnected) previousFocus.current.focus();
+    };
+  }, []);
   return (
-    <dialog className="config-dialog" ref={dialog} aria-labelledby={titleId}
+    <dialog className="config-dialog" ref={dialog} aria-labelledby={titleId} aria-describedby={messageId}
       onCancel={(event) => { event.preventDefault(); onCancel(); }}>
       <form onSubmit={(event) => { event.preventDefault(); onConfirm(value); }}>
         <h3 id={titleId}>{title}</h3>
-        <p>{message}</p>
+        <p id={messageId}>{message}</p>
         {initialValue !== undefined && <label>
           {t("dialog.newProfileName")}
           <input autoFocus required maxLength={64} value={value} onChange={(event) => setValue(event.target.value)} />
         </label>}
         <div className="actions">
-          <button type="button" onClick={onCancel}>{t("dialog.cancel")}</button>
+          <button type="button" autoFocus={initialValue === undefined} onClick={onCancel}>{cancelLabel ?? t("dialog.cancel")}</button>
           <button type="submit" className="primary">{confirmLabel}</button>
         </div>
       </form>

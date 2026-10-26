@@ -120,24 +120,29 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
   };
 
   return <div className="setting-group processing-input"><h2>{t("processing.heading")}</h2>
+    <div className="mapping-content">
     <p className="setting-description">{t("processing.intro")}</p>
     <ol className="processing-flow" aria-label={t("processing.flowLabel")}>
-      <li>{t("app.acquisition")}</li><li>{t("processing.flowMapping")}</li><li>{t("processing.flowEpoching")}</li>
+      <li>{t("app.acquisition")}</li><li aria-current="step"><strong>{t("processing.flowMapping")}</strong></li><li>{t("processing.flowEpoching")}</li>
       <li>{t("profiles.slotFilters")} <small>{t("processing.flowOptional")}</small></li><li>{t("profiles.slotDecoder")}</li>
     </ol>
     <p className="setting-description">{t("processing.pipelineSettings")}</p>
-    <div className="input-source" aria-label={t("processing.sourceInfoLabel")}>
+    <div className="input-context">
+    <section className="input-source" aria-label={t("processing.sourceInfoLabel")}>
+      <h3>{t("processing.sourceContext")}</h3>
       <p>{t("processing.dataSource", { source: binding ? `${binding.profile_name ?? binding.profile_id ?? binding.source_id} · ${binding.source_id}` : t("processing.noSource") })}</p>
       {source ? <p>{t("processing.sourceSummary", { rate: source.sample_rate, count: channels.length })}</p>
         : config?.source_error ? <p className="inline-message error" role="alert">{config.source_error}</p> : <p>{t("processing.sourceMissing")}</p>}
       <button disabled={busy || refreshing} onClick={() => { setNotice(false); void refreshSource(); }}>{refreshing ? t("processing.refreshing") : t("processing.refresh")}</button>
-    </div>
-    <div className="channel-requirements" aria-label={t("processing.requirementsLabel")}>
+    </section>
+    <section className="channel-requirements" aria-label={t("processing.requirementsLabel")}>
+      <h3>{t("processing.decoderContext")}</h3>
       {channelRequirements ? <>
         {channelRequirements.description && <p>{channelRequirements.description}</p>}
         <p>{t("processing.requirements", { type: channelRequirements.signal_type?.toUpperCase() ?? t("processing.unrestricted"), count: channelRequirements.min_count ?? 1 })}</p>
         <p>{t("processing.requiredNames", { names: channelRequirements.required_names?.join(", ") || t("processing.noRequiredNames") })}</p>
       </> : <p>{t("processing.noRequirements")}</p>}
+    </section>
     </div>
     {!value ? <><p className="setting-description">{t("processing.noInput")}</p>
       <button disabled={disabled} onClick={() => edit(emptyProcessingInput())}>{t("processing.configure")}</button></> : <>
@@ -149,13 +154,15 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
       </div>
       {allChannels && <p className="setting-description">{t("processing.allHint")}</p>}
       {defaultNames.length > 0 && !defaultsAvailable && <p className="setting-description">{t("processing.defaultsUnavailable")}</p>}
-      <div className="mapping-table"><table aria-label={t("processing.bindingLabel")}>
-        <thead><tr><th>{t("processing.order")}</th><th>{t("processing.source")}</th><th>{t("processing.inputName")}</th><th>{t("processing.channelType")}</th><th>{t("processing.actions")}</th></tr></thead>
+      <p className="mapping-scroll-help" id="mapping-scroll-help">{t("processing.scrollHelp")}</p>
+      <div className="mapping-table" role="region" aria-label={t("processing.bindingLabel")} aria-describedby="mapping-scroll-help" tabIndex={0}>
+      <table aria-label={t("processing.bindingLabel")}>
+        <thead><tr><th scope="col">{t("processing.order")}</th><th scope="col">{t("processing.source")}</th><th scope="col">{t("processing.inputName")}</th><th scope="col">{t("processing.channelType")}</th><th scope="col">{t("processing.actions")}</th></tr></thead>
         <tbody>{rows.map((row, index) => {
           const channel = channels.find((item) => item.channel_id === row.source_channel_id);
           const knownType = reportedType(channel);
           const conflict = row.signal_type && knownType && row.signal_type !== knownType;
-          return <tr key={index}><td>{index + 1}</td>
+          return <tr key={index}><th scope="row">{index + 1}</th>
             <td><select aria-label={t("processing.inputSourceLabel", { row: index + 1 })} disabled={disabled} value={row.source_channel_id}
               onChange={(event) => updateRow(index, { source_channel_id: event.target.value, signal_type: undefined })}>
               {!channel && <option value={row.source_channel_id}>{row.source_channel_id}{t("processing.unavailable")}</option>}
@@ -192,7 +199,7 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
       <p className="setting-description">{t("processing.mappingHint")}</p>
       {errors.map((message) => <p className="inline-message error" key={message} role="alert">{message}</p>)}
       <button disabled={disabled || !source || sourceProblem || errors.length > 0} onClick={() => void previewInput()}>{t("processing.preview")}</button>
-      {preview && <div className="mapping-preview"><p>{t("processing.previewSummary", { count: preview.plan.output_channels.length })}</p>
+      {preview && <div className="mapping-preview"><p role="status">{t("processing.previewSummary", { count: preview.plan.output_channels.length })}</p>
         <ol>{preview.plan.output_channels.map((channel, index) => <li key={index}>
           {preview.plan.source.channels[preview.plan.source_indices[index]]?.name} → {channel.name} · {(channel.signal_type ?? "unknown").toUpperCase()}
         </li>)}</ol>
@@ -201,5 +208,6 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
     </>}
     {notice && <p className="inline-message" role="status">{t("processing.sourceChanged")}</p>}
     {error && <p className="inline-message error" role="alert">{error}</p>}
+    </div>
   </div>;
 }

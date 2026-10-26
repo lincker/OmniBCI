@@ -7,7 +7,7 @@ import { createServer } from "vite";
 
 const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
 after(() => server.close());
-const { RuntimeConfigurationReview, RuntimeConfigurationStatus } = await server.ssrLoadModule("/src/RuntimeConfiguration.tsx");
+const { RuntimeConfigurationReview, RuntimeConfigurationStatus, RuntimeConfigurationProgress, runtimeBlockReason } = await server.ssrLoadModule("/src/RuntimeConfiguration.tsx");
 const { RunConsole } = await server.ssrLoadModule("/src/RunConsole.tsx");
 const { I18nProvider, translate } = await server.ssrLoadModule("/src/i18n.tsx");
 const english = { language: "en", t: (key, params) => translate("en", key, params) };
@@ -38,9 +38,39 @@ test("review presents the impact before Apply and blocks invalid plans", () => {
   assert.equal(buttonDisabled(invalid, "Apply configuration"), true);
   const rebuild = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan, strategy: "rebuild" } } });
   assert.match(rebuild, /Pause and rebuild the engine/);
+  assert.match(rebuild, /Acquisition or an in-progress epoch may be interrupted/);
+  const nextStart = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan, strategy: "select_on_start" } } });
+  assert.match(nextStart, /It does not start the engine/);
   const channels = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan,
     signal_summary: "Channels: C4, C3; types: EEG" } } });
   assert.match(channels, /Channels: C4, C3; types: EEG/);
+});
+
+test("routine apply progress is local and never reports success before completion", () => {
+  assert.equal(render(RuntimeConfigurationProgress, { runtime: baseRuntime }), "");
+  const waiting = render(RuntimeConfigurationProgress, { runtime: { ...baseRuntime,
+    operation: { status: "applying", stage: "waiting_for_trial_boundary" } } });
+  assert.match(waiting, /Waiting for the current trial to finish/);
+  assert.match(waiting, /role="status"/);
+  const uncertain = render(RuntimeConfigurationProgress, { runtime: { ...baseRuntime, uncertain: true,
+    operation: { status: "succeeded", stage: "complete" } } });
+  assert.match(uncertain, /Confirming the last operation/);
+  assert.doesNotMatch(uncertain, /succeeded|successfully/);
+});
+
+test("blocked reviews explain whether to wait, reconnect, or recover", () => {
+  for (const [overrides, expected] of [
+    [{ uncertain: true, inProgress: true }, "feedback.confirming"],
+    [{ inProgress: true }, "feedback.applying"],
+    [{ recoveryRequired: true }, "feedback.recovery"],
+    [{ status: null }, "feedback.runtimeUnavailable"],
+  ]) {
+    const runtime = { ...baseRuntime, blocked: true, ...overrides };
+    assert.equal(runtimeBlockReason(runtime), expected);
+    const html = render(RuntimeConfigurationReview, { runtime });
+    assert.match(html, /id="configuration-review-blocked"/);
+    assert.equal(buttonDisabled(html, "Apply configuration"), true);
+  }
 });
 
 for (const [field, value] of [["accepted_revision", "changed"], ["applied_revision", "changed"], ["generation", "changed"], ["running", false]]) {
@@ -93,16 +123,32 @@ test("Run preserves system progress and permits stop controls only after an oper
   const props = { engine: { data: { running: true, acquisition_alive: true, processor_alive: true }, error: null, refresh: noop },
     acquisition: { data: { connected: true, streaming: true, sample_rate: 250, channel_count: 8 }, error: null, refresh: noop },
     feed: { generation: "engine-1", trials: [], acks: [] }, onBusyChange: noop, onEditSetup: noop, onResults: noop };
-  const run = (runtime) => renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(RunConsole, { ...props, runtime })));
-  const pending = run({ ...baseRuntime, blocked: true, inProgress: true });
-  assert.match(pending, /aria-label="System progress"/);
-  for (const label of ["Start engine", "Stop engine", "Connect", "Disconnect", "Start reading", "Stop reading", "Launch stimulation", "Trigger trial"]) {
-    assert.equal(buttonDisabled(pending, label), true, label);
-  }
-  const recovery = run({ ...baseRuntime, blocked: true, recoveryRequired: true });
-  for (const label of ["Stop engine", "Stop reading"]) assert.equal(buttonDisabled(recovery, label), false, label);
-  for (const label of ["Start engine", "Connect", "Disconnect", "Start reading", "Launch stimulation", "Trigger trial"]) {
-    assert.equal(buttonDisabled(recovery, label), true, label);
+  const run = (runtime, streaming) => renderToStaticMarkup(React.createElement(I18nProvider, null,
+    React.createElement(RunConsole, { ...props, runtime,
+      acquisition: { ...props.acquisition, data: { ...props.acquisition.data, streaming } } })));
+  for (const streaming of [false, true]) {
+    const action = streaming ? "Stop acquisition" : "Start reading";
+    const absent = streaming ? "Start reading" : "Stop acquisition";
+    const pending = run({ ...baseRuntime, blocked: true, inProgress: true }, streaming);
+    assert.match(pending, /aria-label="System progress"/);
+    for (const label of ["Start engine", "Stop engine", "Disconnect", action, "Launch stimulation", "Trigger trial"]) {
+      assert.equal(buttonDisabled(pending, label), true, label);
+    }
+    const recovery = run({ ...baseRuntime, blocked: true, recoveryRequired: true }, streaming);
+    assert.equal(buttonDisabled(recovery, "Stop engine"), false);
+    assert.equal(buttonDisabled(recovery, action), !streaming, action);
+    for (const label of ["Start engine", "Disconnect", "Launch stimulation", "Trigger trial"]) {
+      assert.equal(buttonDisabled(recovery, label), true, label);
+    }
+    for (const html of [pending, recovery]) {
+      assert.doesNotMatch(html, /<button\b[^>]*>Connect<\/button>/);
+      assert.doesNotMatch(html, new RegExp(`<button\\b[^>]*>${absent}<\\/button>`));
+      const advanced = html.match(/<details class="card runtime-advanced">[\s\S]*?<\/details>/)?.[0];
+      assert.ok(advanced, "Manual runtime controls stay in the advanced disclosure");
+      assert.match(advanced, /<summary>Advanced runtime controls<\/summary>/);
+      for (const label of ["Start engine", "Stop engine", "Disconnect"]) buttonDisabled(advanced, label);
+      assert.doesNotMatch(advanced, /<button\b[^>]*>(Start|Stop) acquisition<\/button>/);
+    }
   }
 });
 

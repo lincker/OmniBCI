@@ -15,19 +15,19 @@ they appear; bundled plugins are available directly.
 Acquisition shows **Plugin and version** first, followed by that plugin's
 **Profile** selector and **New profile** action. A saved profile retains its
 experiment baseline; Get Metadata shows conflicting provided source parameters
-in red. A new profile starts as an unsaved draft for the selected plugin:
-enter the address/port or recording path, and Connect. For Curry8 and File Reader,
-Get Metadata automatically fills the observed sample rate and total output rows
-into that draft. **Save profile** persists it; Connect then applies the saved
-baseline for comparison. Changing the draft's connection parameters clears its
-previously observed dimensions and Curry8 labels.
+in red. A new profile starts as an unsaved draft for the selected plugin.
+Enter the address/port or recording path, **Save profile**, then **Review and apply
+profile**. Curry8 and File Reader profiles can be saved without expected sample
+rate or output rows. **Prepare & inspect** uses the selected saved configuration,
+starts the engine and connects if needed, then reads source metadata. It never
+saves edits or applies another profile. Unsaved or unapplied parameter changes
+must be resolved before preparation.
 
-For Curry8, Get Metadata also fills the optional `channel_labels` list from the
-native metadata JSON into a new draft. The list preserves the complete native
-row order, including the final `Trigger` row, blank labels and duplicates.
-For a saved Profile, **Use observed
-values** adopts the labels into the current draft, and **Save observed values as
-new profile** includes them in the new Profile. **Save profile** persists the
+For Curry8, **Use observed values** also adopts the optional `channel_labels`
+list from the native metadata JSON into the current draft. The list preserves
+the complete native row order, including the final `Trigger` row, blank labels
+and duplicates. **Save observed values as new profile** includes the labels
+in the new Profile. **Save profile** persists the
 labels through the normal Profile file save. Adopting unavailable or invalid
 labels removes stale labels from the draft. This optional snapshot does not add
 an expectation check or change channel mapping; the live `SignalInfo` remains
@@ -39,6 +39,31 @@ plugin or profile does not select it for execution, and **Save profile** only
 persists its values. Use **Review and apply profile** to change the selected
 configuration. The module summary distinguishes the configuration selected for
 the next start from a running configuration whose revision has been acknowledged.
+
+For repeated use, **Run → Start acquisition** uses the persisted startup snapshot:
+start the engine if stopped, connect the selected source if disconnected, then
+prepare configured processing and start reading. It reuses an existing connection after **Stop acquisition**.
+When the source is already connected and reading is stopped, the same action is
+labelled **Start reading**. A selected Decoder requires an Epoch Detector before
+reading can start; Run points to Signal Processing when that selection is missing.
+Saving a newer Profile does not update this snapshot until an explicit review and
+application. Stimulation and trial commands remain separate; configured managed
+Actuation follows the existing stream preparation policy. Source expectations and
+channel mapping are validated when processing is configured; source-only acquisition
+does not run that processing validation. Advanced runtime controls
+retain manual engine and disconnect operations. Disconnect requires stopped reading.
+
+Run distinguishes managed stimulation from external stimulation using the accepted
+`STIMULATION.auto_spawn` setting. In external mode, start the external process first,
+then use **Enable stimulation**; this action does not open a local stimulation
+window. Changing the mode is a backend host configuration change followed by explicit
+review and application. Startup failures are shown beside the corresponding controls.
+
+Setup inspection and quick start share source preparation checks. Failures preserve
+the actual runtime state and show the failed step; they do not automatically undo
+completed engine startup or connection. Configuration, generation and connection
+identity are checked between requests. This frontend sequence is not an atomic
+transaction across independently operating clients.
 
 Signal Processing separates Decoder, Epoch boundary detector, and the ordered Filter chain. Each
 filter instance selects its own plugin and profile. Browsing or saving another

@@ -179,11 +179,29 @@ test("failed refresh keeps the last successful page visible and Retry recovers",
     h.poll(); await h.settle();
     assert.equal(rows(h.tree).length, 1);
     assert.match(text(h.tree), /Epoch history unavailable/);
+    assert.match(text(h.tree), /Showing the last successful page/);
     api.epochs = async () => snapshot([epoch(2), epoch(1)]);
     button(h.tree, "Retry").props.onClick(); await h.settle();
     assert.equal(rows(h.tree).length, 2);
     assert.doesNotMatch(text(h.tree), /Epoch history unavailable/);
     assert.equal(h.timerCount, 1);
+  } finally { h.dispose(); }
+});
+
+test("epoch display shows its page range, exact confidence and normalized UTC time", async () => {
+  const h = harness();
+  const timestamp = "2026-01-01T08:30:01.123456+08:00";
+  api.epochs = async () => snapshot([epoch(1, { status: "decoded", reason: "prediction",
+    result: { target_id: 3, confidence: 0.00004, forced: false }, completed_at: timestamp })]);
+  try {
+    await h.settle();
+    assert.match(text(h.tree), /Showing 1–1 of 1 closed epochs/);
+    assert.match(text(h.tree), /Generation: engine-1/);
+    assert.match(text(h.tree), /0\.00004/);
+    assert.match(text(h.tree), /2026-01-01 00:30:01\.123456/);
+    assert.ok(elements(h.tree).some((item) => item.props.title === timestamp));
+    const region = elements(h.tree).find((item) => item.props.role === "region");
+    assert.equal(region.props.tabIndex, 0);
   } finally { h.dispose(); }
 });
 

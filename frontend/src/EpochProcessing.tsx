@@ -1,13 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type EpochList } from "./api/client";
 import { useI18n } from "./i18n";
+import { resultTime } from "./result-format";
 import "./EpochProcessing.css";
 
 const PAGE_SIZE = 25;
-
-function time(value: string) {
-  return value.replace("T", " ").slice(0, 19);
-}
 
 export function EpochProcessing({ onResults, disabled = false }: { onResults?: () => void; disabled?: boolean }) {
   const { t } = useI18n();
@@ -43,20 +40,24 @@ export function EpochProcessing({ onResults, disabled = false }: { onResults?: (
     <h2 id="epoch-processing-title">{t("epoch.title")} {snapshot && <span className="count">{snapshot.total}</span>}
       {onResults && <button className="text-button" disabled={disabled} onClick={onResults}>{t("epoch.decodedResults")}</button>}</h2>
     <p className="meta">{t("epoch.listHelp")}</p>
+    {current?.generation && <p className="meta epoch-generation">{t("results.generation", { generation: current.generation })}</p>}
     {error && <div className="epoch-toolbar"><p className="error" role="alert">{error}</p>
       <button type="button" onClick={() => setRetry((value) => value + 1)}>{t("epoch.retry")}</button></div>}
+    {error && current && <p className="meta" role="status">{t("epoch.stale")}</p>}
     {!current ? !error && <p role="status">{t("epoch.loading")}</p> : <>
-      {!current.epochs.length ? <p role="status">{t("epoch.empty")}</p> : <div className="table-scroll">
-        <table aria-label={t("epoch.title")}><thead><tr><th>#</th><th>{t("epoch.status")}</th>
-          <th>{t("epoch.reason")}</th><th>{t("epoch.samples")}</th><th>{t("results.event")}</th><th>{t("epoch.result")}</th>
-          <th>{t("epoch.completedAt")}</th></tr></thead>
+      <p className="meta">{t("epoch.range", { start: current.epochs.length ? offset + 1 : 0,
+        end: offset + current.epochs.length, total: current.total })}</p>
+      {!current.epochs.length ? <p role="status">{t("epoch.empty")}</p> : <div className="table-scroll" tabIndex={0} role="region" aria-label={t("epoch.title")}>
+        <table aria-label={t("epoch.title")}><thead><tr><th scope="col">#</th><th scope="col">{t("epoch.status")}</th>
+          <th scope="col">{t("epoch.reason")}</th><th scope="col">{t("epoch.samples")}</th><th scope="col">{t("results.event")}</th><th scope="col">{t("epoch.result")}</th>
+          <th scope="col">{t("epoch.completedAt")}</th></tr></thead>
           <tbody>{current.epochs.map((epoch) => <tr key={`${epoch.generation}:${epoch.epoch_number}`}>
             <td>{epoch.epoch_number}</td><td>{t(`epoch.status.${epoch.status}`)}</td>
             <td>{t(`epoch.reason.${epoch.reason}`)}{epoch.error && <span className="error epoch-error">{epoch.error}</span>}</td><td>{epoch.sample_count}</td>
             <td>{epoch.event_id ?? "—"}</td>
             <td>{epoch.result ? <>{t("run.target", { index: epoch.result.target_id })}
-              {epoch.result.confidence != null && <span className="meta"> · {epoch.result.confidence.toFixed(2)}</span>}</> : t("epoch.noResult")}</td>
-            <td className="meta">{time(epoch.completed_at)}</td>
+              <span className="meta" title={t("results.confidence")}> · {epoch.result.confidence == null ? "—" : String(epoch.result.confidence)}</span></> : t("epoch.noResult")}</td>
+            <td className="meta" title={epoch.completed_at}>{resultTime(epoch.completed_at)}</td>
           </tr>)}</tbody></table>
       </div>}
       {current.total > PAGE_SIZE && <nav className="epoch-pagination" aria-label={t("epoch.pages")}>

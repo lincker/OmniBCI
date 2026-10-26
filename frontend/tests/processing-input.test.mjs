@@ -138,6 +138,28 @@ test("mapping orders stable channel IDs and decoder names without altering Acqui
   }, { selection: decoderSelection });
 });
 
+test("mapping context identifies the current stage and exposes its table to keyboard navigation", async () => {
+  await withInput(async (view, calls) => {
+    const all = elements(view.tree);
+    const flow = all.find((element) => element.props["aria-label"] === "Signal Processing data flow");
+    const current = elements(flow).filter((element) => element.props["aria-current"] === "step");
+    assert.equal(current.length, 1);
+    assert.equal(text(current[0]), "Channel mapping");
+    const sourceContext = all.find((element) => element.type === "section" && element.props["aria-label"] === "Acquisition source information");
+    const requirementsContext = all.find((element) => element.type === "section" && element.props["aria-label"] === "Algorithm channel requirements");
+    assert.match(text(sourceContext), /Lab recording.*500 Hz/);
+    assert.match(text(requirementsContext), /Required channels: C3/);
+    const scrollRegion = all.find((element) => element.props.role === "region" && element.props["aria-label"] === "Algorithm input bindings");
+    assert.equal(scrollRegion.props.tabIndex, 0);
+    const help = all.find((element) => element.props.id === scrollRegion.props["aria-describedby"]);
+    assert.match(text(help), /scroll with arrow keys/);
+    const table = elements(scrollRegion).find((element) => element.type === "table");
+    assert.equal(elements(table).filter((element) => element.type === "th" && element.props.scope === "col").length, 5);
+    assert.deepEqual(elements(table).filter((element) => element.type === "th" && element.props.scope === "row").map(text), ["1", "2"]);
+    assert.equal(calls.change.length, 0);
+  }, { selection: decoderSelection, requirements: channelRequirements });
+});
+
 test("unknown Curry8 channel types are declared explicitly without changing the descriptor", async () => {
   const descriptor = { ...clone(source), source_id: "curry8", channels: source.channels.map((channel) => ({ ...channel, signal_type: "unknown" })) };
   const original = clone(descriptor);

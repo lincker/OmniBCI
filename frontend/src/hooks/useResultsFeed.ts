@@ -14,8 +14,8 @@ export interface ResultsFeed {
   error: string | null;
 }
 
-const MAX_ACKS = 50;
-const MAX_TRIALS = 200;
+export const MAX_ACKS = 50;
+export const MAX_TRIALS = 200;
 const STALE_AFTER_MS = 45_000;
 const SNAPSHOT_INTERVAL_MS = 5_000;
 

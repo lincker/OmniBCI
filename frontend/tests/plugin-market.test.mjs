@@ -57,7 +57,7 @@ test("Settings exposes Logs alongside General and retains console preferences", 
   try {
     const html = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(App)));
     assert.match(html, /aria-label="Settings"[^>]*aria-current="page"/);
-    assert.match(html, /<h1>General settings<\/h1>/);
+    assert.match(html, /<h1\b[^>]*>General settings<\/h1>/);
     assert.match(html, />Logs<\/span>/);
     assert.match(html, /aria-label="Interface language"/);
     assert.match(html, /aria-label="Appearance"/);
@@ -113,4 +113,99 @@ test("creating a version profile carries its reviewed source revision without ap
     assert.equal(requests[0].path, "/api/v1/plugin-packages/version-profiles");
     assert.deepEqual(JSON.parse(requests[0].body), body);
   } finally { globalThis.fetch = previous; }
+});
+
+const { translate } = await server.ssrLoadModule("/src/i18n.tsx");
+const { pluginConfigApi } = await server.ssrLoadModule("/src/api/plugin-config.ts");
+const english = { language: "en", t: (key, params) => translate("en", key, params) };
+const sameDependencies = (a, b) => !!a && !!b && a.length === b.length && a.every((value, i) => Object.is(value, b[i]));
+const elements = (tree) => Array.isArray(tree) ? tree.flatMap(elements)
+  : React.isValidElement(tree) ? [tree, ...elements(tree.props.children)] : [];
+const content = (tree) => Array.isArray(tree) ? tree.map(content).join("")
+  : React.isValidElement(tree) ? content(tree.props.children) : tree == null || typeof tree === "boolean" ? "" : String(tree);
+
+async function withMarket(action, { empty = false } = {}) {
+  const originalMarket = { ...pluginMarketApi }, originalConfig = { ...pluginConfigApi };
+  const contribution = { kind: "epoch_detector", selection: { package_id: "example.events", version: "1.0.0", contribution_id: "edge-detector" } };
+  pluginMarketApi.installed = async () => empty ? [] : [{ package_id: "example.events", version: "1.0.0", label: "Event tools",
+    description: "Marker windows", enabled: true, available: true, references: [], contributions: [contribution] }];
+  pluginMarketApi.catalog = async () => empty ? [] : [{ package_id: "example.events", version: "2.0.0", display_name: "Event tools",
+    repository_id: "official", description: "Marker windows", size: 1024, platforms: [], contributions: [contribution] }];
+  pluginConfigApi.profiles = async () => [];
+  const hooks = []; let cursor = 0, dirty = true, tree, effects = [];
+  const dispatcher = {
+    useContext: () => english,
+    useState(initial) {
+      const i = cursor++; if (!hooks[i]) hooks[i] = { value: typeof initial === "function" ? initial() : initial };
+      return [hooks[i].value, (next) => { const value = typeof next === "function" ? next(hooks[i].value) : next;
+        if (!Object.is(value, hooks[i].value)) { hooks[i].value = value; dirty = true; } }];
+    },
+    useRef(initial) { const i = cursor++; return hooks[i] ??= { current: initial }; },
+    useCallback(fn, deps) { const i = cursor++; if (!sameDependencies(hooks[i]?.deps, deps)) hooks[i] = { value: fn, deps }; return hooks[i].value; },
+    useEffect(fn, deps) { const i = cursor++; if (!sameDependencies(hooks[i]?.deps, deps)) {
+      const cleanup = hooks[i]?.cleanup; hooks[i] = { deps }; effects.push(() => { cleanup?.(); hooks[i].cleanup = fn(); });
+    } },
+  };
+  const harness = {
+    get tree() { return tree; },
+    async settle() {
+      for (let round = 0; round < 24; round += 1) {
+        if (dirty) {
+          const internal = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
+          const previous = internal.current; internal.current = dispatcher; cursor = 0; dirty = false;
+          try { tree = PluginMarket({}); } finally { internal.current = previous; }
+          const pending = effects; effects = []; pending.forEach((fn) => fn());
+        }
+        await Promise.resolve();
+      }
+      assert.equal(dirty, false);
+    },
+    async search(value) { elements(tree).find((el) => el.type === "input" && el.props.type === "search").props.onChange({ target: { value } }); await this.settle(); },
+    async click(label) { const target = elements(tree).find((el) => el.type === "button" && content(el) === label);
+      assert.ok(target, `Missing button: ${label}`); target.props.onClick(); await this.settle(); },
+  };
+  try { await harness.settle(); await action(harness); }
+  finally { hooks.forEach((hook) => hook?.cleanup?.()); Object.assign(pluginMarketApi, originalMarket); Object.assign(pluginConfigApi, originalConfig); }
+}
+
+test("package search matches descriptions and capability IDs in installed and repository lists", async () => {
+  await withMarket(async (harness) => {
+    await harness.search("  MARKER windows ");
+    assert.equal(elements(harness.tree).filter((el) => el.type === "article").length, 1);
+    assert.match(content(harness.tree), /Showing 1 of 1 installed versions/);
+    await harness.search("edge-detector");
+    assert.equal(elements(harness.tree).filter((el) => el.type === "article").length, 1);
+    await harness.click("Repository");
+    await harness.search("epoch_detector");
+    assert.equal(elements(harness.tree).filter((el) => el.type === "article").length, 1);
+    assert.match(content(harness.tree), /Showing 1 of 1 repository versions/);
+    await harness.search("edge-detector");
+    assert.equal(elements(harness.tree).filter((el) => el.type === "article").length, 1);
+  });
+});
+
+test("package searches persist by tab and clear without changing the list scope", async () => {
+  await withMarket(async (harness) => {
+    await harness.search("no-match");
+    assert.match(content(harness.tree), /No installed versions match your search/);
+    assert.match(content(harness.tree), /Showing 0 of 1 installed versions/);
+    await harness.click("Repository");
+    await harness.search("2.0.0");
+    await harness.click("Installed1");
+    assert.match(content(harness.tree), /No installed versions match your search/);
+    await harness.click("Clear search");
+    assert.equal(elements(harness.tree).filter((el) => el.type === "article").length, 1);
+    await harness.click("Repository");
+    assert.equal(elements(harness.tree).find((el) => el.type === "input" && el.props.type === "search").props.value, "2.0.0");
+  });
+});
+
+test("an empty package inventory does not claim the search hid existing versions", async () => {
+  await withMarket(async (harness) => {
+    await harness.search("missing");
+    assert.doesNotMatch(content(harness.tree), /match your search/);
+    await harness.click("Repository");
+    await harness.search("missing");
+    assert.doesNotMatch(content(harness.tree), /match your search/);
+  }, { empty: true });
 });

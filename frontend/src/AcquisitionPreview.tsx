@@ -143,17 +143,25 @@ export function PreviewChunkTable({ chunk, snapshot, onSelectChunk }: {
   return <div className="preview-detail">
     <p><strong>Chunk #{chunk.sequence_id}</strong> · {chunk.original_shape.join(" × ")} / {chunk.dtype}</p>
     <p className="meta">Captured selection: {chunk.row_indices.length} rows, {chunk.sample_count} samples.
-      All row and sample indices are zero-based. Values are acquisition output before processing.</p>
+      {" "}Rows {chunk.row_indices.join(", ")} · {chunk.sample_count
+        ? `samples ${chunk.sample_start}–${chunk.sample_start + chunk.sample_count - 1}` : "no samples"}.
+      All row and sample indices are zero-based. Sample indices restart within each chunk.</p>
+    <p className="meta">This is a bounded sample preview of acquisition output before processing.
+      The selected rows and samples do not represent a continuous waveform or the complete recording.</p>
     <form className="actions preview-search" aria-label="Search displayed chunk"
       onSubmit={(event) => { event.preventDefault(); void search(); }}>
       <label className="control">Scope<select aria-label="Search scope" value={scope}
-        onChange={(event) => { setScope(event.target.value); resetSearch(); }}>
+        onChange={(event) => {
+          setScope(event.target.value);
+          if (event.target.value === "current" && channel !== "all" && !chunk.row_indices.includes(Number(channel))) setChannel("all");
+          resetSearch();
+        }}>
         <option value="current">Current chunk</option>
-        <option value="all" disabled={!snapshot || !onSelectChunk}>All retained chunks (latest 32)</option>
+        <option value="all" disabled={!snapshot || !onSelectChunk}>All retained chunks{snapshot ? ` (up to ${snapshot.limits.max_chunks})` : ""}</option>
       </select></label>
       <label className="control">Channel<select aria-label="Search channel" value={channel}
         onChange={(event) => { setChannel(event.target.value); resetSearch(); }}>
-        <option value="all">All channels (including trigger)</option>
+        <option value="all">All captured rows</option>
         {rows.map((row) => <option key={row} value={String(row)}>{rowLabel(row)}</option>)}
       </select></label>
       <label className="control">Equals<input aria-label="Equals value" value={query} maxLength={128}
@@ -258,6 +266,9 @@ export function PreviewChunks({ snapshot }: { snapshot: Preview }) {
     catch (cause) { setError((cause as Error).message); }
   };
   return <>
+    {snapshot.chunks.length > 0 && <p className="meta">{snapshot.chunks.length} retained chunks
+      {" "}· #{snapshot.chunks[0].sequence_id}–#{snapshot.chunks[snapshot.chunks.length - 1].sequence_id}.
+      Gaps may exist; only the listed chunks are available in this window.</p>}
     <div className="preview-chunks" role="group" aria-label="Retained chunks">
       {snapshot.chunks.map((chunk) => {
         const label = `Chunk #${chunk.sequence_id} · ${chunk.sample_count} samples`;
@@ -269,6 +280,8 @@ export function PreviewChunks({ snapshot }: { snapshot: Preview }) {
       })}
     </div>
     {!snapshot.chunks.length && <p role="status">No chunks retained yet.</p>}
+    <p className="meta">{sequence === null ? "Select a chunk to inspect its captured rows and samples."
+      : `Selected chunk #${sequence} stays fixed while the retained window updates.`}</p>
     <form className="actions" onSubmit={(event) => { event.preventDefault(); select(query); }}>
       <label>Chunk sequence <input value={query} inputMode="numeric" onChange={(event) => setQuery(event.target.value)} /></label>
       <button type="submit" disabled={!snapshot.capture_id}>View chunk</button>
@@ -296,7 +309,7 @@ export function PreviewStatus({ generation, onSnapshot }: {
     <p role="status">{snapshot.status}{snapshot.reason ? ` · ${snapshot.reason.replace(/_/g, " ")}` : ""}.
       Observed {snapshot.observed} · Sent {snapshot.enqueued} · Retained {snapshot.received} · Dropped {snapshot.dropped}</p>
     <p className="meta">Current stream: {snapshot.stream_chunk_count} chunks / {snapshot.stream_sample_count} samples.
-      Last sequence: {snapshot.last_sequence}.</p>
+      {snapshot.last_sequence >= 0 ? ` Last sequence: ${snapshot.last_sequence}.` : " No chunks observed yet."}</p>
     {!snapshot.available && <p className="error" role="alert">Preview delivery is unavailable. Acquisition continues independently.</p>}
     {(snapshot.dropped > 0 || snapshot.cache_errors > 0) && <p role="status">This capture is partial.
       Oversized: {snapshot.oversized}. Cache errors: {snapshot.cache_errors}.</p>}
@@ -325,7 +338,7 @@ function CapturePanel({ generation, revision, connectionId, streaming, disabled 
     finally { setBusy(false); }
   };
   return <>
-    <p className="meta">Reading automatically retains the latest {snapshot?.limits.max_chunks ?? 32} chunks.
+    <p className="meta">Reading automatically retains a bounded window{snapshot ? ` of up to ${snapshot.limits.max_chunks} chunks` : ""}.
       Each green dot is a cached chunk, ordered from oldest to newest. Click a dot to inspect its matrix;
       the selected matrix stays fixed as new data arrives.</p>
     <details onToggle={(event) => {
