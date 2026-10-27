@@ -1,4 +1,6 @@
 export const en = {
+  "acquisition.error.connectionRefused": "The source refused the connection. Check that the device streaming service is running and that the address and port are correct.",
+  "acquisition.error.deviceTimeout": "The source did not respond in time. Check the device service and network connection, then retry.",
   "runtime.profileSaveAbandoned": "The previous profile save result is unknown. No additional save was sent. Check the profile list before saving again.",
   "runtime.returnToEditing": "Return to editor",
   "runtime.profileAbandonSaveHelp": "Returning to the editor keeps your draft and stops checking this save. It does not delete a profile that may already have been saved. Check the profile list before saving again.",
@@ -254,6 +256,8 @@ export const en = {
 } as const;
 
 export const zh: Record<keyof typeof en, string> = {
+  "acquisition.error.connectionRefused": "数据源拒绝连接。请检查设备数据服务是否已启动，以及地址和端口是否正确。",
+  "acquisition.error.deviceTimeout": "数据源未及时响应。请检查设备服务和网络连接后重试。",
   "runtime.profileSaveAbandoned": "上次 Profile 保存结果仍未知，系统没有再次提交保存。请先检查 Profile 列表，再决定是否重新保存。",
   "runtime.returnToEditing": "返回编辑器",
   "runtime.profileAbandonSaveHelp": "返回编辑器会保留草稿并停止检查本次保存，不会删除可能已经保存的 Profile。再次保存前请先检查 Profile 列表。",
