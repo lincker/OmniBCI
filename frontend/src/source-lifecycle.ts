@@ -3,14 +3,13 @@ import { api, type AcquisitionStatus } from "./api/client";
 import { pluginConfigApi } from "./api/plugin-config";
 import { runtimeConfigApi, type RuntimeStatus } from "./api/runtime-config";
 
-export type SourceStage = "checking" | "starting_engine" | "connecting" | "validating" | "inspecting";
 type SourceState = { runtime: RuntimeStatus; acquisition: AcquisitionStatus };
 
 async function readState(revision: string, generation?: string, connectionId?: string): Promise<SourceState> {
   const [runtime, acquisition] = await Promise.all([runtimeConfigApi.status(), api.acquisitionStatus()]);
   if (!runtime || !acquisition) throw new Error("Source status is unavailable. Refresh before retrying.");
   if (runtime.recovery_required !== false || ["queued", "applying"].includes(runtime.operation?.status ?? "")) {
-    throw new Error("Resolve the current runtime operation or recovery state before preparing the source.");
+    throw new Error("Resolve the current runtime operation or recovery state before connecting the source.");
   }
   if (!revision || runtime.accepted_revision !== revision) {
     throw new Error("The startup configuration changed. Review the current selection before retrying.");
@@ -19,19 +18,18 @@ async function readState(revision: string, generation?: string, connectionId?: s
     throw new Error("The running configuration differs from the startup selection. Review and apply it in Setup.");
   }
   if ((runtime.running && !runtime.generation) || (generation && runtime.generation !== generation)) {
-    throw new Error("The engine changed during preparation. Refresh its state before retrying.");
+    throw new Error("The engine changed during the source operation. Refresh its state before retrying.");
   }
   if (acquisition.connected && (!runtime.running || !acquisition.connection_id)) {
     throw new Error("The source connection was not confirmed. Refresh its state before retrying.");
   }
   if (connectionId && (!acquisition.connected || acquisition.connection_id !== connectionId)) {
-    throw new Error("The source connection changed during preparation. Refresh its state before retrying.");
+    throw new Error("The source connection changed during the source operation. Refresh its state before retrying.");
   }
   return { runtime, acquisition };
 }
 
-export async function prepareSource(revision: string, onStage?: (stage: SourceStage) => void): Promise<SourceState> {
-  onStage?.("checking");
+export async function connectSource(revision: string): Promise<SourceState> {
   const [selection, initial] = await Promise.all([pluginConfigApi.activation(), readState(revision)]);
   if (!selection || selection.revision !== revision) {
     throw new Error("The startup configuration changed. Review the current selection before retrying.");
@@ -41,14 +39,12 @@ export async function prepareSource(revision: string, onStage?: (stage: SourceSt
   }
   let state = initial;
   if (!state.runtime.running) {
-    onStage?.("starting_engine");
     await api.engineStart();
     state = await readState(revision);
     if (!state.runtime.running) throw new Error("Engine startup was not confirmed. Refresh before retrying.");
   }
   const generation = state.runtime.generation!;
   if (!state.acquisition.connected) {
-    onStage?.("connecting");
     await api.acqConnect();
     state = await readState(revision, generation);
     if (!state.acquisition.connected || !state.acquisition.connection_id) {
@@ -58,16 +54,18 @@ export async function prepareSource(revision: string, onStage?: (stage: SourceSt
   return state;
 }
 
-export async function startAcquisition(revision: string, onStage?: (stage: SourceStage) => void): Promise<SourceState> {
-  const prepared = await prepareSource(revision, onStage);
-  const generation = prepared.runtime.generation!;
-  const connectionId = prepared.acquisition.connection_id!;
+export async function startReading(revision: string): Promise<SourceState> {
+  const initial = await readState(revision);
+  if (!initial.runtime.running || !initial.acquisition.connected) {
+    throw new Error("Connect the source before reading data.");
+  }
+  const generation = initial.runtime.generation!;
+  const connectionId = initial.acquisition.connection_id!;
   let current = await readState(revision, generation, connectionId);
   if (current.acquisition.streaming) return current;
-  onStage?.("validating");
   // Stream start prepares configured processing and enabled outputs on the backend.
   await api.acqStreamStart();
   current = await readState(revision, generation, connectionId);
-  // The command acknowledges startup; a short recording may already have reached EOF by this refresh.
+  // A short recording may already have reached EOF after the acknowledged start.
   return current;
 }
