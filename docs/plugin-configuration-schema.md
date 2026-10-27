@@ -98,10 +98,12 @@ satisfy plugin-specific bounds.
 
 Curry8 and File Reader omit these values on a new Profile until the user reads
 metadata and explicitly adopts the observed values. Their schema fields are
-optional and have no defaults, allowing connection before confirmation. Get
-Metadata compares the pinned Profile expectations with actual `SignalInfo`.
+optional and have no defaults, allowing connection before confirmation. **Connect**
+and **Disconnect** control the source independently of metadata inspection.
+**Get Metadata** explicitly compares the pinned Profile expectations with actual
+`SignalInfo` after connecting; connecting alone does not request metadata.
 Missing expectations are reported as unconfirmed; Processing uses the observed
-source values. Conflicting provided expectations block preparation and streaming;
+source values. Conflicting provided expectations block processing preparation and streaming;
 the user must correct the source or save and apply the observed values. The
 Acquisition panel can save these values as a new named Profile, preserving the
 original Profile and its experiment expectations.

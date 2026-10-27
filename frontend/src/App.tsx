@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api/client";
 import { usePoll } from "./hooks/usePoll";
+import { useAcquisition } from "./hooks/useAcquisition";
 import { useResultsFeed } from "./hooks/useResultsFeed";
 import { useRuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
 import { RuntimeConfigurationStatus, RuntimeConfigurationReview } from "./RuntimeConfiguration";
@@ -56,8 +57,8 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
   };
   const feed = useResultsFeed();
   const engine = usePoll(api.engineStatus);
-  const acquisition = usePoll(api.acquisitionStatus);
   const runtime = useRuntimeConfiguration();
+  const acquisition = useAcquisition(runtime, engine.refresh);
   const engineRunning = engine.data?.running ?? false;
   const isSetup = setupPages.some(([page]) => page === view);
   const isSettings = settingsPages.some(([page]) => page === view);
@@ -84,10 +85,10 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
   }, [dirty, busy, runtime.inProgress]);
 
   const navigate = useCallback((next: View) => {
-    if (next === view || busy) return;
+    if (next === view || busy || acquisition.pending) return;
     if (dirty) { setPendingView(next); return; }
     setDirty(false); setView(next);
-  }, [view, busy, dirty]);
+  }, [view, busy, dirty, acquisition.pending]);
   useEffect(() => {
     const onHashChange = () => {
       const next = initialView();
@@ -142,7 +143,7 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
         <fieldset className="desktop-control-guard" disabled={!!desktopConnection && desktopConnection.status !== "ready"}>
         <div className="editor-viewport">
           {isSetup ? <PluginProfiles key={view} module={view as SetupPage} engineRunning={engineRunning} engineAvailable={engine.data !== null && engine.error === null} navigation={navigation}
-            runtime={runtime} acquisitionStatus={acquisition.error ? null : acquisition.data} onAcquisitionChange={acquisition.refresh}
+            runtime={runtime} acquisition={acquisition}
             onDirtyChange={setDirty} onBusyChange={setBusy} onRun={() => navigate("run")} />
             : view === "extensions" ? <PluginMarket runtimeBusy={runtime.blocked}
               onBusyChange={setBusy} onDirtyChange={setDirty} onOpenSetup={() => navigate(lastSetup)} />

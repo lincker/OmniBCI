@@ -19,8 +19,13 @@ other modules' pinned values without resolving their profiles, loading their
 plugins, or validating their parameters. A partial configuration can be selected;
 it does not need a complete experiment. Host settings remain a separate operation.
 
-Acquisition preparation uses the explicitly selected source configuration and
-establishes its connection without saving or applying editor changes. Signal Processing
+Acquisition **Connect** uses the explicitly selected source configuration and
+establishes its connection without saving or applying editor changes. Acquisition
+setup and Run share one frontend controller for backend-reported connection status
+and pending commands. **Disconnect** requires stopped reading. Metadata inspection
+is explicit through **Get Metadata**; it is not part of connecting. Run's **Start reading**
+requires an existing connection, and **Stop reading** retains that connection.
+Signal Processing
 starts in standby without interpreting the decoder input. Preparing processing
 validates its channel mapping and loads Decoder, Epoch Detector and Filters using
 the observed source descriptor. Starting the stream prepares configured processing
@@ -39,7 +44,7 @@ repository or configuration archive.
 | Configuration | Authoritative source | Single editing location | Application |
 | --- | --- | --- | --- |
 | Plugin parameters | A named Plugin Profile for an exact contribution and version | Setup, under that plugin | Save preserves the running values; Review and Apply selects a pinned copy |
-| Acquisition metadata | Connected source plugin's raw metadata and `SignalInfo` | Setup / Acquisition / Prepare & inspect or Get Metadata, read-only | Profiles may omit expectations; adopting observations is explicit, and Save and Apply establishes the baseline |
+| Acquisition metadata | Connected source plugin's raw metadata and `SignalInfo` | Setup / Acquisition / Get Metadata, read-only after Connect | Profiles may omit expectations; adopting observations is explicit, and Save and Apply establishes the baseline |
 | Plugin selection and filter order | Activation bindings | Setup, plugin/profile selectors and filter chain | Review and Apply |
 | Shared runtime settings | Host settings, copied into the candidate activation | Settings / General, grouped by subsystem | Review and Apply at a supported runtime boundary |
 | Channel mapping and type declarations | Decoder Plugin Profile `processing_input`, pinned in its activation binding | Setup / Signal Processing / Decoder / Processing input | Profile Review and Apply; input changes rebuild and prepare processing before streaming |

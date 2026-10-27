@@ -9,6 +9,8 @@ after(() => server.close());
 const { default: App } = await server.ssrLoadModule("/src/App.tsx");
 const { ConfigDialog } = await server.ssrLoadModule("/src/ConfigDialog.tsx");
 const { translate } = await server.ssrLoadModule("/src/i18n.tsx");
+const { api } = await server.ssrLoadModule("/src/api/client.ts");
+const { pluginConfigApi } = await server.ssrLoadModule("/src/api/plugin-config.ts");
 const { runtimeConfigApi } = await server.ssrLoadModule("/src/api/runtime-config.ts");
 const desktop = await server.ssrLoadModule("/src/desktop.ts");
 const english = { language: "en", t: (key, params) => translate("en", key, params) };
@@ -256,4 +258,109 @@ test("closing a dialog restores focus only while the original control still exis
       assert.equal(focused, connected ? 1 : 0);
     }
   } finally { globalThis.document = originalDocument; }
+});
+
+async function withSharedAcquisition(action) {
+  const original = { ...api }, originalActivation = pluginConfigApi.activation;
+  const source = { connected: false, streaming: false, connection_id: null }, calls = [];
+  const backend = { status: async () => ({ ...source }) };
+  let engineState;
+  api.engineStatus = async () => ({ running: engineState?.running ?? false });
+  api.acquisitionStatus = () => backend.status();
+  try {
+    await withApp(async ({ h, state }) => {
+      engineState = state;
+      Object.assign(state, { running: true, generation: "engine-1", accepted_revision: "rev-1", applied_revision: "rev-1" });
+      pluginConfigApi.activation = async () => ({ revision: "rev-1", bindings: [{ slot: "acquisition.source" }] });
+      api.acqConnect = async () => { calls.push("connect"); Object.assign(source, { connected: true, connection_id: "source-1" }); };
+      api.acqDisconnect = async () => { calls.push("disconnect"); Object.assign(source, { connected: false, connection_id: null }); };
+      api.acqMetadata = async () => assert.fail("Connect must not inspect metadata");
+      api.acqStreamStart = async () => { calls.push("read"); source.streaming = true; };
+      api.acqStreamStop = async () => { calls.push("stop"); source.streaming = false; };
+      const controller = () => (component(h, "PluginProfiles") ?? component(h, "RunConsole")).props.acquisition;
+      await controller().refresh(); await h.settle();
+      await action({ h, source, calls, controller, backend });
+    });
+  } finally { Object.assign(api, original); pluginConfigApi.activation = originalActivation; }
+}
+
+test("Setup and Run share connection state through connect, reading, stop and disconnect", async () => {
+  await withSharedAcquisition(async ({ h, calls, controller }) => {
+    await controller().connect.run("rev-1"); await h.settle();
+    assert.equal(controller().data.connected, true);
+    assert.deepEqual(calls, ["connect"]);
+    component(h, "PluginProfiles").props.onRun(); await h.settle();
+    assert.ok(component(h, "RunConsole"));
+    assert.equal(controller().data.connected, true);
+    await controller().read.run("rev-1"); await h.settle();
+    assert.equal(controller().data.streaming, true);
+    await controller().stopRead.run(); await h.settle();
+    assert.equal(controller().data.connected, true);
+    assert.equal(controller().data.streaming, false);
+    await controller().disconnect.run(); await h.settle();
+    component(h, "RunConsole").props.onEditSetup(); await h.settle();
+    assert.ok(component(h, "PluginProfiles"));
+    assert.equal(controller().data.connected, false);
+    assert.deepEqual(calls, ["connect", "read", "stop", "disconnect"]);
+  });
+});
+
+test("a pending shared connection blocks navigation and duplicate commands", async () => {
+  await withSharedAcquisition(async ({ h, calls, controller }) => {
+    let finish;
+    const connect = api.acqConnect;
+    api.acqConnect = async () => { await new Promise((resolve) => { finish = resolve; }); await connect(); };
+    const connecting = controller().connect.run("rev-1");
+    await h.settle();
+    assert.equal(controller().pending, true);
+    component(h, "PluginProfiles").props.onRun(); await h.settle();
+    assert.ok(component(h, "PluginProfiles"));
+    await controller().connect.run("rev-1");
+    finish(); await connecting; await h.settle();
+    assert.equal(controller().pending, false);
+    assert.deepEqual(calls, ["connect"]);
+  });
+});
+
+test("a failed connection refreshes actual status and keeps its error when switching pages", async () => {
+  await withSharedAcquisition(async ({ h, source, controller, backend }) => {
+    api.acqConnect = async () => { Object.assign(source, { connected: true, connection_id: "source-1" }); throw new Error("Reply timed out"); };
+    await controller().connect.run("rev-1"); await h.settle();
+    assert.equal(controller().data.connected, true);
+    assert.match(controller().connect.error, /Reply timed out/);
+    component(h, "PluginProfiles").props.onRun(); await h.settle();
+    assert.equal(controller().data.connected, true);
+    assert.match(controller().connect.error, /Reply timed out/);
+    backend.status = async () => { throw new Error("Status unavailable"); };
+    await controller().refresh(); await h.settle();
+    assert.match(controller().error.message, /Status unavailable/);
+    component(h, "RunConsole").props.onEditSetup(); await h.settle();
+    assert.match(controller().error.message, /Status unavailable/);
+  });
+});
+
+for (const staleFailure of [false, true]) test(`older acquisition status cannot overwrite a newer refresh (failure=${staleFailure})`, async () => {
+  await withSharedAcquisition(async ({ h, controller, backend }) => {
+    let resolveOld, rejectOld;
+    backend.status = () => new Promise((resolve, reject) => { resolveOld = resolve; rejectOld = reject; });
+    const older = controller().refresh();
+    backend.status = async () => ({ connected: true, streaming: false, connection_id: "current" });
+    await controller().refresh(); await h.settle();
+    if (staleFailure) rejectOld(new Error("Old status failure"));
+    else resolveOld({ connected: false, streaming: false, connection_id: null });
+    await older; await h.settle();
+    assert.equal(controller().data.connection_id, "current");
+    assert.equal(controller().error, null);
+  });
+});
+
+for (const unavailable of [false, true]) test(`Disconnect rejects a changed or unavailable source (unavailable=${unavailable})`, async () => {
+  await withSharedAcquisition(async ({ h, source, calls, controller, backend }) => {
+    await controller().connect.run("rev-1"); await h.settle();
+    if (unavailable) backend.status = async () => null;
+    else source.connection_id = "replacement";
+    await controller().disconnect.run(); await h.settle();
+    assert.deepEqual(calls, ["connect"]);
+    assert.match(controller().disconnect.error, unavailable ? /status is unavailable/ : /connection changed/);
+  });
 });

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { api, type AcquisitionStatus, type EngineStatus } from "./api/client";
+import { useEffect, useState } from "react";
+import { api, type EngineStatus } from "./api/client";
 import { useAction } from "./hooks/useAction";
 import { usePoll } from "./hooks/usePoll";
 import { MAX_ACKS, type ResultsFeed } from "./hooks/useResultsFeed";
@@ -11,7 +11,7 @@ import { pluginConfigApi, selectionKey, type Activation, type PluginProfile, typ
 import { MAX_TRIALS, parseTrialSequence, readTrialControls, type TrialControl } from "./plugin-controls";
 import { signalConfigApi } from "./api/signal-config";
 import { runtimeBlockReason } from "./RuntimeConfiguration";
-import { startAcquisition, type SourceStage } from "./source-lifecycle";
+import type { AcquisitionController } from "./hooks/useAcquisition";
 import "./RunConsole.css";
 
 const startupModules = [
@@ -61,7 +61,7 @@ export function recordingPathMissing(selection: Activation | null): boolean {
 
 export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, onEditSetup, onEditProcessing, onResults }: {
   engine: ReturnType<typeof usePoll<EngineStatus>>;
-  acquisition: ReturnType<typeof usePoll<AcquisitionStatus>>;
+  acquisition: AcquisitionController;
   feed: ResultsFeed;
   onBusyChange: (busy: boolean) => void;
   onEditSetup: () => void;
@@ -79,25 +79,19 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
   const [loadError, setLoadError] = useState<string | { key: TranslationKey; params?: TranslationParams } | null>(null);
   const [controlValues, setControlValues] = useState<Record<string, string>>({});
   const [trialError, setTrialError] = useState<"count" | "sequence" | { name: string; label: string } | null>(null);
-  const [quickPending, setQuickPending] = useState(false);
-  const [quickStage, setQuickStage] = useState<SourceStage | null>(null);
-  const [quickError, setQuickError] = useState<string | null>(null);
-  const [quickOutcome, setQuickOutcome] = useState<"inactive" | null>(null);
-  const quickLock = useRef(false);
-  const refresh = async () => { await Promise.all([engine.refresh(), acquisition.refresh(), stimulation.refresh(), signal.refresh()]); };
+  const refresh = async () => { await Promise.all([acquisition.refresh(), stimulation.refresh(), signal.refresh()]); };
   const refreshAfter = <A extends unknown[],>(action: (...args: A) => Promise<unknown>) => async (...args: A) => {
     try { return await action(...args); }
     finally { await refresh(); }
   };
   const start = useAction(refreshAfter(api.engineStart));
   const stop = useAction(refreshAfter(api.engineStop));
-  const disconnect = useAction(refreshAfter(api.acqDisconnect));
-  const stopRead = useAction(refreshAfter(api.acqStreamStop));
+  const { connect, disconnect, read, stopRead } = acquisition;
   const launch = useAction(refreshAfter(api.stimStart));
   const stopStim = useAction(refreshAfter(api.stimStop));
   const trigger = useAction(api.trialStart);
-  const actions = [start, stop, disconnect, stopRead, launch, stopStim, trigger];
-  const busy = quickPending || actions.some((action) => action.pending);
+  const actions = [start, stop, launch, stopStim, trigger];
+  const busy = acquisition.pending || actions.some((action) => action.pending);
   const controlsBlocked = busy || runtime.blocked;
   const stopBlocked = busy || runtime.inProgress || !runtime.status;
   const running = engine.data?.running ?? false;
@@ -113,7 +107,6 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
   const missingDetector = decoderConfigured && !selection?.bindings.some((item) => item.slot === "processing.epoch_detector");
   const externalStimulation = selection?.revision === runtime.status?.accepted_revision
     && selection?.settings?.["STIMULATION.auto_spawn"] === false;
-  const acquisitionStartLabel = t(acquisitionAvailable && connected ? "run.startReading" : "run.startAcquisition");
   const stimulationStartLabel = t(externalStimulation ? "run.enableStimulation" : "run.launchStimulation");
   const selectedBindings = !configurationError && selection?.revision === runtime.status?.accepted_revision
     ? selection?.bindings : undefined;
@@ -158,13 +151,16 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
   const startReason = operationReason ?? engineReason ?? (running ? t("run.reason.alreadyRunning")
     : !selection || configurationError ? t("run.reason.configurationUnavailable") : recordingReason);
   const stopReason = stopOperationReason ?? engineReason ?? (!running ? t("run.reason.notRunning") : null);
-  const disconnectReason = operationReason ?? acquisitionReason ?? (!connected ? t("run.reason.notConnected")
-    : reading ? t("run.reason.stopReading") : null);
-  const readReason = operationReason ?? acquisitionReason ?? (!selection ? t("run.reason.configurationUnavailable")
+  const sourceConfigurationReason = !selection || configurationError ? t("run.reason.configurationUnavailable")
     : selection.revision !== runtime.status?.accepted_revision ? t("run.reason.selectionChanged")
     : !selection.bindings.some((item) => item.slot === "acquisition.source") ? t("run.reason.selectSource")
-    : running && runtime.status?.applied_revision !== selection.revision ? t("run.reason.selectionNotApplied")
-    : reading ? t("run.reason.alreadyReading") : missingDetector ? t("run.reason.missingDetector") : recordingReason);
+    : running && runtime.status?.applied_revision !== selection.revision ? t("run.reason.selectionNotApplied") : recordingReason;
+  const connectReason = operationReason ?? acquisitionReason ?? (connected ? t("run.reason.alreadyConnected") : sourceConfigurationReason);
+  const disconnectReason = operationReason ?? acquisitionReason ?? (!connected ? t("run.reason.notConnected")
+    : reading ? t("run.reason.stopReading") : null);
+  const readReason = operationReason ?? acquisitionReason ?? (!running ? t("run.reason.startEngine")
+    : !connected ? t("run.reason.notConnected") : sourceConfigurationReason)
+    ?? (reading ? t("run.reason.alreadyReading") : missingDetector ? t("run.reason.missingDetector") : null);
   const stopReadReason = stopOperationReason ?? acquisitionReason ?? (!reading ? t("run.reason.notReading") : null);
   const launchReason = operationReason ?? engineReason ?? (!running ? t("run.reason.startEngine") : null)
     ?? stimulationReason ?? trialSetupReason
@@ -196,22 +192,6 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
     { label: t("pipeline.reading"), done: acquisitionAvailable && running && connected && reading },
   ];
   const currentStep = steps.findIndex((step) => !step.done);
-
-  const quickStart = async () => {
-    if (readReason || !selection || quickLock.current) return;
-    quickLock.current = true;
-    setQuickPending(true); setQuickStage("checking"); setQuickError(null); setQuickOutcome(null);
-    try {
-      const result = await startAcquisition(selection.revision, setQuickStage);
-      setQuickOutcome(result.acquisition.streaming ? null : "inactive");
-      setQuickStage(null);
-    } catch (cause) {
-      setQuickError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      try { await Promise.all([refresh(), runtime.refresh()]); }
-      finally { quickLock.current = false; setQuickPending(false); }
-    }
-  };
 
   useEffect(() => { onBusyChange(busy); }, [busy, onBusyChange]);
   useEffect(() => {
@@ -329,23 +309,31 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
         <p className="meta">{acquisitionAvailable ? <>{translatePluginName(acquisition.data?.source ?? "", acquisition.data?.source ?? t("run.noSource"), t)}<br />
           {t("run.acquisitionDetails", { sampleRate: acquisition.data?.sample_rate ?? "—", channelCount: acquisition.data?.channel_count ?? "—" })}</> : t("run.unavailable")}</p>
         <div className="actions">
-          {reading ? <button className="primary" disabled={!!stopReadReason}
-            aria-describedby={stopReadReason ? "reading-action-reasons" : "acquisition-start-help"}
-            onClick={() => void stopRead.run()}>{t("run.stopAcquisition")}</button>
-            : <button className="primary" disabled={!!readReason}
-              aria-describedby={readReason ? "reading-action-reasons acquisition-start-help" : "acquisition-start-help"}
-              onClick={quickStart}><Icon name="play" />{acquisitionStartLabel}</button>}
+          <button disabled={!!connectReason}
+            aria-describedby={connectReason ? "connection-action-reasons" : "connection-help"}
+            onClick={() => { if (!connectReason && selection) return connect.run(selection.revision); }}>{t("run.connect")}</button>
+          <button disabled={!!disconnectReason}
+            aria-describedby={disconnectReason ? "connection-action-reasons" : "connection-help"}
+            onClick={() => { if (!disconnectReason) return disconnect.run(); }}>{t("run.disconnect")}</button>
         </div>
-        <p className="meta" id="acquisition-start-help">{t(reading ? "run.stopAcquisitionHelp" : "run.quickStartHelp")}
+        <p className="meta" id="connection-help">{t("run.connectHelp")}</p>
+        {actionReasons("connection-action-reasons", [[t("run.connect"), connectReason], [t("run.disconnect"), disconnectReason]])}
+        {actionErrors([[t("run.connect"), connect.error], [t("run.disconnect"), disconnect.error]])}
+        <div className="actions">
+          <button className="primary" disabled={!!readReason}
+            aria-describedby={readReason ? "reading-action-reasons" : "acquisition-read-help"}
+            onClick={async () => {
+              if (!readReason && selection) { await read.run(selection.revision); await signal.refresh(); }
+            }}><Icon name="play" />{t("run.startReading")}</button>
+          <button disabled={!!stopReadReason}
+            aria-describedby={stopReadReason ? "reading-action-reasons" : "acquisition-read-help"}
+            onClick={() => { if (!stopReadReason) return stopRead.run(); }}>{t("run.stopReading")}</button>
+        </div>
+        <p className="meta" id="acquisition-read-help">{t("run.readHelp")}
           {playback && <> {t("run.playbackRestart")}</>}</p>
-        {actionReasons("reading-action-reasons", [[reading ? t("run.stopAcquisition") : acquisitionStartLabel, reading ? stopReadReason : readReason]])}
+        {actionReasons("reading-action-reasons", [[t("run.startReading"), readReason], [t("run.stopReading"), stopReadReason]])}
         {missingDetector && onEditProcessing && <button className="text-button" disabled={busy} onClick={onEditProcessing}>{t("run.configureProcessing")}</button>}
-        {quickStage && <p className="meta" role="status">{quickPending ? t(`run.stage.${quickStage}`)
-          : t("run.startInterrupted", { stage: t(`run.stage.${quickStage}`) })}</p>}
-        {quickError && <p className="error" role="alert">{quickError}</p>}
-        {quickOutcome === "inactive" && acquisitionAvailable && connected && !reading && !quickPending
-          && <p className="inline-message" role="status">{t("run.readingInactiveAfterStart")}</p>}
-        {actionErrors([[t("run.stopAcquisition"), stopRead.error]])}
+        {actionErrors([[t("run.startReading"), read.error], [t("run.stopReading"), stopRead.error]])}
         <AcquisitionPreview generation={running ? runtime.status?.generation : null}
           revision={runtime.status?.applied_revision} connectionId={acquisition.data?.connection_id ?? null}
           streaming={reading} disabled={controlsBlocked} />
@@ -431,11 +419,6 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
         {actionErrors([[t("run.startEngine"), start.error], [t("run.stopEngine"), stop.error]])}
       </div>
     </div>
-    <div className="actions runtime-disconnect"><button disabled={!!disconnectReason}
-      aria-describedby={disconnectReason ? "connection-action-reasons" : undefined} onClick={() => void disconnect.run()}>{t("run.disconnect")}</button>
-      <span className="meta">{t("run.disconnectHelp")}</span></div>
-    {actionReasons("connection-action-reasons", [[t("run.disconnect"), disconnectReason]])}
-    {actionErrors([[t("run.disconnect"), disconnect.error]])}
     </details>
     <EpochProcessing onResults={onResults} disabled={busy} />
     <details className="ack-panel"><summary>{t("run.acknowledgements")} <span className="count">{feed.acks.length}</span></summary>
