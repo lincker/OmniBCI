@@ -275,6 +275,20 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
         </div>
       </li>)}
     </ol>
+    <section className="card engine-card" aria-label={t("run.engineControls")}>
+      <div><h2>{t("run.engine")}</h2><div className="engine-status">
+        <Dot on={engineAvailable ? running : undefined} label={t("run.running")} /><Dot on={engineAvailable ? engine.data?.acquisition_alive : undefined} label={t("run.acquisitionProcess")} />
+        <Dot on={engineAvailable ? engine.data?.processor_alive : undefined} label={t("run.processingProcess")} />
+      </div>{engine.error && <p className="error" role="alert">{engine.error.message}</p>}</div>
+      <div className="control-feedback"><div className="actions"><button className="primary" disabled={controlsBlocked || !engineAvailable || running || !selection || !!configurationError || missingRecording}
+        aria-describedby={startReason ? "engine-action-reasons" : undefined}
+        onClick={() => void start.run()}><Icon name="play" />{start.pending ? t("run.starting") : t("run.startEngine")}</button>
+        <button className="danger" disabled={stopBlocked || !engineAvailable || !running}
+          aria-describedby={stopReason ? "engine-action-reasons" : undefined} onClick={() => void stop.run()}>{t("run.stopEngine")}</button></div>
+        {actionReasons("engine-action-reasons", [[t("run.startEngine"), startReason], [t("run.stopEngine"), stopReason]])}
+        {actionErrors([[t("run.startEngine"), start.error], [t("run.stopEngine"), stop.error]])}
+      </div>
+    </section>
     <section className="setup-summary" aria-label={t("run.selectedSetup")}>
       <div className="startup-heading"><h2 className="startup-title">{t("run.selectedSetup")}</h2>
         <button className="text-button" disabled={busy} onClick={onEditSetup}>{t("run.editSetup")} <Icon name="chevron" /></button>
@@ -404,22 +418,6 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
       {signal.error && <p className="error" role="alert">{signal.error.message}</p>}
       {decoderConfigured && !missingDetector && engineAvailable && !signal.error && signal.data && !signal.data.readiness.ready && running && <p className="meta">{t("run.prepareSignalHelp")}</p>}
     </section>
-    <details className="card runtime-advanced"><summary>{t("run.advancedControls")}</summary>
-    <div className="engine-card" aria-label={t("run.engineControls")}>
-      <div><h2>{t("run.engine")}</h2><div className="engine-status">
-        <Dot on={engineAvailable ? running : undefined} label={t("run.running")} /><Dot on={engineAvailable ? engine.data?.acquisition_alive : undefined} label={t("run.acquisitionProcess")} />
-        <Dot on={engineAvailable ? engine.data?.processor_alive : undefined} label={t("run.processingProcess")} />
-      </div>{engine.error && <p className="error" role="alert">{engine.error.message}</p>}</div>
-      <div className="control-feedback"><div className="actions"><button className="primary" disabled={controlsBlocked || !engineAvailable || running || !selection || !!configurationError || missingRecording}
-        aria-describedby={startReason ? "engine-action-reasons" : undefined}
-        onClick={() => void start.run()}><Icon name="play" />{start.pending ? t("run.starting") : t("run.startEngine")}</button>
-        <button className="danger" disabled={stopBlocked || !engineAvailable || !running}
-          aria-describedby={stopReason ? "engine-action-reasons" : undefined} onClick={() => void stop.run()}>{t("run.stopEngine")}</button></div>
-        {actionReasons("engine-action-reasons", [[t("run.startEngine"), startReason], [t("run.stopEngine"), stopReason]])}
-        {actionErrors([[t("run.startEngine"), start.error], [t("run.stopEngine"), stop.error]])}
-      </div>
-    </div>
-    </details>
     <EpochProcessing onResults={onResults} disabled={busy} />
     <details className="ack-panel"><summary>{t("run.acknowledgements")} <span className="count">{feed.acks.length}</span></summary>
       <p className="meta">{t("run.acknowledgementsScope", { limit: MAX_ACKS })}</p>

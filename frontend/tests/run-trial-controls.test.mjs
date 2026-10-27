@@ -149,10 +149,20 @@ test("Connect is available from a stopped engine without a stimulation paradigm"
     stimulation: null, runtime: { status: { accepted_revision: revision, applied_revision: null } } });
   assert.equal(actionButton(tree, "Connect").props.disabled, false);
   assert.equal(actionButton(tree, "Start reading").props.disabled, true);
-  const advanced = elements(tree).find((element) => element.type === "details"
-    && text(element).includes("Advanced runtime controls"));
-  assert.ok(advanced);
-  assert.ok(elements(advanced).includes(actionButton(tree, "Start engine")));
+  const nodes = elements(tree);
+  const engineControls = nodes.find((element) => element.type === "section"
+    && element.props["aria-label"] === "Engine controls");
+  const startup = nodes.find((element) => element.props["aria-label"] === "Startup configuration");
+  assert.ok(engineControls, "Engine controls are always visible on Run");
+  assert.ok(nodes.indexOf(engineControls) < nodes.indexOf(startup));
+  for (const label of ["Start engine", "Stop engine"]) {
+    const button = actionButton(tree, label);
+    assert.ok(elements(engineControls).includes(button));
+    assert.equal(nodes.filter((element) => element.type === "button" && text(element).trim() === label).length, 1);
+    assert.ok(nodes.filter((element) => element.type === "details").every((details) => !elements(details).includes(button)));
+  }
+  assert.equal(actionButton(tree, "Start engine").props.disabled, false);
+  assert.equal(actionButton(tree, "Stop engine").props.disabled, true);
 });
 
 test("a connected idle source offers Start reading and explicit inactive status", () => {
@@ -197,8 +207,11 @@ test("each action error stays beside its controls without masking another group"
   assert.match(text(card(tree, "Stimulation")), /Trial failed/);
   assert.match(text(card(tree, "Acquisition")), /Stop failed/);
   assert.doesNotMatch(text(card(tree, "Stimulation")), /Old engine failure/);
-  const advanced = elements(tree).find((element) => element.props.className === "card runtime-advanced");
-  assert.match(text(advanced), /Old engine failure/);
+  const engineControls = elements(tree).find((element) => element.type === "section"
+    && element.props["aria-label"] === "Engine controls");
+  assert.ok(engineControls);
+  assert.match(text(engineControls), /Old engine failure/);
+  assert.doesNotMatch(text(engineControls), /Renderer failed|Trial failed|Stop failed/);
 });
 
 test("Connect refuses an absent source and a stale applied configuration", () => {
