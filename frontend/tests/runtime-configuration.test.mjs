@@ -121,33 +121,38 @@ test("routine configuration states render no status bar or revision details", ()
 
 test("Run preserves system progress and permits stop controls only after an operation settles", () => {
   const props = { engine: { data: { running: true, acquisition_alive: true, processor_alive: true }, error: null, refresh: noop },
-    acquisition: { data: { connected: true, streaming: true, sample_rate: 250, channel_count: 8 }, error: null, refresh: noop },
+    acquisition: { data: { connected: true, streaming: true, sample_rate: 250, channel_count: 8 }, error: null, refresh: noop, pending: false,
+      ...Object.fromEntries(["connect", "disconnect", "read", "stopRead"].map((name) => [name, { run: noop, pending: false, error: null }])) },
     feed: { generation: "engine-1", trials: [], acks: [] }, onBusyChange: noop, onEditSetup: noop, onResults: noop };
   const run = (runtime, streaming) => renderToStaticMarkup(React.createElement(I18nProvider, null,
     React.createElement(RunConsole, { ...props, runtime,
       acquisition: { ...props.acquisition, data: { ...props.acquisition.data, streaming } } })));
   for (const streaming of [false, true]) {
-    const action = streaming ? "Stop acquisition" : "Start reading";
-    const absent = streaming ? "Start reading" : "Stop acquisition";
     const pending = run({ ...baseRuntime, blocked: true, inProgress: true }, streaming);
     assert.match(pending, /aria-label="System progress"/);
-    for (const label of ["Start engine", "Stop engine", "Disconnect", action, "Launch stimulation", "Trigger trial"]) {
+    for (const label of ["Start engine", "Stop engine", "Connect", "Disconnect", "Start reading", "Stop reading", "Launch stimulation", "Trigger trial"]) {
       assert.equal(buttonDisabled(pending, label), true, label);
     }
     const recovery = run({ ...baseRuntime, blocked: true, recoveryRequired: true }, streaming);
     assert.equal(buttonDisabled(recovery, "Stop engine"), false);
-    assert.equal(buttonDisabled(recovery, action), !streaming, action);
-    for (const label of ["Start engine", "Disconnect", "Launch stimulation", "Trigger trial"]) {
+    assert.equal(buttonDisabled(recovery, "Stop reading"), !streaming);
+    assert.equal(buttonDisabled(recovery, "Start reading"), true);
+    for (const label of ["Start engine", "Connect", "Disconnect", "Launch stimulation", "Trigger trial"]) {
       assert.equal(buttonDisabled(recovery, label), true, label);
     }
     for (const html of [pending, recovery]) {
-      assert.doesNotMatch(html, /<button\b[^>]*>Connect<\/button>/);
-      assert.doesNotMatch(html, new RegExp(`<button\\b[^>]*>${absent}<\\/button>`));
-      const advanced = html.match(/<details class="card runtime-advanced">[\s\S]*?<\/details>/)?.[0];
-      assert.ok(advanced, "Manual runtime controls stay in the advanced disclosure");
-      assert.match(advanced, /<summary>Advanced runtime controls<\/summary>/);
-      for (const label of ["Start engine", "Stop engine", "Disconnect"]) buttonDisabled(advanced, label);
-      assert.doesNotMatch(advanced, /<button\b[^>]*>(Start|Stop) acquisition<\/button>/);
+      const engineControls = html.match(/<section\b[^>]*aria-label="Engine controls"[^>]*>[\s\S]*?<\/section>/)?.[0];
+      assert.ok(engineControls, "Engine controls remain visible while configuration changes or recovery is needed");
+      assert.ok(html.indexOf(engineControls) < html.indexOf('aria-label="Startup configuration"'));
+      for (const label of ["Start engine", "Stop engine"]) {
+        buttonDisabled(engineControls, label);
+        const buttons = [...html.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)]
+          .filter(([, body]) => body.replace(/<[^>]*>/g, "").trim() === label);
+        assert.equal(buttons.length, 1, label);
+      }
+      for (const [details] of html.matchAll(/<details\b[^>]*>[\s\S]*?<\/details>/g)) {
+        assert.doesNotMatch(details, /Engine controls|Start engine|Stop engine/);
+      }
     }
   }
 });
@@ -197,7 +202,8 @@ for (const [name, activeInput, expected] of [
   let tree;
   try {
     tree = RunConsole({ engine: { data: { running: true }, error: null, refresh: noop },
-      acquisition: { data: { connected: true, streaming: false }, error: null, refresh: noop },
+      acquisition: { data: { connected: true, streaming: false }, error: null, refresh: noop, pending: false,
+        ...Object.fromEntries(["connect", "disconnect", "read", "stopRead"].map((name) => [name, { run: noop, pending: false, error: null }])) },
       feed: { generation: null, trials: [], acks: [] }, runtime: baseRuntime,
       onBusyChange: noop, onEditSetup: noop, onResults: noop });
   } finally { dispatcher.current = previous; }

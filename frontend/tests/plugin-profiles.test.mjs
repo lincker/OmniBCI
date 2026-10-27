@@ -12,6 +12,7 @@ const { PluginProfiles } = await server.ssrLoadModule("/src/PluginProfiles.tsx")
 const { pluginConfigApi: api, selectionKey } = await server.ssrLoadModule("/src/api/plugin-config.ts");
 const { api: controlApi } = await server.ssrLoadModule("/src/api/client.ts");
 const { runtimeConfigApi } = await server.ssrLoadModule("/src/api/runtime-config.ts");
+const { connectSource } = await server.ssrLoadModule("/src/source-lifecycle.ts");
 
 const selection = (packageId, version = "1.0.0") => ({ package_id: packageId, contribution_id: "main", version });
 const scanV1 = selection("example.scan45");
@@ -165,6 +166,12 @@ async function click(harness, label, scope) {
   assert.equal(!!target.props.disabled, false, `${label} should be enabled`);
   await target.props.onClick(); await harness.settle();
 }
+async function inspectSource(harness) {
+  if (!button(harness, "Connect").props.disabled) await click(harness, "Connect");
+  assert.equal(metadata(harness).props.canRead, true, "Metadata requires the connected selected source");
+  metadata(harness).props.onRead(); await harness.settle();
+}
+
 async function change(harness, label, value, type = "select") {
   const target = control(harness, label, type);
   assert.equal(!!target.props.disabled, false, `${label} should be enabled`);
@@ -270,7 +277,35 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
     refresh: async () => {},
   };
   data.runtime = runtime;
-  const harness = componentHarness({ module, engineRunning, acquisitionStatus: clone(data.source), runtime });
+  let harness;
+  const acquisition = {
+    data: clone(data.source), error: null, pending: false,
+    refresh: async () => {
+      try { acquisition.data = await controlApi.acquisitionStatus(); acquisition.error = null; }
+      catch (cause) { acquisition.error = cause; }
+      harness?.updateProps({ acquisition: { ...acquisition }, engineRunning: runtime.status.running });
+    },
+  };
+  const command = (execute) => {
+    const state = { pending: false, error: null, run: async (...args) => {
+      state.pending = true; state.error = null; acquisition.pending = true;
+      harness.updateProps({ acquisition: { ...acquisition } });
+      try { await execute(...args); }
+      catch (cause) { state.error = String(cause); }
+      finally {
+        await acquisition.refresh();
+        state.pending = false; acquisition.pending = false;
+        harness.updateProps({ acquisition: { ...acquisition } });
+      }
+    } };
+    return state;
+  };
+  acquisition.connect = command(connectSource);
+  acquisition.disconnect = command(() => controlApi.acqDisconnect());
+  acquisition.read = command(() => controlApi.acqStreamStart());
+  acquisition.stopRead = command(() => controlApi.acqStreamStop());
+  data.acquisition = acquisition;
+  harness = componentHarness({ module, engineRunning, acquisition, runtime });
   try {
     await harness.settle();
     await action(harness, calls, data);
@@ -515,7 +550,7 @@ for (const [label, action] of [
   ["profile", async (harness) => change(harness, "Profile", "lab-b")],
   ["plugin", async (harness) => change(harness, "Plugin and version", selectionKey(replay))],
   ["parameters", async (harness) => { form(harness).props.onChange({ gain: 8, calibration: [3, 4] }); await harness.settle(); }],
-  ["connection state", async (harness) => click(harness, "Disconnect source")],
+  ["connection state", async (harness) => click(harness, "Disconnect")],
 ]) {
   test(`changing ${label} clears metadata from the previous source`, async () => {
     await withProfiles("acquisition", async (harness, calls) => {
@@ -535,7 +570,7 @@ test("reconnecting between polls clears metadata even while connected and runtim
     assert.equal(metadata(harness).props.value.connection_id, "connection-a");
     const generation = (await runtimeConfigApi.status()).generation;
     data.source.connection_id = "connection-b";
-    harness.updateProps({ acquisitionStatus: clone(data.source) }); await harness.settle();
+    await data.acquisition.refresh(); await harness.settle();
     assert.equal(data.source.connected, true);
     assert.equal((await runtimeConfigApi.status()).generation, generation);
     assert.equal(metadata(harness).props.value, null, "The previous connection's metadata must be removed");
@@ -575,34 +610,34 @@ for (const [label, sourceChange] of [
   });
 }
 
-test("changed source parameters require Save then reviewed Apply before preparation", async () => {
+test("changed source parameters require Save then reviewed Apply before connecting", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
     const otherBindings = clone(data.activation.bindings.filter((item) => item.kind !== "acquisition"));
     form(harness).props.onChange({ gain: 9, calibration: [3, 4] }); await harness.settle();
-    assert.equal(button(harness, "Prepare & inspect").props.disabled, true);
+    assert.equal(button(harness, "Connect").props.disabled, true);
     await click(harness, "Save profile");
     assert.equal(calls.update[0].parameters.gain, 9);
-    assert.equal(button(harness, "Prepare & inspect").props.disabled, true);
+    assert.equal(button(harness, "Connect").props.disabled, true);
     assert.deepEqual(data.events, []);
     await applyReviewed(harness, calls, data);
-    await click(harness, "Prepare & inspect");
-    assert.deepEqual(data.events, ["apply", "start", "connect", "metadata"]);
+    await click(harness, "Connect");
+    assert.deepEqual(data.events, ["apply", "start", "connect"]);
     assert.deepEqual(calls.apply[0].refresh_slots, ["acquisition.source"]);
     assert.equal(calls.apply[0].module, "acquisition");
     assert.equal(calls.apply[0].bindings.length, 1);
     assert.deepEqual(data.activation.bindings.filter((item) => item.kind !== "acquisition"), otherBindings);
-    assert.deepEqual(metadata(harness).props.value, data.metadata);
+    assert.equal(metadata(harness).props.value, null);
     assert.equal(calls.update.length, 1);
-    await click(harness, "Disconnect source");
+    await click(harness, "Disconnect");
     assert.equal(metadata(harness).props.canRead, false);
   });
 });
 
-test("Acquisition prepares without loading or submitting unrelated processing profiles", async () => {
+test("Acquisition connects without loading or submitting unrelated processing profiles", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
     const accepted = clone(data.activation);
-    await click(harness, "Prepare & inspect");
-    assert.deepEqual(data.events, ["start", "connect", "metadata"]);
+    await click(harness, "Connect");
+    assert.deepEqual(data.events, ["start", "connect"]);
     assert.equal(calls.apply.length, 0);
     assert.ok(data.profileKinds.every((kind) => kind === "acquisition"));
     assert.deepEqual(data.activation, accepted);
@@ -614,11 +649,11 @@ test("Acquisition prepares without loading or submitting unrelated processing pr
   } });
 });
 
-test("a new plugin draft cannot prepare an inline source or write a profile implicitly", async () => {
+test("a new plugin draft cannot connect an inline source or write a profile implicitly", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
     await click(harness, "New profile");
     await change(harness, "Plugin and version", selectionKey(unsavedPlugin));
-    const prepare = button(harness, "Prepare & inspect");
+    const prepare = button(harness, "Connect");
     assert.equal(prepare.props.disabled, true);
     prepare.props.onClick(); await harness.settle();
     assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
@@ -627,25 +662,25 @@ test("a new plugin draft cannot prepare an inline source or write a profile impl
   });
 });
 
-test("an unsuccessful explicit apply keeps preparation unavailable for the changed profile", async () => {
+test("an unsuccessful explicit apply keeps Connect unavailable for the changed profile", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
     await change(harness, "Profile", "lab-b");
     await click(harness, "Review and apply profile");
     assert.equal(await data.runtime.applySelection(calls.review[0]), false);
     await harness.settle();
-    assert.equal(button(harness, "Prepare & inspect").props.disabled, true);
+    assert.equal(button(harness, "Connect").props.disabled, true);
     assert.deepEqual(data.events, ["apply"]);
     assert.equal(metadata(harness).props.canRead, false);
   }, { applySucceeds: false });
 });
 
-test("Prepare refuses a startup revision changed by another client", async () => {
+test("Connect refuses a startup revision changed by another client", async () => {
   await withProfiles("acquisition", async (harness, _, data) => {
     runtimeConfigApi.status = async () => ({ ...data.runtime.status, accepted_revision: "another-selection", applied_revision: "another-selection" });
-    await click(harness, "Prepare & inspect");
+    await click(harness, "Connect");
     assert.deepEqual(data.events, []);
     assert.match(text(harness.tree), /configuration changed/);
-  }, { engineRunning: true });
+  });
 });
 
 test("metadata cannot read a disconnected, streaming, different or edited source", async () => {
@@ -659,7 +694,7 @@ test("metadata cannot read a disconnected, streaming, different or edited source
   }, { engineRunning: true });
   await withProfiles("acquisition", async (harness, calls, data) => {
     assert.equal(metadata(harness).props.canRead, false);
-    assert.equal(button(harness, "Prepare & inspect").props.disabled, true);
+    assert.equal(button(harness, "Connect").props.disabled, true);
     assert.equal(calls.update.length, 0);
     assert.deepEqual(data.events, []);
   }, { engineRunning: true, streaming: true });
@@ -861,7 +896,7 @@ test("new profiles explain validation while allowing optional expectations to re
     await click(harness, "New profile");
     assert.match(text(harness.tree), /Enter a profile name before saving/);
     assert.equal(button(harness, "Save profile").props["aria-describedby"], "profile-save-help");
-    assert.match(text(harness.tree), /Save the profile first. Preparation does not save or apply edits/);
+    assert.match(text(harness.tree), /Save the profile first. Connecting does not save or apply edits/);
     await change(harness, "Name", "Draft", "input");
     assert.equal(button(harness, "Save profile").props.disabled, false);
     assert.match(text(harness.tree), /Saves this profile only/);
@@ -1083,7 +1118,7 @@ function observedCurryLabels(data, expected = null) {
 test("Curry8 adopts ordered metadata labels including Trigger only after an explicit action", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
     assert.equal(form(harness).props.schema.properties.channel_labels, undefined);
-    await click(harness, "Prepare & inspect");
+    await inspectSource(harness);
     assert.equal(form(harness).props.value.channel_labels, undefined);
     metadata(harness).props.onUseObserved(); await harness.settle();
     assert.deepEqual(form(harness).props.value, { gain: 2, calibration: [3, 4], sample_rate: 500,
@@ -1095,7 +1130,7 @@ test("Curry8 adopts ordered metadata labels including Trigger only after an expl
     assert.deepEqual(calls.update[0].parameters.channel_labels, curryLabels);
     assert.equal(data.activation.bindings[0].parameters.channel_labels, undefined);
     await applyReviewed(harness, calls, data);
-    await click(harness, "Prepare & inspect");
+    await inspectSource(harness);
     assert.deepEqual(data.activation.bindings.find((item) => item.slot === "acquisition.source").parameters.channel_labels, curryLabels);
   }, { configure: observedCurryLabels });
 });
@@ -1163,9 +1198,9 @@ for (const action of ["adopt", "new profile"]) {
         assert.deepEqual(data.profiles.find((item) => item.profile_id === "lab-a").parameters.channel_labels, previousLabels);
       }
       assert.deepEqual(data.activation.bindings[0].parameters.channel_labels, previousLabels);
-      assert.equal(button(harness, "Prepare & inspect").props.disabled, true);
+      assert.equal(button(harness, "Connect").props.disabled, true);
       await applyReviewed(harness, calls, data);
-      await click(harness, "Prepare & inspect");
+      await inspectSource(harness);
       assert.deepEqual(data.activation.bindings.find((item) => item.slot === "acquisition.source").parameters.channel_labels, curryLabels);
     }, { engineRunning: true, configure: (data) => observedCurryLabels(data, {
       sample_rate: 1000, channel_count: 3, channel_labels: previousLabels,
@@ -1174,17 +1209,17 @@ for (const action of ["adopt", "new profile"]) {
 }
 
 for (const pluginType of ["neuroscan_curry8_reader", "file_reader"]) {
-  test(`${pluginType} saves connection parameters before preparation and adopts expectations explicitly`, async () => {
+  test(`${pluginType} saves connection parameters before connecting and adopts expectations explicitly`, async () => {
     await withProfiles("acquisition", async (harness, calls, data) => {
       const originalProfiles = clone(data.profiles);
       await click(harness, "New profile");
       await change(harness, "Name", "New experiment", "input");
-      assert.equal(button(harness, "Prepare & inspect").props.disabled, true);
+      assert.equal(button(harness, "Connect").props.disabled, true);
       await click(harness, "Save profile");
       assert.deepEqual(calls.create[0].parameters, { gain: 1, calibration: [1, 2] });
       assert.deepEqual(data.events, []);
       await applyReviewed(harness, calls, data);
-      await click(harness, "Prepare & inspect");
+      await inspectSource(harness);
       assert.equal(metadata(harness).props.value.comparison.status, "unconfirmed");
       assert.equal(form(harness).props.value.sample_rate, undefined);
       assert.equal(form(harness).props.value.channel_count, undefined);
@@ -1198,7 +1233,7 @@ for (const pluginType of ["neuroscan_curry8_reader", "file_reader"]) {
       await applyReviewed(harness, calls, data);
       data.metadata.comparison = { status: "matched", sample_rate: { expected: 500, actual: 500 },
         channel_count: { expected: 3, actual: 3 } };
-      await click(harness, "Prepare & inspect");
+      await inspectSource(harness);
       assert.equal(metadata(harness).props.value.comparison.status, "matched");
       data.metadata.descriptor.sample_rate = 1000;
       data.metadata.comparison = { status: "mismatched", sample_rate: { expected: 500, actual: 1000 },
@@ -1211,10 +1246,10 @@ for (const pluginType of ["neuroscan_curry8_reader", "file_reader"]) {
   });
 }
 
-test("preparing an already connected source reads metadata again without promoting expectations", async () => {
+test("explicit metadata inspection can repeat on a connected source without promoting expectations", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
-    await click(harness, "Prepare & inspect");
-    await click(harness, "Prepare & inspect");
+    await inspectSource(harness);
+    await inspectSource(harness);
     assert.deepEqual(data.events, ["metadata", "metadata"]);
     assert.equal(form(harness).props.value.sample_rate, undefined);
     assert.equal(form(harness).props.value.channel_labels, undefined);
@@ -1241,19 +1276,21 @@ test("a failed explicit save retains adopted observations and other draft edits 
     await click(harness, "Save profile");
     assert.equal(calls.update.length, 1);
     assert.equal(control(harness, "Profile").props.value, "lab-a");
-    assert.equal(button(harness, "Prepare & inspect").props.disabled, true);
+    assert.equal(button(harness, "Connect").props.disabled, true);
   }, { engineRunning: true, configure: observedSource });
 });
 
-test("a metadata failure leaves the prepared connection visible and releases the editor for retry", async () => {
+test("a metadata failure leaves the connected source visible and releases the editor for retry", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
     controlApi.acqMetadata = async () => { throw new Error("Device metadata request timed out."); };
-    await click(harness, "Prepare & inspect");
+    await inspectSource(harness);
     assert.match(text(harness.tree), /Device metadata request timed out/);
     assert.match(text(harness.tree), /The current source is connected/);
     assert.equal(metadata(harness).props.busy, false);
     assert.equal(metadata(harness).props.value, null);
-    assert.equal(button(harness, "Prepare & inspect").props.disabled, false);
+    assert.equal(button(harness, "Connect").props.disabled, true);
+    assert.equal(button(harness, "Disconnect").props.disabled, false);
+    assert.equal(metadata(harness).props.canRead, true);
     assert.equal(form(harness).props.value.sample_rate, undefined);
     assert.deepEqual(data.events, ["start", "connect"]);
     assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
@@ -1264,9 +1301,9 @@ test("a delayed inspection response cannot be adopted after the source reconnect
   await withProfiles("acquisition", async (harness, calls, data) => {
     let finishRead;
     controlApi.acqMetadata = () => new Promise((resolve) => { finishRead = resolve; });
-    await click(harness, "Prepare & inspect");
+    await inspectSource(harness);
     data.source.connection_id = "connection-b";
-    harness.updateProps({ acquisitionStatus: clone(data.source) }); await harness.settle();
+    await data.acquisition.refresh(); await harness.settle();
     finishRead(clone(data.metadata)); await harness.settle();
     assert.equal(metadata(harness).props.value, null);
     assert.equal(metadata(harness).props.canUseObserved, false);
@@ -1296,7 +1333,7 @@ for (const pluginType of ["neuroscan_curry8_reader", "file_reader"]) {
       assert.equal(calls.update[0].parameters.channel_count, 3);
       assert.equal(data.activation.bindings[0].parameters.sample_rate, undefined);
       await applyReviewed(harness, calls, data);
-      await click(harness, "Prepare & inspect");
+      await inspectSource(harness);
       const applied = data.activation.bindings.find((item) => item.slot === "acquisition.source");
       assert.equal(applied.profile_revision, 3);
       assert.equal(applied.parameters.sample_rate, 500);
@@ -1312,10 +1349,10 @@ test("a mismatched source never overwrites expected values without explicit adop
     assert.equal(form(harness).props.value.sample_rate, 1000);
     assert.equal(data.activation.bindings[0].parameters.sample_rate, 1000);
     metadata(harness).props.onUseObserved(); await harness.settle();
-    assert.equal(button(harness, "Prepare & inspect").props.disabled, true);
+    assert.equal(button(harness, "Connect").props.disabled, true);
     await click(harness, "Save profile");
     await applyReviewed(harness, calls, data);
-    await click(harness, "Prepare & inspect");
+    await inspectSource(harness);
     assert.equal(calls.update[0].parameters.sample_rate, 500);
     assert.equal(calls.update[0].parameters.channel_count, 3);
     assert.equal(data.activation.bindings.find((item) => item.slot === "acquisition.source").profile_revision, 3);
@@ -1342,9 +1379,9 @@ for (const pluginType of ["neuroscan_curry8_reader", "file_reader"]) {
       assert.equal(calls.review.length, 0);
       assert.equal(control(harness, "Profile").props.value, "created-1");
       assert.equal(metadata(harness).props.value, null);
-      assert.equal(button(harness, "Prepare & inspect").props.disabled, true);
+      assert.equal(button(harness, "Connect").props.disabled, true);
       await applyReviewed(harness, calls, data);
-      await click(harness, "Prepare & inspect");
+      await inspectSource(harness);
       const applied = data.activation.bindings.find((item) => item.slot === "acquisition.source");
       assert.equal(applied.profile_id, "created-1");
       assert.equal(applied.parameters.sample_rate, 500);
@@ -1384,7 +1421,7 @@ for (const [label, sourceChange] of [
       metadata(harness).props.onRead(); await harness.settle();
       metadata(harness).props.onSaveObservedProfile(); await harness.settle();
       sourceChange(data.source);
-      harness.updateProps({ acquisitionStatus: clone(data.source) }); await harness.settle();
+      await data.acquisition.refresh(); await harness.settle();
       dialog(harness).props.onConfirm("Expired observations"); await harness.settle();
       assert.equal(dialog(harness), undefined);
       assert.match(text(harness.tree), /The source or its metadata changed/);
@@ -1420,7 +1457,7 @@ test("a stale adoption callback cannot apply metadata from an earlier source con
     metadata(harness).props.onRead(); await harness.settle();
     const staleAdopt = metadata(harness).props.onUseObserved;
     data.source.connection_id = "connection-b";
-    harness.updateProps({ acquisitionStatus: clone(data.source) }); await harness.settle();
+    await data.acquisition.refresh(); await harness.settle();
     staleAdopt(); await harness.settle();
     assert.equal(form(harness).props.value.sample_rate, undefined);
     assert.equal(form(harness).props.value.channel_labels, undefined);
@@ -1444,7 +1481,7 @@ test("streaming prevents adoption of a previously observed source", async () => 
   await withProfiles("acquisition", async (harness, calls, data) => {
     metadata(harness).props.onRead(); await harness.settle();
     data.source.streaming = true;
-    harness.updateProps({ acquisitionStatus: clone(data.source) }); await harness.settle();
+    await data.acquisition.refresh(); await harness.settle();
     assert.equal(metadata(harness).props.canUseObserved, false);
     metadata(harness).props.onUseObserved(); await harness.settle();
     assert.equal(form(harness).props.value.sample_rate, undefined);
@@ -1474,15 +1511,15 @@ test("new observed-source profiles leave expectations absent instead of inventin
     await click(harness, "New profile");
     assert.equal(form(harness).props.value.sample_rate, undefined);
     assert.equal(form(harness).props.value.channel_count, undefined);
-    assert.equal(button(harness, "Prepare & inspect").props.disabled, true);
+    assert.equal(button(harness, "Connect").props.disabled, true);
     assert.match(text(harness.tree), /Use source value/);
   }, { configure: observedSource });
 });
 
-test("preparing an edited profile requires explicit save and apply without hidden writes", async () => {
+test("connecting an edited profile requires explicit save and apply without hidden writes", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
     await change(harness, "Name", "Uncommitted name", "input");
-    const prepare = button(harness, "Prepare & inspect");
+    const prepare = button(harness, "Connect");
     assert.equal(prepare.props.disabled, true);
     await prepare.props.onClick(); await harness.settle();
     assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
@@ -1490,12 +1527,12 @@ test("preparing an edited profile requires explicit save and apply without hidde
   });
 });
 
-test("a saved source prepares from a stopped engine and shows metadata without saving or applying", async () => {
+test("a saved source connects from a stopped engine without inspecting metadata, saving or applying", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
-    await click(harness, "Prepare & inspect");
-    assert.deepEqual(data.events, ["start", "connect", "metadata"]);
+    await click(harness, "Connect");
+    assert.deepEqual(data.events, ["start", "connect"]);
     assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-    assert.equal(metadata(harness).props.value.metadata, data.metadata.metadata);
+    assert.equal(metadata(harness).props.value, null);
   });
 });
 
@@ -1507,75 +1544,74 @@ test("a new reported source can be saved before observing its optional expectati
     assert.equal(calls.create.length, 1);
     assert.equal(calls.create[0].parameters.sample_rate, undefined);
     assert.equal(calls.create[0].parameters.channel_count, undefined);
-    assert.equal(button(harness, "Prepare & inspect").props.disabled, true);
+    assert.equal(button(harness, "Connect").props.disabled, true);
     assert.deepEqual(data.events, []);
   }, { configure: observedSource });
 });
 
-test("source controls identify the selected profile and cannot disconnect another editor's source or streaming data", async () => {
+test("source controls disconnect the shared current source while browsing another profile, but never while streaming", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
     await change(harness, "Profile", "lab-b");
     assert.match(text(harness.tree), /Current source.*Lab A/);
-    assert.equal(button(harness, "Disconnect source").props.disabled, true);
-    await button(harness, "Disconnect source").props.onClick(); await harness.settle();
-    assert.deepEqual(data.events, []);
+    assert.equal(button(harness, "Disconnect").props.disabled, false);
+    await button(harness, "Disconnect").props.onClick(); await harness.settle();
+    assert.deepEqual(data.events, ["disconnect"]);
+    assert.equal(control(harness, "Profile").props.value, "lab-b");
   }, { engineRunning: true });
   await withProfiles("acquisition", async (harness, calls, data) => {
-    assert.equal(button(harness, "Disconnect source").props.disabled, true);
-    await button(harness, "Disconnect source").props.onClick(); await harness.settle();
+    assert.equal(button(harness, "Disconnect").props.disabled, true);
+    await button(harness, "Disconnect").props.onClick(); await harness.settle();
     assert.deepEqual(data.events, []);
   }, { engineRunning: true, streaming: true });
 });
 
-test("same-render preparation clicks launch one source operation", async () => {
+test("same-render Connect clicks launch one source operation", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
-    const prepare = button(harness, "Prepare & inspect").props.onClick;
+    const prepare = button(harness, "Connect").props.onClick;
     prepare(); prepare(); await harness.settle();
-    assert.deepEqual(data.events, ["start", "connect", "metadata"]);
-    assert.equal(metadata(harness).props.busy, false);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  });
-});
-
-test("pending inspection releases the editor when parent engine status never confirms preparation", async (context) => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    context.mock.timers.enable({ apis: ["setTimeout"] });
-    data.runtime.status = clone(data.runtime.status);
-    harness.updateProps({ runtime: data.runtime }); await harness.settle();
-    await click(harness, "Prepare & inspect");
-    assert.equal(metadata(harness).props.busy, true);
     assert.deepEqual(data.events, ["start", "connect"]);
-    context.mock.timers.tick(5000); await harness.settle();
     assert.equal(metadata(harness).props.busy, false);
-    assert.match(text(harness.tree), /source or startup configuration changed/);
-    assert.equal(control(harness, "Profile").props.disabled, false);
-    assert.equal(metadata(harness).props.value, null);
     assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
   });
 });
 
-test("pending inspection aborts when a new connection replaces the prepared source", async () => {
+test("shared connection updates immediately enable or disable metadata and connection actions", async () => {
   await withProfiles("acquisition", async (harness, _, data) => {
-    data.runtime.status = clone(data.runtime.status);
-    harness.updateProps({ runtime: data.runtime }); await harness.settle();
-    await click(harness, "Prepare & inspect");
-    data.source.connection_id = "connection-b";
-    harness.updateProps({ acquisitionStatus: clone(data.source) }); await harness.settle();
-    assert.equal(metadata(harness).props.busy, false);
-    assert.match(text(harness.tree), /source or startup configuration changed/);
-    assert.deepEqual(data.events, ["start", "connect"]);
+    assert.equal(button(harness, "Connect").props.disabled, false);
+    Object.assign(data.runtime.status, { running: true, applied_revision: data.activation.revision, generation: "generation-a" });
+    Object.assign(data.source, { connected: true, connection_id: "external-connection" });
+    await data.acquisition.refresh(); await harness.settle();
+    assert.equal(button(harness, "Connect").props.disabled, true);
+    assert.equal(button(harness, "Disconnect").props.disabled, false);
+    assert.equal(metadata(harness).props.canRead, true);
+    Object.assign(data.source, { connected: false, connection_id: null });
+    await data.acquisition.refresh(); await harness.settle();
+    assert.equal(button(harness, "Connect").props.disabled, false);
+    assert.equal(button(harness, "Disconnect").props.disabled, true);
+    assert.equal(metadata(harness).props.canRead, false);
   });
 });
 
-test("preparation refuses metadata inspection if streaming starts during connection", async () => {
+test("shared status errors suppress a previously connected source", async () => {
+  await withProfiles("acquisition", async (harness, _, data) => {
+    controlApi.acquisitionStatus = async () => { throw new Error("Connection status unavailable"); };
+    await data.acquisition.refresh(); await harness.settle();
+    assert.equal(button(harness, "Connect").props.disabled, true);
+    assert.equal(button(harness, "Disconnect").props.disabled, true);
+    assert.equal(metadata(harness).props.canRead, false);
+    assert.match(text(harness.tree), /Acquisition status is unavailable/);
+  }, { engineRunning: true });
+});
+
+test("connecting does not inspect metadata and disables inspection if another client starts reading", async () => {
   await withProfiles("acquisition", async (harness, _, data) => {
     const connect = controlApi.acqConnect;
     controlApi.acqConnect = async () => { await connect(); data.source.streaming = true; };
-    await click(harness, "Prepare & inspect");
+    await click(harness, "Connect");
     assert.deepEqual(data.events, ["start", "connect"]);
     assert.equal(metadata(harness).props.value, null);
     assert.equal(metadata(harness).props.busy, false);
-    assert.match(text(harness.tree), /Stop reading in Run before getting fresh metadata/);
+    assert.match(metadata(harness).props.readHint, /Stop reading in Run before getting fresh metadata/);
   });
 });
 
@@ -1583,7 +1619,7 @@ test("a successful no-change apply refreshes a renamed profile revision without 
   await withProfiles("acquisition", async (harness, calls, data) => {
     await change(harness, "Name", "Renamed source", "input");
     await click(harness, "Save profile");
-    assert.equal(button(harness, "Prepare & inspect").props.disabled, true);
+    assert.equal(button(harness, "Connect").props.disabled, true);
     const previousRevision = data.activation.revision;
     await click(harness, "Review and apply profile");
     await data.runtime.applySelection(calls.review[0]);
@@ -1591,27 +1627,40 @@ test("a successful no-change apply refreshes a renamed profile revision without 
     harness.updateProps({ runtime: data.runtime }); await harness.settle();
     assert.equal(data.activation.revision, previousRevision);
     assert.equal(control(harness, "Name", "input").props.value, "Renamed source");
-    assert.equal(button(harness, "Prepare & inspect").props.disabled, false);
-    await click(harness, "Prepare & inspect");
-    assert.deepEqual(data.events, ["apply", "start", "connect", "metadata"]);
+    assert.equal(button(harness, "Connect").props.disabled, false);
+    await click(harness, "Connect");
+    assert.deepEqual(data.events, ["apply", "start", "connect"]);
     assert.match(text(harness.tree), /revision 3/);
   });
 });
 
-test("a connection failure identifies its step and keeps the started engine available for retry", async () => {
+test("a connection failure stays beside Connect and keeps the started engine available for retry", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
     const connect = controlApi.acqConnect;
     controlApi.acqConnect = async () => { data.events.push("connect"); throw new Error("Command execution failed"); };
-    await click(harness, "Prepare & inspect");
-    assert.match(text(harness.tree), /Preparation failed.*Connecting the source.*Command execution failed/);
+    await click(harness, "Connect");
+    assert.match(text(harness.tree), /Connect:.*Command execution failed/);
     assert.deepEqual(data.events, ["start", "connect"]);
     assert.equal(data.runtime.status.running, true);
     assert.equal(metadata(harness).props.busy, false);
-    assert.equal(button(harness, "Prepare & inspect").props.disabled, false);
+    assert.equal(button(harness, "Connect").props.disabled, false);
     assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
     controlApi.acqConnect = connect;
-    await click(harness, "Prepare & inspect");
-    assert.deepEqual(data.events, ["start", "connect", "connect", "metadata"]);
-    assert.deepEqual(metadata(harness).props.value, data.metadata);
+    await click(harness, "Connect");
+    assert.deepEqual(data.events, ["start", "connect", "connect"]);
+    assert.equal(metadata(harness).props.value, null);
+  });
+});
+
+
+test("Connect only connects the shared source and leaves metadata inspection explicit", async () => {
+  await withProfiles("acquisition", async (harness, calls, data) => {
+    assert.equal(elements(harness.tree).some((item) => item.type === "button" && text(item) === "Prepare & inspect"), false);
+    await click(harness, "Connect");
+    assert.deepEqual(data.events, ["start", "connect"]);
+    assert.equal(metadata(harness).props.value, null);
+    assert.equal(button(harness, "Connect").props.disabled, true);
+    assert.equal(button(harness, "Disconnect").props.disabled, false);
+    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
   });
 });

@@ -11,16 +11,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export function usePoll<T>(fn: () => Promise<T>, intervalMs = 2000) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<Error | null>(null);
+  const request = useRef(0);
   const fnRef = useRef(fn);
   fnRef.current = fn;
 
   const fetchOnce = useCallback(async (): Promise<void> => {
+    const id = ++request.current;
     try {
       const value = await fnRef.current();
-      setData(value);
-      setError(null);
+      if (id === request.current) { setData(value); setError(null); }
     } catch (e) {
-      setError(e as Error);
+      if (id === request.current) setError(e as Error);
     }
   }, []);
 
@@ -30,14 +31,15 @@ export function usePoll<T>(fn: () => Promise<T>, intervalMs = 2000) {
 
     const tick = async () => {
       if (!document.hidden) {
+        const id = ++request.current;
         try {
           const value = await fnRef.current();
-          if (alive) {
+          if (alive && id === request.current) {
             setData(value);
             setError(null);
           }
         } catch (e) {
-          if (alive) setError(e as Error);
+          if (alive && id === request.current) setError(e as Error);
         }
       }
       if (alive) timer = setTimeout(tick, intervalMs);

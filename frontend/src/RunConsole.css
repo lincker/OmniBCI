@@ -1,6 +1,3 @@
-.runtime-advanced > summary { cursor: pointer; color: var(--muted); font-size: 0.8125rem; }
-.runtime-advanced[open] > summary { margin-bottom: 1rem; }
-.runtime-advanced .runtime-disconnect { margin-top: 1rem; }
 .runtime-content .summary-items { flex-basis: 100%; }
 .runtime-content .summary-items small { display: block; margin-top: 0.3rem; overflow-wrap: anywhere; }
 .runtime-content .startup-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; width: 100%; }

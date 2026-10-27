@@ -18,10 +18,12 @@ experiment baseline; Get Metadata shows conflicting provided source parameters
 in red. A new profile starts as an unsaved draft for the selected plugin.
 Enter the address/port or recording path, **Save profile**, then **Review and apply
 profile**. Curry8 and File Reader profiles can be saved without expected sample
-rate or output rows. **Prepare & inspect** uses the selected saved configuration,
-starts the engine and connects if needed, then reads source metadata. It never
-saves edits or applies another profile. Unsaved or unapplied parameter changes
-must be resolved before preparation.
+rate or output rows. **Connect** uses the selected saved configuration and starts
+the engine if needed, then connects the source. It does not read metadata, start
+reading, save edits, or apply another profile. Unsaved or unapplied parameter
+changes must be resolved before connecting. **Get Metadata** is a separate action
+after connection; a metadata error does not mark a connected source as disconnected.
+**Disconnect** releases the source after reading has stopped.
 
 For Curry8, **Use observed values** also adopts the optional `channel_labels`
 list from the native metadata JSON into the current draft. The list preserves
@@ -40,18 +42,19 @@ persists its values. Use **Review and apply profile** to change the selected
 configuration. The module summary distinguishes the configuration selected for
 the next start from a running configuration whose revision has been acknowledged.
 
-For repeated use, **Run → Start acquisition** uses the persisted startup snapshot:
-start the engine if stopped, connect the selected source if disconnected, then
-prepare configured processing and start reading. It reuses an existing connection after **Stop acquisition**.
-When the source is already connected and reading is stopped, the same action is
-labelled **Start reading**. A selected Decoder requires an Epoch Detector before
-reading can start; Run points to Signal Processing when that selection is missing.
-Saving a newer Profile does not update this snapshot until an explicit review and
-application. Stimulation and trial commands remain separate; configured managed
-Actuation follows the existing stream preparation policy. Source expectations and
-channel mapping are validated when processing is configured; source-only acquisition
-does not run that processing validation. Advanced runtime controls
-retain manual engine and disconnect operations. Disconnect requires stopped reading.
+For repeated use, **Run → Connect** uses the persisted startup snapshot and starts
+the engine if needed. **Start reading** starts reading from an already connected source;
+it never starts the engine or connects implicitly. **Stop reading** keeps the source
+connected, so reading can be started again without reconnecting. Run also exposes
+**Disconnect**, which requires stopped reading. A selected Decoder requires an Epoch
+Detector before reading can start; Run points to Signal Processing when that
+selection is missing. Saving a newer Profile does not update the startup snapshot
+until an explicit review and application. Stimulation and trial commands remain
+separate; configured managed Actuation follows the existing stream preparation
+policy. Source expectations and channel mapping are validated when processing is
+configured; source-only acquisition does not run that processing validation.
+Run displays **Start engine** and **Stop engine** above the startup configuration.
+These manual engine controls remain visible alongside engine and worker status.
 
 Run distinguishes managed stimulation from external stimulation using the accepted
 `STIMULATION.auto_spawn` setting. In external mode, start the external process first,
@@ -59,10 +62,13 @@ then use **Enable stimulation**; this action does not open a local stimulation
 window. Changing the mode is a backend host configuration change followed by explicit
 review and application. Startup failures are shown beside the corresponding controls.
 
-Setup inspection and quick start share source preparation checks. Failures preserve
-the actual runtime state and show the failed step; they do not automatically undo
-completed engine startup or connection. Configuration, generation and connection
-identity are checked between requests. This frontend sequence is not an atomic
+Acquisition setup and Run share one frontend acquisition controller, including
+backend-reported connection and reading status, pending commands, and command
+errors. Switching pages does not create another connection state. The controller
+refreshes acquisition, engine, and configuration status after both successful and
+failed commands; failures do not automatically undo a completed engine startup or
+connection. Connection and reading checks use configuration, generation, and
+connection identity between requests. This frontend sequence is not an atomic
 transaction across independently operating clients.
 
 Signal Processing separates Decoder, Epoch boundary detector, and the ordered Filter chain. Each
