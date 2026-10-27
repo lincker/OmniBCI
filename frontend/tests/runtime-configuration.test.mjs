@@ -192,10 +192,18 @@ for (const [name, activeInput, expected] of [
   const dispatcher = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
   const previous = dispatcher.current;
   let stateIndex = 0;
-  // Seed the signal poll's data; the first poll contains stimulation data and its error.
+  // Active mapping is meaningful only after the matching decoder configuration has loaded.
+  const seeded = {
+    2: { active_input: activeInput, readiness: { ready: true } },
+    4: { revision: status.accepted_revision, bindings: [{ slot: "processing.decoder", kind: "decoder",
+      selection: { package_id: "example.decoder", contribution_id: "main", version: "1.0.0" }, parameters: {} }] },
+    21: { status: "ready", revision: status.accepted_revision },
+  };
   dispatcher.current = {
-    useState: (initial) => [stateIndex++ === 2 ? { active_input: activeInput, readiness: { ready: true } }
-      : typeof initial === "function" ? initial() : initial, noop],
+    useState: (initial) => {
+      const index = stateIndex++;
+      return [Object.hasOwn(seeded, index) ? seeded[index] : typeof initial === "function" ? initial() : initial, noop];
+    },
     useContext: () => english, useRef: (value) => ({ current: value }),
     useCallback: (callback) => callback, useEffect: noop,
   };

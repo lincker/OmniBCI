@@ -11,3 +11,6 @@
 @media (max-width: 580px) {
   .runtime-content .summary-items { grid-template-columns: 1fr; }
 }
+
+.startup-empty { width: 100%; padding: 12px; background: var(--sidebar-bg); border-left: 2px solid var(--accent); font-size: 0.8125rem; }
+.startup-empty p { margin: 6px 0 0; color: var(--muted); line-height: 1.6; }
