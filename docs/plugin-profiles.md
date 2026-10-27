@@ -53,7 +53,8 @@ until an explicit review and application. Stimulation and trial commands remain
 separate; configured managed Actuation follows the existing stream preparation
 policy. Source expectations and channel mapping are validated when processing is
 configured; source-only acquisition does not run that processing validation.
-Advanced runtime controls retain manual engine operations.
+Run displays **Start engine** and **Stop engine** above the startup configuration.
+These manual engine controls remain visible alongside engine and worker status.
 
 Run distinguishes managed stimulation from external stimulation using the accepted
 `STIMULATION.auto_spawn` setting. In external mode, start the external process first,

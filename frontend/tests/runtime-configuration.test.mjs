@@ -141,11 +141,18 @@ test("Run preserves system progress and permits stop controls only after an oper
       assert.equal(buttonDisabled(recovery, label), true, label);
     }
     for (const html of [pending, recovery]) {
-      const advanced = html.match(/<details class="card runtime-advanced">[\s\S]*?<\/details>/)?.[0];
-      assert.ok(advanced, "Manual runtime controls stay in the advanced disclosure");
-      assert.match(advanced, /<summary>Advanced runtime controls<\/summary>/);
-      for (const label of ["Start engine", "Stop engine"]) buttonDisabled(advanced, label);
-      assert.doesNotMatch(advanced, /<button\b[^>]*>(Connect|Disconnect|Start reading|Stop reading)<\/button>/);
+      const engineControls = html.match(/<section\b[^>]*aria-label="Engine controls"[^>]*>[\s\S]*?<\/section>/)?.[0];
+      assert.ok(engineControls, "Engine controls remain visible while configuration changes or recovery is needed");
+      assert.ok(html.indexOf(engineControls) < html.indexOf('aria-label="Startup configuration"'));
+      for (const label of ["Start engine", "Stop engine"]) {
+        buttonDisabled(engineControls, label);
+        const buttons = [...html.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)]
+          .filter(([, body]) => body.replace(/<[^>]*>/g, "").trim() === label);
+        assert.equal(buttons.length, 1, label);
+      }
+      for (const [details] of html.matchAll(/<details\b[^>]*>[\s\S]*?<\/details>/g)) {
+        assert.doesNotMatch(details, /Engine controls|Start engine|Stop engine/);
+      }
     }
   }
 });
