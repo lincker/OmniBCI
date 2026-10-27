@@ -182,6 +182,32 @@ test("a source-only configuration renders without processing or trial setup requ
   });
 });
 
+test("an inline source summary identifies the current configuration without a profile revision", async () => {
+  const activation = { ...sourceOnly, bindings: [{ ...source, profile_revision: 0 }] };
+  await withScenario({ activation: async () => activation, acceptedRevision: activation.revision }, async ({ harness }) => {
+    await harness.settle();
+    const summary = text(region(harness.tree, "Startup configuration"));
+    assert.match(summary, /Current configuration \(not saved as a profile\)/);
+    assert.match(summary, /example\.source\/main/);
+    assert.match(summary, /Plugin 1\.0\.0/);
+    assert.doesNotMatch(summary, /Profile revision|revision 0/);
+  });
+});
+
+test("a saved source summary retains its profile name and selected revision", async () => {
+  const activation = { ...sourceOnly, bindings: [{ ...source, profile_id: "saved-source", profile_revision: 3 }] };
+  await withScenario({ activation: async () => activation, acceptedRevision: activation.revision,
+    profiles: async () => [{ profile_id: "saved-source", name: "Lab source", revision: 4 }] }, async ({ harness }) => {
+    await harness.settle();
+    const summary = text(region(harness.tree, "Startup configuration"));
+    assert.match(summary, /Lab source/);
+    assert.match(summary, /example\.source\/main/);
+    assert.match(summary, /Plugin 1\.0\.0/);
+    assert.match(summary, /Profile revision 3/);
+    assert.doesNotMatch(summary, /not saved as a profile|Profile revision 4/);
+  });
+});
+
 test("a complete configuration preserves selected modules and processing readiness", async () => {
   await withScenario({ activation: async () => complete, acceptedRevision: complete.revision, running: true }, async ({ harness, calls }) => {
     await harness.settle();

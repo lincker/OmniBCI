@@ -510,7 +510,7 @@ for (const [label, overrides, reason] of [
   ["Start engine", { engine: null }, /Engine status is unavailable/],
   ["Start engine", { engine: { running: false }, selection: null }, /Loading the startup configuration/],
   ["Disconnect", { acquisition: { connected: true, streaming: true } }, /Stop reading before disconnecting/],
-  ["Connect", {}, /Choose a source profile/],
+  ["Connect", {}, /Configure a source in Acquisition/],
   ["Connect", { acquisitionError: new Error("Unavailable") }, /Acquisition status is unavailable/],
   ["Trigger trial", { stimulation: { ...ready, engine_connected: false } }, /Wait for stimulation to connect/],
   ["Trigger trial", { stimulation: { ...ready, paradigm: "other" } }, /running paradigm differs/],

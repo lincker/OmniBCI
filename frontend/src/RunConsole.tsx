@@ -130,7 +130,9 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
       ?? `${binding.selection.package_id}/${binding.selection.contribution_id} · ${binding.selection.version ?? t("profiles.unversioned")}`;
   };
   const selectedPlugin = (binding: Activation["bindings"][number]) => {
-    const name = profiles.find((item) => item.profile_id === binding.profile_id)?.name;
+    const name = binding.slot === "acquisition.source" && !binding.profile_id
+      ? t("profiles.currentSourceConfiguration")
+      : profiles.find((item) => item.profile_id === binding.profile_id)?.name;
     const identity = `${binding.selection.package_id}/${binding.selection.contribution_id}`;
     return <><strong>{name ?? identity}</strong>
       {name && <small className="meta">{identity}</small>}

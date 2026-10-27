@@ -35,7 +35,7 @@ const schemaTextKeys: Record<string, TranslationKey> = {
   "TCP port": "schema.tcpPort",
   "Total channels sent by the device, including the final event channel. Must match the Scan45 stream.": "schema.scanChannelsDescription",
 };
-const schemaText = (value: string, t: Translate): string => {
+export const schemaText = (value: string, t: Translate): string => {
   const key = Object.prototype.hasOwnProperty.call(schemaTextKeys, value) ? schemaTextKeys[value] : undefined;
   return key ? t(key) : value;
 };

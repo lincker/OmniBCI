@@ -33,18 +33,27 @@ and managed Actuation. With no Decoder selected, Acquisition can run on its own.
 An unrelated missing or invalid decoder or effector cannot block Acquisition
 configuration or connection. Decoded results publish directly without a Session.
 
-Fresh installations have no selected plugins. Profiles and selections are created
-explicitly in their module pages; the global settings initializer and alias-to-profile
-mapper have been removed. Packaged settings contain host controls only. Idle Apply
-saves the selected module. Runtime results remain transient; there is no Session
-repository or configuration archive.
+Fresh installations have no selected plugins. Selections are created explicitly
+in their module pages; the global settings initializer and alias-to-profile mapper
+have been removed. Acquisition starts with a parameter draft without requiring a
+pre-existing Profile. Review previews the draft; final confirmation saves a new
+Profile and applies its pinned parameters. Changed existing Profiles show a
+parameter comparison and offer saving a new Profile (the default) or explicitly
+updating the original. Unchanged Profiles are reused without another save.
+After a refresh, Acquisition restores the applied configuration. Existing
+activations without a Profile remain readable, and Run labels them as
+**Current configuration (not saved as a profile)**. Other plugin roles retain
+their saved-Profile workflow. Packaged settings contain
+host controls only. Idle Apply saves the selected module. Runtime results remain
+transient; there is no Session repository or configuration archive.
 
 ## Ownership rules
 
 | Configuration | Authoritative source | Single editing location | Application |
 | --- | --- | --- | --- |
-| Plugin parameters | A named Plugin Profile for an exact contribution and version | Setup, under that plugin | Save preserves the running values; Review and Apply selects a pinned copy |
-| Acquisition metadata | Connected source plugin's raw metadata and `SignalInfo` | Setup / Acquisition / Get Metadata, read-only after Connect | Profiles may omit expectations; adopting observations is explicit, and Save and Apply establishes the baseline |
+| Acquisition parameters | Applied source binding for an exact contribution and version; a named Profile preserves reusable parameters | Setup / Acquisition | Review previews the draft; final confirmation saves a new Profile or confirms how to save changes, then applies its pinned parameters |
+| Other plugin parameters | A named Plugin Profile for an exact contribution and version | Setup, under that plugin | Save preserves the running values; Review and Apply selects a pinned copy |
+| Acquisition metadata | Connected source plugin's raw metadata and `SignalInfo` | Setup / Acquisition / Get Metadata, read-only after Connect | Expectations may be omitted; adopting observations updates the draft explicitly, and final Review and Apply confirms Profile saving and establishes the current baseline |
 | Plugin selection and filter order | Activation bindings | Setup, plugin/profile selectors and filter chain | Review and Apply |
 | Shared runtime settings | Host settings, copied into the candidate activation | Settings / General, grouped by subsystem | Review and Apply at a supported runtime boundary |
 | Channel mapping and type declarations | Decoder Plugin Profile `processing_input`, pinned in its activation binding | Setup / Signal Processing / Decoder / Processing input | Profile Review and Apply; input changes rebuild and prepare processing before streaming |
@@ -350,20 +359,23 @@ is generated for them. This preserves existing trial-boundary decoder updates
 and output-module changes. Revision and serialized bindings remain generated
 runtime fields.
 
-Source Profiles retain `sample_rate` and `channel_count`; provided values must
-be positive integers. Curry8 and File Reader can save and connect profiles without
-expectations. Metadata reads do not fill or save the profile automatically;
-adopting observed values followed by Save and Apply establishes a named experiment baseline. Existing Profiles keep
-their saved values and show conflicting provided parameters in red. Missing
+Source configurations retain `sample_rate` and `channel_count`; provided values
+must be positive integers. Curry8 and File Reader can apply and connect without
+expectations or an upfront Profile save. Metadata reads do not fill or save the
+editor automatically. Adopting observed values followed by final Review and Apply
+saves the Profile and establishes the current experiment baseline. A new Profile
+is saved automatically on confirmation; changed existing parameters default to
+saving a new Profile, with updating the original as an explicit choice. Conflicting
+provided parameters are shown in red. Missing
 expectations use the observed source values. The comparison uses the pinned
 source binding, never old host copies or saved edits that have not been applied.
 A mismatched comparison blocks preparation and streaming, including when only
 one expectation is provided. An unconfirmed comparison is informational;
 preparation uses actual source dimensions without changing the Profile.
-Neither status hides source metadata. Observed values can be saved as a separately named
-Profile with the current connection parameters, preserving the original Profile
-and applied configuration until explicit application. Adoption into the current
-draft remains available; Save and Apply publishes a new revision. Scan45 retains its required configuration and
+Neither status hides source metadata. Observed values are first adopted into the
+draft; final Review handles the Profile choice and application. Saving and applying
+are separate backend requests: partial success is reported explicitly, and a retry
+reuses the confirmed saved Profile. Canceling Review does not write either resource. Scan45 retains its required configuration and
 is marked unverified because it cannot query independent device dimensions.
 
 The old initialization path and packaged flat plugin defaults have been removed.

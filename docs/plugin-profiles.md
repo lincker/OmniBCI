@@ -12,35 +12,45 @@ The profile selector and sidebar show only profiles for that exact contribution
 and version. Installed managed packages must be enabled in Extensions before
 they appear; bundled plugins are available directly.
 
-Acquisition shows **Plugin and version** first, followed by that plugin's
-**Profile** selector and **New profile** action. A saved profile retains its
-experiment baseline; Get Metadata shows conflicting provided source parameters
-in red. A new profile starts as an unsaved draft for the selected plugin.
-Enter the address/port or recording path, **Save profile**, then **Review and apply
-profile**. Curry8 and File Reader profiles can be saved without expected sample
-rate or output rows. **Connect** uses the selected saved configuration and starts
-the engine if needed, then connects the source. It does not read metadata, start
-reading, save edits, or apply another profile. Unsaved or unapplied parameter
-changes must be resolved before connecting. **Get Metadata** is a separate action
-after connection; a metadata error does not mark a connected source as disconnected.
-**Disconnect** releases the source after reading has stopped.
+Acquisition shows **Plugin and version** first, with a selector for an existing
+Profile. **New configuration** starts from plugin defaults. Enter the address/port
+or recording path, then **Review and apply configuration**. Naming and saving are
+part of that final review; there is no separate acquisition Save profile step.
 
-For Curry8, **Use observed values** also adopts the optional `channel_labels`
-list from the native metadata JSON into the current draft. The list preserves
-the complete native row order, including the final `Trigger` row, blank labels
-and duplicates. **Save observed values as new profile** includes the labels
-in the new Profile. **Save profile** persists the
-labels through the normal Profile file save. Adopting unavailable or invalid
-labels removes stale labels from the draft. This optional snapshot does not add
-an expectation check or change channel mapping; the live `SignalInfo` remains
-authoritative for Signal Processing and contains only signal channels.
+For a first configuration, Review proposes an editable profile name. Confirming
+saves a new Profile and applies it. For an existing Profile with changed parameters,
+the same dialog lists the old and new values and defaults to **Save as new profile**;
+**Update original profile** is an explicit alternative. An unchanged Profile is
+applied without another save or revision increment. Cancel leaves the editor draft
+intact and performs no save or application. Ctrl/Cmd+S opens this review in Acquisition.
+Other modules retain their existing explicit Save profile controls.
 
-**New profile** starts with the selected plugin's defaults. **Duplicate profile**
-saves an independent named copy of the displayed parameters. Browsing another
-plugin or profile does not select it for execution, and **Save profile** only
-persists its values. Use **Review and apply profile** to change the selected
-configuration. The module summary distinguishes the configuration selected for
-the next start from a running configuration whose revision has been acknowledged.
+Saving and runtime application use separate existing backend requests. After saving,
+the frontend replans using the saved profile reference and checks that its target and
+runtime impact still match the reviewed plan. Changed impact requires another review.
+A later Apply failure leaves the saved Profile available and is reported as saved but
+not applied; retry does not save it again. An uncertain save response is reconciled
+before any retry, rather than blindly creating a duplicate. Neither saving nor Apply
+claims that a device connection or data acquisition has been tested.
+
+**Connect** uses the applied configuration and starts the engine if needed. It does
+not read metadata, start reading, or apply editor changes. **Get Metadata** is separate;
+a metadata error does not mark a connected source as disconnected. **Disconnect**
+releases the source after reading stops. Current parameters and the profile binding
+are restored after refresh. Existing inline source activations remain readable;
+reviewing one now creates its named Profile.
+
+Curry8 and File Reader can be applied and connected without expected sample rate
+or output rows. **Use observed values** copies metadata into the draft; final Review
+handles saving and application. For Curry8 it also adopts optional `channel_labels`
+in complete native row order, including the final `Trigger` row, blank labels and
+duplicates. Invalid or unavailable labels remove stale draft labels. This snapshot
+does not change channel mapping; live `SignalInfo` remains authoritative for Signal
+Processing and contains only signal channels.
+
+Browsing a plugin or Profile does not select it for execution. The module summary
+distinguishes the next-start configuration from a running configuration whose
+revision has been acknowledged.
 
 For repeated use, **Run → Connect** uses the persisted startup snapshot and starts
 the engine if needed. **Start reading** starts reading from an already connected source;
@@ -144,12 +154,12 @@ engine runs, the runtime application coordinator commits acceptance after worker
 acknowledge the change.
 
 The runtime planning API also accepts an inline acquisition binding with
-`slot: "acquisition.source"`, `selection`, and `parameters`. This pins connection
-configuration in the activation without creating or updating a named Profile.
-The binding has no `profile_id` and uses `profile_revision: 0`. Other module
-updates preserve it. The direct activation endpoint still accepts saved Profile
-references only. New Curry8/File drafts omit expected dimensions from this
-binding until the user saves and applies the completed Profile.
+`slot: "acquisition.source"`, `selection`, and `parameters`. The Acquisition editor
+uses it for the initial Review so the plan describes the exact displayed draft.
+After final confirmation, it saves or reuses a Profile and replans with `profile_id`
+before applying. Legacy inline bindings remain supported and persist in the startup
+activation; the UI omits their synthetic Profile revision. Other module updates
+preserve them. No backend contract or storage schema changes are required.
 
 Fixed slots are `acquisition.source`, `processing.decoder`,
 `processing.epoch_detector`, `stimulation.paradigm`, `stimulation.trigger`, and

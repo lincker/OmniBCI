@@ -128,7 +128,7 @@ test("source comparison treats unspecified expectations as optional and keeps ad
   const tree = render({ value, canUseObserved: true, onUseObserved: () => { adoptions += 1; } });
   assert.equal(adoptions, 0);
   const table = elements(tree).find((element) => element.type === "table" && element.props["aria-label"] === "Experiment parameter comparison");
-  assert.match(text(table), /Expected \(applied profile\)Observed \(data source\)/);
+  assert.match(text(table), /Expected \(applied configuration\)Observed \(data source\)/);
   assert.match(text(table), /Use source value500/);
   assert.match(text(table), /Use source value3/);
   assert.match(text(tree), /Unspecified expectations use the observed source values/);
