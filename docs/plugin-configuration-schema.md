@@ -96,18 +96,25 @@ expected experiment parameters. `channel_count` counts all adapter output rows,
 including the final event row. Declared values must be positive integers and
 satisfy plugin-specific bounds.
 
-Curry8 and File Reader omit these values on a new Profile until the user reads
-metadata and explicitly adopts the observed values. Their schema fields are
-optional and have no defaults, allowing connection before confirmation. **Connect**
-and **Disconnect** control the source independently of metadata inspection.
-**Get Metadata** explicitly compares the pinned Profile expectations with actual
-`SignalInfo` after connecting; connecting alone does not request metadata.
-Missing expectations are reported as unconfirmed; Processing uses the observed
-source values. Conflicting provided expectations block processing preparation and streaming;
-the user must correct the source or save and apply the observed values. The
-Acquisition panel can save these values as a new named Profile, preserving the
-original Profile and its experiment expectations.
-Metadata reads never overwrite a Profile.
+Curry8 and File Reader start with no expected dimensions in a new configuration.
+Their schema fields are optional and have no defaults, allowing connection before
+confirming an experiment baseline. Users can explicitly enter expected values or
+adopt them from observed metadata. Acquisition can **Review and apply
+configuration** directly from these parameters without an upfront save. The final
+Review proposes a name for a new Profile, or shows changed parameters with a choice
+to save a new Profile (default) or update the original. Confirmation saves the
+Profile, checks the final plan, and applies its pinned values. An unchanged Profile
+is reused without another write. Legacy inline bindings remain readable.
+
+**Connect** and **Disconnect** control the source independently of metadata
+inspection. **Get Metadata** explicitly compares expectations in the applied source
+binding with actual `SignalInfo` after connecting; connecting alone does not request
+metadata. Missing expectations are reported as unconfirmed; Processing uses the
+observed source values. Conflicting provided expectations block processing
+preparation and streaming; the user must correct the source or review and apply
+the observed values. Adopting them updates the draft; final Review defaults to
+saving a new Profile, preserving the original Profile and its expectations.
+Metadata reads never overwrite a Profile or apply configuration changes.
 
 Processing initialization and trial updates receive the actual sample rate and
 mapped channels from the prepared `SignalInfo`. They do not fall back to expected

@@ -5,7 +5,7 @@ import queue
 import numpy as np
 import pytest
 
-from omnibci.application.events import CommandRequest, CommandResult
+from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime, AcquisitionCommand
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.shared.events import EventType
@@ -82,6 +82,14 @@ def test_terminal_fetch_failure_blocks_drain_checkpoint_and_manual_restart(failu
             assert isinstance(result, CommandResult)
             assert not result.ok
             assert "lost stream continuity" in result.message
+            if command is AcquisitionCommand.get_checkpoint:
+                # Configuration commands retain their existing internal wrapper.
+                assert result.error_code == "ACQUISITION_CONFIGURATION_FAILED"
+                assert result.failure_kind is CommandFailureKind.EXECUTION_FAILED
+            else:
+                assert result.error_code == "ACQUISITION_STREAM_CONTINUITY_LOST"
+                assert result.failure_kind is CommandFailureKind.REJECTED
+                assert "Stop engine" in result.message and "Start engine" in result.message
             assert data.get_data(0) is None
         # Reconnecting the same graph cannot erase evidence of the lost chunk.
         await acquisition.execute(AcquisitionCommand.disconnect)

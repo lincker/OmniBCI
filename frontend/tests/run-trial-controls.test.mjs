@@ -60,7 +60,7 @@ function render({ stimulation = ready, stimulationError = null, selectedParadigm
   loadError = null, runtime = {}, acquisition = { connected: false, streaming: false },
   selection = activation, engine = { running: true }, engineError = null, acquisitionError = null,
   signal = null, signalError = null,
-  profiles = [], refresh = noop,
+  profiles = [], refresh = noop, configurationLoad,
   acquisitionPending = false, acquisitionActions = {}, actionErrors = {},
   controls = legacyControls, controlValues = { n_trials: "3", cue: "2" }, trialError = null,
   onStateChange = noop, onEffect = noop, onEditProcessing = noop } = {}) {
@@ -69,7 +69,10 @@ function render({ stimulation = ready, stimulationError = null, selectedParadigm
   // Seed the two polls, then the accepted selection and loaded trial-control state.
   const states = [stimulation, stimulationError, signal, signalError, selection, profiles, selectedParadigm,
     controls, loadError, controlValues, trialError,
-    ...["start", "stop", "launch", "stopStim", "trigger"].flatMap((name) => [false, actionErrors[name] ?? null])];
+    ...["start", "stop", "launch", "stopStim", "trigger"].flatMap((name) => [false, actionErrors[name] ?? null]),
+    configurationLoad ?? { status: loadError && (typeof loadError === "string"
+      || !["run.invalidTrialControls", "run.trialControlsUnavailable"].includes(loadError.key)) ? "failed" : selection ? "ready" : "loading",
+      revision: selection?.revision ?? runtime.status?.accepted_revision ?? revision }, 0];
   let stateIndex = 0;
   dispatcher.current = {
     useState: (initial) => {
@@ -319,11 +322,11 @@ test("a failed paradigm catalog does not block loading or connecting an accepted
       onStateChange: (state, value) => updates.set(state, value),
       onEffect: (effect, dependencies) => effects.push([effect, dependencies]) });
     const loadSelection = effects.find(([, dependencies]) => dependencies?.[0] === revision);
-    assert.deepEqual(loadSelection[1], [revision, null]);
+    assert.deepEqual(loadSelection[1], [revision, null, 0]);
     const cleanup = loadSelection[0]();
     await new Promise(setImmediate);
     const loaded = render({ ...options, selection: updates.get(4), profiles: updates.get(5),
-      selectedParadigm: updates.get(6), controls: updates.get(7), loadError: updates.get(8) });
+      selectedParadigm: updates.get(6), controls: updates.get(7), loadError: updates.get(8), configurationLoad: updates.get(21) });
     assert.equal(actionButton(loaded, "Connect").props.disabled, false);
     assert.equal(triggerButton(loaded).props.disabled, true);
     assert.ok(elements(loaded).some((element) => element.props.role === "alert"
@@ -505,9 +508,9 @@ for (const [name, overrides] of [
 
 for (const [label, overrides, reason] of [
   ["Start engine", { engine: null }, /Engine status is unavailable/],
-  ["Start engine", { engine: { running: false }, selection: null }, /Load a valid configuration in Setup/],
+  ["Start engine", { engine: { running: false }, selection: null }, /Loading the startup configuration/],
   ["Disconnect", { acquisition: { connected: true, streaming: true } }, /Stop reading before disconnecting/],
-  ["Connect", {}, /Choose a source profile/],
+  ["Connect", {}, /Configure a source in Acquisition/],
   ["Connect", { acquisitionError: new Error("Unavailable") }, /Acquisition status is unavailable/],
   ["Trigger trial", { stimulation: { ...ready, engine_connected: false } }, /Wait for stimulation to connect/],
   ["Trigger trial", { stimulation: { ...ready, paradigm: "other" } }, /running paradigm differs/],
@@ -558,7 +561,7 @@ test("signal preparation describes only a configured decoder", () => {
   const decoder = { slot: "processing.decoder", kind: "decoder",
     selection: { package_id: "example.decoder", contribution_id: "main", version: "1.0.0" }, parameters: {} };
   for (const [selection, expected, validationHelp] of [
-    [sourceActivation, "Not configured", false],
+    [sourceActivation, "Signal processing not enabled", false],
     [{ ...sourceActivation, bindings: [...sourceActivation.bindings, decoder,
       { slot: "processing.epoch_detector", selection: { package_id: "example.detector" }, parameters: {} }] }, "Validated before reading starts", true],
     [null, "Loading…", false],
@@ -577,7 +580,7 @@ test("signal preparation describes only a configured decoder", () => {
 test("active decoder input does not present cached readiness as current after a failed poll", () => {
   const signal = { readiness: { ready: true }, active_input: { outputs: [{ name: "Cached channel" }] } };
   for (const overrides of [{ engineError: new Error("Unavailable") }, { signalError: new Error("Unavailable") }]) {
-    const tree = render({ signal, ...overrides });
+    const tree = render({ signal, selection: completeActivation, ...overrides });
     const summary = elements(tree).find((element) => element.props["aria-label"] === "Active decoder input");
     assert.match(text(summary), /Unavailable/);
     assert.doesNotMatch(text(summary), /Cached channel|Ready/);

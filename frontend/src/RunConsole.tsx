@@ -14,6 +14,11 @@ import { runtimeBlockReason } from "./RuntimeConfiguration";
 import type { AcquisitionController } from "./hooks/useAcquisition";
 import "./RunConsole.css";
 
+type ConfigurationLoad = {
+  status: "loading" | "empty" | "ready" | "failed";
+  revision: string | null;
+};
+
 const startupModules = [
   { id: "acquisition", label: "run.acquisition", slots: [
     ["acquisition.source", "profiles.slotSource"],
@@ -90,6 +95,8 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
   const launch = useAction(refreshAfter(api.stimStart));
   const stopStim = useAction(refreshAfter(api.stimStop));
   const trigger = useAction(api.trialStart);
+  const [configurationLoad, setConfigurationLoad] = useState<ConfigurationLoad>({ status: "loading", revision: null });
+  const [configurationReload, setConfigurationReload] = useState(0);
   const actions = [start, stop, launch, stopStim, trigger];
   const busy = acquisition.pending || actions.some((action) => action.pending);
   const controlsBlocked = busy || runtime.blocked;
@@ -102,15 +109,20 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
   const stimulationAvailable = stimulation.data !== null && !stimulation.error;
   const configurationError = loadError && (typeof loadError === "string"
     || !["run.invalidTrialControls", "run.trialControlsUnavailable"].includes(loadError.key));
-  const decoderConfigured = selection && !configurationError && selection.revision === runtime.status?.accepted_revision
-    ? selection.bindings.some((item) => item.slot === "processing.decoder") : null;
+  const configurationState = configurationError || runtime.error ? "failed"
+    : configurationLoad.revision !== runtime.status?.accepted_revision
+      || (selection && selection.revision !== runtime.status?.accepted_revision) ? "loading" : configurationLoad.status;
+  const decoderConfigured = configurationState === "empty" ? false : configurationState === "ready"
+    ? selection?.bindings.some((item) => item.slot === "processing.decoder") ?? false : null;
   const missingDetector = decoderConfigured && !selection?.bindings.some((item) => item.slot === "processing.epoch_detector");
   const externalStimulation = selection?.revision === runtime.status?.accepted_revision
     && selection?.settings?.["STIMULATION.auto_spawn"] === false;
   const stimulationStartLabel = t(externalStimulation ? "run.enableStimulation" : "run.launchStimulation");
-  const selectedBindings = !configurationError && selection?.revision === runtime.status?.accepted_revision
-    ? selection?.bindings : undefined;
-  const emptySelection = t(configurationError ? "run.unavailable" : !selectedBindings ? "run.loading" : "run.none");
+  const selectedBindings = configurationState === "empty" ? [] : configurationState === "ready" ? selection?.bindings : undefined;
+  const emptySelection = t(configurationState === "failed" ? "run.unavailable"
+    : configurationState === "loading" ? "run.loading" : "run.none");
+  const sourceNotConfigured = (configurationState === "empty" || configurationState === "ready")
+    && !selectedBindings?.some((item) => item.slot === "acquisition.source");
   const selectedName = (slot: string) => {
     const binding = selectedBindings?.find((item) => item.slot === slot);
     if (!binding) return emptySelection;
@@ -118,7 +130,9 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
       ?? `${binding.selection.package_id}/${binding.selection.contribution_id} · ${binding.selection.version ?? t("profiles.unversioned")}`;
   };
   const selectedPlugin = (binding: Activation["bindings"][number]) => {
-    const name = profiles.find((item) => item.profile_id === binding.profile_id)?.name;
+    const name = binding.slot === "acquisition.source" && !binding.profile_id
+      ? t("profiles.currentSourceConfiguration")
+      : profiles.find((item) => item.profile_id === binding.profile_id)?.name;
     const identity = `${binding.selection.package_id}/${binding.selection.contribution_id}`;
     return <><strong>{name ?? identity}</strong>
       {name && <small className="meta">{identity}</small>}
@@ -130,7 +144,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
   const currentParadigm = stimulation.data?.paradigm || selectedParadigm?.plugin_type || "";
   const paradigmName = translatePluginName(currentParadigm,
     selectedParadigm?.plugin_type === currentParadigm ? selectedParadigm.label : currentParadigm || t("run.none"), t);
-  const trialControlsReady = selectedParadigm?.available && !loadError
+  const trialControlsReady = configurationState === "ready" && selectedParadigm?.available && !loadError
     && selection?.revision === runtime.status?.accepted_revision
     && (!running || runtime.status?.applied_revision === selection?.revision)
     && (!stimulation.data?.active || stimulation.data.paradigm === selectedParadigm.plugin_type);
@@ -143,22 +157,24 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
   const acquisitionReason = engineReason ?? (!acquisitionAvailable ? t("run.reason.acquisitionUnavailable") : null);
   const stimulationReason = !stimulationAvailable ? t("run.reason.stimulationUnavailable") : null;
   const recordingReason = missingRecording ? t("run.missingRecording") : null;
-  const trialSetupReason = trialControlsReady ? null : t(loadError ? "run.reason.trialControlsUnavailable"
+  const trialSetupReason = configurationState === "loading" ? t("run.reason.configurationLoading") : trialControlsReady ? null : t(loadError ? "run.reason.trialControlsUnavailable"
     : !selectedParadigm?.available ? "run.reason.selectParadigm"
     : selection?.revision !== runtime.status?.accepted_revision ? "run.reason.selectionChanged"
     : running && runtime.status?.applied_revision !== selection?.revision ? "run.reason.selectionNotApplied"
     : "run.reason.paradigmMismatch");
+  const configurationReason = t(configurationState === "empty" ? "run.reason.configureSource"
+    : configurationState === "loading" ? "run.reason.configurationLoading" : "run.reason.configurationUnavailable");
   const startReason = operationReason ?? engineReason ?? (running ? t("run.reason.alreadyRunning")
-    : !selection || configurationError ? t("run.reason.configurationUnavailable") : recordingReason);
+    : configurationState === "loading" || !selection || configurationError ? configurationReason : recordingReason);
   const stopReason = stopOperationReason ?? engineReason ?? (!running ? t("run.reason.notRunning") : null);
-  const sourceConfigurationReason = !selection || configurationError ? t("run.reason.configurationUnavailable")
+  const sourceConfigurationReason = configurationState === "loading" || !selection || configurationError ? configurationReason
     : selection.revision !== runtime.status?.accepted_revision ? t("run.reason.selectionChanged")
     : !selection.bindings.some((item) => item.slot === "acquisition.source") ? t("run.reason.selectSource")
     : running && runtime.status?.applied_revision !== selection.revision ? t("run.reason.selectionNotApplied") : recordingReason;
   const connectReason = operationReason ?? acquisitionReason ?? (connected ? t("run.reason.alreadyConnected") : sourceConfigurationReason);
   const disconnectReason = operationReason ?? acquisitionReason ?? (!connected ? t("run.reason.notConnected")
     : reading ? t("run.reason.stopReading") : null);
-  const readReason = operationReason ?? acquisitionReason ?? (!running ? t("run.reason.startEngine")
+  const readReason = operationReason ?? acquisitionReason ?? (configurationState === "empty" ? configurationReason : !running ? t("run.reason.startEngine")
     : !connected ? t("run.reason.notConnected") : sourceConfigurationReason)
     ?? (reading ? t("run.reason.alreadyReading") : missingDetector ? t("run.reason.missingDetector") : null);
   const stopReadReason = stopOperationReason ?? acquisitionReason ?? (!reading ? t("run.reason.notReading") : null);
@@ -196,6 +212,8 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
   useEffect(() => { onBusyChange(busy); }, [busy, onBusyChange]);
   useEffect(() => {
     let alive = true;
+    setConfigurationLoad({ status: "loading", revision: runtime.status?.accepted_revision ?? null });
+    setLoadError(null);
     void Promise.allSettled([
       pluginConfigApi.activation(), pluginConfigApi.profiles(), pluginConfigApi.catalog("paradigm"),
     ]).then(([activation, savedProfiles, paradigms]) => {
@@ -204,19 +222,30 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
       const selected = activation.status === "fulfilled" ? activation.value : null;
       setSelection(selected);
       setProfiles(savedProfiles.status === "fulfilled" ? savedProfiles.value : []);
-      if (activation.status === "rejected") { setLoadError(String(activation.reason)); return; }
-      if (!selected) { setLoadError({ key: "run.configurationUnavailable" }); return; }
+      if (activation.status === "rejected") {
+        setConfigurationLoad({ status: "failed", revision: runtime.status?.accepted_revision ?? null });
+        setLoadError(String(activation.reason));
+        return;
+      }
+      setConfigurationLoad({ status: selected ? "ready" : "empty", revision: selected?.revision ?? null });
+      if (!selected) { setLoadError(null); return; }
+      const binding = selected.bindings.find((item) => item.slot === "stimulation.paradigm");
+      if (!binding) { setLoadError(null); return; }
       if (paradigms.status === "rejected") {
         setLoadError({ key: "run.trialControlsUnavailable", params: { detail: String(paradigms.reason) } }); return;
       }
-      const binding = selected.bindings.find((item) => item.slot === "stimulation.paradigm");
-      const paradigm = binding ? paradigms.value.find((item) => selectionKey(item.selection) === selectionKey(binding.selection)) : undefined;
+      const paradigm = paradigms.value.find((item) => selectionKey(item.selection) === selectionKey(binding.selection));
       setSelectedParadigm(paradigm ?? null);
       try { setControls(readTrialControls(paradigm?.controls)); setLoadError(null); }
       catch (error) { setLoadError({ key: "run.invalidTrialControls", params: { detail: String(error) } }); }
-    }).catch((error) => { if (alive) setLoadError(String(error)); });
+    }).catch((error) => {
+      if (alive) {
+        setConfigurationLoad({ status: "failed", revision: runtime.status?.accepted_revision ?? null });
+        setLoadError(String(error));
+      }
+    });
     return () => { alive = false; };
-  }, [runtime.status?.accepted_revision, runtime.status?.applied_revision]);
+  }, [runtime.status?.accepted_revision, runtime.status?.applied_revision, configurationReload]);
 
   // Controls are taken from the exact selected package, contribution, and version.
   useEffect(() => {
@@ -280,7 +309,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
         <Dot on={engineAvailable ? running : undefined} label={t("run.running")} /><Dot on={engineAvailable ? engine.data?.acquisition_alive : undefined} label={t("run.acquisitionProcess")} />
         <Dot on={engineAvailable ? engine.data?.processor_alive : undefined} label={t("run.processingProcess")} />
       </div>{engine.error && <p className="error" role="alert">{engine.error.message}</p>}</div>
-      <div className="control-feedback"><div className="actions"><button className="primary" disabled={controlsBlocked || !engineAvailable || running || !selection || !!configurationError || missingRecording}
+      <div className="control-feedback"><div className="actions"><button className="primary" disabled={controlsBlocked || !engineAvailable || running || configurationState === "loading" || !selection || !!configurationError || missingRecording}
         aria-describedby={startReason ? "engine-action-reasons" : undefined}
         onClick={() => void start.run()}><Icon name="play" />{start.pending ? t("run.starting") : t("run.startEngine")}</button>
         <button className="danger" disabled={stopBlocked || !engineAvailable || !running}
@@ -291,8 +320,11 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
     </section>
     <section className="setup-summary" aria-label={t("run.selectedSetup")}>
       <div className="startup-heading"><h2 className="startup-title">{t("run.selectedSetup")}</h2>
-        <button className="text-button" disabled={busy} onClick={onEditSetup}>{t("run.editSetup")} <Icon name="chevron" /></button>
+        <button className="text-button" disabled={busy} onClick={onEditSetup}>{t(sourceNotConfigured ? "run.configureSource" : "run.editSetup")} <Icon name="chevron" /></button>
       </div>
+      {sourceNotConfigured && <div className="startup-empty" role="status">
+        <strong>{t("run.noSourceConfigured")}</strong><p>{t("run.emptyConfigurationHelp")}</p>
+      </div>}
       <div className="summary-items">
         {startupModules.map((module) => <section className="startup-module" key={module.id}
           aria-labelledby={`startup-${module.id}-title`}>
@@ -309,10 +341,13 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
           })}
         </section>)}
       </div>
-      <p className="meta">{t("run.selectedConfigurationHelp")}</p>
+      {configurationState === "ready" && <p className="meta">{t("run.selectedConfigurationHelp")}</p>}
     </section>
     {missingRecording && <p className="inline-message" role="status">{t("run.missingRecording")}</p>}
-    {loadError && <p className="inline-message error" role="alert">{typeof loadError === "string" ? loadError : t(loadError.key, loadError.params)}</p>}
+    {loadError && <div className="inline-message error">
+      <p role="alert">{typeof loadError === "string" ? loadError : t(loadError.key, loadError.params)}</p>
+      <button disabled={busy} onClick={() => setConfigurationReload((value) => value + 1)}>{t("run.retryConfiguration")}</button>
+    </div>}
     <div className="runtime-grid">
       <section className="card"><h2><Icon name="signal" />{t("run.acquisition")}</h2>
         <p><Dot on={acquisitionAvailable ? connected : undefined} label={t(!acquisitionAvailable ? "run.sourceConnection"
@@ -408,14 +443,16 @@ export function RunConsole({ engine, acquisition, feed, runtime, onBusyChange, o
     {feed.error && <p className="error" role="alert">{feed.error}</p>}
     <section className="setup-summary" aria-label={t("run.activeDecoderInput")}>
       <div className="summary-items"><div><span>{t("run.signalPreparation")}</span>
-        <strong>{!engineAvailable || signal.error ? t("run.unavailable") : decoderConfigured === null ? t("run.loading")
-          : !decoderConfigured ? t("run.processingNotConfigured") : missingDetector ? t("run.epochDetectorMissing")
-          : !running ? t("run.engineStopped") : !signal.data ? t("run.loading")
+        <strong>{configurationState === "failed" ? t("run.unavailable") : decoderConfigured === null ? t("run.loading")
+          : !decoderConfigured ? t("run.processingNotConfigured") : !engineAvailable || signal.error ? t("run.unavailable")
+          : missingDetector ? t("run.epochDetectorMissing") : !running ? t("run.engineStopped") : !signal.data ? t("run.loading")
           : signal.data.readiness.ready ? t("run.ready") : t("run.validatedBeforeReading")}</strong></div>
-        <div><span>{t("run.activeDecoderChannels")}</span><strong>{!engineAvailable || signal.error ? t("run.unavailable") : !running ? t("run.none") : !signal.data ? t("run.loading") : signal.data.active_input
+        <div><span>{t("run.activeDecoderChannels")}</span><strong>{configurationState === "failed" ? t("run.unavailable")
+          : decoderConfigured === null ? t("run.loading") : !decoderConfigured ? t("run.noActiveMapping")
+          : !engineAvailable || signal.error ? t("run.unavailable") : !running ? t("run.none") : !signal.data ? t("run.loading") : signal.data.active_input
           ? signal.data.active_input.outputs.length ? signal.data.active_input.outputs.map((output) => output.name).join(", ") : t("run.allSourceChannels")
           : t("run.noActiveMapping")}</strong></div></div>
-      {signal.error && <p className="error" role="alert">{signal.error.message}</p>}
+      {decoderConfigured && signal.error && <p className="error" role="alert">{signal.error.message}</p>}
       {decoderConfigured && !missingDetector && engineAvailable && !signal.error && signal.data && !signal.data.readiness.ready && running && <p className="meta">{t("run.prepareSignalHelp")}</p>}
     </section>
     <EpochProcessing onResults={onResults} disabled={busy} />

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import logging
 import struct
@@ -163,6 +164,7 @@ class Curry8DataReader(SignalSource):
     plugin_type = "neuroscan_curry8_reader"
 
     DEFAULT_PORT = 4455
+    CLOSE_TIMEOUT = 1.0
     MAX_BODY_SIZE = 10 * 1024 * 1024
     CHANNEL_INFO_SIZE = 144
     SUPPORTED_PROTOCOL_VERSIONS = frozenset((802, 803))
@@ -236,10 +238,6 @@ class Curry8DataReader(SignalSource):
                 await self.stop_stream()
         finally:
             await self._close_writer()
-            self._is_connected = False
-            self._is_streaming = False
-            self._protocol_version = None
-            self._metadata = None
         return True
 
     async def get_metadata(self) -> str:
@@ -372,35 +370,44 @@ class Curry8DataReader(SignalSource):
             ) from exc
 
     async def _send_request(self, request: ClientRequest) -> None:
-        if self.writer is None:
-            raise ConnectionError("CURRY NetStreaming socket is not connected")
-        header = Curry8Header(
-            identifier=b"CTRL",
-            code=ControlCode.FROM_CLIENT,
-            request=request,
-        )
-        self.writer.write(header.to_bytes())
-        await self.writer.drain()
+        reader, writer = self.reader, self.writer
+        try:
+            if writer is None:
+                raise ConnectionError("CURRY NetStreaming socket is not connected")
+            header = Curry8Header(
+                identifier=b"CTRL",
+                code=ControlCode.FROM_CLIENT,
+                request=request,
+            )
+            writer.write(header.to_bytes())
+            await writer.drain()
+        except OSError as exc:
+            self._invalidate_failed_transport(reader, writer, exc)
+            raise
 
     async def _read_packet(self) -> tuple[Curry8Header, bytes]:
-        reader = self.reader
-        if reader is None:
-            raise ConnectionError("CURRY NetStreaming socket is not connected")
-        if self._pending_header is None or self._pending_header[0] is not reader:
+        reader, writer = self.reader, self.writer
+        try:
+            if reader is None:
+                raise ConnectionError("CURRY NetStreaming socket is not connected")
+            if self._pending_header is None or self._pending_header[0] is not reader:
+                self._pending_header = None
+                raw_header = await reader.readexactly(Curry8Header.SIZE)
+                header = Curry8Header.from_bytes(raw_header)
+                if header.body_size > self.MAX_BODY_SIZE:
+                    raise Curry8ProtocolError(
+                        f"CURRY packet body is too large: {header.body_size} bytes"
+                    )
+                # Retain framing until readexactly finishes, including cancellation.
+                self._pending_header = (reader, header)
+            else:
+                header = self._pending_header[1]
+            body = await reader.readexactly(header.body_size)
             self._pending_header = None
-            raw_header = await reader.readexactly(Curry8Header.SIZE)
-            header = Curry8Header.from_bytes(raw_header)
-            if header.body_size > self.MAX_BODY_SIZE:
-                raise Curry8ProtocolError(
-                    f"CURRY packet body is too large: {header.body_size} bytes"
-                )
-            # Retain framing until readexactly finishes, including cancellation.
-            self._pending_header = (reader, header)
-        else:
-            header = self._pending_header[1]
-        body = await reader.readexactly(header.body_size)
-        self._pending_header = None
-        return header, body
+            return header, body
+        except (asyncio.IncompleteReadError, OSError) as exc:
+            self._invalidate_failed_transport(reader, writer, exc)
+            raise
 
     def _handle_control(self, header: Curry8Header) -> None:
         if header.code != ControlCode.FROM_SERVER:
@@ -459,15 +466,55 @@ class Curry8DataReader(SignalSource):
         packet[-1] = packet[-1].astype(np.int64) & 0xFF
         return packet
 
-    async def _close_writer(self) -> None:
-        writer = self.writer
-        self._pending_header = None
+    def _detach_transport(
+        self,
+        reader: asyncio.StreamReader | None,
+        writer: asyncio.StreamWriter | None,
+    ) -> None:
+        if self.reader is not reader or self.writer is not writer:
+            return
         self.reader = None
         self.writer = None
+        self._is_connected = False
+        self._is_streaming = False
+        self._protocol_version = None
+        self._metadata = None
+        self._pending_header = None
+
+    def _invalidate_failed_transport(
+        self,
+        reader: asyncio.StreamReader | None,
+        writer: asyncio.StreamWriter | None,
+        error: BaseException,
+    ) -> None:
+        # TimeoutError is an OSError too, but does not prove the peer disconnected.
+        if not (
+            isinstance(error, (asyncio.IncompleteReadError, ConnectionError))
+            or getattr(error, "errno", None) in (errno.EBADF, errno.ENOTCONN)
+        ):
+            return
+        self._detach_transport(reader, writer)
+        if writer is not None:
+            self._abort_writer(writer)
+        # Do not await close here: fetch must receive the original I/O failure
+        # before a concurrent Stop can cancel it and erase continuity evidence.
+
+    @staticmethod
+    def _abort_writer(writer: asyncio.StreamWriter) -> None:
+        try:
+            writer.transport.abort()
+        except Exception:
+            logger.debug("Failed to abort the broken CURRY socket", exc_info=True)
+
+    async def _close_writer(self) -> None:
+        reader, writer = self.reader, self.writer
+        self._detach_transport(reader, writer)
         if writer is None:
             return
-        writer.close()
         try:
-            await writer.wait_closed()
-        except (ConnectionError, OSError):
-            pass
+            writer.close()
+            async with asyncio.timeout(self.CLOSE_TIMEOUT):
+                await writer.wait_closed()
+        except OSError:
+            # Includes timeout: a stalled close must not block lifecycle commands.
+            self._abort_writer(writer)

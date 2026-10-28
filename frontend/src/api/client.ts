@@ -42,6 +42,7 @@ export class ApiError extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
+    public readonly detail?: unknown,
   ) {
     super(message);
   }
@@ -51,7 +52,7 @@ async function get<T>(path: string): Promise<T | null> {
   const { response: res, body } = await requestJson(path, { headers: { Accept: "application/json" } });
   if (!res.ok) {
     const code = body?.code ?? "UNKNOWN";
-    throw new ApiError(res.status, code, body?.message ?? res.statusText);
+    throw new ApiError(res.status, code, body?.message ?? res.statusText, body?.detail);
   }
   return (body as ApiEnvelope<T>).data;
 }
@@ -64,7 +65,7 @@ async function send<T>(method: "POST" | "DELETE" | "PATCH" | "PUT", path: string
   });
   if (!res.ok) {
     const code = resBody?.code ?? "UNKNOWN";
-    throw new ApiError(res.status, code, resBody?.message ?? res.statusText);
+    throw new ApiError(res.status, code, resBody?.message ?? res.statusText, resBody?.detail);
   }
   return (resBody as ApiEnvelope<T>).data;
 }
