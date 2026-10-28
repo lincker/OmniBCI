@@ -83,6 +83,8 @@ class AcquisitionRuntime:
     SignalChunk objects into the shared DataManager buffer.
     """
 
+    FETCH_FINISH_TIMEOUT_S = 5.0
+
     def __init__(
         self,
         data_source: SignalSource,
@@ -198,6 +200,7 @@ class AcquisitionRuntime:
                 # The processor alone can confirm consumption of prior data.
                 return
         except asyncio.CancelledError:
+            self._emit_state()
             if request is not None:
                 self._emit_command_result(
                     request, command, ok=False, message="Command interrupted by acquisition shutdown",
@@ -205,6 +208,7 @@ class AcquisitionRuntime:
                 )
             raise
         except AcquisitionCommandRejected as exc:
+            self._emit_state()
             if request is None:
                 return
             logger.warning("Acquisition command %s rejected: %s", command, exc)
@@ -218,6 +222,7 @@ class AcquisitionRuntime:
             )
             return
         except Exception as exc:
+            self._emit_state()
             if request is None:
                 raise
             logger.exception("Acquisition command %s execution failed", command)
@@ -309,6 +314,9 @@ class AcquisitionRuntime:
                 self.connection_id = uuid4().hex
             self._emit_state()
             return
+        # A failed reader may still be stopping its old source. Never let its
+        # teardown run after a replacement connection has been established.
+        await self._join_finished_source()
         await self.data_source.connect()
         if not self.data_source.is_connected:
             raise AcquisitionCommandRejected(
@@ -378,6 +386,12 @@ class AcquisitionRuntime:
             return
         try:
             await self.data_source.stop_stream()
+        except Exception as exc:
+            if not self.data_source.is_connected and self.fetch_task is not None:
+                # The stop command can detect transport loss before the reader.
+                # Preserve that evidence before cancelling the pending read.
+                self._fetch_failure = self._fetch_failure or f"{type(exc).__name__}: {exc}"
+            raise
         finally:
             await self._cancel_fetch_task()
         if self.data_source.is_streaming:
@@ -388,6 +402,25 @@ class AcquisitionRuntime:
             )
         logger.info('Fetch task stopped')
         self._emit_state()
+
+    async def _join_finished_source(self) -> None:
+        """Wait for old-source teardown without cancelling its failure evidence."""
+        task = self.fetch_task
+        if task is None:
+            return
+        done, _ = await asyncio.wait({task}, timeout=self.FETCH_FINISH_TIMEOUT_S)
+        if not done:
+            raise AcquisitionCommandRejected(
+                "ACQUISITION_STOP_PENDING",
+                "The previous source is still stopping. Stop and restart the engine before reconnecting.",
+            )
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass  # An already cancelled task has no teardown left to run.
+        finally:
+            if self.fetch_task is task:
+                self.fetch_task = None
 
     async def _cancel_fetch_task(self) -> None:
         """Cancel and join the reader task before confirming a stop command."""
@@ -505,9 +538,11 @@ class AcquisitionRuntime:
 
     def _require_healthy_stream(self) -> None:
         if self._fetch_failure is not None:
-            raise RuntimeError(
-                "Acquisition lost stream continuity; rebuild the source before resuming "
-                f"or creating a checkpoint ({self._fetch_failure})"
+            raise AcquisitionCommandRejected(
+                "ACQUISITION_STREAM_CONTINUITY_LOST",
+                "Acquisition lost stream continuity. Use Stop engine and Start engine "
+                "to restart the engine, then select Connect before Start reading. "
+                f"The current stream cannot be resumed or checkpointed ({self._fetch_failure})",
             )
 
     async def _finish_stream(self) -> None:
@@ -527,6 +562,9 @@ class AcquisitionRuntime:
         The snapshot reads the SignalSource port properties directly — the
         single source of truth — rather than tracking booleans by hand.
         """
+        if not self.data_source.is_connected:
+            self.connection_id = None
+            self._clear_metadata()
         if self.event_bus is None:
             return
         self.event_bus.put_event(Event(

@@ -86,6 +86,41 @@ class TestAcquisitionStream:
             "error_code": "DATA_SOURCE_NOT_CONNECTED",
         }
 
+    def test_continuity_failure_blocks_restart_before_preparation_and_returns_409(
+        self, api_client, acquisition_service, command_executor, monkeypatch
+    ):
+        from omnibci.shared.events import EventType
+
+        message = (
+            "Acquisition lost stream continuity. Stop and restart the engine, "
+            "then connect the source before reading again. "
+            "The current stream cannot be resumed or checkpointed (ConnectionResetError)"
+        )
+        request = MagicMock(side_effect=CommandRejectedError(CommandResult(
+            command_id="cmd-continuity-lost",
+            command="StopAndDrain",
+            ok=False,
+            message=message,
+            error_code="ACQUISITION_STREAM_CONTINUITY_LOST",
+            failure_kind=CommandFailureKind.REJECTED,
+        )))
+        monkeypatch.setattr(command_executor, "request", request)
+        prepare = MagicMock()
+        acquisition_service.set_signal_preparer(prepare)
+
+        response = api_client.post("/api/v1/acquisition/stream/start")
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "COMMAND_REJECTED"
+        assert response.json()["message"] == message
+        assert response.json()["detail"] == {
+            "command_id": "cmd-continuity-lost",
+            "command": "StopAndDrain",
+            "error_code": "ACQUISITION_STREAM_CONTINUITY_LOST",
+        }
+        request.assert_called_once_with(EventType.StopAndDrain, timeout_s=None)
+        prepare.assert_not_called()
+
     def test_missing_terminal_result_returns_504(
         self, api_client, acquisition_service
     ):
@@ -148,6 +183,86 @@ class TestAcquisitionStatus:
         data = resp.json()["data"]
         assert data["connected"] is True
         assert data["streaming"] is True
+
+    def test_disconnect_and_reconnect_do_not_expose_previous_connection_metadata(
+        self, api_client, acquisition_service, command_executor, monkeypatch
+    ):
+        from copy import deepcopy
+        from omnibci.application.events import AcquisitionSnapshot
+        from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
+        from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
+        from omnibci.shared.events import Event, EventType
+
+        binding = ProfileBinding(
+            "acquisition.source", "acquisition",
+            "00000000-0000-0000-0000-000000000001",
+            PluginSelection("test.source", "default", "1"),
+            {"sample_rate": 250, "channel_count": 2}, profile_revision=1,
+        ).to_dict()
+        saved_binding = deepcopy(binding)
+        acquisition_service.set_metadata_binding(lambda: binding)
+        descriptor = SignalInfo(
+            "test", 250, (ChannelDescriptor(0, "C3", unit="uV"),), 1,
+            connection_id="previous", provenance="device-reported",
+        )
+        metadata_result = CommandResult("read", "GetSourceMetadata", True, data={
+            "source_id": "test", "connection_id": "previous",
+            "metadata": "Amplifier metadata from previous connection",
+            "descriptor": descriptor.to_dict(), "descriptor_error": None,
+        })
+        request = MagicMock(return_value=metadata_result)
+        monkeypatch.setattr(command_executor, "request", request)
+        acquisition_service.on_acquisition_state(Event(
+            EventType.AcquisitionState, AcquisitionSnapshot(True, False, "previous"),
+        ))
+        assert api_client.get("/api/v1/acquisition/metadata").status_code == 200
+        acquisition_service.on_acquisition_state(Event(
+            EventType.AcquisitionState, AcquisitionSnapshot(True, True, "previous"),
+        ))
+        before = api_client.get("/api/v1/acquisition/status").json()["data"]
+        assert before["connected"] is True and before["streaming"] is True
+        assert before["metadata_available"] is True
+        assert before["sample_rate"] == 250 and before["channel_count"] == 1
+        assert before["metadata_provenance"] == "device-reported"
+
+        for snapshot in (
+            AcquisitionSnapshot(False, False, None),
+            AcquisitionSnapshot(True, False, "reconnected"),
+        ):
+            acquisition_service.on_acquisition_state(Event(EventType.AcquisitionState, snapshot))
+            response = api_client.get("/api/v1/acquisition/status")
+            assert response.status_code == 200
+            status = response.json()["data"]
+            assert status["connected"] is snapshot.connected
+            assert status["streaming"] is False
+            assert status["connection_id"] == snapshot.connection_id
+            assert status["metadata_available"] is False
+            assert status["sample_rate"] is None
+            assert status["channel_count"] is None
+            assert status["metadata_provenance"] is None
+            assert acquisition_service.cached_descriptor_for(binding) is None
+        request.assert_called_once()
+
+        # Only metadata read from the new connection may restore its dimensions.
+        replacement = SignalInfo(
+            "test", 500, (ChannelDescriptor(0, "C3", unit="uV"),), 1,
+            connection_id="reconnected", provenance="device-reported",
+        )
+        request.return_value = CommandResult("read-new", "GetSourceMetadata", True, data={
+            "source_id": "test", "connection_id": "reconnected",
+            "metadata": "Amplifier metadata from new connection",
+            "descriptor": replacement.to_dict(), "descriptor_error": None,
+        })
+        response = api_client.get("/api/v1/acquisition/metadata")
+        assert response.status_code == 200
+        assert response.json()["data"]["descriptor"]["connection_id"] == "reconnected"
+        assert response.json()["data"]["descriptor"]["sample_rate"] == 500
+        assert acquisition_service.cached_descriptor_for(binding) == replacement.to_dict()
+        after = api_client.get("/api/v1/acquisition/status").json()["data"]
+        assert after["connection_id"] == "reconnected"
+        assert after["metadata_available"] is True
+        assert after["sample_rate"] == 500
+        assert binding == saved_binding
 
 
 class TestAcquisitionMetadata:
