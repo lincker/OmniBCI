@@ -28,6 +28,22 @@ def create_source(service, name="Replay", **parameters):
     return service.create("acquisition", plugin.selection, name, parameters)
 
 
+def test_curry8_parallel_address_survives_profile_save_and_update(service):
+    plugin = service.catalog.legacy("trigger", "neuroscan_curry8_trigger")
+    profile = service.create("trigger", plugin.selection, "CURRY high port", {
+        "parallel_port_address": "0xFFF8",
+    })
+    assert service.repository.get_profile(profile.profile_id).parameters == {
+        "parallel_port_address": "0xFFF8",
+    }
+    updated = service.update(profile.profile_id, name="Updated CURRY port",
+                             parameters={"parallel_port_address": "0xFFF8"},
+                             expected_revision=profile.revision)
+    assert updated.parameters == profile.parameters
+    assert updated.revision == profile.revision + 1
+    assert service.repository.get_activation() is None
+
+
 def test_decoder_defaults_initialize_once_and_never_replace_explicit_all_channels(service, monkeypatch):
     from omnibci.domain.decoder_input import DecoderChannelRequirements
     definition = service.catalog.legacy("decoder", "THUBCI_SSVEP_classic40CCA")

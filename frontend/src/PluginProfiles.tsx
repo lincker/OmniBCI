@@ -1,7 +1,7 @@
 /** Plugin-owned settings, saved profiles, and explicit ordered activation. */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ConfigDialog, type ConfigDialogProps } from "./ConfigDialog";
-import { SchemaForm, initialSchemaValue, schemaErrors, sameParameters } from "./SchemaForm";
+import { SchemaForm, initialSchemaValue, schemaErrors, sameParameters, schemaText } from "./SchemaForm";
 import { pluginConfigApi as api, selectionKey, type Activation, type BindingSelection,
   type PluginDefinition, type PluginKind, type PluginProfile } from "./api/plugin-config";
 import { useI18n, translatePluginName, type TranslationKey } from "./i18n";
@@ -14,7 +14,7 @@ import { api as controlApi, type DataSourceMetadata } from "./api/client";
 import type { RuntimePlanRequest } from "./api/runtime-config";
 import { RuntimeConfigurationProgress, runtimeBlockReason } from "./RuntimeConfiguration";
 import type { AcquisitionController } from "./hooks/useAcquisition";
-import type { ReviewedRuntimeOperation } from "./profileReview";
+import { formatProfileValue, profileParameterChanges } from "./profileReviewDiff";
 
 type Module = "acquisition" | "processing" | "stimulation" | "actuation";
 type Slot = { slot: string; kind: PluginKind; label: TranslationKey };
@@ -120,10 +120,6 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   const metadataGeneration = useRef(0);
   const sourceOperation = useRef(false);
   const loadGeneration = useRef(0);
-  const editorSession = useRef(0);
-  const latestEditor = useRef(editor);
-  latestEditor.current = editor;
-  const sourceReview = useRef<{ planId: string; targetRevision: string; editor: Editor; session: number } | null>(null);
   const definition = definitions.find((item) => selectionKey(item.selection) === editor.plugin);
   const noTrigger = slot.kind === "trigger" && editor.plugin === "";
   const profilesFor = (plugin: string) => profiles.filter((item) => item.kind === slot.kind
@@ -144,6 +140,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   const dirty = editor.name !== baseline.name || editor.plugin !== baseline.plugin
     || !sameParameters(editor.parameters, baseline.parameters)
     || !sameParameters(editor.processingInput, baseline.processingInput);
+  const needsSave = !noTrigger && (!editor.profile || dirty);
   const errors = [...(definition?.schema ? schemaErrors(definition.schema, editor.parameters, undefined, t) : []),
     ...(slot.kind === "decoder" ? processingInputErrors(editor.processingInput, t) : [])];
   const selectedBindings = editor.profile ? activation?.bindings.filter((item) => item.profile_id === editor.profile!.profile_id) ?? [] : [];
@@ -178,47 +175,11 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   }, [sourceMode, editor.plugin, editor.profile?.profile_id, sourceParameterKey, sourceStatus?.connected, sourceStatus?.connection_id, sourceStatus?.streaming, sourceMatches, runtime.status?.generation, runtime.blocked]);
 
   useEffect(() => {
-    const saved = runtime.savedProfile;
-    if (slot.kind !== "acquisition" || !saved) return;
-    setProfiles((current) => {
-      const previous = current.find((item) => item.profile_id === saved.profile.profile_id);
-      if (previous && previous.revision > saved.profile.revision) return current;
-      return [...current.filter((item) => item.profile_id !== saved.profile.profile_id), saved.profile];
-    });
-    const pending = sourceReview.current;
-    const current = latestEditor.current;
-    if (pending?.planId === saved.reviewed_plan_id && editorSession.current === pending.session
-        && current.plugin === pending.editor.plugin && sameParameters(current.parameters, pending.editor.parameters)) {
-      // A saved Profile may exist even when the later Apply fails. Keep its identity for retry.
-      setEditor({ ...current, profile: saved.profile, name: saved.profile.name });
-      setBaseline((previous) => ({ ...previous, name: saved.profile.name }));
-    }
-  }, [runtime.savedProfile, slot.kind]);
-
-  useEffect(() => {
     let active = true;
     void api.activation().then((next) => {
       if (!active) return;
       setActivation(next);
       if (!chainDirtyRef.current) setChain(filterInstances(next));
-      const pending = sourceReview.current;
-      const completed: ReviewedRuntimeOperation | null = runtime.completedOperation ?? runtime.operation;
-      if (slot.kind === "acquisition" && pending && completed?.status === "succeeded"
-          && (completed.reviewed_plan_id ?? completed.plan_id) === pending.planId
-          && next?.revision === completed.target_revision) {
-        sourceReview.current = null;
-        const current = latestEditor.current;
-        const binding = next.bindings.find((item) => item.slot === "acquisition.source");
-        // Only our successful Apply can accept the submitted draft. Keep later edits and names.
-        if (binding && editorSession.current === pending.session && current.plugin === pending.editor.plugin
-            && selectionKey(binding.selection) === current.plugin
-            && sameParameters(current.parameters, pending.editor.parameters)) {
-          const profile = completed.profile ?? current.profile;
-          const applied = { ...current, profile, name: profile?.name ?? current.name,
-            sourceOrigin: "current" as const, parameters: structuredClone(binding.parameters) };
-          setEditor(applied); setBaseline(structuredClone(applied));
-        }
-      }
       onSelected?.();
     }).catch((cause) => { if (active) setError(String(cause)); });
     return () => { active = false; };
@@ -230,13 +191,11 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   useEffect(() => () => { onDirtyChange?.(false); onBusyChange?.(false); }, [onDirtyChange, onBusyChange]);
 
   const resetEditor = (next: Editor) => {
-    editorSession.current += 1; sourceReview.current = null;
     metadataGeneration.current += 1; setSourceMetadata(null);
-    setEditor(next); setBaseline(structuredClone(next)); setNotice(null);
+    setEditor(next); setBaseline(next.profile ? editorFor(next.profile, definitions) : structuredClone(next)); setNotice(null);
   };
   const reload = useCallback(async (profileId?: string, plugin?: string) => {
     const generation = ++loadGeneration.current;
-    editorSession.current += 1; sourceReview.current = null;
     const [nextDefinitions, nextProfiles, nextActivation] = await Promise.all([
       api.catalog(slot.kind), api.profiles(slot.kind), api.activation(),
     ]);
@@ -252,7 +211,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
       ? editorForSource(nextBinding, nextProfiles)
       : slot.kind === "trigger" && (plugin === "" || (plugin === undefined && !nextBinding))
         ? structuredClone(emptyEditor) : editorFor(selected, nextDefinitions, plugin);
-    setEditor(next); setBaseline(structuredClone(next));
+    setEditor(next); setBaseline(next.profile ? editorFor(next.profile, nextDefinitions) : structuredClone(next));
   }, [slot.kind, slot.slot]);
 
   useEffect(() => {
@@ -264,10 +223,10 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   }, [reload]);
 
   useEffect(() => {
-    if (busy || !pendingFocus.current || typeof document === "undefined") return;
+    if (busy || dialog || !pendingFocus.current || typeof document === "undefined") return;
     focusSection(pendingFocus.current);
     pendingFocus.current = null;
-  }, [busy, slot.slot]);
+  }, [busy, slot.slot, dialog]);
 
   useEffect(() => {
     if (busy || !saveFocus.current) return;
@@ -315,30 +274,44 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
       throw new Error(t("profiles.saveEveryProfile"));
     }) ?? [];
   };
-  const reviewSelection = async (makeBindings: () => RuntimePlanRequest["bindings"], refreshSlots: string[]) => {
-    setBusy(true); setError(""); setNotice(null);
-    try { return await runtime.review({ module, bindings: makeBindings(), expected_revision: activation?.revision ?? null,
-      refresh_slots: refreshSlots, include_host_settings: false }); }
-    catch (cause) { setError(String(cause)); }
-    finally { setBusy(false); }
+  const requireSavedProfile = () => {
+    if (!needsSave) return false;
+    const before = editor.profile ? { name: editor.profile.name, parameters: editor.profile.parameters,
+      ...(slot.kind === "decoder" ? { processing_input: editor.profile.processing_input ?? null } : {}) } : {};
+    const after = { name: editor.name, parameters: editor.parameters,
+      ...(slot.kind === "decoder" ? { processing_input: editor.processingInput } : {}) };
+    const changes = profileParameterChanges(before, after, { type: "object", properties: {
+      name: { type: "string", title: t("profiles.name") },
+      parameters: { type: "object", ...definition?.schema, title: t("schema.parameters") },
+      processing_input: { type: "object", title: t("processing.flowMapping") },
+    } }, (label) => schemaText(label, t));
+    const displayValue = (value: unknown, present: boolean, secret: boolean) => !present ? t("runtime.profileNotSet")
+      : secret ? t("runtime.profileSecretValue") : formatProfileValue(value);
+    setDialog({ title: t(editor.profile ? "profiles.unsaved" : "profiles.newNotSaved"),
+      message: t("profiles.saveBeforeReview"), cancelLabel: t("profiles.keepEditing"), confirmLabel: t("profiles.edit"),
+      details: <div className="profile-review-diff-scroll"><table className="profile-review-diff">
+        <caption>{t("profiles.unsaved")}</caption>
+        <thead><tr><th scope="col">{t("runtime.profileDiffField")}</th>
+          <th scope="col">{t("runtime.profileDiffBefore")}</th><th scope="col">{t("runtime.profileDiffAfter")}</th></tr></thead>
+        <tbody>{changes.map((change) => <tr key={change.path}>
+          <th scope="row">{change.label}</th>
+          <td><pre>{displayValue(change.before, change.beforePresent, change.secret)}</pre></td>
+          <td><pre>{displayValue(change.after, change.afterPresent, change.secret)}</pre></td>
+        </tr>)}</tbody>
+      </table></div>,
+      onConfirm: () => { pendingFocus.current = "profile-name"; setDialog(null); } });
+    return true;
   };
-  const reviewSourceConfiguration = async () => {
-    if (!definition || reviewReason) return;
-    const submitted = structuredClone(editor);
-    const session = editorSession.current;
-    sourceReview.current = null;
+  const reviewSelection = async (makeBindings: () => RuntimePlanRequest["bindings"], refreshSlots: string[]) => {
+    if (requireSavedProfile()) return;
     setBusy(true); setError(""); setNotice(null);
     try {
-      const target = await runtime.review({ module: "acquisition", expected_revision: activation?.revision ?? null,
-        bindings: [{ slot: "acquisition.source", selection: definition.selection,
-          parameters: structuredClone(sourceParameters) }],
-        refresh_slots: ["acquisition.source"], include_host_settings: false,
-      }, { kind: "acquisition", selection: definition.selection, parameters: structuredClone(sourceParameters),
-        profile: editor.profile ? structuredClone(editor.profile) : null,
-        name: editor.name || translatePluginName(definition.plugin_type, definition.label, t), schema: definition.schema });
-      if (target && editorSession.current === session) sourceReview.current = {
-        planId: target.plan_id, targetRevision: target.target_revision, editor: submitted, session,
-      };
+      const bindings = makeBindings();
+      const expectedProfiles = profiles.filter((profile) => bindings.some((binding) => "profile_id" in binding
+        && binding.profile_id === profile.profile_id && (refreshSlots.includes(binding.slot)
+          || activation?.bindings.find((current) => current.slot === binding.slot)?.profile_id !== binding.profile_id)));
+      return await runtime.review({ module, bindings, expected_revision: activation?.revision ?? null,
+        refresh_slots: refreshSlots, include_host_settings: false }, undefined, expectedProfiles);
     } catch (cause) { setError(String(cause)); }
     finally { setBusy(false); }
   };
@@ -349,11 +322,15 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
       ? api.update(editor.profile, name, editor.parameters, processingInput)
       : api.create(slot.kind, definition.selection, name, editor.parameters, processingInput);
   };
-  const save = (copy = false, name = editor.name) => {
-    void run(async () => {
+  const save = async (copy = false, name = editor.name) => {
+    setBusy(true); setError(""); setNotice(null);
+    try {
       const saved = await persistProfile(copy, name);
-      return saved.profile_id;
-    }, slot.kind === "acquisition" ? "profiles.sourceProfileSaved" : "profiles.saved", true);
+      setProfiles((current) => [...current.filter((profile) => profile.profile_id !== saved.profile_id), saved]);
+      resetEditor(editorFor(saved, definitions));
+      setNotice("profiles.saved");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(false); }
   };
   const connectSource = async () => {
     if (sourceOperation.current || connectReason || !activation) return;
@@ -416,11 +393,8 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   </>;
 
   const blockedReason = runtimeBlockReason(runtime);
-  const reviewReason = busy ? "feedback.busy" : slot.kind === "acquisition"
-    ? !definition?.available ? "profiles.pluginUnavailable" : !definition.schema ? "profiles.schemaRequired"
-      : errors.length > 0 ? "profiles.fixErrors" : !engineAvailable ? "feedback.runtimeUnavailable" : blockedReason
-    : dirty ? "profiles.saveBeforeReview" : !noTrigger && !editor.profile ? "profiles.saveBeforeReview"
-      : !noTrigger && !definition?.available ? "profiles.pluginUnavailable"
+  const reviewReason = busy ? "feedback.busy" : needsSave ? null
+    : !noTrigger && !definition?.available ? "profiles.pluginUnavailable"
       : slot.kind !== "filter" ? !engineAvailable ? "feedback.runtimeUnavailable" : blockedReason : null;
   const saveReason = busy ? "feedback.busy" : !definition?.schema ? "profiles.schemaRequired"
     : errors.length > 0 ? "profiles.fixErrors" : !editor.name.trim() ? "profiles.nameRequired"
@@ -435,9 +409,9 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   const chainReason = busy ? "feedback.busy" : !engineAvailable ? "feedback.runtimeUnavailable" : blockedReason
     ?? (!chainDirty ? "profiles.chainUnchanged" : chain.some((item) => !item.profile_id) ? "profiles.saveEveryProfile" : null);
   const profileAction = <div className="editor-action"><button className="primary" disabled={!!reviewReason}
-          aria-describedby="profile-review-help" aria-keyshortcuts={slot.kind === "acquisition" ? "Control+s Meta+s" : undefined}
+          aria-describedby="profile-review-help"
           onClick={() => {
-            if (slot.kind === "acquisition") { void reviewSourceConfiguration(); return; }
+            if (requireSavedProfile()) return;
             if (noTrigger) {
               void reviewSelection(() => bindingSelections().filter((item) => item.slot !== slot.slot), []);
               return;
@@ -450,17 +424,15 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
               ...bindingSelections().filter((item) => item.slot !== slot.slot),
               { slot: slot.slot, profile_id: editor.profile!.profile_id },
             ], [slot.slot]);
-          }}>{t(slot.kind === "acquisition" ? "profiles.reviewSourceConfiguration" : slot.kind === "filter" ? "profiles.addFilter" : "profiles.reviewProfile")}</button>
-    <p className="action-help" id="profile-review-help">{t(reviewReason ?? (slot.kind === "acquisition" ? "profiles.sourceApplyHelp" : slot.kind === "filter" ? "profiles.addFilterHelp" : "profiles.reviewHelp"))}</p>
+          }}>{t(slot.kind === "filter" ? "profiles.addFilter" : "profiles.reviewProfile")}</button>
+    <p className="action-help" id="profile-review-help">{t(reviewReason ?? (needsSave ? "profiles.saveBeforeReview" : slot.kind === "filter" ? "profiles.addFilterHelp" : "profiles.reviewHelp"))}</p>
   </div>;
 
   return <section className={`settings-workspace plugin-profiles module-${module}`} onKeyDown={(event) => {
     if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "s" && !event.defaultPrevented) {
       event.preventDefault();
       if (!event.repeat && !event.nativeEvent?.isComposing && !dialog && !runtime.plan && !noTrigger) {
-        if (slot.kind === "acquisition") {
-          if (!reviewReason) void reviewSourceConfiguration();
-        } else if (!saveReason) {
+        if (!saveReason) {
           saveFocus.current = typeof document === "undefined" ? null : document.activeElement as HTMLElement | null;
           save();
         }
@@ -488,7 +460,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
       </div>
       <div className="profile-list" aria-busy={busy}>
         {!busy && !error && displayedProfiles.length === 0 && <p className="profile-list-empty">{t(pluginProfiles.length
-          ? "profiles.noSearchMatches" : slot.kind === "acquisition" ? "profiles.noSavedSourceProfiles" : "profiles.noSavedProfiles")}</p>}
+          ? "profiles.noSearchMatches" : "profiles.noSavedProfiles")}</p>}
         {displayedProfiles.map((profile) => <button key={profile.profile_id}
           disabled={busy} className={`explorer-item profile-item ${editor.profile?.profile_id === profile.profile_id ? "selected" : ""}`}
           aria-current={editor.profile?.profile_id === profile.profile_id ? "true" : undefined}
@@ -497,7 +469,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
             && <span className="active-indicator">{t("profiles.selected")}</span>}
         </button>)}
       </div>
-      <div className="explorer-footer"><p>{t(slot.kind === "acquisition" ? "profiles.sourceExplorerHint" : "profiles.explorerHint")}</p></div>
+      <div className="explorer-footer"><p>{t("profiles.explorerHint")}</p></div>
       </div>
     </aside>
     <div className="settings-editor">
@@ -533,19 +505,19 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
         <div className="setting-group profile-selectors"><h2>{t("profiles.pluginAndProfile")}</h2>
           <label className="setting-row"><span className="setting-label">{t("profiles.pluginAndVersion")}</span>
             <select value={editor.plugin} disabled={busy} onChange={(event) => choosePlugin(event.target.value)}>{pluginOptions}</select></label>
-          {!noTrigger && <><label className="setting-row"><span className="setting-label">{t(slot.kind === "acquisition" ? "profiles.optionalProfile" : "profiles.profile")}</span>
+          {!noTrigger && <><label className="setting-row"><span className="setting-label">{t("profiles.profile")}</span>
             <select value={editor.profile?.profile_id ?? ""} disabled={busy || !editor.plugin}
               onChange={(event) => { const profile = pluginProfiles.find((item) => item.profile_id === event.target.value);
                 changeEditor(() => resetEditor(editorFor(profile, definitions, editor.plugin))); }}>
-              {!editor.profile && <option value="">{t(slot.kind === "acquisition" ? sourceMode === "current" ? "profiles.currentSourceConfiguration" : "profiles.newSourceConfiguration" : "profiles.newUnsaved")}</option>}
+              {!editor.profile && <option value="">{t("profiles.newUnsaved")}</option>}
               {pluginProfiles.map((profile) => <option key={profile.profile_id} value={profile.profile_id}>{profile.name}</option>)}
             </select></label>
           <div className="profile-tools actions">
-            <button disabled={busy || !definition?.schema} onClick={() => newProfile()}>{t(slot.kind === "acquisition" ? "profiles.newSourceConfiguration" : "profiles.newProfile")}</button>
-            {slot.kind !== "acquisition" && <button disabled={busy || !definition?.schema || errors.length > 0 || legacyDecoder} onClick={() => setDialog({ title: t("profiles.duplicate"),
+            <button disabled={busy || !definition?.schema} onClick={() => newProfile()}>{t("profiles.newProfile")}</button>
+            <button disabled={busy || !definition?.schema || errors.length > 0 || legacyDecoder} onClick={() => setDialog({ title: t("profiles.duplicate"),
               message: t("profiles.duplicateMessage"),
               confirmLabel: t("profiles.create"), initialValue: t("profiles.copyName", { name: editor.name || (definition ? translatePluginName(definition.plugin_type, definition.label, t) : t(slot.label)) }),
-              onConfirm: (name) => { setDialog(null); save(true, name); } })}>{t("profiles.duplicate")}</button>}
+              onConfirm: (name) => { setDialog(null); void save(true, name); } })}>{t("profiles.duplicate")}</button>
           </div></>}
           {noTrigger && <p className="setting-description">{t("profiles.noTriggerHint")}</p>}
           {slot.kind === "acquisition" && <p className="setting-description">{t(sourceMode === "new"
@@ -585,13 +557,13 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
         </div>}
         <div className={slot.kind === "acquisition" ? "acquisition-layout" : "profile-layout"}>
         <div className="profile-fields">
-        {!noTrigger && <>{slot.kind !== "acquisition" && <div className="setting-group profile-identity">
+        {!noTrigger && <><div className="setting-group profile-identity">
           <h2>{t(editor.profile ? "profiles.edit" : "profiles.newProfile")}</h2>
           <label className="setting-row"><span className="setting-label">{t("profiles.name")}</span>
-            <input value={editor.name} maxLength={64} disabled={busy} onChange={(event) => {
+            <input id="profile-name" value={editor.name} maxLength={64} disabled={busy} onChange={(event) => {
               setEditor({ ...editor, name: event.target.value }); setNotice(null);
             }} /></label>
-        </div>}
+        </div>
         <div id={slot.kind === "decoder" ? "processing-decoder-parameters" : "processing-parameters"}
           className="profile-parameters" tabIndex={-1} role="region" aria-label={t(slot.label)}>
           {sourceSchema ? <SchemaForm schema={sourceSchema} value={editor.parameters} disabled={busy} onChange={changeParameters} />
@@ -654,12 +626,11 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
       </div>
       <footer className="editor-footer"><div className="editor-feedback">
         <div className="save-state" role="status">{noTrigger ? t("profiles.noTrigger")
-          : slot.kind === "acquisition" && !sourceSelected ? <><span className="unsaved-dot" />{t("profiles.sourceUnappliedChanges")}</>
           : dirty ? <><span className="unsaved-dot" />{t("profiles.unsaved")}</>
-          : slot.kind === "acquisition" ? t("profiles.currentConfigurationApplied")
           : editor.profile ? t("profiles.profileSaved") : t("profiles.newNotSaved")}
+          {slot.kind === "acquisition" && !sourceSelected && <span className="pending-state">{t("profiles.sourceUnappliedChanges")}</span>}
           {chainDirty && <span className="pending-state">{t("profiles.chainPending")}</span>}</div>
-        {!noTrigger && <p className="action-help" id="profile-save-help">{t(slot.kind === "acquisition" ? "profiles.autoSaveOnApply" : saveReason ?? "profiles.saveHelp")}</p>}
+        {!noTrigger && <p className="action-help" id="profile-save-help">{t(saveReason ?? "profiles.saveHelp")}</p>}
         <RuntimeConfigurationProgress runtime={runtime} />
       </div>
         <div className="actions">
@@ -670,8 +641,8 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
           <button disabled={busy || (!dirty && !chainDirty)} onClick={() => changeEditor(() => {
             resetEditor(structuredClone(baseline)); setChain(savedChain);
           }, true)}>{t("profiles.discard")}</button>
-          {slot.kind !== "acquisition" && <button className="primary" disabled={!!saveReason} aria-describedby="profile-save-help" aria-keyshortcuts="Control+s Meta+s"
-            onClick={() => save()}>{t("profiles.save")}</button>}</>}
+          <button className="primary" disabled={!!saveReason} aria-describedby="profile-save-help" aria-keyshortcuts="Control+s Meta+s"
+            onClick={() => void save()}>{t("profiles.save")}</button></>}
         </div>
       </footer>
     </div>

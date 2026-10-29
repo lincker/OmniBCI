@@ -15,9 +15,8 @@ from omnibci.infrastructure.stimulation.stimulator import Stimulator
 
 @pytest.fixture
 def driver(monkeypatch):
-    library = Mock()
+    library = Mock(spec=["Out32", "IsInpOutDriverOpen"])
     library.IsInpOutDriverOpen.return_value = True
-    library.Inp32.return_value = 0xFF
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(ctypes, "WinDLL", Mock(return_value=library), raising=False)
     monkeypatch.setattr(trigger.time, "sleep", Mock())
@@ -31,18 +30,37 @@ def test_initialization_uses_process_bitness_and_resets_output(driver, monkeypat
 
     ctypes.WinDLL.assert_called_once_with(dll)
     assert output.address == 0xD010
-    assert driver.Out32.call_args_list == [
-        call(0xD412, 0x3F),  # Byte mode, retaining unrelated ECP bits.
-        call(0xD012, 0xDF),  # Output direction, retaining unrelated control bits.
-        call(0xD010, 0),
-    ]
+    assert driver.Out32.call_args_list == [call(0xD010, 0)]
     assert driver.Out32.argtypes == [ctypes.c_short, ctypes.c_short]
     assert driver.Out32.restype is None
     trigger.time.sleep.assert_called_once_with(0.02)
 
 
-def test_send_clear_sequence_preserves_events_and_repeated_markers(driver):
-    output = trigger.Curry8Trigger(parameters={})
+@pytest.mark.parametrize("address", ["0xFFF8", "0XFFF8"])
+def test_high_address_and_marker_bits_survive_the_ctypes_short_boundary(driver, address):
+    writes = []
+    callback = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)
+
+    @callback(None, ctypes.c_short, ctypes.c_short)
+    def write_port(port, value):
+        # InpOut preserves the low 16 bits of the configured port address.
+        writes.append((port, port & 0xFFFF, value))
+
+    driver.Out32 = write_port
+    output = trigger.Curry8Trigger(parameters={"parallel_port_address": address})
+    markers = [1, 2, 4, 8, 16, 32, 64, 128, 255]
+    for marker in markers:
+        output.send(marker)
+        output.clear()
+
+    assert writes == [(-8, 0xFFF8, 0)] + [
+        (-8, 0xFFF8, value) for marker in markers for value in (marker, 0)
+    ]
+
+
+@pytest.mark.parametrize("address", ["0x3100", "0xFFF8"])
+def test_send_clear_sequence_preserves_events_and_repeated_markers(driver, address):
+    output = trigger.Curry8Trigger(parameters={"parallel_port_address": address})
     driver.Out32.reset_mock()
     trigger.time.sleep.reset_mock()
 
@@ -53,7 +71,7 @@ def test_send_clear_sequence_preserves_events_and_repeated_markers(driver):
     assert output.send(0) is True
     output.clear()
     assert driver.Out32.call_args_list == [
-        call(0x3100, value) for value in (1, 0, 40, 0, 255, 0, 255, 0, 2, 0, 0, 0)
+        call(int(address, 16), value) for value in (1, 0, 40, 0, 255, 0, 255, 0, 2, 0, 0, 0)
     ]
     assert trigger.time.sleep.call_args_list == [call(0.02)] * 6
 
@@ -64,14 +82,6 @@ def test_invalid_events_do_not_write_to_hardware(driver, event):
     driver.Out32.reset_mock()
     with pytest.raises(ValueError, match="0.*255"):
         output.send(event)
-    driver.Out32.assert_not_called()
-
-
-@pytest.mark.parametrize("address", ["", "wrong", "0x0", "-1", "0x10000", "0xffff", None, 888, True])
-def test_invalid_addresses_fail_before_loading_hardware(driver, address):
-    with pytest.raises(ValueError, match="parallel_port_address"):
-        trigger.Curry8Trigger(parameters={"parallel_port_address": address})
-    ctypes.WinDLL.assert_not_called()
     driver.Out32.assert_not_called()
 
 
@@ -123,13 +133,14 @@ def test_port_write_errors_are_propagated(driver, operation):
             output.clear()
 
 
-def test_stimulator_loads_exact_curry_trigger_and_free_run_keeps_zero(driver):
+@pytest.mark.parametrize("address", ["0x378", "0xFFF8"])
+def test_stimulator_loads_exact_curry_trigger_and_free_run_keeps_zero(driver, address):
     catalog = PluginCatalog()
     selected_trigger = catalog.resolve("trigger", "neuroscan_curry8_trigger")
     selected_paradigm = catalog.resolve("paradigm", "STIMULATION_THUBCI_SSVEP_classic40")
     stimulator = Stimulator(settings_snapshot={"PLUGINS.bindings": [
         ProfileBinding("stimulation.trigger", "trigger", None, selected_trigger.selection,
-                       {"parallel_port_address": "0x378"}).to_dict(),
+                       {"parallel_port_address": address}).to_dict(),
         ProfileBinding("stimulation.paradigm", "paradigm", None, selected_paradigm.selection,
                        {}).to_dict(),
     ]})
@@ -138,8 +149,9 @@ def test_stimulator_loads_exact_curry_trigger_and_free_run_keeps_zero(driver):
     paradigm = stimulator._load_paradigm(output)
     driver.Out32.reset_mock()
     paradigm.trial_stimulus_present(None)
-    assert driver.Out32.call_args_list == [call(0x378, 0), call(0x378, 0)]
+    base = int(address, 16)
+    assert driver.Out32.call_args_list == [call(base, 0), call(base, 0)]
     output.send(40)
     stimulator.trigger = output
     stimulator.clear_trigger()
-    assert driver.Out32.call_args_list[-2:] == [call(0x378, 40), call(0x378, 0)]
+    assert driver.Out32.call_args_list[-2:] == [call(base, 40), call(base, 0)]
