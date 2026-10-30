@@ -242,6 +242,29 @@ test("discard dialogs describe the consequence and focus Keep editing; Escape pr
   h.dispose();
 });
 
+test("save-required dialogs show one focused Continue editing action and retain their details", async () => {
+  let continued = 0, cancelled = 0;
+  const details = React.createElement("p", null, "Gain: 2 → 3");
+  const h = harness(ConfigDialog, { title: "Unsaved changes", message: "Save this profile before applying it.",
+    details, confirmLabel: "Continue editing", cancelLabel: null,
+    onConfirm: () => { continued += 1; }, onCancel: () => { cancelled += 1; } });
+  try {
+    await h.settle();
+    const buttons = elements(h.tree).filter((item) => item.type === "button");
+    assert.equal(buttons.length, 1);
+    assert.equal(buttons[0].props.children, "Continue editing");
+    assert.equal(buttons[0].props.autoFocus, true);
+    assert.ok(elements(h.tree).includes(details));
+    assert.ok(elements(h.tree).some((item) => item.type === "p" && item.props.children === "Save this profile before applying it."));
+    elements(h.tree).find((item) => item.type === "form").props.onSubmit({ preventDefault() {} });
+    assert.equal(continued, 1);
+    assert.equal(cancelled, 0);
+    h.tree.props.onCancel({ preventDefault() {} });
+    assert.equal(cancelled, 1);
+    assert.equal(continued, 1);
+  } finally { h.dispose(); }
+});
+
 test("closing a dialog restores focus only while the original control still exists", async () => {
   const originalDocument = globalThis.document;
   try {

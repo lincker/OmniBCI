@@ -720,6 +720,7 @@ test("browsing profiles and a plugin without profiles never selects a runtime bi
     assert.equal(control(harness, "Plugin and version").props.value, selectionKey(unsavedPlugin));
     assert.equal(control(harness, "Profile").props.value, "");
     assert.deepEqual(options(control(harness, "Profile")).map((item) => item.value), [""]);
+    assert.equal(control(harness, "Profile name", "input").props.value, "new profile 1");
     assert.deepEqual(form(harness).props.value, { gain: 1, calibration: [1, 2] });
     assert.equal(!!button(harness, "Review and apply profile").props.disabled, false);
     assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
@@ -902,8 +903,8 @@ test("profile saving preserves and distinguishes unapplied filter order", async 
 test("new acquisition drafts are named and saved before runtime review", async () => {
   await withProfiles("acquisition", async (harness, calls) => {
     await click(harness, "New profile");
-    assert.equal(control(harness, "Profile name", "input").props.value, "");
-    assert.equal(button(harness, "Save profile").props.disabled, true);
+    assert.equal(control(harness, "Profile name", "input").props.value, "new profile 1");
+    assert.equal(button(harness, "Save profile").props.disabled, false);
     assert.equal(button(harness, "Connect").props.disabled, true);
     await click(harness, "Review and apply profile");
     assert.ok(dialog(harness));
@@ -1590,7 +1591,7 @@ const withoutProfiles = (data) => { data.profiles = []; data.activation = null; 
 test("a first-use source saves independently before selecting the startup configuration", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
     assert.ok(button(harness, "New profile"));
-    assert.equal(control(harness, "Profile name", "input").props.value, "");
+    assert.equal(control(harness, "Profile name", "input").props.value, "new profile 1");
     assert.equal(button(harness, "Connect").props.disabled, true);
     form(harness).props.onChange({ gain: 7, calibration: [5, 6] }); await harness.settle();
     await click(harness, "Review and apply profile");
@@ -1822,6 +1823,8 @@ for (const module of ["acquisition", "processing", "stimulation", "actuation"]) 
       await click(harness, "Review and apply profile");
       assert.ok(dialog(harness), "An unsaved profile opens a save-required prompt");
       assert.match(dialog(harness).props.message, /save/i);
+      assert.equal(dialog(harness).props.confirmLabel, "Continue editing");
+      assert.equal(dialog(harness).props.cancelLabel, null);
       assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
       assert.deepEqual(data.profiles, original);
       assert.deepEqual(data.activation, accepted);
@@ -1840,10 +1843,10 @@ for (const module of ["acquisition", "processing", "stimulation", "actuation"]) 
       assert.equal(calls.apply.length, 0);
     });
   });
-  test(`${module} new profiles cannot be applied until explicitly named and saved`, async () => {
+  test(`${module} new profiles have an editable default name and require saving before apply`, async () => {
     await withProfiles(module, async (harness, calls, data) => {
       await click(harness, "New profile");
-      assert.equal(control(harness, "Profile name", "input").props.value, "");
+      assert.equal(control(harness, "Profile name", "input").props.value, "new profile 1");
       await click(harness, "Review and apply profile");
       assert.ok(dialog(harness));
       assert.match(dialog(harness).props.message, /save/i);
@@ -1858,6 +1861,50 @@ for (const module of ["acquisition", "processing", "stimulation", "actuation"]) 
     });
   });
 }
+
+for (const [module, kind, choice, tab] of [
+  ["acquisition", "acquisition", scanV1],
+  ["processing", "decoder", decoder],
+  ["processing", "epoch_detector", selection("example.epoch"), "Epoch boundary detector"],
+  ["processing", "filter", bandpass, "Filters"],
+  ["stimulation", "paradigm", paradigm],
+  ["stimulation", "trigger", trigger, "Trigger"],
+  ["actuation", "effector", effector],
+]) {
+  test(`${kind} new profile names skip saved conflicts, including hidden profiles`, async () => {
+    await withProfiles(module, async (harness, calls, data) => {
+      if (tab) await click(harness, tab);
+      if (kind === "trigger") await change(harness, "Plugin and version", selectionKey(choice));
+      await change(harness, "Search saved profiles", "no matching profiles", "input");
+      await click(harness, "New profile");
+      assert.equal(control(harness, "Profile name", "input").props.value, "new profile 3");
+      assert.equal(data.dirty, false);
+      await click(harness, "New profile");
+      assert.equal(control(harness, "Profile name", "input").props.value, "new profile 3");
+      await click(harness, "Save profile");
+      assert.equal(calls.create[0].name, "new profile 3");
+      assert.equal(calls.update.length + calls.review.length + calls.apply.length, 0);
+      await click(harness, "New profile");
+      assert.equal(control(harness, "Profile name", "input").props.value, "new profile 5");
+    }, { configure: (data) => {
+      if (kind === "epoch_detector") data.definitions.push(definition(kind, choice, "Epoch detector"));
+      for (const index of [1, 2, 4]) data.profiles.push(profile(`numbered-${index}`, kind, choice, `new profile ${index}`, 1));
+    } });
+  });
+}
+
+test("new profile numbering is scoped to the current plugin version", async () => {
+  await withProfiles("acquisition", async (harness) => {
+    await click(harness, "New profile");
+    assert.equal(control(harness, "Profile name", "input").props.value, "new profile 1");
+    await change(harness, "Plugin and version", selectionKey(scanV2));
+    await click(harness, "New profile");
+    assert.equal(control(harness, "Profile name", "input").props.value, "new profile 2");
+  }, { configure: (data) => {
+    data.profiles.find((item) => item.profile_id === "lab-v2").name = "new profile 1";
+    data.profiles.find((item) => item.profile_id === "replay").name = "new profile 1";
+  } });
+});
 
 
 test("save-required details include renamed fields and mask secret before and after values", async () => {
@@ -1882,7 +1929,7 @@ test("save-required details include renamed fields and mask secret before and af
   } });
 });
 
-test("the save-required confirmation focuses the profile name without saving or applying", async () => {
+test("Continue editing returns to the profile name without saving or applying", async () => {
   const originalDocument = globalThis.document;
   const focused = [];
   globalThis.document = { getElementById: (id) => ({ focus() { focused.push(id); }, scrollIntoView() {} }) };
@@ -1891,9 +1938,14 @@ test("the save-required confirmation focuses the profile name without saving or 
       await click(harness, "New profile");
       await click(harness, "Review and apply profile");
       assert.ok(dialog(harness));
+      assert.equal(dialog(harness).props.confirmLabel, "Continue editing");
+      assert.equal(dialog(harness).props.cancelLabel, null);
+      assert.match(dialog(harness).props.message, /Save this profile before applying it/);
+      assert.match(text(dialog(harness).props.details), /new profile 1/);
       dialog(harness).props.onConfirm(""); await harness.settle();
       assert.equal(dialog(harness), undefined);
       assert.equal(focused.at(-1), "profile-name");
+      assert.equal(control(harness, "Profile name", "input").props.value, "new profile 1");
       assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
     });
   } finally { if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument; }

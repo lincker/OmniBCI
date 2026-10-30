@@ -7,7 +7,7 @@ export type ConfigDialogProps = {
   message: string;
   details?: ReactNode;
   confirmLabel: string;
-  cancelLabel?: string;
+  cancelLabel?: string | null;
   initialValue?: string;
   onConfirm: (value: string) => void;
   onCancel: () => void;
@@ -40,8 +40,8 @@ export function ConfigDialog({ title, message, details, confirmLabel, cancelLabe
           <input autoFocus required maxLength={64} value={value} onChange={(event) => setValue(event.target.value)} />
         </label>}
         <div className="actions">
-          <button type="button" autoFocus={initialValue === undefined} onClick={onCancel}>{cancelLabel ?? t("dialog.cancel")}</button>
-          <button type="submit" className="primary">{confirmLabel}</button>
+          {cancelLabel !== null && <button type="button" autoFocus={initialValue === undefined} onClick={onCancel}>{cancelLabel ?? t("dialog.cancel")}</button>}
+          <button type="submit" className="primary" autoFocus={cancelLabel === null && initialValue === undefined}>{confirmLabel}</button>
         </div>
       </form>
     </dialog>

@@ -62,7 +62,7 @@ function observedParameters(metadata: DataSourceMetadata, pluginType: string | u
   return parameters;
 }
 
-function editorFor(profile: PluginProfile | undefined, definitions: PluginDefinition[], plugin?: string): Editor {
+function editorFor(profile: PluginProfile | undefined, definitions: PluginDefinition[], plugin?: string, profiles: PluginProfile[] = []): Editor {
   if (profile) return { sourceOrigin: "profile", profile, plugin: selectionKey(profile.selection), name: profile.name,
     parameters: structuredClone(profile.parameters),
     processingInput: profile.processing_input ? { ...structuredClone(profile.processing_input),
@@ -70,7 +70,12 @@ function editorFor(profile: PluginProfile | undefined, definitions: PluginDefini
   const definition = plugin !== undefined ? definitions.find((item) => selectionKey(item.selection) === plugin)
     : definitions.find((item) => item.schema && item.available) ?? definitions.find((item) => item.schema);
   const defaults = definition?.schema ? initialSchemaValue(definition.schema) as Record<string, unknown> : {};
-  return { sourceOrigin: "new", profile: null, plugin: plugin ?? (definition ? selectionKey(definition.selection) : ""), name: "",
+  const pluginKey = plugin ?? (definition ? selectionKey(definition.selection) : "");
+  const names = new Set(profiles.filter((item) => item.kind === definition?.kind
+    && selectionKey(item.selection) === pluginKey).map((item) => item.name));
+  let index = 1;
+  while (names.has(`new profile ${index}`)) index += 1;
+  return { sourceOrigin: "new", profile: null, plugin: pluginKey, name: `new profile ${index}`,
     parameters: ["file_reader", "neuroscan_curry8_reader"].includes(definition?.plugin_type ?? "")
       ? connectionParameters(defaults) : defaults,
     processingInput: definition?.kind === "decoder" ? emptyProcessingInput() : null };
@@ -210,7 +215,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     const next = slot.kind === "acquisition" && nextBinding && (profileId === undefined || profileId === "current")
       ? editorForSource(nextBinding, nextProfiles)
       : slot.kind === "trigger" && (plugin === "" || (plugin === undefined && !nextBinding))
-        ? structuredClone(emptyEditor) : editorFor(selected, nextDefinitions, plugin);
+        ? structuredClone(emptyEditor) : editorFor(selected, nextDefinitions, plugin, nextProfiles);
     setEditor(next); setBaseline(next.profile ? editorFor(next.profile, nextDefinitions) : structuredClone(next));
   }, [slot.kind, slot.slot]);
 
@@ -254,10 +259,10 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   const choosePlugin = (plugin: string) => changeEditor(() => {
     const candidates = profilesFor(plugin);
     const preferred = candidates.find((item) => item.profile_id === selectedBinding?.profile_id) ?? candidates[0];
-    resetEditor(editorFor(preferred, definitions, plugin));
+    resetEditor(editorFor(preferred, definitions, plugin, profiles));
   });
   const newProfile = (plugin = editor.plugin) => changeEditor(() => {
-    resetEditor(editorFor(undefined, definitions, plugin));
+    resetEditor(editorFor(undefined, definitions, plugin, profiles));
   });
   const openProcessingStep = (target: string, section: string) => {
     if (busy) return;
@@ -288,7 +293,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     const displayValue = (value: unknown, present: boolean, secret: boolean) => !present ? t("runtime.profileNotSet")
       : secret ? t("runtime.profileSecretValue") : formatProfileValue(value);
     setDialog({ title: t(editor.profile ? "profiles.unsaved" : "profiles.newNotSaved"),
-      message: t("profiles.saveBeforeReview"), cancelLabel: t("profiles.keepEditing"), confirmLabel: t("profiles.edit"),
+      message: t("profiles.saveBeforeReview"), cancelLabel: null, confirmLabel: t("profiles.continueEditing"),
       details: <div className="profile-review-diff-scroll"><table className="profile-review-diff">
         <caption>{t("profiles.unsaved")}</caption>
         <thead><tr><th scope="col">{t("runtime.profileDiffField")}</th>
@@ -508,7 +513,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
           {!noTrigger && <><label className="setting-row"><span className="setting-label">{t("profiles.profile")}</span>
             <select value={editor.profile?.profile_id ?? ""} disabled={busy || !editor.plugin}
               onChange={(event) => { const profile = pluginProfiles.find((item) => item.profile_id === event.target.value);
-                changeEditor(() => resetEditor(editorFor(profile, definitions, editor.plugin))); }}>
+                changeEditor(() => resetEditor(editorFor(profile, definitions, editor.plugin, profiles))); }}>
               {!editor.profile && <option value="">{t("profiles.newUnsaved")}</option>}
               {pluginProfiles.map((profile) => <option key={profile.profile_id} value={profile.profile_id}>{profile.name}</option>)}
             </select></label>

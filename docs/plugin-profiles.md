@@ -13,14 +13,18 @@ and version. Installed managed packages must be enabled in Extensions before
 they appear; bundled plugins are available directly.
 
 All four modules expose **Profile name**, **New profile**, and **Save profile**.
-New profile starts from plugin defaults; saving creates a named profile. Editing
-and saving an existing profile updates its revision. **Duplicate profile** saves a
+New profile starts from plugin defaults and prefills **Profile name** with
+`new profile 1`, incrementing to the first unused number among saved names for
+the same plugin contribution and version. The name remains editable; saving
+creates a named profile. Editing and saving an existing profile updates its
+revision. **Duplicate profile** saves a
 separate copy. Ctrl/Cmd+S saves the current profile without applying it. Profiles
 can be configured and saved independently of the engine and device connection.
 
 **Review and apply profile** requires a saved profile. If the profile is new or
 has unsaved edits, a dialog lists the old and new names, parameters, and decoder
 channel mappings and asks the user to save first. Secret values are masked.
+Its only button, **Continue editing**, returns to the profile name field.
 This check also covers filter-chain review and adding filter instances. Saving
 does not apply the profile; review and confirm application separately after saving.
 
