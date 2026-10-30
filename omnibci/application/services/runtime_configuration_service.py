@@ -151,11 +151,15 @@ class RuntimeConfigurationService:
             outputs = value.to_dict()["outputs"]
         except (ValueError, TypeError):
             return "Invalid channel mapping; correct the validation errors before applying"
-        descriptions = [item["name"] if item["name"] == item["source_channel_id"]
-                        else f"{item['source_channel_id']} → {item['name']}" for item in outputs]
-        for index, item in enumerate(outputs):
+        descriptions = []
+        for item in outputs:
+            source = item.get("source_channel_id")
+            if source is None:
+                source = f"row {item['source_channel_index'] + 1}"
+            description = item["name"] if item["name"] == source else f"{source} → {item['name']}"
             if item.get("signal_type"):
-                descriptions[index] += f" ({item['signal_type']})"
+                description += f" ({item['signal_type']})"
+            descriptions.append(description)
         return "Channels: " + (", ".join(descriptions) or "all source channels")
 
     def resolve_plan(self, plan_id: str) -> PlannedConfiguration:

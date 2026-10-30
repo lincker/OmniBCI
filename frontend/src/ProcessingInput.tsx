@@ -14,10 +14,14 @@ export function processingInputErrors(value: Input | null, t: Translate = (key, 
   if (!value) return [];
   const errors: string[] = [];
   const names = value.outputs.map((output) => output.name);
-  const sources = value.outputs.map((output) => output.source_channel_id);
+  const sources = value.outputs.map((output) => output.source_channel_index != null
+    ? `row:${output.source_channel_index}` : `id:${output.source_channel_id}`);
   if (names.some((name) => !name.trim())) errors.push(t("processing.emptyName"));
   if (new Set(names).size !== names.length) errors.push(t("processing.uniqueNames"));
-  if (sources.some((source) => !source.trim())) errors.push(t("processing.sourceError"));
+  if (value.outputs.some((output) => (output.source_channel_id != null) === (output.source_channel_index != null)
+    || output.source_channel_id != null && !output.source_channel_id.trim())) errors.push(t("processing.sourceError"));
+  if (value.outputs.some((output) => output.source_channel_index != null
+    && (!Number.isSafeInteger(output.source_channel_index) || output.source_channel_index < 0))) errors.push(t("processing.sourceRowError"));
   if (new Set(sources).size !== sources.length) errors.push(t("processing.uniqueSources"));
   if (value.outputs.some((output) => output.signal_type != null && !declaredTypes.includes(output.signal_type))) errors.push(t("processing.typeError"));
   return errors;
@@ -38,6 +42,8 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState(false);
+  const [manualEditing, setManualEditing] = useState(false);
+  const [channelCount, setChannelCount] = useState(() => String(value?.outputs.length || 1));
   const request = useRef(0);
   const sourceRequest = useRef(0);
   const currentConfig = useRef<SignalConfiguration | null>(null);
@@ -81,6 +87,7 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
   const channels = source?.channels ?? [];
   const allChannels = !!value && !value.outputs.length;
   const rows: ChannelBinding[] = allChannels ? channels.map((channel) => ({ name: channel.name, source_channel_id: channel.channel_id })) : value?.outputs ?? [];
+  const manual = manualEditing || rows.some((row) => row.source_channel_index != null);
   const disabled = busy || previewing || refreshing;
   const errors = processingInputErrors(value, t);
   const channelLabel = (channel: ChannelDescriptor) => channels.filter((item) => item.name === channel.name).length > 1
@@ -89,18 +96,40 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
   const defaultsAvailable = !!source && defaultNames.every((name) => channels.filter((channel) => channel.name === name).length === 1);
   const edit = (next: Input) => { request.current += 1; setPreview(null); setPreviewing(false); setError(""); onChange(next); };
   const setRows = (outputs: ChannelBinding[]) => { if (outputs.length) edit({ schema_version: 2, outputs }); };
+  const channelFor = (row: ChannelBinding) => channels.find((channel) => row.source_channel_index != null
+    ? channel.index === row.source_channel_index : channel.channel_id === row.source_channel_id);
+  const generationLimit = source ? channels.length : 4096;
+  const count = Number(channelCount);
+  const validCount = Number.isSafeInteger(count) && count >= 1 && count <= generationLimit;
+  const generateChannels = () => {
+    if (!validCount || disabled) return;
+    setRows(Array.from({ length: count }, (_, index) => ({ name: `CH${index + 1}`, source_channel_index: index })));
+  };
+  const usedIndices = new Set(rows.map((row) => row.source_channel_index ?? channelFor(row)?.index));
+  let nextSourceIndex = 0;
+  while (usedIndices.has(nextSourceIndex)) nextSourceIndex += 1;
+  const addChannel = () => {
+    let nameIndex = nextSourceIndex + 1;
+    while (rows.some((row) => row.name === `CH${nameIndex}`)) nameIndex += 1;
+    setRows([...rows, { name: `CH${nameIndex}`, source_channel_index: nextSourceIndex }]);
+  };
   const updateRow = (index: number, patch: Partial<ChannelBinding>) => setRows(rows.map((row, target) => {
     if (target !== index) return row;
     const next = { ...row, ...patch };
+    if ("source_channel_index" in patch) delete next.source_channel_id;
+    if ("source_channel_id" in patch) delete next.source_channel_index;
     if (next.signal_type == null) delete next.signal_type;
     return next;
   }));
   const moveRow = (index: number, offset: number) => {
     const next = [...rows]; [next[index], next[index + offset]] = [next[index + offset], next[index]]; setRows(next);
   };
-  const sourceProblem = rows.some((row) => {
-    const channel = channels.find((item) => item.channel_id === row.source_channel_id);
-    return !channel || (row.signal_type && reportedType(channel) && row.signal_type !== channel.signal_type);
+  const resolved = rows.map(channelFor).filter((channel) => channel !== undefined);
+  const duplicateSource = new Set(resolved.map((channel) => channel.channel_id)).size !== resolved.length;
+  const sourceProblem = duplicateSource || rows.some((row) => {
+    const channel = channelFor(row);
+    return !channel || ["trigger", "stim", "ground"].includes(channel.signal_type)
+      || (row.signal_type && reportedType(channel) && row.signal_type !== channel.signal_type);
   });
   const previewInput = async () => {
     if (!value || !config) return;
@@ -147,11 +176,24 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
     {!value ? <><p className="setting-description">{t("processing.noInput")}</p>
       <button disabled={disabled} onClick={() => edit(emptyProcessingInput())}>{t("processing.configure")}</button></> : <>
       <div className="mapping-actions"><strong>{allChannels ? t("processing.allChannels") : t("processing.selectedChannels")}</strong>
-        <button disabled={disabled || allChannels} onClick={() => edit(emptyProcessingInput())}>{t("processing.allChannelsAction")}</button>
+        <button disabled={disabled || allChannels && !manual} onClick={() => { setManualEditing(false); edit(emptyProcessingInput()); }}>{t("processing.allChannelsAction")}</button>
+        <button disabled={disabled || manual} onClick={() => { setManualEditing(true); setChannelCount(String(rows.length || 1)); }}>{t("processing.manual")}</button>
         {defaultNames.length > 0 && <button disabled={disabled || !defaultsAvailable} onClick={() => setRows(defaultNames.map((name) => ({
           name, source_channel_id: channels.find((channel) => channel.name === name)!.channel_id,
         })))}>{t("processing.pluginDefaults")}</button>}
       </div>
+      {!preview && <p className="inline-message" role="status">{t("processing.notVerified")} — {t(source ? "processing.verifyHint" : "processing.offlineHint")}</p>}
+      {manual && <div className="manual-mapping">
+        <p className="setting-description">{t("processing.manualHint")}</p>
+        <label className="mapping-add"><span>{t("processing.signalCount")}</span>
+          <input type="number" min={1} max={generationLimit} step={1} disabled={disabled} value={channelCount}
+            onChange={(event) => setChannelCount(event.target.value)} /></label>
+        {!validCount && <p className="channel-error">{t("processing.countError", { max: generationLimit })}</p>}
+        <div className="actions">
+          <button disabled={disabled || !validCount} onClick={generateChannels}>{t("processing.generate")}</button>
+          <button disabled={disabled || !!source && nextSourceIndex >= channels.length} onClick={addChannel}>{t("processing.addChannel")}</button>
+        </div>
+      </div>}
       {allChannels && <p className="setting-description">{t("processing.allHint")}</p>}
       {defaultNames.length > 0 && !defaultsAvailable && <p className="setting-description">{t("processing.defaultsUnavailable")}</p>}
       <p className="mapping-scroll-help" id="mapping-scroll-help">{t("processing.scrollHelp")}</p>
@@ -159,16 +201,28 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
       <table aria-label={t("processing.bindingLabel")}>
         <thead><tr><th scope="col">{t("processing.order")}</th><th scope="col">{t("processing.source")}</th><th scope="col">{t("processing.inputName")}</th><th scope="col">{t("processing.channelType")}</th><th scope="col">{t("processing.actions")}</th></tr></thead>
         <tbody>{rows.map((row, index) => {
-          const channel = channels.find((item) => item.channel_id === row.source_channel_id);
+          const channel = channelFor(row);
+          const sourceIndex = row.source_channel_index ?? channel?.index;
           const knownType = reportedType(channel);
           const conflict = row.signal_type && knownType && row.signal_type !== knownType;
           return <tr key={index}><th scope="row">{index + 1}</th>
-            <td><select aria-label={t("processing.inputSourceLabel", { row: index + 1 })} disabled={disabled} value={row.source_channel_id}
+            <td>{manual ? <>
+              <input type="number" min={1} max={source ? channels.length : undefined} step={1}
+                aria-label={t("processing.inputSourceRowLabel", { row: index + 1 })} disabled={disabled}
+                value={sourceIndex != null && sourceIndex >= 0 ? sourceIndex + 1 : ""}
+                onChange={(event) => updateRow(index, { source_channel_index: event.target.value === "" ? -1 : Number(event.target.value) - 1 })} />
+              <small>{channel ? channel.name : row.source_channel_id ? t("processing.savedSourceId", { id: row.source_channel_id }) : t("processing.sourceRowHint")}</small>
+            </> : <select aria-label={t("processing.inputSourceLabel", { row: index + 1 })} disabled={disabled} value={row.source_channel_id ?? ""}
               onChange={(event) => updateRow(index, { source_channel_id: event.target.value, signal_type: undefined })}>
-              {!channel && <option value={row.source_channel_id}>{row.source_channel_id}{t("processing.unavailable")}</option>}
+              {!channel && <option value={row.source_channel_id ?? ""}>{row.source_channel_id}{t("processing.unavailable")}</option>}
               {channels.map((item) => <option key={item.channel_id} value={item.channel_id}
-                disabled={rows.some((current, target) => target !== index && current.source_channel_id === item.channel_id)}>{channelLabel(item)}</option>)}
-            </select>{!channel && source && <p className="channel-error">{t("processing.missingSource", { source: row.source_channel_id })}</p>}</td>
+                disabled={rows.some((current, target) => target !== index && channelFor(current)?.channel_id === item.channel_id)}>{channelLabel(item)}</option>)}
+            </select>}
+              {!channel && source && <p className="channel-error">{row.source_channel_index != null
+                ? t(row.source_channel_index === source.trigger_row_index ? "processing.eventRow" : "processing.missingRow", { row: row.source_channel_index + 1 })
+                : t("processing.missingSource", { source: row.source_channel_id ?? "" })}</p>}
+              {channel && ["trigger", "stim", "ground"].includes(channel.signal_type)
+                && <p className="channel-error">{t("processing.nonSignalRow")}</p>}</td>
             <td><input aria-label={t("processing.inputNameLabel", { row: index + 1 })} disabled={disabled} value={row.name}
               onChange={(event) => updateRow(index, { name: event.target.value })} /></td>
             <td>{knownType ? <><span>{knownType.toUpperCase()}</span><small>{t("processing.reportedType")}</small>
@@ -189,15 +243,16 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
             </div></td></tr>;
         })}</tbody>
       </table></div>
-      <label className="mapping-add"><span>{t("processing.addSource")}</span><select aria-label={t("processing.addSource")} disabled={disabled || !source || rows.length >= channels.length}
+      {!manual && <label className="mapping-add"><span>{t("processing.addSource")}</span><select aria-label={t("processing.addSource")} disabled={disabled || !source || rows.length >= channels.length}
         value="" onChange={(event) => { const channel = channels.find((item) => item.channel_id === event.target.value);
           if (channel) setRows([...rows, { name: channel.name, source_channel_id: channel.channel_id }]); }}>
         <option value="" disabled>{t("processing.selectSource")}</option>
         {channels.map((channel) => <option key={channel.channel_id} value={channel.channel_id}
-          disabled={rows.some((row) => row.source_channel_id === channel.channel_id)}>{channelLabel(channel)}</option>)}
-      </select></label>
+          disabled={rows.some((row) => channelFor(row)?.channel_id === channel.channel_id)}>{channelLabel(channel)}</option>)}
+      </select></label>}
       <p className="setting-description">{t("processing.mappingHint")}</p>
       {errors.map((message) => <p className="inline-message error" key={message} role="alert">{message}</p>)}
+      {duplicateSource && !errors.includes(t("processing.uniqueSources")) && <p className="inline-message error" role="alert">{t("processing.uniqueSources")}</p>}
       <button disabled={disabled || !source || sourceProblem || errors.length > 0} onClick={() => void previewInput()}>{t("processing.preview")}</button>
       {preview && <div className="mapping-preview"><p role="status">{t("processing.previewSummary", { count: preview.plan.output_channels.length })}</p>
         <ol>{preview.plan.output_channels.map((channel, index) => <li key={index}>

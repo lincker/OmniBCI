@@ -6490,8 +6490,28 @@
             "title": "Name"
           },
           "source_channel_id": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Source Channel Id"
+          },
+          "source_channel_index": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Channel Index",
+            "description": "Zero-based signal row, excluding the final event row. Use either this or source_channel_id."
           },
           "signal_type": {
             "anyOf": [
@@ -6515,8 +6535,7 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "name",
-          "source_channel_id"
+          "name"
         ],
         "title": "ChannelBindingModel"
       },

@@ -1,6 +1,8 @@
 """Saving, selecting, and resolving configuration have distinct effects."""
 from contextlib import contextmanager
 from dataclasses import replace
+import json
+import tomllib
 from uuid import uuid4
 
 import pytest
@@ -60,6 +62,52 @@ def test_decoder_defaults_initialize_once_and_never_replace_explicit_all_channel
     retained_all = service.update(explicit.profile_id, name="Still all", parameters=explicit.parameters,
                                   expected_revision=explicit.revision)
     assert retained_all.processing_input.outputs == ()
+
+
+def test_manual_decoder_mappings_save_offline_and_remain_independent_after_updates(service):
+    definition = service.catalog.legacy("decoder", "THUBCI_SSVEP_classic40CCA")
+    first_value = {"schema_version": 2, "outputs": [
+        {"source_channel_index": 2, "name": "Right", "signal_type": "eeg"},
+        {"source_channel_index": 0, "name": "Eye", "signal_type": "eog"},
+    ]}
+    second_value = {"schema_version": 2, "outputs": [
+        {"source_channel_index": 4, "name": "Oz", "signal_type": "eeg"},
+    ]}
+    first = service.create("decoder", definition.selection, "Manual visual", {},
+                           processing_input=ProcessingInput.from_dict(first_value))
+    second = service.create("decoder", definition.selection, "Manual alternative", {},
+                            processing_input=ProcessingInput.from_dict(second_value))
+    assert service.repository.get_activation() is None
+    assert service.repository.list_profiles("acquisition") == []
+    for profile, expected in ((first, first_value), (second, second_value)):
+        stored = service.repository.get_profile(profile.profile_id)
+        assert json.loads(json.dumps(stored.to_dict()))["processing_input"] == expected
+        path = service.repository.root / "plugin-profiles" / f"{profile.profile_id}.toml"
+        assert tomllib.loads(path.read_text())["processing_input"] == expected
+        assert all("source_channel_id" not in row for row in expected["outputs"])
+
+    selected = service.accept(service.propose([
+        {"slot": "processing.decoder", "profile_id": first.profile_id},
+    ], module="processing"), expected_revision=None, module="processing")
+    activation_path = service.repository.root / "activation.toml"
+    accepted_bytes = activation_path.read_bytes()
+    second_path = service.repository.root / "plugin-profiles" / f"{second.profile_id}.toml"
+    second_bytes = second_path.read_bytes()
+    edited_value = {"schema_version": 2, "outputs": [
+        {"source_channel_index": 0, "name": "Left", "signal_type": "eeg"},
+        {"source_channel_index": 2, "name": "Right", "signal_type": "eeg"},
+    ]}
+    updated = service.update(first.profile_id, name=first.name, parameters=first.parameters,
+                             processing_input=ProcessingInput.from_dict(edited_value),
+                             expected_revision=first.revision)
+    assert updated.revision == first.revision + 1
+    fresh = TomlPluginProfileRepository(service.repository.root)
+    assert fresh.get_profile(first.profile_id).processing_input.to_dict() == edited_value
+    assert fresh.get_profile(second.profile_id) == second
+    assert second_path.read_bytes() == second_bytes
+    assert fresh.get_activation() == selected
+    assert activation_path.read_bytes() == accepted_bytes
+    assert selected.bindings[0].processing_input.to_dict() == first_value
 
 
 def _source_montage():

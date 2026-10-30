@@ -198,7 +198,7 @@ class TestResponseDtos:
         assert set(props) == {"schema_version", "outputs"}
         assert props["schema_version"]["const"] == 2
         props = _schema(spec, "ChannelBindingModel")["properties"]
-        assert set(props) == {"source_channel_id", "name", "signal_type"}
+        assert set(props) == {"source_channel_id", "source_channel_index", "name", "signal_type"}
         props = _schema(spec, "SignalSetupResponse")["properties"]
         assert "acquisition_descriptor" in props
         assert not {"setup", "legacy_setup", "accepted_setup", "active_setup", "source_metadata"} & props.keys()

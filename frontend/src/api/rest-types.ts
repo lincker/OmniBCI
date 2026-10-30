@@ -1428,7 +1428,12 @@ export interface components {
             /** Name */
             name: string;
             /** Source Channel Id */
-            source_channel_id: string;
+            source_channel_id?: string | null;
+            /**
+             * Source Channel Index
+             * @description Zero-based signal row, excluding the final event row. Use either this or source_channel_id.
+             */
+            source_channel_index?: number | null;
             /** Signal Type */
             signal_type?: ("eeg" | "eog" | "ecg" | "emg" | "misc") | null;
         };

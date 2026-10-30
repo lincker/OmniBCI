@@ -183,11 +183,35 @@ A decoder profile owns an ordered `ProcessingInput` with schema version 2:
 }
 ```
 
-Bindings identify Acquisition channels by ID, never by label. Explicit output
-names and selected source IDs must be unique. Missing IDs block preparation.
+Each binding identifies an Acquisition channel by exactly one of
+`source_channel_id` or `source_channel_index`, never by label. The index is a
+zero-based signal row; the editor displays source row numbers starting at 1.
+For example, `{"source_channel_index": 2, "name": "Oz", "signal_type": "eeg"}`
+maps source row 3 to the decoder input `Oz`. Row bindings follow the configured
+row position, while ID bindings follow the source's channel identity. The host
+resolves both against the actual descriptor, including sources with custom IDs.
+Explicit output names and selected source rows must be unique. Missing IDs,
+out-of-range indices, event rows, and two bindings resolving to the same source
+channel block preparation.
 An empty `outputs` list selects all source signal rows in their original order;
 it does not mean zero channels. Decoder `default_names` are suggestions that the
 user can match to unique source labels after a descriptor is available.
+
+**Manual mapping** supports configuring a Decoder Profile before Metadata is
+available. Generate `CH1` through `CHN` by entering a signal-channel count, then
+edit source row numbers, decoder input names, and optional types. Rows can be
+added, removed, and reordered. The count excludes the final event row: a source
+with 10 total output rows has 9 signal rows. Event data remains automatically
+preserved at the end of the mapped output.
+
+Save the mapping with **Save profile**; each Decoder Profile retains its own
+mapping. The editor shows **Not verified** until a successful preview against
+current Metadata. Get Metadata in Acquisition, then refresh the source in the
+mapping editor and use **Preview mapping** to check source rows, types, and
+decoder requirements. New Metadata does not overwrite the manual mapping.
+Offline saving does not create source metadata or bypass preparation before
+streaming. **Use all channels** retains its dynamic behavior; without Metadata,
+there are no known source rows to display.
 
 A binding may declare `eeg`, `eog`, `ecg`, `emg`, or `misc` for an unknown source
 type. Without a declaration, it inherits the source type. A declaration cannot

@@ -1056,6 +1056,40 @@ test("new decoder profiles start with all channels until descriptor IDs are avai
   });
 });
 
+test("manual channel mappings save independently to decoder profiles without a connected source", async () => {
+  await withProfiles("processing", async (harness, calls, data) => {
+    const accepted = clone(data.activation);
+    const first = { schema_version: 2, outputs: [
+      { name: "Oz", source_channel_index: 4, signal_type: "eeg" },
+      { name: "O1", source_channel_index: 2, signal_type: "eeg" },
+    ] };
+    const second = { schema_version: 2, outputs: [{ name: "Eye", source_channel_index: 0, signal_type: "eog" }] };
+    input(harness).props.onChange(first); await harness.settle();
+    await click(harness, "Save profile");
+    assert.deepEqual(calls.update[0].processing_input, first);
+    await change(harness, "Profile", "decoder-b");
+    input(harness).props.onChange(second); await harness.settle();
+    await click(harness, "Save profile");
+    assert.deepEqual(calls.update[1].processing_input, second);
+    await change(harness, "Profile", "decoder-a");
+    assert.deepEqual(input(harness).props.value, first);
+    await change(harness, "Profile", "decoder-b");
+    assert.deepEqual(input(harness).props.value, second);
+    assert.equal(calls.create.length + calls.review.length + calls.apply.length, 0);
+    assert.deepEqual(data.activation, accepted);
+    assert.deepEqual(data.events, []);
+  });
+});
+
+test("invalid manual source rows block decoder profile saving", async () => {
+  await withProfiles("processing", async (harness, calls) => {
+    input(harness).props.onChange({ schema_version: 2, outputs: [{ name: "Oz", source_channel_index: -1 }] });
+    await harness.settle();
+    assert.equal(button(harness, "Save profile").props.disabled, true);
+    assert.equal(calls.update.length + calls.create.length, 0);
+  });
+});
+
 test("the input editor receives the browsed decoder requirements independently of the active decoder", async () => {
   await withProfiles("processing", async (harness, calls, data) => {
     const otherDecoder = selection("example.other-decoder");

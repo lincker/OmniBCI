@@ -87,6 +87,13 @@ Signal Processing separates Decoder, Epoch boundary detector, and the ordered Fi
 filter instance selects its own plugin and profile. Browsing or saving another
 profile preserves pending filter order; applying the chain is a separate action.
 
+Each Decoder Profile can save its own **Manual mapping** offline. Generate
+signal channels, edit their source row numbers, names and types, and add, remove,
+or reorder them before saving. Source row numbers start at 1 and exclude the
+final event row. The mapping remains **Not verified** until previewed against
+current Metadata; saving never substitutes manual rows for observed source
+information. See [channel mapping](channel-mapping.md) for validation and storage.
+
 In **Stimulation → Trigger**, choose **None (no trigger output)** and review/apply
 to run stimulation without hardware event output. This removes the trigger binding
 without deleting its saved Profile; no new Profile is needed. Selecting None alone

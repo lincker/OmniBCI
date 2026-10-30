@@ -52,13 +52,14 @@ def signal_service(tmp_path):
     return service, metadata, setup, calls
 
 
-def test_disconnected_mapping_preview_requires_metadata_from_the_current_connection(signal_service):
+@pytest.mark.parametrize("source", [{"source_channel_id": "channel-0"}, {"source_channel_index": 0}])
+def test_disconnected_mapping_preview_requires_metadata_from_the_current_connection(signal_service, source):
     service, _, _, calls = signal_service
     service.acquisition.cached_descriptor = None
     assert service.read()["acquisition_descriptor"] is None
     assert not service.read()["readiness"]["ready"]
     with pytest.raises(ConfigProfileValidationError, match="Connect the acquisition source and get metadata"):
-        service.preview_input({"outputs": [{'source_channel_id': 'channel-0', 'name': 'O1'}]})
+        service.preview_input({"outputs": [{**source, 'name': 'O1'}]})
     assert not calls
 
 
@@ -108,10 +109,11 @@ def test_invalid_preview_does_not_write_or_prepare(signal_service):
     assert not calls
 
 
-def test_processing_input_preview_uses_source_facts_without_writing(signal_service):
+@pytest.mark.parametrize("source", [{"source_channel_id": "channel-0"}, {"source_channel_index": 0}])
+def test_processing_input_preview_uses_source_facts_without_writing(signal_service, source):
     service, metadata, _, calls = signal_service
     before = service.settings.read_saved()
-    result = service.preview_input({"outputs": [{'source_channel_id': 'channel-0', 'name': 'O1'}]})
+    result = service.preview_input({"outputs": [{**source, 'name': 'O1'}]})
     assert result["plan"]["source_indices"] == [0]
     assert result["plan"]["source"] == metadata.to_dict()
     assert service.settings.read_saved() == before

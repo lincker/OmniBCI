@@ -46,7 +46,7 @@ requirements section retain their existing behavior.
 | `signal_type` | Optional required signal type for every final input channel, for example `eeg`. Omit to impose no type restriction. |
 | `min_count` | Positive integer minimum for the final input's signal-channel count. The trigger row does not count. |
 | `required_names` | Mandatory channel names, as an unordered subset. Extra channels are allowed. An empty list imposes no named-channel requirement. |
-| `default_names` | Ordered suggestions for output names. The user binds them to Acquisition channel IDs; names alone do not establish a mapping. |
+| `default_names` | Ordered suggestions for output names. The user binds them to Acquisition channel IDs or source row positions; names alone do not establish a mapping. |
 
 Channel names must match the final mapped input names, including spelling and
 case. A nonempty default selection must satisfy the minimum count and contain
@@ -67,6 +67,14 @@ In the Signal Processing binding editor, Acquisition channels are on the left an
 ordered algorithm inputs are on the right. Users can select all channels or bind
 individual sources, including an explicit different-name binding such as
 `{"name": "Oz", "source_channel_id": "channel-0", "signal_type": "eeg"}`.
+**Manual mapping** also supports offline bindings such as
+`{"name": "Oz", "source_channel_index": 2, "signal_type": "eeg"}` for source
+row 3. Each binding uses exactly one source ID or zero-based signal-row index.
+The final event row is excluded. Manual rows can be generated, edited, added,
+removed, and reordered, then saved independently in a Decoder Profile. They
+remain **Not verified** until previewed against current Acquisition Metadata.
+Preview and runtime preparation resolve row indices against the real descriptor
+and reject missing rows, duplicate source selections, and type conflicts.
 The optional type declaration fills an unknown Acquisition type and rejects a
 conflict with a known type. It does not edit the Acquisition descriptor. Mapping
 only selects, orders, and renames signal rows; it preserves sample amplitudes and
