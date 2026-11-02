@@ -135,6 +135,10 @@ class Scan45DataReader(SignalSource):
         self._packets_counter = 0
 
     @property
+    def trigger_is_level(self) -> bool:
+        return True
+
+    @property
     def resume_without_checkpoint_safe(self) -> bool:
         """Scan45 starts live network delivery without seeking recorded data."""
         return True

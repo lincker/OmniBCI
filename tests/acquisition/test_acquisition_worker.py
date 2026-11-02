@@ -2,6 +2,7 @@
 
 from queue import Queue
 from pathlib import Path
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,6 +13,25 @@ from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
 from omnibci.shared.events import EventType
+
+
+def test_managed_worker_forwards_runtime_logs_with_source_context():
+    records = Queue()
+    worker = AcquisitionWorker(command_queue=Queue(), log_queue=records, settings_snapshot={
+        "ACQUISITION.signal_source": "selected-source", "CONFIG.generation": "generation",
+    })
+    worker.data_source = MagicMock(spec=SignalSource)
+    with patch("omnibci.infrastructure.acquisition.worker.AcquisitionRuntime") as runtime_class:
+        runtime = runtime_class.return_value
+        runtime.source_id, runtime.generation = "selected-source", "generation"
+        runtime.run.side_effect = lambda: logging.getLogger(
+            "omnibci.infrastructure.acquisition.preprocessing"
+        ).info("Trigger preprocessing: sequence_id=1 suppressed=2")
+        worker._run()
+    message = records.get_nowait()["msg"]
+    assert "source_id=selected-source generation=generation" in message
+    assert "sequence_id=1 suppressed=2" in message
+    assert records.empty()
 
 
 def test_run_loads_source_before_running_runtime():

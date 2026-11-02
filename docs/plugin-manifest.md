@@ -161,9 +161,33 @@ Paradigms receive the selected trigger through `bind_trigger()` before setup.
 Acquisition, Signal Processing, Stimulation, and Actuation load only their selected
 entrypoints. A missing pinned selection never falls back to a legacy alias.
 
+### Signal-source trigger semantics
+
+`SignalSource.trigger_is_level` is an optional Python capability, defaulting to
+`False`. Return `True` only when the final event row contains codes held over
+consecutive samples. Scan45 and Curry8 declare it. The host then keeps the first
+sample of each nonzero code and clears immediately repeated values, preserving
+code changes: `7,7,8,8` becomes `7,0,8,0`. This happens after protocol decoding
+and before processing-queue and acquisition-preview publication.
+
+Discrete event sources, including File Reader's CNT annotations, leave this
+capability false so adjacent independent events remain intact. Undeclared
+sources retain their existing values. The capability is not a manifest field,
+Profile parameter, or inference from `SignalInfo.native_event`; byte extraction
+and device protocol interpretation remain the source plugin's responsibility.
+
+Host preprocessing state spans chunks within one read. It resets when a stopped
+stream starts again or a new connection is established, preserving the first
+nonzero sample after that boundary. An already-running Start is idempotent and
+does not reset it. These resets also apply when a source restores a checkpoint;
+the host does not extend the source checkpoint format with preprocessing state.
+Discrete File Reader events are unaffected. See
+[shared trigger preprocessing](channel-mapping.md#shared-trigger-preprocessing)
+for the processing boundary and extension contract.
+
 ### Signal-source resumption
 
-`SignalSource` exposes two optional capabilities, both disabled by default:
+`SignalSource` exposes two optional resumption capabilities, both disabled by default:
 
 - `supports_checkpoint`: `checkpoint()` captures the next undelivered sample
   after acquisition has stopped and its fetch task has joined.

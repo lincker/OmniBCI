@@ -2,6 +2,17 @@
 
 Date: 2026-10-22. Branch: `refactor/acquisition`. Audited source commit: `e9154ad`.
 
+Current trigger behavior (2026-11-02): Scan45's parser preserves decoded event
+samples; the shared AcquisitionRuntime preprocessing step now suppresses
+consecutive equal nonzero values for explicitly declared level-trigger sources
+(Scan45 and Curry8). Different nonzero codes are retained, and discrete file
+events are unchanged. Queue consumers and preview see the same processed event
+row. State spans chunks but resets on a new read or connection. See
+[shared trigger preprocessing](channel-mapping.md#shared-trigger-preprocessing).
+This note supersedes the historical inventory's claims that the Scan45 parser
+performs suppression or that `_previous_event` is required for live suppression;
+the original audited line references and retention decisions remain below.
+
 Audit revision: the user subsequently requested retaining counters and useful information for a future Web view of selected data inside acquisition packets/chunks. The revised retention decisions below supersede the original A4/P4 deletion proposal and P9 formatter retirement. That analysis revision changed the report only; implementation was authorized subsequently, as recorded below.
 
 Confirmed delivery scope: phase one inspects normalized acquisition output chunks. Native protocol headers/raw-byte inspection is deferred to a later phase. This supersedes the intervening raw-packet-first preference; it does not authorize implementation or pending deletion batches by itself.
@@ -14,7 +25,7 @@ Delivery acceptance: inspect a finite, bounded selection of acquisition-output c
 
 The user subsequently requested one green dot per received data block and confirmed automatic collection while reading, retaining the latest 32 blocks. This supersedes the finite, manually started Web capture described in the original delivery record below.
 
-- Each successful stream start creates a continuous preview before the first source read. The default selection includes all available signal rows up to 16, plus the original trigger row, and up to 512 sample columns within the 8,192-value budget. Small chunks are retained as complete matrices; larger chunks retain the explicitly bounded selection.
+- Each successful stream start creates a continuous preview before the first source read. The default selection includes all available signal rows up to 16, plus the final event row after source preprocessing, and up to 512 sample columns within the 8,192-value budget. Small chunks are retained as complete matrices; larger chunks retain the explicitly bounded selection.
 - Continuous capture has no 32-observation, 10-second or cumulative-byte stopping condition. Per-frame size, the eight-slot nonblocking channel and the 32-frame / 4 MiB retained-cache bounds still apply. Preview drops remain separate from source/processing failures. Only successfully cached blocks produce green dots.
 - The inspector opens by default and refreshes its list every 250 ms while open. Dots follow reception order from oldest to newest; later blocks replace the oldest retained blocks. Each dot identifies its chunk sequence and sample count and supports keyboard activation.
 - Clicking a dot loads that block's matrix. New blocks do not change the selected sequence. A loaded matrix stays visible if its block leaves the live window, with an explicit notice; only that one client-side snapshot is held. Temporary polling errors also preserve the loaded selection. A new capture or generation resets the selection.

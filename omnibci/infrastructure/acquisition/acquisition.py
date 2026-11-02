@@ -17,6 +17,7 @@ from omnibci.domain.signal_info import SignalInfo
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.domain.signal import SignalChunk
 from omnibci.application.acquisition_preview import PreviewSelection
+from omnibci.infrastructure.acquisition.preprocessing import ChunkPreprocessor, TriggerEdgePreprocessor
 from omnibci.infrastructure.acquisition.preview_capture import PreviewCapture
 from omnibci.shared.events import Event, EventType
 
@@ -99,6 +100,9 @@ class AcquisitionRuntime:
         preview_queue=None,
     ) -> None:
         self.data_source = data_source
+        self._preprocessors: tuple[ChunkPreprocessor, ...] = (
+            (TriggerEdgePreprocessor(),) if getattr(data_source, "trigger_is_level", False) is True else ()
+        )
         self.command_queue = command_queue
         self.fetch_task: Optional[asyncio.Task] = None
         self.data_manager = data_manager
@@ -324,6 +328,7 @@ class AcquisitionRuntime:
                 "Data source did not enter the connected state",
             )
         self.connection_id = uuid4().hex
+        self._reset_preprocessors("connect")
         self._clear_metadata()
         self._emit_state()
 
@@ -369,6 +374,7 @@ class AcquisitionRuntime:
                 "STREAM_START_FAILED",
                 "Data source did not enter the streaming state",
             )
+        self._reset_preprocessors("stream_start")
         try:
             if self.preview.queue is not None:
                 self.preview.start(uuid4().hex, None, self._preview_identity(), continuous=True)
@@ -377,6 +383,16 @@ class AcquisitionRuntime:
         self.fetch_task = asyncio.create_task(self.fetch())
         logger.info('Fetch task started')
         self._emit_state()
+
+    def _reset_preprocessors(self, reason: str) -> None:
+        for preprocessor in self._preprocessors:
+            preprocessor.reset()
+        logger.info(
+            "Acquisition preprocessing: reason=%s source_id=%s generation=%s "
+            "connection_id=%s steps=%s",
+            reason, self.source_id, self.generation, self.connection_id,
+            ",".join(type(step).__name__ for step in self._preprocessors) or "passthrough",
+        )
 
     async def _on_stop_stream(self) -> None:
         self.preview.finish("source_stopped")
@@ -517,6 +533,8 @@ class AcquisitionRuntime:
                     raw_data=raw_data,
                     sequence_id=self._last_sequence + 1,
                 )
+                for preprocessor in self._preprocessors:
+                    chunk = preprocessor.process(chunk)
                 # TODO: Consider validating data matrices against the acquisition descriptor in the future.
                 self.data_manager.put_data(chunk)
                 self._last_sequence = chunk.sequence_id

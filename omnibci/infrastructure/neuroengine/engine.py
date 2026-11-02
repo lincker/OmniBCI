@@ -7,6 +7,7 @@ from queue import Full
 
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
+from omnibci.infrastructure.acquisition.logging import AcquisitionLogListener
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
 from omnibci.infrastructure.acquisition.preview_cache import PreviewCache
 from omnibci.infrastructure.ipc.data_manager import DataManager
@@ -72,10 +73,12 @@ class NeuroEngine:
         generation: str | None = None,
         allow_process_termination: bool = True,
         preview_cache: PreviewCache | None = None,
+        acquisition_logs: AcquisitionLogListener | None = None,
     ) -> None:
         self.event_bus = event_bus
         self.data_manager = data_manager
         self.preview_cache = preview_cache
+        self.acquisition_logs = acquisition_logs
         self.acquisition_worker = acquisition_worker
         self.acquisition_command_queue = acquisition_command_queue
         self.signal_processing_worker = signal_processing_worker
@@ -193,7 +196,8 @@ class NeuroEngine:
             return
         if any((self._acquisition_started, self._processor_started,
                 self._event_bus_started, self._gateway_started)) or (
-                    self.preview_cache is not None and not self.preview_cache.stopped):
+                    self.preview_cache is not None and not self.preview_cache.stopped) or (
+                    self.acquisition_logs is not None and not self.acquisition_logs.stopped):
             raise RuntimeError("NeuroEngine is in a partial lifecycle state")
         if self._shutdown_complete:
             raise RuntimeError("A stopped NeuroEngine graph cannot be restarted")
@@ -203,6 +207,8 @@ class NeuroEngine:
             # publish.  Registering after the gateway bind left a small window
             # where a valid inbound event could be consumed and then lost.
             self._register_event_listeners()
+            if self.acquisition_logs is not None:
+                self.acquisition_logs.start()
             if self.preview_cache is not None:
                 await self.preview_cache.start()
             self.acquisition_worker.start()
@@ -341,6 +347,14 @@ class NeuroEngine:
             else:
                 setattr(self, attr, False)
 
+        if self.acquisition_logs is not None and not self._acquisition_started:
+            try:
+                if not await asyncio.to_thread(self.acquisition_logs.stop):
+                    raise RuntimeError("Acquisition log consumer did not stop")
+            except Exception as exc:
+                errors.append(exc)
+                logger.exception("Error stopping acquisition log consumer")
+
         if self.preview_cache is not None:
             try:
                 await self.preview_cache.stop()
@@ -373,7 +387,8 @@ class NeuroEngine:
             self._acquisition_started or self._processor_started
         )
         preview_stopped = self.preview_cache is None or self.preview_cache.stopped
-        if workers_stopped and preview_stopped and not self._event_bus_started and not self._queues_closed:
+        logs_stopped = self.acquisition_logs is None or self.acquisition_logs.stopped
+        if workers_stopped and preview_stopped and logs_stopped and not self._event_bus_started and not self._queues_closed:
             queue_errors = []
             for queue in (
                 self.processor_command_queue,
@@ -397,6 +412,7 @@ class NeuroEngine:
             and self._queues_closed
             and self._startup_channels_closed
             and (self.preview_cache is None or self.preview_cache.stopped)
+            and logs_stopped
         )
         if errors:
             raise ExceptionGroup("NeuroEngine shutdown failed", errors)

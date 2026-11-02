@@ -33,6 +33,15 @@ class SignalSource(ABC):
         return self._is_streaming
 
     @property
+    def trigger_is_level(self) -> bool:
+        """Whether repeated trigger samples represent a held level, not events.
+
+        The host compresses held values into one-sample events. Sources must
+        explicitly opt in; discrete events and existing plugins pass through.
+        """
+        return False
+
+    @property
     def supports_checkpoint(self) -> bool:
         """Whether a stopped source can resume its next undelivered sample."""
         return False

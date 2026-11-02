@@ -194,6 +194,10 @@ class Curry8DataReader(SignalSource):
         self._metadata: Curry8Metadata | None = None
 
     @property
+    def trigger_is_level(self) -> bool:
+        return True
+
+    @property
     def resume_without_checkpoint_safe(self) -> bool:
         """NetStreaming starts live EEG delivery without a replay request."""
         return True
