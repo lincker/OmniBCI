@@ -17,7 +17,7 @@ the unchanged Scan45 implementation. REST payload keys `descriptor` and
 flowchart LR
     S["Device / File"] --> P
     subgraph A["Acquisition"]
-        P["Source plugin<br/>Protocol parsing and data conversion"] --> R["Acquisition runtime<br/>Connection, reading, publishing"]
+        P["Source plugin<br/>Protocol parsing and data conversion"] --> R["Acquisition runtime<br/>Connection, reading, preprocessing, publishing"]
         R --> O["SignalInfo<br/>SignalChunk"]
     end
     O --> M["Signal Processing<br/>Channel mapping and type declarations"]
@@ -169,6 +169,81 @@ and delivery of `SignalChunk` objects. Stopping still waits for the read task,
 and stream draining still sends a barrier after the final chunk. Channel mapping
 and signal processing remain downstream.
 
+### Shared trigger preprocessing
+
+After constructing a `SignalChunk` from the source's decoded data, the runtime
+passes it through an ordered sequence of `ChunkPreprocessor` steps before
+publishing it to the processing queue and acquisition preview. Both consumers
+receive the same processed event values. This boundary precedes channel mapping,
+epoch detection, and any future distribution to multiple Decoders.
+
+`SignalSource.trigger_is_level` explicitly identifies a source whose final row
+holds event codes over consecutive samples. Its default is `False`; Scan45 and
+Curry8 declare `True`. The runtime applies `TriggerEdgePreprocessor` only to
+sources that declare this capability. File Reader produces discrete events from
+CNT annotations and keeps them unchanged, including adjacent equal event codes.
+Sources without the declaration also remain unchanged; neither a plugin name
+nor `SignalInfo.native_event` is used to infer this capability. Device-specific
+event decoding, including the stimulus-byte extraction, remains in the source
+plugin.
+
+The trigger step preserves the first sample of each nonzero code and clears
+only immediately repeated values: `7,7,8,8,0,7` becomes `7,0,8,0,0,7`. A change
+to another nonzero code is preserved without requiring a zero in between. State
+uses the previous original input value and continues across chunks, so chunks
+`[7,7]` and `[7,8,8]` become `[7,0]` and `[0,8,0]`.
+
+Each successful transition from stopped to reading resets preprocessing state,
+including resume after a pause. A new connection resets it as well. Thus the
+first nonzero sample of a new read is preserved even if the previous read ended
+with the same code. Repeating Start while already reading does not reset state.
+This policy does not assume that a live source delivered every sample during a
+pause. File checkpoint positions remain source-owned; discrete file events need
+no trigger preprocessing state.
+
+The preview shows these processed events, not the original held-pulse width.
+Preprocessing does not mutate source arrays or file caches. The trigger step
+copies a chunk's matrix only when it must clear repeated values; signal samples,
+dtype, shape, timestamp, sequence ID, and sample positions remain unchanged.
+
+The extension point is the small `process(SignalChunk) -> SignalChunk` and
+`reset()` contract in `infrastructure/acquisition/preprocessing.py`. Additional
+steps can run in order under the same lifecycle. This contract preserves shape,
+sample rate, and sample positions; resampling or changing channel dimensions
+would also require an explicit descriptor contract. It does not introduce a
+plugin registry, user-configurable chain, or changes to the epoch Filter chain.
+
+#### Preprocessing logs
+
+At `INFO`, each chunk containing nonzero triggers produces one summary with its
+sequence ID, sample count, input nonzero count, retained event count, suppressed
+count, previous input value, and last input value. `kept_events` lists at most
+eight retained `(sample offset, event code)` pairs; offsets are zero-based within
+that chunk, and `events_truncated` indicates additional retained events. Counts
+always cover the complete chunk. Empty and all-zero chunks do not emit summaries,
+and EEG arrays are never included.
+
+For example, `7,7,8,8` at the start of a stream produces:
+
+```text
+Trigger preprocessing: sequence_id=12 samples=4 input_nonzero=4 kept=2 suppressed=2 previous_trigger=0 last_trigger=8 kept_events=[(0, 7), (2, 8)] events_truncated=False
+```
+
+Lifecycle records identify the source, generation, connection, and reset reason
+(`connect` or `stream_start`). Their step list also shows `passthrough` when no
+preprocessing is enabled, including discrete File Reader events. Repeated Start
+on an already-running stream does not report another reset.
+
+Managed acquisition forwards these diagnostics over a separate bounded logging
+channel to the backend's existing file sink. They are visible in **Settings →
+Logs** and the current backend log file; no signal, event, or command queue is
+used for logging. The configured backend log level still applies, so `WARNING`
+or higher hides these `INFO` records. Logging is best-effort: saturation can drop
+diagnostics without blocking acquisition or changing trigger processing.
+Worker exit may also discard diagnostics still waiting in its queue feeder.
+Shutdown waits a bounded time for the consumer; if that consumer cannot stop,
+the engine reports incomplete cleanup rather than declaring its resources closed.
+
 ## Signal Processing mapping
 
 A decoder profile owns an ordered `ProcessingInput` with schema version 2:
@@ -183,11 +258,35 @@ A decoder profile owns an ordered `ProcessingInput` with schema version 2:
 }
 ```
 
-Bindings identify Acquisition channels by ID, never by label. Explicit output
-names and selected source IDs must be unique. Missing IDs block preparation.
+Each binding identifies an Acquisition channel by exactly one of
+`source_channel_id` or `source_channel_index`, never by label. The index is a
+zero-based signal row; the editor displays source row numbers starting at 1.
+For example, `{"source_channel_index": 2, "name": "Oz", "signal_type": "eeg"}`
+maps source row 3 to the decoder input `Oz`. Row bindings follow the configured
+row position, while ID bindings follow the source's channel identity. The host
+resolves both against the actual descriptor, including sources with custom IDs.
+Explicit output names and selected source rows must be unique. Missing IDs,
+out-of-range indices, event rows, and two bindings resolving to the same source
+channel block preparation.
 An empty `outputs` list selects all source signal rows in their original order;
 it does not mean zero channels. Decoder `default_names` are suggestions that the
 user can match to unique source labels after a descriptor is available.
+
+**Manual mapping** supports configuring a Decoder Profile before Metadata is
+available. Generate `CH1` through `CHN` by entering a signal-channel count, then
+edit source row numbers, decoder input names, and optional types. Rows can be
+added, removed, and reordered. The count excludes the final event row: a source
+with 10 total output rows has 9 signal rows. Event data remains automatically
+preserved at the end of the mapped output.
+
+Save the mapping with **Save profile**; each Decoder Profile retains its own
+mapping. The editor shows **Not verified** until a successful preview against
+current Metadata. Get Metadata in Acquisition, then refresh the source in the
+mapping editor and use **Preview mapping** to check source rows, types, and
+decoder requirements. New Metadata does not overwrite the manual mapping.
+Offline saving does not create source metadata or bypass preparation before
+streaming. **Use all channels** retains its dynamic behavior; without Metadata,
+there are no known source rows to display.
 
 A binding may declare `eeg`, `eog`, `ecg`, `emg`, or `misc` for an unknown source
 type. Without a declaration, it inherits the source type. A declaration cannot

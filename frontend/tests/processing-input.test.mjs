@@ -105,7 +105,7 @@ async function withInput(action, { value = mapping("C3", "C4"), descriptor = sou
   api.preview = async (processing_input, expected_source_revision, decoder_selection) => {
     calls.preview.push(clone({ processing_input, expected_source_revision, decoder_selection }));
     const outputs = processing_input.outputs.length ? processing_input.outputs : descriptor.channels.map((channel) => ({ name: channel.name, source_channel_id: channel.channel_id }));
-    const indices = outputs.map((row) => descriptor.channels.findIndex((channel) => channel.channel_id === row.source_channel_id));
+    const indices = outputs.map((row) => row.source_channel_index ?? descriptor.channels.findIndex((channel) => channel.channel_id === row.source_channel_id));
     return { plan: { source: clone(descriptor), source_indices: indices,
       output_channels: outputs.map((row, index) => ({ ...descriptor.channels[indices[index]], name: row.name,
         signal_type: row.signal_type ?? descriptor.channels[indices[index]]?.signal_type })),
@@ -240,6 +240,99 @@ test("an unavailable descriptor keeps saved mappings editable and directs metada
   }, { descriptor: null });
 });
 
+test("manual mappings generate and edit signal rows offline without inventing channel IDs", async () => {
+  await withInput(async (view, calls) => {
+    assert.match(text(view.tree), /Not verified/);
+    await click(view, "Manual mapping");
+    assert.equal(calls.change.length, 0);
+    await change(view, "Signal channel count (excluding event row)", "3");
+    await click(view, "Generate channels");
+    assert.deepEqual(view.props.value.outputs, [0, 1, 2].map((index) => ({ name: `CH${index + 1}`, source_channel_index: index })));
+    await change(view, "Input 1 source row", "5");
+    await change(view, "Input 1 name", "Oz");
+    await change(view, "Input 1 type", "eeg", "select");
+    await click(view, "Move input 1 down");
+    assert.deepEqual(view.props.value.outputs[1], { name: "Oz", source_channel_index: 4, signal_type: "eeg" });
+    await click(view, "Remove input 1");
+    await click(view, "Add channel");
+    assert.deepEqual(view.props.value.outputs, [
+      { name: "Oz", source_channel_index: 4, signal_type: "eeg" },
+      { name: "CH3", source_channel_index: 2 }, { name: "CH1", source_channel_index: 0 },
+    ]);
+    assert.deepEqual(processingInputErrors(view.props.value), []);
+    assert.match(text(view.tree), /Not verified/);
+    assert.equal(button(view, "Preview mapping").props.disabled, true);
+    assert.equal(calls.preview.length, 0);
+    await click(view, "Use all channels");
+    assert.deepEqual(view.props.value, mapping());
+  }, { descriptor: null, value: mapping() });
+});
+
+test("manual generation validates counts and excludes a known event row", async () => {
+  await withInput(async (view, calls) => {
+    await click(view, "Manual mapping");
+    for (const count of ["", "0", "-1", "1.5", "4", "1000000000"]) {
+      await change(view, "Signal channel count (excluding event row)", count);
+      assert.equal(button(view, "Generate channels").props.disabled, true);
+    }
+    assert.equal(calls.change.length, 0);
+    await change(view, "Signal channel count (excluding event row)", "3");
+    await click(view, "Generate channels");
+    assert.deepEqual(view.props.value.outputs.map((row) => row.source_channel_index), [0, 1, 2]);
+    assert.equal(button(view, "Add channel").props.disabled, true);
+    await click(view, "Remove input 3");
+    await click(view, "Remove input 2");
+    assert.equal(button(view, "Remove input 1").props.disabled, true);
+  }, { value: mapping() });
+});
+
+test("manual rows resolve custom channel IDs only after metadata and preserve the saved mapping", async () => {
+  const value = { schema_version: 2, outputs: [{ name: "Right", source_channel_index: 1, signal_type: "eeg" }] };
+  await withInput(async (view, calls) => {
+    api.get = async () => sourceConfig(null);
+    await click(view, "Refresh source");
+    assert.match(text(view.tree), /Not verified/);
+    assert.equal(button(view, "Preview mapping").props.disabled, true);
+    api.get = async () => sourceConfig(source, "source-2");
+    await click(view, "Refresh source");
+    assert.equal(input(view, "Input 1 source row").props.value, 2);
+    assert.deepEqual(view.props.value, value);
+    assert.equal(calls.change.length, 0);
+    await click(view, "Preview mapping");
+    assert.deepEqual(calls.preview[0].processing_input, value);
+    assert.match(text(view.tree), /C4 → Right/);
+    assert.doesNotMatch(text(view.tree), /Not verified/);
+    await change(view, "Input 1 name", "Renamed");
+    assert.match(text(view.tree), /Not verified/);
+  }, { value });
+});
+
+test("metadata rejects manual event rows, out-of-range rows, duplicate sources and conflicting types", async () => {
+  for (const [outputs, message] of [
+    [[{ name: "Event", source_channel_index: 3 }], /event row/],
+    [[{ name: "Missing", source_channel_index: 4 }], /Source row 5 is unavailable/],
+    [[{ name: "Eye", source_channel_index: 0, signal_type: "eog" }], /conflicts/],
+    [[{ name: "First", source_channel_index: 0 }, { name: "Same", source_channel_id: "sample-0" }], /bound only once/],
+  ]) {
+    await withInput(async (view, calls) => {
+      assert.equal(input(view, "Signal channel count (excluding event row)").props.value, String(outputs.length));
+      assert.match(text(view.tree), message);
+      assert.equal(button(view, "Preview mapping").props.disabled, true);
+      assert.equal(calls.change.length, 0);
+    }, { value: { schema_version: 2, outputs } });
+  }
+});
+
+test("offline manual row validation blocks invalid indices and duplicate rows", () => {
+  for (const source_channel_index of [-1, 0.5, NaN, Infinity]) {
+    assert.ok(processingInputErrors({ schema_version: 2, outputs: [{ name: "Input", source_channel_index }] }).length);
+  }
+  assert.ok(processingInputErrors({ schema_version: 2, outputs: [
+    { name: "A", source_channel_index: 0 }, { name: "B", source_channel_index: 0 },
+  ] }).some((error) => /bound only once/.test(error)));
+  assert.ok(processingInputErrors({ schema_version: 2, outputs: [{ name: "A", source_channel_index: 0, source_channel_id: "sample-0" }] }).length);
+});
+
 test("All becomes an ordered subset and removing the last row never switches back to All", async () => {
   await withInput(async (view, calls) => {
     await click(view, "Use C4 only");
@@ -276,7 +369,7 @@ test("duplicate decoder names, source IDs, missing IDs and invalid types prevent
     assert.match(text(view.tree), /Input channel names cannot be empty/);
   });
   assert.deepEqual(processingInputErrors({ schema_version: 2, outputs: [output("C3"), { ...output("C3"), name: "Motor" }] }), ["Each Acquisition channel can be bound only once."]);
-  assert.deepEqual(processingInputErrors({ schema_version: 2, outputs: [{ source_channel_id: "", name: "C3" }] }), ["Each input needs an Acquisition channel ID."]);
+  assert.deepEqual(processingInputErrors({ schema_version: 2, outputs: [{ source_channel_id: "", name: "C3" }] }), ["Each input needs either a source row number or an Acquisition channel ID."]);
   assert.deepEqual(processingInputErrors({ schema_version: 2, outputs: [{ ...output("C3"), signal_type: "trigger" }] }), ["Declare a channel type from EEG, EOG, ECG, EMG, or MISC."]);
 });
 

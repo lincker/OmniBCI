@@ -16,18 +16,26 @@ from omnibci.domain.signal import SignalChunk
 @dataclass(frozen=True)
 class ChannelBinding:
     name: str
-    source_channel_id: str
+    source_channel_id: str | None = None
     signal_type: str | None = None
+    source_channel_index: int | None = None
 
     def __post_init__(self) -> None:
         name(self.name, "output channel name")
-        name(self.source_channel_id, "source_channel_id")
+        if (self.source_channel_id is None) == (self.source_channel_index is None):
+            raise ValueError("Channel binding requires exactly one source_channel_id or source_channel_index")
+        if self.source_channel_id is not None:
+            name(self.source_channel_id, "source_channel_id")
+        else:
+            integer(self.source_channel_index, "source_channel_index")
         if self.signal_type is not None and (not isinstance(self.signal_type, str)
                 or self.signal_type not in {"eeg", "eog", "ecg", "emg", "misc"}):
             raise ValueError("Declared signal_type must be eeg, eog, ecg, emg, or misc")
 
     def to_dict(self) -> dict:
-        result = {"source_channel_id": self.source_channel_id, "name": self.name}
+        source = ({"source_channel_id": self.source_channel_id} if self.source_channel_id is not None
+                  else {"source_channel_index": self.source_channel_index})
+        result = {**source, "name": self.name}
         if self.signal_type is not None:
             result["signal_type"] = self.signal_type
         return result
@@ -35,8 +43,8 @@ class ChannelBinding:
     @classmethod
     def from_dict(cls, value: dict) -> "ChannelBinding":
         data = record(value, "channel binding", set(cls.__dataclass_fields__))
-        if not {"name", "source_channel_id"} <= data.keys():
-            raise ValueError("channel binding requires name and source_channel_id")
+        if "name" not in data:
+            raise ValueError("channel binding requires name")
         return cls(**data)
 
 
@@ -53,7 +61,7 @@ class ProcessingInput:
             raise ValueError("outputs must contain ChannelBinding records")
         if len({output.name for output in outputs}) != len(outputs):
             raise ValueError("Output names must be unique")
-        if len({output.source_channel_id for output in outputs}) != len(outputs):
+        if len({(output.source_channel_id, output.source_channel_index) for output in outputs}) != len(outputs):
             raise ValueError("Acquisition channels cannot be mapped more than once")
         object.__setattr__(self, "outputs", outputs)
 
@@ -160,9 +168,14 @@ def compile_processing_plan(
     channels = []
     indices = []
     for binding in requested:
-        if binding.source_channel_id not in by_id:
-            raise ValueError(f"Missing acquisition channel: {binding.source_channel_id}")
-        channel = by_id[binding.source_channel_id]
+        if binding.source_channel_index is not None:
+            if binding.source_channel_index >= descriptor.signal_channel_count:
+                raise ValueError(f"Source row {binding.source_channel_index + 1} is missing or is the trigger row")
+            channel = descriptor.channels[binding.source_channel_index]
+        else:
+            if binding.source_channel_id not in by_id:
+                raise ValueError(f"Missing acquisition channel: {binding.source_channel_id}")
+            channel = by_id[binding.source_channel_id]
         if channel.signal_type in {"trigger", "stim", "ground"}:
             raise ValueError(f"{channel.signal_type} channel cannot be mapped: {channel.channel_id}")
         if binding.signal_type is not None and channel.signal_type not in {"unknown", binding.signal_type}:

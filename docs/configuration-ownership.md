@@ -5,7 +5,8 @@ reject host changes that the current runtime cannot apply. New activations
 separate host settings from plugin inputs, and runtime projections use pinned
 bindings. Settings has one host editor; the old named Application Profile editor
 and file overlay are removed.
-Playback speed and the reviewed unused settings are also removed. Real-time
+Playback speed and the reviewed unused settings are also removed. Acquisition
+runtime and preprocessing diagnostics use a dedicated logging channel; general
 worker logging remains deferred.
 
 The historical inventory below covers the original 38 leaf keys declared in
@@ -621,12 +622,23 @@ still owns it; it also cannot wait on this sink's file I/O lock.
 `app.state.backend_logging` exposes `file_path`, `is_running`, `dropped_records`,
 and `write_errors` for diagnostics; this batch adds no public diagnostic endpoint.
 
-Only the backend process enables this sink. Acquisition, processing, stimulation,
-Actuation, and standalone entry points are unchanged. Queue operations still
+Only the backend process enables this file sink. Managed Acquisition now forwards
+its runtime and preprocessing diagnostics through a separate bounded process
+channel, including source, generation, and worker PID context. The backend
+consumer writes them through the existing sink, making them available in
+Settings / Logs. Its consumer starts before the worker and drains during worker
+shutdown. Processing, stimulation, Actuation, and standalone entry points retain
+their existing logging behavior. Queue operations still
 consume CPU and briefly synchronize, so this is not a claim of zero real-time
 overhead. Before enabling file logging in real-time workers, measure latency
 under normal and saturated logging load, verify hardware timing, and retain
 separate process queues/files without reusing BCI event or command queues.
+
+The acquisition log channel holds at most 256 records and drops new diagnostics
+when full or unavailable. Workers never wait for the logging feeder at exit, so
+undelivered final messages can be lost. The backend consumer drains with a bounded
+stop timeout. A consumer that cannot stop leaves engine cleanup explicitly
+incomplete; it is not reported as successfully closed.
 
 ## 5. Additional inputs and derived values
 

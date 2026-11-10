@@ -4,12 +4,14 @@ AcquisitionWorker runs a configured signal source in its own process.
 Plugin loading and source construction remain outside the domain layer.
 """
 import multiprocessing as mp
+from contextlib import nullcontext
 from copy import deepcopy
 from typing import Optional
 
 from omnibci.application.processing_source import requires_signal_preparation
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.infrastructure.process_lifecycle import StartupReporter
+from omnibci.infrastructure.acquisition.logging import AcquisitionLogForwarder
 from omnibci.infrastructure.acquisition.acquisition import (
     AcquisitionRuntime,
     CommandQueue,
@@ -35,6 +37,7 @@ class AcquisitionWorker(mp.Process):
         settings_snapshot: dict | None = None,
         startup_reporter: StartupReporter | None = None,
         preview_queue=None,
+        log_queue=None,
     ) -> None:
         super().__init__()
         self.data_source: SignalSource
@@ -46,6 +49,7 @@ class AcquisitionWorker(mp.Process):
         self.settings_snapshot = deepcopy(settings_snapshot)
         self.startup_reporter = startup_reporter
         self.preview_queue = preview_queue
+        self.log_queue = log_queue
         self._startup_stage = "settings"
 
     def run(self) -> None:
@@ -78,10 +82,14 @@ class AcquisitionWorker(mp.Process):
             config_revision=snapshot.get("CONFIG.revision"),
             **({"preview_queue": self.preview_queue} if self.preview_queue is not None else {}),
         )
-        if self.startup_reporter is not None:
-            self.startup_reporter.ready()
-        self._startup_stage = "run"
-        self.runtime.run()
+        forwarding = (AcquisitionLogForwarder(
+            self.log_queue, source_id=self.runtime.source_id, generation=self.runtime.generation,
+        ) if self.log_queue is not None else nullcontext())
+        with forwarding:
+            if self.startup_reporter is not None:
+                self.startup_reporter.ready()
+            self._startup_stage = "run"
+            self.runtime.run()
 
     def _settings_snapshot(self) -> dict:
         if self.settings_snapshot is None:

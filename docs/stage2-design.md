@@ -54,9 +54,13 @@ If EEG is visible but no trial result appears, check:
 
 Scan45 currently uses the Profile's sample rate and total channel count as
 user-declared metadata. It does not query device metadata. Its parser reads the
-low byte of the final data word as the event value and suppresses repeated held
-values. For a stream of nine signal rows plus one event row, configure ten total
-rows, and map only the nine signal rows to the decoder.
+low byte of the final data word as the event value and preserves those samples.
+The shared acquisition preprocessing step suppresses consecutive equal nonzero
+values for Scan45 and Curry8 before queue and preview publication, preserving a
+change to another nonzero code. Discrete file events remain unchanged. See
+[shared trigger preprocessing](channel-mapping.md#shared-trigger-preprocessing).
+For a stream of nine signal rows plus one event row, configure ten total rows,
+and map only the nine signal rows to the decoder.
 
 ## Minimal result lifetime
 

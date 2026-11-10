@@ -244,14 +244,18 @@ def test_legacy_montage_is_not_exposed_by_profile_or_activation_responses(client
     assert "ACQUISITION.manual_montage" not in service.resolve_settings()
 
 
-def test_decoder_profile_saves_and_pins_processing_input(client):
+@pytest.mark.parametrize("sources", [
+    ({"source_channel_id": "channel-1"}, {"source_channel_id": "channel-0"}),
+    ({"source_channel_index": 1}, {"source_channel_index": 0}),
+])
+def test_decoder_profile_saves_and_pins_processing_input(client, sources):
     http, service, _ = client
     profile = create(client, "decoder", "THUBCI_SSVEP_classic40CCA")
     assert profile["processing_input"] == {"schema_version": 2, "outputs": []}
     path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
     channel_input = {"schema_version": 2, "outputs": [
-        {"source_channel_id": "channel-1", "name": "O2", "signal_type": "eeg"},
-        {"source_channel_id": "channel-0", "name": "O1", "signal_type": "eeg"}]}
+        {**sources[0], "name": "O2", "signal_type": "eeg"},
+        {**sources[1], "name": "O1", "signal_type": "eeg"}]}
     updated = http.put(path, json={"name": profile["name"], "parameters": profile["parameters"],
         "expected_revision": profile["revision"], "processing_input": channel_input})
     assert updated.status_code == 200, updated.text

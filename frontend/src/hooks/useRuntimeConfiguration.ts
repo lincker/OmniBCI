@@ -95,7 +95,7 @@ export function useRuntimeConfiguration() {
     updateProfileReview({ ...current, name, ...(current.mode === "create" ? { createName: name } : {}) });
   };
 
-  const review = useCallback(async (body: RuntimePlanRequest, draft?: ProfileReviewDraft) => {
+  const review = useCallback(async (body: RuntimePlanRequest, draft?: ProfileReviewDraft, expectedProfiles: PluginProfile[] = []) => {
     if (pendingProfileSave.current || applying.current) {
       setRequestError({ key: "runtime.profileSaveUncertain" }); return null;
     }
@@ -103,6 +103,13 @@ export function useRuntimeConfiguration() {
     reviewContext.current = null; setProfileReview(null); setSavedProfile(null);
     try {
       const target = await api.plan(body);
+      // Plans pin their parameter snapshot. Verify its profiles before exposing Apply.
+      const kinds = [...new Set(expectedProfiles.map((profile) => profile.kind))];
+      const latest = (await Promise.all(kinds.map((kind) => profilesApi.profiles(kind)))).flat();
+      if (expectedProfiles.some((expected) => !latest.some((profile) => profile.profile_id === expected.profile_id
+          && profile.revision === expected.revision))) {
+        setRequestError({ key: "runtime.profileSaveConflict" }); return null;
+      }
       if (draft) {
         const state = initialProfileReview(draft, t("profiles.copyName", { name: draft.profile?.name ?? draft.name }).slice(0, 64));
         reviewContext.current = { reviewedPlanId: target.plan_id, planId: target.plan_id,

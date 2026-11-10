@@ -178,11 +178,15 @@ def test_retired_manual_source_montage_is_not_applied(runtime):
     assert before.bindings[0].legacy == {}
 
 
-def test_decoder_input_edit_requires_rebuild_and_review_uses_profile_input(runtime):
+@pytest.mark.parametrize("first_source,summary", [
+    ({"source_channel_id": "channel-1"}, "Channels: channel-1 → O2 (eeg), channel-0 → O1"),
+    ({"source_channel_index": 1}, "Channels: row 2 → O2 (eeg), channel-0 → O1"),
+])
+def test_decoder_input_edit_requires_rebuild_and_review_uses_profile_input(runtime, first_source, summary):
     service, selections, before = runtime
     profile = service.profiles.repository.get_profile(selections[1]["profile_id"])
     input_a = ProcessingInput.from_dict({
-        "outputs": [{"source_channel_id": "channel-1", "name": "O2", "signal_type": "eeg"},
+        "outputs": [{**first_source, "name": "O2", "signal_type": "eeg"},
                     {"source_channel_id": "channel-0", "name": "O1"}],
     })
     service.profiles.update(profile.profile_id, name=profile.name, parameters=profile.parameters,
@@ -193,7 +197,7 @@ def test_decoder_input_edit_requires_rebuild_and_review_uses_profile_input(runti
     assert plan.strategy == "rebuild"
     assert plan.changed_slots == ("processing.decoder",)
     assert plan.changed_settings == ()
-    assert plan.signal_summary == "Channels: channel-1 → O2 (eeg), channel-0 → O1"
+    assert plan.signal_summary == summary
     candidate = service.resolve_plan(plan.plan_id).snapshot
     assert candidate.bindings[1].processing_input == input_a
     assert "SIGNAL.setup" not in candidate.settings

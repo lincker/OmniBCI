@@ -1,7 +1,7 @@
 """Typed contracts for source metadata, processing input, and resolved plans."""
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 from pydantic_core import PydanticCustomError
 
 from omnibci.presentation.schemas.plugin_selection import PluginSelectionResponse
@@ -14,8 +14,24 @@ class SignalModel(BaseModel):
 
 class ChannelBindingModel(SignalModel):
     name: str
-    source_channel_id: str
+    source_channel_id: str | None = None
+    source_channel_index: int | None = Field(default=None, ge=0,
+        description="Zero-based signal row, excluding the final event row. Use either this or source_channel_id.")
     signal_type: Literal["eeg", "eog", "ecg", "emg", "misc"] | None = None
+
+    @model_validator(mode="after")
+    def source_reference(self):
+        if (self.source_channel_id is None) == (self.source_channel_index is None):
+            raise ValueError("Channel binding requires exactly one source_channel_id or source_channel_index")
+        return self
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler):
+        data = handler(self)
+        for key in ("source_channel_id", "source_channel_index"):
+            if data.get(key) is None:
+                data.pop(key, None)
+        return data
 
 
 class ProcessingInputModel(SignalModel):

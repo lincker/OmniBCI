@@ -12,37 +12,39 @@ The profile selector and sidebar show only profiles for that exact contribution
 and version. Installed managed packages must be enabled in Extensions before
 they appear; bundled plugins are available directly.
 
-Acquisition shows **Plugin and version** first, with a selector for an existing
-Profile. **New configuration** starts from plugin defaults. Enter the address/port
-or recording path, then **Review and apply configuration**. Naming and saving are
-part of that final review; there is no separate acquisition Save profile step.
+All four modules expose **Profile name**, **New profile**, and **Save profile**.
+New profile starts from plugin defaults and prefills **Profile name** with
+`new profile 1`, incrementing to the first unused number among saved names for
+the same plugin contribution and version. The name remains editable; saving
+creates a named profile. Editing and saving an existing profile updates its
+revision. **Duplicate profile** saves a
+separate copy. Ctrl/Cmd+S saves the current profile without applying it. Profiles
+can be configured and saved independently of the engine and device connection.
 
-For a first configuration, Review proposes an editable profile name. Confirming
-saves a new Profile and applies it. For an existing Profile with changed parameters,
-the same dialog lists the old and new values and defaults to **Save as new profile**;
-**Update original profile** is an explicit alternative. An unchanged Profile is
-applied without another save or revision increment. Cancel leaves the editor draft
-intact and performs no save or application. Ctrl/Cmd+S opens this review in Acquisition.
-Other modules retain their existing explicit Save profile controls.
+**Review and apply profile** requires a saved profile. If the profile is new or
+has unsaved edits, a dialog lists the old and new names, parameters, and decoder
+channel mappings and asks the user to save first. Secret values are masked.
+Its only button, **Continue editing**, returns to the profile name field.
+This check also covers filter-chain review and adding filter instances. Saving
+does not apply the profile; review and confirm application separately after saving.
 
-Saving and runtime application use separate existing backend requests. After saving,
-the frontend replans using the saved profile reference and checks that its target and
-runtime impact still match the reviewed plan. Changed impact requires another review.
-A later Apply failure leaves the saved Profile available and is reported as saved but
-not applied; retry does not save it again. An uncertain save response is reconciled
-before any retry, rather than blindly creating a duplicate. Neither saving nor Apply
-claims that a device connection or data acquisition has been tested.
+Application uses the saved profile reference and retains the existing runtime
+impact review. Before showing confirmation, the console checks that profiles
+being applied still have the revisions shown in the editor; concurrent changes
+require a reload. An Apply failure leaves the saved profile available for retry
+without saving again. Neither saving nor applying verifies a device connection
+or starts data acquisition.
 
 **Connect** uses the applied configuration and starts the engine if needed. It does
 not read metadata, start reading, or apply editor changes. **Get Metadata** is separate;
 a metadata error does not mark a connected source as disconnected. **Disconnect**
 releases the source after reading stops. Current parameters and the profile binding
 are restored after refresh. Existing inline source activations remain readable;
-reviewing one now creates its named Profile.
+save one as a named profile before reviewing and applying it.
 
 Curry8 and File Reader can be applied and connected without expected sample rate
-or output rows. **Use observed values** copies metadata into the draft; final Review
-handles saving and application. For Curry8 it also adopts optional `channel_labels`
+or output rows. **Use observed values** copies metadata into the draft; save the
+profile before reviewing and applying it. For Curry8 it also adopts optional `channel_labels`
 in complete native row order, including the final `Trigger` row, blank labels and
 duplicates. Invalid or unavailable labels remove stale draft labels. This snapshot
 does not change channel mapping; live `SignalInfo` remains authoritative for Signal
@@ -85,6 +87,13 @@ Signal Processing separates Decoder, Epoch boundary detector, and the ordered Fi
 filter instance selects its own plugin and profile. Browsing or saving another
 profile preserves pending filter order; applying the chain is a separate action.
 
+Each Decoder Profile can save its own **Manual mapping** offline. Generate
+signal channels, edit their source row numbers, names and types, and add, remove,
+or reorder them before saving. Source row numbers start at 1 and exclude the
+final event row. The mapping remains **Not verified** until previewed against
+current Metadata; saving never substitutes manual rows for observed source
+information. See [channel mapping](channel-mapping.md) for validation and storage.
+
 In **Stimulation → Trigger**, choose **None (no trigger output)** and review/apply
 to run stimulation without hardware event output. This removes the trigger binding
 without deleting its saved Profile; no new Profile is needed. Selecting None alone
@@ -101,6 +110,13 @@ cable connected to the amplifier, and an installed InpOut kernel driver and DLL
 matching the Python process (`inpoutx64.dll` for 64-bit, `inpout32.dll` for 32-bit).
 Make the DLL available to the Windows DLL loader, for example alongside the
 Python executable. See the [InpOut installation instructions](https://www.highrez.co.uk/downloads/inpout32/).
+
+Sending markers and clearing both write directly to the configured base address.
+
+InpOut's `Out32` has no success return value. A successful `send()` therefore
+means the function returned, not that output pins changed or CURRY received a
+marker. Mock-driver and ctypes tests verify software addressing only. Verify
+physical output and received marker codes on the Windows stimulation host.
 
 The output uses eight stimulus bits: codes 1–255, with 0 reserved for the idle
 baseline. The paradigm calls `clear()` before each event and at its end;

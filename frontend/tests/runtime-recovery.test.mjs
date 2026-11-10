@@ -564,3 +564,69 @@ for (const conflict of ["changed", "deleted"]) {
     });
   });
 }
+
+for (const conflict of ["changed", "deleted", "changed during planning"]) {
+  test(`saved-profile review refuses a profile ${conflict} after the editor loaded it`, async () => {
+    await withProfileWorkflow(async ({ render, calls, records }) => {
+      const expected = structuredClone(savedSource);
+      const request = { module: "acquisition", bindings: [{ slot: "acquisition.source", profile_id: expected.profile_id }],
+        refresh_slots: ["acquisition.source"], expected_revision: "old-revision", include_host_settings: false };
+      let finishPlan;
+      if (conflict === "changed during planning") {
+        const originalPlan = runtimeConfigApi.plan;
+        runtimeConfigApi.plan = async (body) => {
+          const result = await originalPlan(body);
+          await new Promise((resolve) => { finishPlan = resolve; });
+          return result;
+        };
+      } else if (conflict === "deleted") records.splice(0, 1);
+      else { records[0].revision += 1; records[0].parameters.address = "unseen-device"; }
+      const reviewing = render().review(request, undefined, [expected]);
+      if (conflict === "changed during planning") {
+        for (let index = 0; index < 5; index += 1) await Promise.resolve();
+        assert.equal(render().plan, null, "A pending plan is never exposed for Apply");
+        records[0].revision += 1;
+        records[0].parameters.address = "unseen-device";
+        finishPlan();
+      }
+      assert.equal(await reviewing, null);
+      assert.equal(render().plan, null);
+      assert.match(render().requestError, /profile was changed elsewhere/);
+      assert.equal(await render().apply(), false);
+      assert.equal(calls.plans.length, 1);
+      assert.equal(calls.creates.length + calls.updates.length + calls.applies.length, 0);
+    });
+  });
+}
+
+test("saved-profile review exposes its pinned plan only after the displayed revisions are verified", async () => {
+  await withProfileWorkflow(async ({ render, calls, records }) => {
+    let finishProfiles;
+    const listedKinds = [];
+    profileApi.profiles = async (kind) => {
+      listedKinds.push(kind);
+      assert.equal(calls.plans.length, 1, "Create the immutable plan before checking the current profile revision");
+      await new Promise((resolve) => { finishProfiles = resolve; });
+      return structuredClone(records);
+    };
+    const request = { module: "acquisition", bindings: [{ slot: "acquisition.source", profile_id: savedSource.profile_id }],
+      refresh_slots: ["acquisition.source"], expected_revision: "old-revision", include_host_settings: false };
+    const reviewing = render().review(request, undefined, [structuredClone(savedSource)]);
+    for (let index = 0; index < 5; index += 1) await Promise.resolve();
+    assert.deepEqual(listedKinds, ["acquisition"]);
+    assert.equal(render().plan, null);
+    assert.equal(render().reviewing, true);
+    assert.equal(calls.creates.length + calls.updates.length + calls.applies.length, 0);
+    finishProfiles();
+    const target = await reviewing;
+    assert.equal(target.plan_id, "profile-plan-1");
+    assert.equal(render().plan, target);
+    assert.equal(render().profileReview, null, "Saved-profile review never enters the automatic-save workflow");
+    assert.equal(render().requestError, null);
+    assert.equal(await render().apply(), true);
+    assert.equal(calls.plans.length, 1);
+    assert.equal(calls.creates.length + calls.updates.length, 0);
+    assert.equal(calls.applies.length, 1);
+    assert.equal(calls.applies[0].planId, target.plan_id);
+  });
+});

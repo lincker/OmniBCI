@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from omnibci.infrastructure.acquisition.preview_channel import PreviewChannel
 from omnibci.infrastructure.acquisition.preview_cache import PreviewCache
+from omnibci.infrastructure.acquisition.logging import AcquisitionLogListener
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
@@ -110,6 +111,8 @@ class NeuroEngineBuilder:
         data_manager = DataManager(buffer=data_buffer)
         preview_queue = PreviewChannel()
         preview_cache = PreviewCache(preview_queue, generation=generation)
+        acquisition_log_queue = mp.Queue(maxsize=256)
+        acquisition_logs = AcquisitionLogListener(acquisition_log_queue)
 
         # 3. Command queues
         acquisition_command_queue = mp.Queue(cfg.queue_size)
@@ -133,6 +136,7 @@ class NeuroEngineBuilder:
             settings_snapshot=self._settings_snapshot,
             startup_reporter=acquisition_reporter,
             preview_queue=preview_queue,
+            log_queue=acquisition_log_queue,
         )
         signal_processing_worker = SignalProcessingWorker(
             command_queue=processor_command_queue,
@@ -181,8 +185,9 @@ class NeuroEngineBuilder:
             signal_processing_worker=signal_processing_worker,
             processor_command_queue=processor_command_queue,
             peer_gateway=peer_gateway,
-            owned_ipc_queues=(event_queue, data_buffer, preview_queue),
+            owned_ipc_queues=(event_queue, data_buffer, preview_queue, acquisition_log_queue),
             preview_cache=preview_cache,
+            acquisition_logs=acquisition_logs,
             actuation_translator=actuation_translator,
             actuation_feedback=actuation_feedback,
             debug=cfg.debug,

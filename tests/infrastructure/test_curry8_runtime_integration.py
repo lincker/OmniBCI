@@ -45,8 +45,11 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
         np.linspace(-100, 100, len(times)),
         np.zeros(len(times)),
     ], dtype="<f4")
-    raw[-1, 25] = 1
-    blocks = np.split(raw, [100, 300], axis=1)
+    raw[-1, 25:30] = 1
+    blocks = np.split(raw, [27, 300], axis=1)
+    expected = raw.copy()
+    expected[-1, 26:30] = 0
+    normalized_blocks = np.split(expected, [27, 300], axis=1)
     requests = []
     server_done = asyncio.get_running_loop().create_future()
 
@@ -179,12 +182,17 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
         assert trials[0].trial_number == 1
         assert trials[0].classification.target_id == 1
         assert trials[0].classification.event_id == 1
+        assert processor._epoch_number == 1
+        epochs = [event.data for event in events if event.type is EventType.EpochProcessed]
+        assert len(epochs) == 1
+        assert epochs[0].status == "decoded"
+        assert epochs[0].reason == "prediction"
         assert processor._signal_plan.source_indices == (3, 1, 2)
         assert [channel.signal_type for channel in processor._signal_plan.output_channels] == ["eeg"] * 3
 
         await acquisition_command(AcquisitionCommand.stop_stream, "stop")
         assert [chunk.sequence_id for chunk in received] == list(range(len(blocks)))
-        for chunk, expected in zip(received, blocks, strict=True):
+        for chunk, expected in zip(received, normalized_blocks, strict=True):
             np.testing.assert_array_equal(chunk.raw_data, expected)
             np.testing.assert_array_equal(chunk.triggers, expected[-1])
             assert chunk.raw_data.dtype == expected.dtype

@@ -59,6 +59,58 @@ def test_mapping_tracks_channel_ids_after_source_reordering():
         compile_processing_plan(source(("C3",)), mapping)
 
 
+def test_manual_rows_resolve_custom_channel_ids_and_preserve_the_event_row():
+    mapping = ProcessingInput.from_dict({"schema_version": 2, "outputs": [
+        {"name": "Right", "source_channel_index": 1, "signal_type": "eeg"},
+        {"name": "Left", "source_channel_index": 0, "signal_type": "eeg"},
+    ]})
+    observed = source()
+    plan = compile_processing_plan(observed, mapping)
+    assert plan.source_indices == (1, 0)
+    assert [channel.channel_id for channel in plan.output_channels] == ["id-C4", "id-C3"]
+    assert [channel.name for channel in plan.output_channels] == ["Right", "Left"]
+    raw = np.array([[1, 2, 3], [4, 5, 6], [20, 30, 40], [0, 7, 255]])
+    chunk = plan.apply(SignalChunk(123, 17, raw))
+    np.testing.assert_array_equal(chunk.raw_data, raw[[1, 0, 3], :])
+    assert ResolvedSignalPlan.from_dict(plan.to_dict()) == plan
+    assert ProcessingInput.from_dict(mapping.to_dict()) == mapping
+    assert all("source_channel_id" not in row for row in mapping.to_dict()["outputs"])
+
+
+@pytest.mark.parametrize("index", [3, 4, 100])
+def test_manual_rows_reject_the_event_row_and_missing_rows(index):
+    mapping = ProcessingInput(outputs=(ChannelBinding("Manual", source_channel_index=index),))
+    with pytest.raises(ValueError, match="missing or is the trigger row"):
+        compile_processing_plan(source(), mapping)
+
+
+def test_manual_rows_validate_types_and_duplicates_against_live_channels():
+    observed = source()
+    observed = replace(observed, channels=(*observed.channels[:2], replace(observed.channels[2], signal_type="eog")))
+    with pytest.raises(ValueError, match="conflicts.*id-AUX"):
+        compile_processing_plan(observed, ProcessingInput(outputs=(
+            ChannelBinding("Eye", signal_type="eeg", source_channel_index=2),
+        )))
+    with pytest.raises(ValueError, match="Source indices must be unique"):
+        compile_processing_plan(observed, ProcessingInput(outputs=(
+            ChannelBinding("First", "id-C3"), ChannelBinding("Repeated", source_channel_index=0),
+        )))
+    with pytest.raises(ValueError, match="cannot be mapped more than once"):
+        ProcessingInput(outputs=(ChannelBinding("First", source_channel_index=0),
+                                 ChannelBinding("Repeated", source_channel_index=0)))
+
+
+@pytest.mark.parametrize("reference", [
+    {}, {"source_channel_id": None}, {"source_channel_index": None},
+    {"source_channel_id": "id-C3", "source_channel_index": 0},
+    {"source_channel_index": -1}, {"source_channel_index": True},
+    {"source_channel_index": 1.0}, {"source_channel_index": "1"},
+])
+def test_manual_rows_require_exactly_one_valid_source_reference(reference):
+    with pytest.raises(ValueError):
+        ChannelBinding.from_dict({"name": "Input", **reference})
+
+
 @pytest.mark.parametrize("channel_ids, requires_data_mapping", [
     ((), False),
     (("id-C3", "id-C4", "id-AUX"), False),
@@ -108,7 +160,8 @@ def test_type_declaration_fills_unknown_without_overriding_reported_type():
 def test_non_signal_rows_cannot_be_mapped_or_disguised(signal_type):
     observed = source(("event",))
     observed = replace(observed, channels=(replace(observed.channels[0], signal_type=signal_type),))
-    for mapping in (ProcessingInput(), ProcessingInput(outputs=(ChannelBinding("EEG", "id-event", "eeg"),))):
+    for mapping in (ProcessingInput(), ProcessingInput(outputs=(ChannelBinding("EEG", "id-event", "eeg"),)),
+                    ProcessingInput(outputs=(ChannelBinding("EEG", signal_type="eeg", source_channel_index=0),))):
         with pytest.raises(ValueError, match="cannot be mapped"):
             compile_processing_plan(observed, mapping)
 

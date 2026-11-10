@@ -7,6 +7,7 @@ no processes are started — we only verify the wiring is correct.
 from __future__ import annotations
 
 import multiprocessing as mp
+import asyncio
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -53,6 +54,21 @@ class TestNeuroEngineConfig:
 
 
 class TestNeuroEngineBuilder:
+    def test_acquisition_logs_use_a_separate_bounded_owned_channel(self):
+        engine = NeuroEngineBuilder(settings_snapshot={}).build()
+        try:
+            channel = engine.acquisition_worker.log_queue
+            assert channel is engine.acquisition_logs.queue
+            assert channel._maxsize == 256
+            assert channel in engine._owned_ipc_queues
+            assert all(channel is not other for other in (
+                engine.data_manager.buffer, engine.event_bus._event_queue,
+                engine.acquisition_command_queue, engine.processor_command_queue,
+                engine.acquisition_worker.preview_queue,
+            ))
+        finally:
+            asyncio.run(engine._shutdown_resources())
+
     def test_missing_runtime_snapshot_fails_before_constructing_resources(self):
         with patch("omnibci.infrastructure.neuroengine.builder.mp.Queue") as queue:
             with pytest.raises(ValueError, match="pinned settings snapshot"):

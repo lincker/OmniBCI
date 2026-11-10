@@ -67,11 +67,12 @@ def connected_descriptor(signal_client, signal_type="unknown"):
     return descriptor
 
 
-def test_preview_uses_channel_identity_and_preserves_acquisition_properties(signal_client):
+@pytest.mark.parametrize("source", [{"source_channel_id": "channel-1"}, {"source_channel_index": 1}])
+def test_preview_uses_channel_identity_and_preserves_acquisition_properties(signal_client, source):
     descriptor = connected_descriptor(signal_client)
     before = signal_client.get("/config/signal").json()["data"]
     channel_input = {"schema_version": 2, "outputs": [
-        {"name": "Oz", "source_channel_id": "channel-1", "signal_type": "eeg"}]}
+        {"name": "Oz", **source, "signal_type": "eeg"}]}
     response = signal_client.post("/config/signal/preview", json={
         "processing_input": channel_input, "expected_source_revision": before["source_revision"],
     })

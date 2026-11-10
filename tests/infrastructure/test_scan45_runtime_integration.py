@@ -3,6 +3,7 @@
 import asyncio
 from queue import Queue
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import numpy as np
 import pytest
@@ -11,7 +12,7 @@ from omnibci.application.events import CommandRequest, TrialOutcome
 from omnibci.application.plugin_profiles import ProfileBinding
 from omnibci.application.services.results_service import ResultsService
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
-from omnibci.domain.signal import SignalChunk
+from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.outbound import event_to_wire
@@ -26,7 +27,7 @@ from omnibci.shared.events import EventType
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session_commands():
+async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session_commands(monkeypatch):
     sample_rate = 500
     generation, revision = "scan45-generation", "scan45-revision"
     reader = Scan45DataReader(parameters={"channel_count": 10, "sample_rate": sample_rate})
@@ -65,6 +66,14 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
     }
     bus = EventBus(Queue())
     data = DataManager(Queue())
+    acquired = []
+    put_data = data.put_data
+
+    def capture(chunk):
+        acquired.append(chunk)
+        put_data(chunk)
+
+    monkeypatch.setattr(data, "put_data", capture)
     results = ResultsService(SimpleNamespace(generation=generation))
     prepared = asyncio.get_running_loop().create_future()
     received = asyncio.Event()
@@ -110,18 +119,35 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         expected_events = np.zeros(times.size, dtype=int)
         expected_events[25:30] = 1
 
-        # Split inside the held pulse: Scan45 must preserve every event sample across
-        # packet boundaries while processing aliases change only metadata.
-        for sequence, (start, end) in enumerate(((0, 27), (27, 300), (300, 700))):
+        # The protocol parser preserves the held pulse; the common acquisition
+        # preprocessor emits its onset once even when the pulse spans packets.
+        bounds = ((0, 27), (27, 300), (300, 700))
+        parsed_chunks = []
+        for start, end in bounds:
             body = raw[:, start:end].T.astype("<u4").tobytes()
             parsed = reader._parse_body_data(Scan45Message.Header("DATA", 2, 2, len(body)), body)
             np.testing.assert_array_equal(parsed[:-1], eeg[:, start:end])
             np.testing.assert_array_equal(parsed[-1], expected_events[start:end])
-            chunk = SignalChunk(timestamp=float(sequence), sequence_id=sequence, raw_data=parsed)
+            parsed_chunks.append(parsed)
+
+        monkeypatch.setattr(reader, "read_chunk", AsyncMock(side_effect=[*parsed_chunks, None]))
+        monkeypatch.setattr(reader, "stop_stream", AsyncMock())
+        acquisition = AcquisitionRuntime(
+            reader, Queue(), data, bus, source_id=reader.plugin_type,
+            preparation_required=False, generation=generation, config_revision=revision,
+        )
+        await acquisition.fetch()
+        assert acquisition._fetch_failure is None
+        assert [chunk.sequence_id for chunk in acquired] == [0, 1, 2]
+        normalized_events = np.zeros(times.size, dtype=int)
+        normalized_events[25] = 1
+        for chunk, parsed, (start, end) in zip(acquired, parsed_chunks, bounds, strict=True):
+            np.testing.assert_array_equal(parsed[-1], expected_events[start:end])
+            np.testing.assert_array_equal(chunk.data, eeg[:, start:end])
+            np.testing.assert_array_equal(chunk.triggers, normalized_events[start:end])
             mapped = plan.apply(chunk)
             np.testing.assert_array_equal(mapped.data, eeg[:, start:end])
-            np.testing.assert_array_equal(mapped.triggers, expected_events[start:end])
-            data.put_data(chunk)
+            np.testing.assert_array_equal(mapped.triggers, normalized_events[start:end])
             await processor._current_state.run()
 
         await asyncio.wait_for(received.wait(), timeout=2)
@@ -133,6 +159,8 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         assert outcome.classification.event_id == outcome.classification.target_id == 1
         assert outcome.classification.forced is False
         assert processor.current_epoch is None
+        assert processor._epoch_number == 1
+        assert data.empty()
 
         visible = results.snapshot()
         assert visible["generation"] == generation
