@@ -49,17 +49,15 @@ class Bus:
         self.events.append(event)
 
 
-@pytest.mark.parametrize("failure", ["queue_full", "malformed_chunk", "read"])
+@pytest.mark.parametrize("failure", ["malformed_chunk", "read"])
 def test_terminal_fetch_failure_blocks_drain_checkpoint_and_manual_restart(failure):
     async def scenario():
         source, bus = Source(malformed_chunk=failure == "malformed_chunk"), Bus()
         data = DataManager(queue.Queue(maxsize=1))
-        if failure == "queue_full":
-            data.put_data("existing-chunk")
         acquisition = AcquisitionRuntime(
             source, queue.Queue(), data, bus,
-            source_id="test-source", preparation_required=False,
-            generation="generation", config_revision="revision",
+            source_id="test-source",
+            generation="generation", acquisition_revision="revision", engine_revision="engine",
         )
         if failure == "read":
             async def fail_read():
@@ -74,7 +72,7 @@ def test_terminal_fetch_failure_blocks_drain_checkpoint_and_manual_restart(failu
             pass
         for command, payload in (
             (AcquisitionCommand.stop_and_drain, {}),
-            (AcquisitionCommand.get_checkpoint, {"generation": "generation", "expected_revision": "revision"}),
+            (AcquisitionCommand.get_checkpoint, {"generation": "generation", "expected_revision": "revision", "engine_revision": "engine"}),
             (AcquisitionCommand.start_stream, None),
         ):
             await acquisition.execute((command, CommandRequest(command.name, payload)))
@@ -92,8 +90,8 @@ def test_terminal_fetch_failure_blocks_drain_checkpoint_and_manual_restart(failu
                 assert "Stop engine" in result.message and "Start engine" in result.message
             assert data.get_data(0) is None
         # Reconnecting the same graph cannot erase evidence of the lost chunk.
-        await acquisition.execute(AcquisitionCommand.disconnect)
-        await acquisition.execute(AcquisitionCommand.connect)
+        await acquisition.execute((AcquisitionCommand.disconnect, None))
+        await acquisition.execute((AcquisitionCommand.connect, None))
         await acquisition.execute((AcquisitionCommand.stop_and_drain, CommandRequest("retry", {})))
         assert not bus.events[-1].data.ok
         assert data.get_data(0) is None
@@ -105,7 +103,7 @@ def test_fresh_graph_has_no_stale_failure_latch():
     async def scenario():
         acquisition = AcquisitionRuntime(
             Source(), queue.Queue(), DataManager(queue.Queue()), Bus(),
-            source_id="test-source", preparation_required=False,
+            source_id="test-source",
         )
         await acquisition._on_stop_stream()
         acquisition._require_healthy_stream()

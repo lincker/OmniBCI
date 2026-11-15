@@ -20,7 +20,7 @@ class PreviewCapture:
         self._deadline = None
         self._selection = None
         self._state = {
-            "capture_id": None, "generation": None, "config_revision": None,
+            "capture_id": None, "generation": None, "acquisition_revision": None, "engine_revision": None,
             "source_id": None, "connection_id": None, "status": "idle", "reason": None,
             "continuous": False,
             "observed": 0, "enqueued": 0, "dropped": 0, "oversized": 0, "enqueued_bytes": 0,
@@ -78,7 +78,7 @@ class PreviewCapture:
         self.expire()
         if self._state["status"] != "capturing" or any(
             identity.get(key) != self._state[key]
-            for key in ("generation", "config_revision", "connection_id", "source_id")
+            for key in ("generation", "acquisition_revision", "engine_revision", "connection_id", "source_id")
         ):
             return
         self._state["observed"] += 1

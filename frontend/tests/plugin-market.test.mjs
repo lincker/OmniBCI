@@ -77,7 +77,7 @@ test("an unsettled runtime blocks installation while the library remains readabl
   assert.doesNotMatch(installButton[1], /disabled/);
 });
 
-test("package actions send exact identities and local ZIP bytes to the backend", async () => {
+test("package actions send exact identities and local ZIP bytes to the server", async () => {
   const requests = [];
   const previous = globalThis.fetch;
   globalThis.fetch = async (path, options) => {
@@ -127,9 +127,9 @@ const content = (tree) => Array.isArray(tree) ? tree.map(content).join("")
 async function withMarket(action, { empty = false } = {}) {
   const originalMarket = { ...pluginMarketApi }, originalConfig = { ...pluginConfigApi };
   const contribution = { kind: "epoch_detector", selection: { package_id: "example.events", version: "1.0.0", contribution_id: "edge-detector" } };
-  pluginMarketApi.installed = async () => empty ? [] : [{ package_id: "example.events", version: "1.0.0", label: "Event tools",
+  pluginMarketApi.installed = async () => empty ? [] : [{ package_id: "example.events", version: "1.0.0", domain: "processing", label: "Event tools",
     description: "Marker windows", enabled: true, available: true, references: [], contributions: [contribution] }];
-  pluginMarketApi.catalog = async () => empty ? [] : [{ package_id: "example.events", version: "2.0.0", display_name: "Event tools",
+  pluginMarketApi.catalog = async () => empty ? [] : [{ package_id: "example.events", version: "2.0.0", domain: "processing", display_name: "Event tools",
     repository_id: "official", description: "Marker windows", size: 1024, platforms: [], contributions: [contribution] }];
   pluginConfigApi.profiles = async () => [];
   const hooks = []; let cursor = 0, dirty = true, tree, effects = [];
@@ -208,4 +208,18 @@ test("an empty package inventory does not claim the search hid existing versions
     await harness.search("missing");
     assert.doesNotMatch(content(harness.tree), /match your search/);
   }, { empty: true });
+});
+
+
+test("domain tabs filter exact package versions in installed and repository views", async () => {
+  await withMarket(async (h) => {
+    await h.click("acquisition");
+    assert.match(content(h.tree), /Showing 0 of 1 installed versions/);
+    await h.click("Signal Processing");
+    assert.match(content(h.tree), /Showing 1 of 1 installed versions/);
+    await h.click("Repository");
+    assert.match(content(h.tree), /Showing 1 of 1 repository versions/);
+    await h.click("stimulation");
+    assert.match(content(h.tree), /Showing 0 of 1 repository versions/);
+  });
 });

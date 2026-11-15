@@ -19,8 +19,8 @@ const { openResultsSocket } = await server.ssrLoadModule("/src/api/results-socke
 const { SchemaForm, schemaErrors } = await server.ssrLoadModule("/src/SchemaForm.tsx");
 const { default: App } = await server.ssrLoadModule("/src/App.tsx");
 const { I18nProvider } = await server.ssrLoadModule("/src/i18n.tsx");
-const { recordingPathMissing } = await server.ssrLoadModule("/src/RunConsole.tsx");
-const ready = (id = "backend-A", kind = "local") => ({ id, kind, status: "ready", url: "http://127.0.0.1:49152" });
+const { recordingPathMissing } = await server.ssrLoadModule("/src/hooks/useRuntimeControls.ts");
+const ready = (id = "server-A", kind = "owned") => ({ id, kind, status: "ready", url: "http://127.0.0.1:49152", canChooseRecordingFile: true });
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 beforeEach(() => {
   globalThis.window = { omnibciDesktop: {}, localStorage: { getItem: () => "en" }, navigator: { language: "en" } };
@@ -41,14 +41,14 @@ test("all REST entrypoints carry the current connection and preserve ZIP bytes",
   assert.equal(requests.length, 3);
   requests.forEach((request) => {
     assert.ok(request.path.startsWith("app://omnibci/api/v1/"), "Desktop development requests must not bypass the main-process proxy");
-    assert.equal(request.headers.get("X-OmniBCI-Connection-Id"), "backend-A");
+    assert.equal(request.headers.get("X-OmniBCI-Connection-Id"), "server-A");
     assert.equal(request.redirect, "error");
   });
   assert.equal(requests[2].body, archive);
   assert.equal(requests[2].headers.get("Content-Type"), "application/zip");
 });
 
-test("switching backend aborts the request and discards a delayed consumed response", async () => {
+test("switching server aborts the request and discards a delayed consumed response", async () => {
   const body = deferred();
   const started = deferred();
   let signal;
@@ -59,9 +59,9 @@ test("switching backend aborts the request and discards a delayed consumed respo
   };
   const request = requestJson("/api/v1/engine/status");
   await started.promise;
-  desktop.setDesktopConnection(ready("backend-B", "remote"));
+  desktop.setDesktopConnection(ready("server-B", "existing"));
   assert.equal(signal.aborted, true);
-  body.resolve({ success: true, data: { backend: "A" } });
+  body.resolve({ success: true, data: { server: "A" } });
   await assert.rejects(request, { name: "AbortError" });
 });
 
@@ -107,31 +107,31 @@ test("desktop results subscriptions suppress old connection events and close onc
   let deliver;
   let unsubscribed = 0;
   window.omnibciDesktop.subscribeResults = (id, listener) => {
-    assert.equal(id, "backend-A"); deliver = listener;
+    assert.equal(id, "server-A"); deliver = listener;
     return () => { unsubscribed += 1; };
   };
   const events = [];
   const socket = openResultsSocket((event) => events.push(event));
   deliver({ type: "open" });
   deliver({ type: "message", data: "first" });
-  desktop.setDesktopConnection(ready("backend-B"));
-  deliver({ type: "message", data: "old backend" });
+  desktop.setDesktopConnection(ready("server-B"));
+  deliver({ type: "message", data: "old server" });
   socket.close(); socket.close();
   deliver({ type: "message", data: "after close" });
   assert.deepEqual(events, [{ type: "open" }, { type: "message", data: "first" }, { type: "closed" }]);
   assert.equal(unsubscribed, 1);
 });
 
-test("file fields allow blank setup and offer native selection only on the local backend", () => {
+test("file fields offer native selection according to the connected Server capability", () => {
   const schema = { type: "object", required: ["path"], properties: {
     path: { type: "string", default: "", "x-widget": "file-path", "x-scope": "machine" },
   } };
   assert.deepEqual(schemaErrors(schema, { path: "" }), []);
   const render = () => renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(SchemaForm, { schema, value: { path: "" }, onChange: () => {} })));
   assert.match(render(), /Browse…/);
-  desktop.setDesktopConnection(ready("remote", "remote"));
+  desktop.setDesktopConnection({ ...ready("remote", "existing"), canChooseRecordingFile: false });
   assert.doesNotMatch(render(), /Browse…/);
-  assert.match(render(), /Path on the backend computer/);
+  assert.match(render(), /Path on the server computer/);
   delete window.omnibciDesktop;
   assert.doesNotMatch(render(), /Browse…/);
 });
@@ -139,7 +139,7 @@ test("file fields allow blank setup and offer native selection only on the local
 test("an offline desktop workspace keeps the current page visible with its controls disabled", () => {
   Object.assign(window, { location: { hash: "#run" }, localStorage: { getItem: () => "en" }, navigator: { language: "en" } });
   const render = (status) => renderToStaticMarkup(React.createElement(I18nProvider, null,
-    React.createElement(App, { desktopConnection: { ...ready(), status } })));
+    React.createElement(App, { connected: status === "ready" })));
   const offline = render("failed");
   assert.match(offline, /Run console/);
   assert.match(offline, /<fieldset class="desktop-control-guard" disabled=""/);
@@ -149,12 +149,12 @@ test("an offline desktop workspace keeps the current page visible with its contr
 test("the built-in manifest's qualified File Reader identity requires a recording before starting", async () => {
   const manifest = await readFile(new URL("../../omnibci/infrastructure/plugins/acquisition/file/manifest.toml", import.meta.url), "utf8");
   const identity = `${/^publisher = "([^"]+)"/m.exec(manifest)[1]}.${/^id = "([^"]+)"/m.exec(manifest)[1]}`;
-  const selected = (path, packageId = identity) => ({ bindings: [{ slot: "acquisition.source", selection: { package_id: packageId }, parameters: { data_file_path: path } }] });
+  const selected = (path, packageId = identity) => ({ selection: { package_id: packageId }, parameters: { data_file_path: path } });
   assert.equal(identity, "OmniBCI.file_reader");
   for (const value of [undefined, "", "   "]) assert.equal(recordingPathMissing(selected(value)), true);
   assert.equal(recordingPathMissing(selected("/recordings/subject.cnt")), false);
   assert.equal(recordingPathMissing(selected("", "example.device")), false);
-  assert.equal(recordingPathMissing(null), false);
+  assert.equal(recordingPathMissing(undefined), false);
 });
 
 test("live results and read controls use only results and acquisition endpoints", async () => {

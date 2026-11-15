@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from omnibci.infrastructure.ipc.contracts import encode_event
+from omnibci.infrastructure.ipc.contracts import PROTOCOL_VERSION, encode_event
 from omnibci.infrastructure.ipc import network, peer_transport
 from omnibci.infrastructure.ipc.network import (
     NetworkClient, NetworkServer, StreamCleanupError, read_event_frame,
@@ -14,7 +14,16 @@ from omnibci.infrastructure.ipc.protocol import Frame
 from omnibci.shared.events import Event, EventType
 
 
-IDENTITY = PeerIdentity("actuation", "a" * 64, "generation-1")
+IDENTITY = PeerIdentity("actuation", "a" * 64, "c" * 64, "generation-1")
+
+
+@pytest.mark.parametrize("keep_current", [False, True])
+def test_old_configuration_identity_field_is_rejected(keep_current):
+    payload = IDENTITY.to_dict()
+    payload["system_revision"] = payload["engine_revision"]
+    if not keep_current:
+        del payload["engine_revision"]
+    assert not IDENTITY.matches(payload)
 
 
 async def wait_for(predicate):
@@ -53,9 +62,10 @@ def test_unverified_socket_cannot_receive_commands_or_claim_liveness():
 
 
 @pytest.mark.parametrize("identity", [
-    PeerIdentity("stimulation", "a" * 64, "generation-1"),
-    PeerIdentity("actuation", "b" * 64, "generation-1"),
-    PeerIdentity("actuation", "a" * 64, "generation-2"),
+    PeerIdentity("stimulation", "a" * 64, "c" * 64, "generation-1"),
+    PeerIdentity("actuation", "b" * 64, "c" * 64, "generation-1"),
+    PeerIdentity("actuation", "a" * 64, "c" * 64, "generation-2"),
+    PeerIdentity("actuation", "a" * 64, "d" * 64, "generation-1"),
 ])
 def test_wrong_identity_is_rejected(identity):
     async def scenario():
@@ -126,7 +136,7 @@ def test_client_requires_matching_ack_and_does_not_reconnect_old_identity():
         async def stale_server(reader, writer):
             connections.append(True)
             hello = await read_event_frame(reader)
-            assert hello.event.type == EventType.PeerHello
+            assert hello.type == EventType.PeerHello
             payload = IDENTITY.to_dict()
             payload["generation"] = "wrong"
             writer.write(encode_event(Event(EventType.PeerAccepted, payload)))
@@ -154,7 +164,7 @@ def test_keepalive_cannot_bypass_handshake():
         server, port = await listen()
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
         try:
-            writer.write(Frame("", version=1).to_bytes())
+            writer.write(Frame("", version=PROTOCOL_VERSION).to_bytes())
             await writer.drain()
             assert await asyncio.wait_for(reader.read(), 1) == b""
             assert not server.is_connected
@@ -193,7 +203,7 @@ def test_client_cannot_send_before_ack_and_stop_closes_pending_handshake():
         hello_received, disconnected = asyncio.Event(), asyncio.Event()
         async def no_ack(reader, writer):
             hello = await read_event_frame(reader)
-            assert hello.event.type == EventType.PeerHello
+            assert hello.type == EventType.PeerHello
             hello_received.set()
             assert await reader.read() == b""
             writer.close()
@@ -359,4 +369,4 @@ def test_failed_handshake_cleanup_blocks_restart_until_socket_release(monkeypatc
 ])
 def test_identity_requires_role_revision_and_generation(role, revision, generation):
     with pytest.raises(ValueError):
-        PeerIdentity(role, revision, generation)
+        PeerIdentity(role, revision, "c" * 64, generation)

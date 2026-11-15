@@ -14,7 +14,8 @@ class TrialResponse(BaseModel):
     confidence: float | None = None
     forced: bool
     produced_at: datetime
-    config_revision: str | None = None
+    processing_revision: str | None = None
+    acquisition_revision: str | None = None
 
 
 class ResultsResponse(BaseModel):
@@ -32,9 +33,11 @@ class EpochSummary(BaseModel):
     generation: str
     epoch_number: int
     event_id: int | None
-    config_revision: str | None
+    processing_revision: str | None
+    acquisition_revision: str | None
     status: Literal["decoded", "no_result", "interrupted", "error"]
-    reason: Literal["prediction", "end_marker", "next_start", "stream_stop", "processor_stop", "error"]
+    reason: Literal["prediction", "end_marker", "next_start", "stream_stop", "processor_stop",
+                    "processing_detached", "source_unavailable", "error"]
     sample_rate: int | None
     channel_count: int
     sample_count: int

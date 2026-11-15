@@ -25,6 +25,9 @@ from omnibci.shared.events import Event, EventType
 class _Engine:
     is_engine_ready = True
 
+    def is_command_ready(self, event_type):
+        return self.is_engine_ready
+
     def __init__(self) -> None:
         self.dispatched: list[Event] = []
         self.on_dispatch = None
@@ -232,3 +235,42 @@ def test_concurrent_results_do_not_cross_requests():
     assert returned["connect"].command == "ConnectDataProvider"
     assert returned["stream"].command == "StartStream"
     assert broker.pending_count == 0
+
+
+@pytest.mark.parametrize("unsent", [False, True])
+def test_peer_delivery_failure_distinguishes_unsent_from_unknown(unsent):
+    from omnibci.application.services.command_result_service import CommandDeliveryError
+
+    engine = _Engine()
+    broker = CommandResultBroker(engine, timeout_s=2)
+
+    def fail(event):
+        broker.on_peer_delivery_fault(Event(EventType.PeerDeliveryFault, {
+            "peer": "stimulation", "reason": "outbound queue full",
+            "unsent_command_ids": [event.data.command_id] if unsent else [],
+        }))
+
+    engine.on_dispatch = fail
+    with pytest.raises(CommandDeliveryError) as raised:
+        broker.request(EventType.StopStimulation)
+    assert raised.value.execution_unknown is not unsent
+    assert raised.value.command_id == engine.dispatched[0].data.command_id
+    assert broker.pending_count == 0
+
+
+def test_peer_fault_leaves_other_module_waiters_and_confirmed_results_intact():
+    engine = _Engine()
+    broker = CommandResultBroker(engine, timeout_s=0.2)
+
+    def respond(event):
+        fault = Event(EventType.PeerDeliveryFault, {
+            "peer": "stimulation", "reason": "write failed", "unsent_command_ids": [],
+        })
+        if event.type == EventType.StartStream:
+            broker.on_peer_delivery_fault(fault)
+        broker.on_result(_result(event, ok=True))
+        broker.on_peer_delivery_fault(fault)
+
+    engine.on_dispatch = respond
+    assert broker.request(EventType.StartStream).ok
+    assert broker.request(EventType.StopStimulation).ok

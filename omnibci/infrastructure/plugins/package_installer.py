@@ -19,6 +19,7 @@ import tempfile
 import unicodedata
 import zipfile
 from dataclasses import dataclass, replace
+from contextlib import contextmanager
 from importlib import metadata
 from pathlib import Path, PurePosixPath
 from typing import Mapping
@@ -26,6 +27,7 @@ from typing import Mapping
 import tomlkit
 
 from omnibci.infrastructure.plugins.descriptors import PluginDescriptor, PluginSelection
+from omnibci.infrastructure.plugins.package_requirements import check_host_compatibility
 from omnibci.infrastructure.plugins.plugin_catalog import (
     PluginCatalog,
     PluginResolutionError,
@@ -42,7 +44,7 @@ _HOST_LIBRARIES = (
 _PACKAGE_FIELDS = frozenset({
     "id", "publisher", "version", "api_version", "platforms", "host_version",
     "requires", "display_name", "description", "license", "homepage", "repository",
-    "icon", "readme",
+    "icon", "readme", "domain", "engines",
 })
 _WINDOWS_DEVICES = frozenset({
     "con", "prn", "aux", "nul", "conin$", "conout$",
@@ -147,7 +149,7 @@ class PluginPackageInstaller:
     def install(
         self, archive: Path, *, expected_sha256: str | None = None,
         expected_package_id: str | None = None, expected_version: str | None = None,
-        expected_contributions: Mapping[str, str] | None = None,
+        expected_contributions: Mapping[str, str] | None = None, expected_domain: str | None = None,
     ) -> InstalledPackage:
         """Validate, extract, and atomically publish; leave activation unchanged."""
         if expected_sha256 is not None and not re.fullmatch(
@@ -180,7 +182,8 @@ class PluginPackageInstaller:
                     descriptor.contribution_id: descriptor.category for descriptor in descriptors
                 } != dict(expected_contributions):
                     raise PackageInstallError("Archive contributions do not match the expected contributions")
-                assert package.version is not None
+                if expected_domain is not None and package.domain != expected_domain:
+                    raise PackageInstallError("Archive domain does not match signed repository metadata")
                 _portable_path(package.identifier)
                 _portable_path(package.version)
                 if not re.fullmatch(r"[0-9][A-Za-z0-9._+-]{0,127}", package.version):
@@ -193,8 +196,10 @@ class PluginPackageInstaller:
                     "version": package.version, "sha256": digest, "files": files,
                 }
                 self._write_receipt(location, receipt)
-                destination_parent.mkdir(exist_ok=True)
-                already_installed = self._publish(location, destination, receipt)
+                with self._package_lock(package.identifier):
+                    self._check_domain(package.identifier, package.domain, destination_parent)
+                    destination_parent.mkdir(exist_ok=True)
+                    already_installed = self._publish(location, destination, receipt)
                 published = tuple(replace(
                     descriptor, package=replace(descriptor.package, location=destination),
                 ) for descriptor in descriptors)
@@ -346,7 +351,7 @@ class PluginPackageInstaller:
         if not isinstance(package, dict) or not isinstance(contributions, list) or not contributions:
             raise PackageInstallError("Package metadata and contributions are required")
         self._check_requirements(package)
-        catalog = PluginCatalog({"acquisition": lambda: [PluginRoot(location, "user", 0)]})
+        catalog = PluginCatalog({"acquisition": lambda: [PluginRoot(location, "user", 0)]}, host_version=self.host_version)
         descriptors = []
         for contribution in contributions:
             if not isinstance(contribution, dict) or not isinstance(
@@ -370,11 +375,10 @@ class PluginPackageInstaller:
         unknown = package.keys() - _PACKAGE_FIELDS
         if unknown:
             raise PackageInstallError(f"Unsupported package fields: {', '.join(sorted(unknown))}")
-        if "host_version" in package and (
-            not isinstance(package["host_version"], str)
-            or not package["host_version"] or package["host_version"] != self.host_version
-        ):
-            raise PackageInstallError("Package requires a different exact OmniBCI host version")
+        try:
+            check_host_compatibility(package, self.host_version)
+        except ValueError as exc:
+            raise PackageInstallError(str(exc)) from exc
         requirements = package.get("requires", {})
         if not isinstance(requirements, dict):
             raise PackageInstallError("package.requires must map host library names to exact versions")
@@ -414,6 +418,51 @@ class PluginPackageInstaller:
                     raise PackageInstallError("Package identity or version collides across platforms")
             if (parent / name).is_symlink():
                 raise PackageInstallError("Installation destination must not be a symlink")
+
+    @contextmanager
+    def _package_lock(self, package_id: str):
+        directory = self.root / "__locks"
+        if directory.is_symlink():
+            raise PackageInstallError("Package lock directory must not be a symlink")
+        directory.mkdir(exist_ok=True)
+        path = directory / f"{package_id}.lock"
+        if path.is_symlink():
+            raise PackageInstallError("Package lock must not be a symlink")
+        with path.open("a+b") as stream:
+            if os.name == "nt":
+                import msvcrt
+                if stream.seek(0, os.SEEK_END) == 0:
+                    stream.write(b"0"); stream.flush()
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+                try:
+                    yield
+                finally:
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+    def _check_domain(self, package_id: str, domain: str, parent: Path) -> None:
+        if parent.exists():
+            for version in parent.iterdir():
+                if version.is_symlink() or not version.is_dir():
+                    raise PackageInstallError("Installed package versions must be real directories")
+                try:
+                    package = tomlkit.loads((version / "manifest.toml").read_text(encoding="utf-8")).unwrap().get("package", {})
+                except (OSError, ValueError) as exc:
+                    raise PackageInstallError(f"Installed package version has conflicting content: {version}") from exc
+                if package.get("domain") != domain:
+                    raise PackageInstallError("Package domain cannot change across installed versions")
+        catalog = PluginCatalog(host_version=self.host_version)
+        descriptors, _ = catalog._scan("acquisition", all_categories=True)
+        if any(item.identifier == package_id and item.package.domain != domain for item in descriptors):
+            raise PackageInstallError("Package domain cannot change across discovered versions")
 
     @staticmethod
     def _write_receipt(location: Path, receipt: dict) -> None:

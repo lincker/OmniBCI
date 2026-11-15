@@ -14,7 +14,7 @@ def test_results_snapshot_has_engine_generation_and_decoded_trials(api_client):
                 "generation": "engine-7", "trial_number": 4, "target_id": 2,
                 "event_id": 8, "confidence": 0.9, "forced": False,
                 "produced_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
-                "config_revision": "configuration-2",
+                "processing_revision": "configuration-2", "acquisition_revision": "source-1",
             }]}
 
     api_client.app.dependency_overrides[get_results_service] = Results
@@ -28,7 +28,7 @@ def test_results_snapshot_has_engine_generation_and_decoded_trials(api_client):
     assert data["trials"][0] == {
         "generation": "engine-7", "trial_number": 4, "target_id": 2,
         "event_id": 8, "confidence": 0.9, "forced": False,
-        "produced_at": "2026-01-01T00:00:00Z", "config_revision": "configuration-2",
+        "produced_at": "2026-01-01T00:00:00Z", "processing_revision": "configuration-2", "acquisition_revision": "source-1",
     }
 
 
@@ -49,7 +49,7 @@ def test_epoch_page_includes_unclassified_processing_records(api_client):
             assert (offset, limit) == (25, 25)
             return {"generation": "run", "total": 26, "offset": offset, "limit": limit, "epochs": [{
                 "generation": "run", "epoch_number": 1, "event_id": 8,
-                "config_revision": "revision", "status": "no_result", "reason": "end_marker",
+                "processing_revision": "revision", "acquisition_revision": "source-1", "status": "no_result", "reason": "end_marker",
                 "sample_rate": 1000, "channel_count": 9, "sample_count": 20,
                 "pre_trigger_samples": 5, "trial_number": None, "result": None, "error": None,
                 "started_at": datetime(2026, 1, 1, tzinfo=timezone.utc),

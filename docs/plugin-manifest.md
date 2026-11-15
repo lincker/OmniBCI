@@ -17,7 +17,8 @@ manifest_version = 2
 id = "device-kit"
 publisher = "example"
 version = "1.0.0"
-api_version = "1"
+api_version = "2"
+domain = "acquisition"
 
 [[contributions]]
 id = "reader"
@@ -34,8 +35,8 @@ display_name = "Example Trigger"
 ```
 
 - `manifest_version` is the manifest format, separate from the package's code
-  `version` and plugin `api_version`. Supported API versions are `1` and `2`.
-- Package `id`, `publisher`, `version`, and `api_version` are required strings.
+  `version` and plugin `api_version`. Only API version `2` is supported.
+- Package `id`, `publisher`, `version`, `api_version`, and `domain` are required strings.
   Publisher and package ID form the case-sensitive identity `publisher.id`.
 - Package and contribution IDs, and publishers, begin with an ASCII letter or
   digit and contain only ASCII letters, digits, underscores, and hyphens.
@@ -43,9 +44,9 @@ display_name = "Example Trigger"
   unique throughout the package, including across different kinds.
 - Supported kinds are `acquisition`, `decoder`, `epoch_detector`, `filter`,
   `paradigm`, `trigger`, and `effector`.
-- `plugin_type` is an optional legacy registry alias, defaulting to the
-  contribution ID. With API `1`, the entrypoint class must expose that same
-  `plugin_type` and implement the expected domain port.
+- `plugin_type` is optional display/runtime source metadata, defaulting to the
+  contribution ID. Selection always uses the exact package/contribution/version;
+  a registry alias is never a fallback.
 - `entrypoint` names a Python class relative to the package directory, in
   `module:Class` form. Absolute paths and parent-directory traversal are invalid.
 - Optional `display_name`, `description`, `params`, and `controls` belong to
@@ -55,11 +56,11 @@ display_name = "Example Trigger"
   references plugin-owned configuration data. The file must stay inside the
   package, cannot traverse symlinks, and is limited to 1 MiB. Its positive
   schema version is separate from the package and manifest versions.
-  Discovery validates the [supported Schema subset](plugin-configuration-schema.md)
+  Discovery validates the [supported Schema subset](../omnibci/application/plugin_schema.py)
   and defaults without importing Python or resolving external references.
   API 2 construction validates parameters and inserts declared defaults before
   executing the selected plugin. A missing schema means no editable profile
-  contract; legacy packages can still be discovered.
+  contract.
 - Execution fields such as `kind`, `plugin_type`, and `entrypoint` must not
   appear at package level in v2. A malformed contribution invalidates the entire
   package; the catalog does not expose a partially valid package.
@@ -73,9 +74,11 @@ Declaring a publisher does not verify the package's author or grant it trust.
 
 ## Discovery and exact selection
 
-All configured category roots are searched for packages. A v2 package can expose
-any supported kind regardless of its containing category directory. For example,
-a package under `acquisition/` can provide both an acquisition reader and a trigger.
+All configured category roots are searched for packages. A package declares one
+immutable domain: `acquisition`, `processing`, `stimulation`, or `actuation`.
+Contributions must belong to that domain, with one explicit exception: acquisition
+packages may also ship Trigger contributions consumed by Stimulation. Different
+versions of one package cannot change its domain.
 Overlapping roots do not duplicate the same physical package.
 A category root may itself contain a manifest (for example, bundled filters).
 Once a package is found, discovery does not recurse into its internal modules.
@@ -99,45 +102,43 @@ root has higher precedence. An invalid copy with that identity/version prevents
 fallback to another copy. An invalid version field conservatively blocks that
 package identity because the catalog cannot establish which version is broken.
 
-These APIs establish the selection contract. Existing runtime settings and HTTP
-lists continue to use the legacy alias interface until their migration steps.
-This change does not install packages or select an active version automatically.
+Only manifest version 2, API version 2, and explicit exact package versions are
+accepted. There is no legacy manifest reader, alias resolver, or implicit latest
+version selection. Installation and enablement remain explicit operations.
 
-## Legacy compatibility
+## Compatibility and dependencies
 
-An omitted `manifest_version`, or `manifest_version = 1`, uses the existing
-single-entry format. Its contribution ID is `default`. Existing publisher/author
-fallbacks, IDs, optional versions, and legacy directory-category checks remain.
-`version=None` selects an unversioned legacy package only; it never means latest.
+`[package] engines = { omnibci = ">=0.1,<1" }` optionally constrains the host at
+installation and catalog discovery. Supported clauses are comma-separated
+`>=`, `>`, `<=`, `<`, and `==` comparisons over numeric dot-separated versions.
+This deliberately small syntax does not implement npm ranges. The existing
+`host_version` field still requires an exact host version when present.
 
-`resolve(category, plugin_type)` delegates to `resolve_legacy`. Legacy resolution
-and `list(category)` retain root precedence and alias collision rules. Legacy
-non-Actuation manifests without entrypoints remain visible in the old list;
-exact resolution and `list_contributions` require executable entrypoints.
-
-Bundled packages now use v2 manifests. Scan45 declares acquisition and Windows
-parallel trigger contributions independently. Epoch boundary detection and baseline
-correction also have explicit entrypoints. Classic40's metadata describes its
-existing 240 stimulus frames at 60 Hz (four seconds); no rendering timing changed.
-Profile storage and runtime selection wiring are separate steps.
+`[package.requires]` maps Python library distribution names to exact installed
+versions. The installer checks these requirements; it does not install libraries.
+This field is not a list of OmniBCI plugin packages. No inter-plugin dependency
+resolver is introduced. Multiple contributions inside one package need no
+inter-package dependency declaration.
 
 ## SDK and construction API
 
 API `2` implementations import their ports from `omnibci.sdk` and accept exactly
 the keyword inputs `parameters` and `context`. The host copies parameters and
-supplies a frozen, pickle-safe `PluginContext` containing sample rate, channel
-names, configuration revision, and the selected package's resource directory.
+supplies a frozen, pickle-safe `PluginContext` containing sample rate, prepared
+signal descriptors, `module_revision`, and the selected package's resource directory.
+The revision belongs to the consuming module, including a Trigger shipped in
+an acquisition-domain package and loaded by Stimulation.
 Context contains metadata, not global settings or live service objects.
-The class implements its domain port; a registry decorator and `plugin_type`
-attribute are no longer required. The manifest owns its selection identity.
+The class implements its domain port. The manifest owns its selection identity
+and the entrypoint used to load it.
 
-Signal Processing contributions that support prepared channel input declare
+Signal Processing contributions must declare
 `signal_input_contract = 1` beside their contribution `kind`. Decoder
 contributions can declare `signal_input_contract = 2` together with
 `[contributions.channel_requirements]` to add minimum count, signal type and
 required names, plus ordered name suggestions for channel mapping. Contract 2 requires that
-section and is currently Decoder-only; older hosts reject the unsupported
-capability rather than ignoring its requirements. The
+section and is currently Decoder-only. Missing or unsupported declarations are
+rejected during manifest discovery. The
 [Decoder authoring guide](decoder-plugin-development.md#manifest-and-channel-requirements)
 describes every field, with comments in the executable starter manifest.
 
@@ -146,17 +147,13 @@ context, as immutable `SignalInfo` values.
 Use `acquired_signal.channels` for the original Acquisition channels and the
 ordered `input_signal.channels` for the actual decoder/filter/detector input,
 including source channel IDs, signal types and optional units. The final trigger
-row remains separate. `PluginContext.channel_names` remains compatible with its
-original acquired-channel meaning but is deprecated for new plugin code.
-Channel mapping selects and orders rows without changing
-sample values. Undeclared plugins retain the legacy identity path and reject
-changed input before streaming. The bundled CCA
+row remains separate. Channel mapping selects and orders rows without changing
+sample values. The bundled CCA
 and FBCCA declare contract 2 with flexible EEG input and no mandatory electrode
 names. The bundled epoch boundary detector and baseline-correction filter retain contract 1.
 
-API `1` keeps its existing constructor arguments and alias checks. Constructor
-errors never cause a retry using a different API. All bundled contributions use
-API `2`; direct legacy constructor calls remain compatible during migration.
+Constructor errors never cause a retry using a different API. All bundled
+contributions use API `2`; API `1` construction is removed.
 Paradigms receive the selected trigger through `bind_trigger()` before setup.
 Acquisition, Signal Processing, Stimulation, and Actuation load only their selected
 entrypoints. A missing pinned selection never falls back to a legacy alias.
@@ -181,9 +178,7 @@ stream starts again or a new connection is established, preserving the first
 nonzero sample after that boundary. An already-running Start is idempotent and
 does not reset it. These resets also apply when a source restores a checkpoint;
 the host does not extend the source checkpoint format with preprocessing state.
-Discrete File Reader events are unaffected. See
-[shared trigger preprocessing](channel-mapping.md#shared-trigger-preprocessing)
-for the processing boundary and extension contract.
+Discrete File Reader events are unaffected.
 
 ### Signal-source resumption
 

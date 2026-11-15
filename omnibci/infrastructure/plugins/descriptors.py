@@ -1,7 +1,6 @@
 """Runtime descriptors for discovered OmniBCI plugins.
 
-``PluginInfo`` is the application/query DTO exposed to the UI.  This module
-contains the infrastructure-only contract used to resolve and execute a
+This module contains the infrastructure-only contract used to resolve and execute a
 plugin.  In particular, filesystem locations and Python entrypoints must never
 be reconstructed later from a plugin id.
 """
@@ -12,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from omnibci.application.plugin_profiles import PluginSelection
+from omnibci.application.configuration.models import PluginSelection
 from omnibci.domain.decoder_input import DecoderChannelRequirements
 
 
@@ -65,8 +64,12 @@ class PluginPackageDescriptor:
     source: str
     location: Path
     api_version: str
-    version: str | None = None
-    manifest_version: int = 1
+    version: str
+    domain: str
+    manifest_version: int = 2
+    engines: Mapping[str, str] = field(default_factory=dict)
+    host_version: str | None = None
+    requires: tuple[tuple[str, str], ...] = ()
     platforms: tuple[str, ...] = ()
     # Catalog metadata: lower values have higher priority.  It is intentionally
     # excluded from equality/repr because it is not plugin identity.
@@ -90,8 +93,8 @@ class PluginPackageDescriptor:
 class PluginDescriptor:
     """One executable contribution, with shared package metadata.
 
-    The legacy package properties remain available to existing loader and DTO
-    callers. New selections use ``selection`` instead of the registry alias.
+    Package properties provide identity and loading metadata. ``selection``
+    identifies the exact package version and contribution to load.
     """
 
     package: PluginPackageDescriptor
@@ -145,7 +148,7 @@ class PluginDescriptor:
         return self.package.api_version
 
     @property
-    def version(self) -> str | None:
+    def version(self) -> str:
         return self.package.version
 
     @property

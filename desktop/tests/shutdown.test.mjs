@@ -10,13 +10,13 @@ import { fileURLToPath } from "node:url";
 
 const temporary = await mkdtemp(path.join(tmpdir(), "omnibci-shutdown-tests-"));
 after(async () => { delete globalThis.__desktopDialogs; await rm(temporary, { recursive: true, force: true }); });
-const hooks = { responses: [], messages: [], };
+const hooks = { responses: [], messages: [], quits: 0 };
 globalThis.__desktopDialogs = hooks;
 hooks.fetch = async url => {
-  if (url.endsWith("/system/info")) return Response.json({ success: true, data: {
-    desktop_api_version: 1, app_version: "1.0.0", instance_id: "backend", auth_enabled: true,
+  if (url.endsWith("/server/info")) return Response.json({ success: true, data: {
+    desktop_api_version: 1, app_version: "1.0.0", instance_id: "server", auth_enabled: true,
   } });
-  assert.fail(`Unexpected backend request: ${url}`);
+  assert.fail(`Unexpected server request: ${url}`);
 };
 await build({ entryPoints: [fileURLToPath(new URL("../src/main.ts", import.meta.url))],
   outfile: path.join(temporary, "main.cjs"), platform: "node", format: "cjs", bundle: true,
@@ -24,7 +24,7 @@ await build({ entryPoints: [fileURLToPath(new URL("../src/main.ts", import.meta.
     builder.onResolve({ filter: /^electron$/ }, () => ({ path: "electron", namespace: "fixture" }));
     builder.onLoad({ filter: /.*/, namespace: "fixture" }, () => ({ contents: `
       const hooks = globalThis.__desktopDialogs;
-      export const app = { setName() {}, setPath() {}, requestSingleInstanceLock() { return false; }, quit() {} };
+      export const app = { setName() {}, setPath() {}, requestSingleInstanceLock() { return false; }, quit() { hooks.quits += 1; } };
       export const protocol = { registerSchemesAsPrivileged() {} };
       export const dialog = {
         async showMessageBox(_window, options) {
@@ -41,10 +41,11 @@ await build({ entryPoints: [fileURLToPath(new URL("../src/main.ts", import.meta.
     `, loader: "js" }));
     builder.onLoad({ filter: /[\\/]src[\\/]main\.ts$/ }, async args => ({
       contents: await readFile(args.path, "utf8") + `
-        export const fixture = { connection, disconnect,
+        export const fixture = { connection, disconnect, requestQuit,
+          setDirty(value) { editor.dirty = value; },
           setLanguage(value) { language = value; },
-          reset(owned) { language = "en"; backend = owned; window = {}; editor = { dirty: false, busy: false }; },
-          getBackend() { return backend; },
+          reset(owned) { language = "en"; server = owned; window = {}; editor = { dirty: false, busy: false }; },
+          getServer() { return server; },
         };
       `, loader: "ts",
     }));
@@ -53,7 +54,7 @@ await build({ entryPoints: [fileURLToPath(new URL("../src/main.ts", import.meta.
 const { fixture } = createRequire(import.meta.url)(path.join(temporary, "main.cjs"));
 let owned;
 beforeEach(async () => {
-  hooks.responses = []; hooks.messages = [];
+  hooks.responses = []; hooks.messages = []; hooks.quits = 0;
   owned = {
     calls: [], exited: false,
     async command(op) { this.calls.push(op); return { ok: true }; },
@@ -61,7 +62,7 @@ beforeEach(async () => {
     async force() { this.calls.push("force"); this.exited = true; },
   };
   fixture.reset(owned);
-  await fixture.connection.connect("local", "http://127.0.0.1:49201", "test-credential");
+  await fixture.connection.connect("owned", "http://127.0.0.1:49201", "test-credential");
 });
 
 test("keeping the window after an incomplete stop reports errors and permits another attempt", async () => {
@@ -74,26 +75,26 @@ test("keeping the window after an incomplete stop reports errors and permits ano
   assert.equal(fixture.connection.info.status, "ready");
 });
 
-test("confirmed shutdown waits for the owned backend to exit before disconnecting", async () => {
+test("confirmed shutdown waits for the owned server to exit before disconnecting", async () => {
   hooks.responses.push(1);
   assert.equal(await fixture.disconnect(), true);
   assert.deepEqual(owned.calls, ["prepare_shutdown", "shutdown"]);
   assert.equal(owned.exited, true);
-  assert.equal(fixture.getBackend(), undefined);
+  assert.equal(fixture.getServer(), undefined);
   assert.equal(fixture.connection.info.status, "disconnected");
 });
 
-test("final shutdown errors are reported after exit and release stale backend ownership", async () => {
+test("final shutdown errors are reported after exit and release stale server ownership", async () => {
   hooks.responses.push(1);
   owned.command = async op => { owned.calls.push(op); return op === "shutdown"
     ? { ok: false, errors: ["Device stop not confirmed"] } : { ok: true }; };
   await assert.rejects(fixture.disconnect(), /Device stop not confirmed/);
   assert.equal(owned.exited, true);
-  assert.equal(fixture.getBackend(), undefined);
+  assert.equal(fixture.getServer(), undefined);
   assert.equal(fixture.connection.info.status, "disconnected");
 });
 
-test("an interrupted final reply still waits for exit and releases backend ownership", async () => {
+test("an interrupted final reply still waits for exit and releases server ownership", async () => {
   hooks.responses.push(1);
   owned.command = async op => {
     owned.calls.push(op);
@@ -102,7 +103,7 @@ test("an interrupted final reply still waits for exit and releases backend owner
   };
   await assert.rejects(fixture.disconnect(), /Control pipe closed/);
   assert.equal(owned.exited, true);
-  assert.equal(fixture.getBackend(), undefined);
+  assert.equal(fixture.getServer(), undefined);
   assert.equal(fixture.connection.info.status, "disconnected");
 });
 
@@ -111,7 +112,7 @@ test("native shutdown confirmations follow Chinese without changing cancellation
   fixture.setLanguage("zh");
   hooks.responses.push(0);
   assert.equal(await fixture.disconnect(), false);
-  assert.equal(hooks.messages[0].message, "停止本地后端？");
+  assert.equal(hooks.messages[0].message, "停止本地服务端？");
   assert.deepEqual(hooks.messages[0].buttons, ["取消", "停止并继续"]);
   assert.deepEqual(owned.calls, []);
   assert.equal(fixture.connection.info.status, "ready");
@@ -122,4 +123,41 @@ test("successful shutdown needs no result export or extra API request", async ()
   assert.equal(await fixture.disconnect(), true);
   assert.equal(hooks.messages.length, 1);
   assert.deepEqual(owned.calls, ["prepare_shutdown", "shutdown"]);
+});
+
+
+test("disconnecting from an existing server sends no shutdown commands or confirmation", async () => {
+  fixture.reset(undefined);
+  await fixture.connection.connect("existing", "http://127.0.0.1:49201", "test-credential");
+  assert.equal(await fixture.disconnect(), true);
+  assert.deepEqual(hooks.messages, []);
+  assert.deepEqual(owned.calls, []);
+  assert.equal(owned.exited, false);
+  assert.equal(fixture.connection.info.status, "disconnected");
+});
+
+test("closing the desktop client leaves an existing server running", async () => {
+  fixture.reset(undefined);
+  await fixture.connection.connect("existing", "https://lab.example", "test-credential");
+  await fixture.requestQuit();
+  assert.equal(hooks.quits, 1);
+  assert.deepEqual(hooks.messages, []);
+  assert.deepEqual(owned.calls, []);
+  assert.equal(owned.exited, false);
+  assert.equal(fixture.connection.info.status, "disconnected");
+});
+
+test("existing service disconnect still protects unsaved edits", async () => {
+  fixture.reset(undefined);
+  await fixture.connection.connect("existing", "http://127.0.0.1:49201", "test-credential");
+  fixture.setDirty(true);
+  hooks.responses.push(0);
+  assert.equal(await fixture.disconnect(), false);
+  assert.equal(fixture.connection.info.status, "ready");
+  assert.deepEqual(owned.calls, []);
+  hooks.responses.push(1);
+  assert.equal(await fixture.disconnect(), true);
+  assert.equal(hooks.messages.length, 2);
+  assert.ok(hooks.messages.every(message => message.message === "Discard unsaved configuration changes?"));
+  assert.deepEqual(owned.calls, []);
 });

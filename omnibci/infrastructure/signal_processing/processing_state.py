@@ -48,7 +48,7 @@ class ProcessingState:
 
     def _process_chunk(self, chunk: SignalChunk, *, collecting: bool) -> None:
         started = perf_counter()
-        revision = self.context.config_revision
+        revision = self.context.processing_revision
         try:
             self._process_epoch_chunk(chunk, collecting=collecting)
         finally:

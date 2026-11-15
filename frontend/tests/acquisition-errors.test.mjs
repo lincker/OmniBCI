@@ -15,29 +15,36 @@ const failure = (error_code) => ({ success: false, code: "COMMAND_EXECUTION_FAIL
   detail: { command_id: "connect-failed", command: "ConnectDataProvider", error_code } });
 
 function sourceFixture(error) {
-  const state = { error, connected: false, calls: [] };
+  const state = { error, connected: false, revision: "rev-1", calls: [] };
   globalThis.fetch = async (path, options = {}) => {
     state.calls.push([path, options.method ?? "GET"]);
+    if (path === "/api/v1/acquisition/disconnect") {
+      state.connected = false;
+      return Response.json({ success: true, message: "Data provider disconnected", data: null });
+    }
     if (path === "/api/v1/acquisition/connect") {
       if (state.error) return Response.json(state.error, { status: 500 });
       state.connected = true;
-      return Response.json({ success: true, message: "Data provider connected", data: null });
+      const request = JSON.parse(options.body);
+      return Response.json({ success: true, data: { operation_id: request.operation_id, module: "acquisition", status: "succeeded",
+        target_revisions: { acquisition: state.revision }, result: { configuration_applied: true, action: "connected" } } });
     }
     const data = path === "/api/v1/acquisition/status"
       ? { connected: state.connected, streaming: false, connection_id: state.connected ? "source-1" : null }
-      : path === "/api/v1/config/runtime"
-        ? { running: true, generation: "engine-1", accepted_revision: "rev-1", applied_revision: "rev-1", recovery_required: false, operation: null }
-        : path === "/api/v1/config/activation"
-          ? { revision: "rev-1", bindings: [{ slot: "acquisition.source" }] } : assert.fail(`Unexpected request: ${path}`);
+      : assert.fail(`Unexpected request: ${path}`);
     return Response.json({ success: true, message: "ok", data });
   };
   return state;
 }
 
-function controllerHarness() {
+function controllerHarness(runtimeActions = {}) {
   const values = [], refs = [];
   let language = "en";
-  const runtime = { refresh: async () => {} };
+  const runtime = { refresh: async () => {}, execute: async (module, configuration, send, onApplied) => {
+    const result = await send({ operation_id: crypto.randomUUID(), configuration });
+    if (result.result?.configuration_applied) onApplied?.(result);
+    return result;
+  }, ...runtimeActions };
   return {
     setLanguage(next) { language = next; },
     render() {
@@ -55,7 +62,7 @@ function controllerHarness() {
         useCallback: (callback) => callback,
         useEffect: () => {},
       };
-      try { return useAcquisition(runtime, async () => {}); }
+      try { return useAcquisition(runtime, async () => {}, { acknowledge() {} }); }
       finally { internals.current = previous; }
     },
   };
@@ -78,7 +85,7 @@ for (const [code, key] of [["ConnectionRefusedError", "acquisition.error.connect
   test(`${code} displays a specific acquisition hint and still refreshes failed connection state`, async () => {
     const state = sourceFixture(failure(code));
     const harness = controllerHarness();
-    await harness.render().connect.run("rev-1");
+    await harness.render().connect.run(currentSource());
     const result = harness.render();
     assert.equal(result.connect.error, `[COMMAND_EXECUTION_FAILED] ${translate("en", key)}`);
     assert.equal(result.data.connected, false);
@@ -89,7 +96,7 @@ for (const [code, key] of [["ConnectionRefusedError", "acquisition.error.connect
     assert.match(harness.render().connect.error, code === "ConnectionRefusedError" ? /拒绝连接/ : /未及时响应/);
     assert.equal(harness.render().connect.error, `[COMMAND_EXECUTION_FAILED] ${translate("zh", key)}`);
     state.error = null;
-    await harness.render().connect.run("rev-1");
+    await harness.render().connect.run(currentSource());
     assert.equal(harness.render().connect.error, null);
     assert.equal(harness.render().data.connected, true);
   });
@@ -100,7 +107,7 @@ test("unknown, missing or malformed details preserve the original acquisition er
     { error_code: "OSError" }, { error_code: { name: "TimeoutError" } }]) {
     sourceFixture({ success: false, code: "COMMAND_EXECUTION_FAILED", message: "Original device failure", detail });
     const harness = controllerHarness();
-    await harness.render().connect.run("rev-1");
+    await harness.render().connect.run(currentSource());
     assert.equal(harness.render().connect.error, "[COMMAND_EXECUTION_FAILED] Original device failure");
   }
 });
@@ -108,7 +115,7 @@ test("unknown, missing or malformed details preserve the original acquisition er
 test("other API codes do not reinterpret detail as an acquisition execution failure", async () => {
   sourceFixture({ success: false, code: "COMMAND_REJECTED", message: "Source is already reading", detail: { error_code: "TimeoutError" } });
   const harness = controllerHarness();
-  await harness.render().connect.run("rev-1");
+  await harness.render().connect.run(currentSource());
   assert.equal(harness.render().connect.error, "[COMMAND_REJECTED] Source is already reading");
 });
 
@@ -122,4 +129,17 @@ test("other control clients and existing three-argument ApiErrors keep their mes
     assert.equal(error.detail.error_code, "TimeoutError");
     return true;
   });
+});
+
+const currentSource = () => ({ settings: {}, expected_revision: "rev-1", bindings: [{
+  slot: "acquisition.source", selection: { package_id: "example.source", contribution_id: "main", version: "1.0.0" },
+  parameters: { host: "192.168.0.20", port: 4000 },
+}] });
+
+test("Disconnect sends scoped recovery even when the acquisition worker is already disconnected", async () => {
+  const state = sourceFixture(null);
+  const harness = controllerHarness({ status: { recovery: { acquisition: "Worker state unknown" } } });
+  await harness.render().disconnect.run();
+  assert.equal(harness.render().disconnect.error, null);
+  assert.equal(state.calls.filter(([path]) => path.endsWith("/disconnect")).length, 1);
 });

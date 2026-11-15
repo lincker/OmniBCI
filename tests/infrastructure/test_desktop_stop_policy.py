@@ -8,6 +8,7 @@ from omnibci.infrastructure.stimulation import process_manager as stimulation
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
 from omnibci.infrastructure.process_lifecycle import ChildProcessState, StartupReport
 from omnibci.application.services.engine_service import NeuroEngineService
+from tests.infrastructure.test_child_runtime_snapshot import _snapshot
 
 
 @pytest.mark.parametrize("module,manager_class,component", [
@@ -19,14 +20,18 @@ def test_desktop_output_retains_live_child_without_termination(monkeypatch, modu
     process.is_alive.return_value = True
     receiver, sender = MagicMock(), MagicMock()
     receiver.poll.return_value = True
-    receiver.recv.return_value = StartupReport.ready(component)
+    receiver.recv.return_value = StartupReport.ready(
+        component, module_revisions={component.lower(): "revision-1"},
+        engine_revision="engine", generation="graph-1")
     process_factory = MagicMock(return_value=process)
     monkeypatch.setattr(module.mp, "Process", process_factory)
     monkeypatch.setattr(module.mp, "Event", MagicMock())
     monkeypatch.setattr(module.mp, "Pipe", MagicMock(return_value=(receiver, sender)))
     manager = manager_class(allow_process_termination=False)
-    manager.start()
-    # Python itself must not terminate this child as a daemon on backend exit.
+    key = "STIMULATION.paradigm" if component == "Stimulation" else "ACTUATION.effector"
+    snapshot = _snapshot(key)
+    manager.start(settings_snapshot=snapshot)
+    # Python itself must not terminate this child as a daemon on server exit.
     assert process_factory.call_args.kwargs["daemon"] is False
 
     with pytest.raises(RuntimeError, match="did not stop gracefully"):
@@ -38,7 +43,7 @@ def test_desktop_output_retains_live_child_without_termination(monkeypatch, modu
     process.kill.assert_not_called()
     process.close.assert_not_called()
     with pytest.raises(RuntimeError, match="did not stop gracefully"):
-        manager.start()
+        manager.start(settings_snapshot=snapshot)
     assert process_factory.call_count == 1
 
     process.is_alive.return_value = False

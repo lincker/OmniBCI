@@ -3,6 +3,7 @@
 manifest_version = 2
 
 [package]
+domain = "processing"
 id = "classic40_cca"
 version = "0.1.0"
 api_version = "2"

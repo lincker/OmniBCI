@@ -23,7 +23,7 @@ def source():
 def snapshot():
     return {
         "ACQUISITION.signal_source": "file_reader", "ACQUISITION.sample_rate": 250,
-        "ACQUISITION.channel_count": 4, "CONFIG.revision": "a" * 64,
+        "ACQUISITION.channel_count": 4, "CONFIG.module_revisions": {"acquisition": "a" * 64, "processing": "b" * 64},
         "CONFIG.generation": "generation-one", "PLUGINS.bindings": [
             {"slot": "acquisition.source", "kind": "acquisition", "profile_id": "source-profile",
              "selection": {"package_id": "test.source", "contribution_id": "reader", "version": "1.0.0"},
@@ -51,57 +51,15 @@ def test_retired_input_is_deferred_until_processing_is_used(snapshot):
     assert requires_signal_preparation(snapshot)
 
 
-@pytest.mark.parametrize("value", [
-    {},
-    {"schema_version": 1},
-    {"outputs": [], "excluded_channels": [], "reference": {}},
-    {"schema_version": 1, "outputs": [], "excluded_channels": [],
-     "reference": {"mode": "original"}},
-    {"schema_version": 1, "outputs": [], "excluded_channels": [],
-     "reference": {"mode": "original", "channels": []}},
-])
-def test_default_legacy_input_resolves_without_changing_pinned_snapshot(snapshot, source, value):
-    binding_for(snapshot, "processing.decoder")["processing_input"] = deepcopy(value)
-    original = deepcopy(snapshot)
-
-    resolved = processing_input(snapshot)
-
-    assert resolved == ProcessingInput()
-    plan = compile_processing_plan(source, resolved)
-    assert plan.is_identity
-    validate_plan_binding(snapshot, plan)
-    assert processing_binding_key(snapshot)["input"] == resolved.to_dict()
-    assert snapshot == original
 
 
-@pytest.mark.parametrize("change", [
-    {"outputs": ["C3"]},
-    {"excluded_channels": ["M1"]},
-    {"reference": {"mode": "single", "channels": ["M1"]}},
-    {"reference": {"mode": "average", "channels": ["C3", "C4"]}},
-    {"reference": {"mode": "original", "channels": ["M1"]}},
-    {"reference": {"mode": "original", "unknown": []}},
-    {"outputs": None},
-    {"excluded_channels": ""},
-    {"reference": None},
-    {"schema_version": True},
-    {"schema_version": 2},
-    {"unknown": []},
-])
-def test_legacy_input_compatibility_does_not_discard_changes_or_invalid_fields(snapshot, change):
-    value = {"schema_version": 1, "outputs": [], "excluded_channels": [],
-             "reference": {"mode": "original", "channels": []}, **change}
-    binding_for(snapshot, "processing.decoder")["processing_input"] = value
-    original = deepcopy(snapshot)
-    with pytest.raises(ValueError):
-        processing_input(snapshot)
-    assert snapshot == original
 
 
 def test_retired_global_setup_does_not_configure_decoder_input(snapshot):
     binding_for(snapshot, "processing.decoder").pop("processing_input")
     snapshot["SIGNAL.setup"] = {"source_id": "file_reader", "outputs": ["C3"]}
-    assert processing_input(snapshot) == ProcessingInput()
+    with pytest.raises(ValueError, match="explicit processing_input"):
+        processing_input(snapshot)
     snapshot["PLUGINS.bindings"].clear()
     assert processing_input(snapshot) is None
     assert not requires_signal_preparation(snapshot)
@@ -109,7 +67,7 @@ def test_retired_global_setup_does_not_configure_decoder_input(snapshot):
 
 def test_processing_binding_survives_profile_revision_and_decoder_parameter_changes(snapshot):
     before = processing_binding_key(snapshot)
-    snapshot["CONFIG.revision"] = "b" * 64
+    snapshot["CONFIG.module_revisions"]["processing"] = "c" * 64
     snapshot["CONFIG.generation"] = "generation-two"
     binding_for(snapshot, "acquisition.source")["profile_revision"] += 1
     decoder = binding_for(snapshot, "processing.decoder")
@@ -119,7 +77,6 @@ def test_processing_binding_survives_profile_revision_and_decoder_parameter_chan
 
 
 @pytest.mark.parametrize("field,value", [
-    ("profile_id", "other-source"),
     ("parameters", {"sample_rate": 250, "channel_count": 4, "data_file_path": "two.cnt"}),
     ("selection", {"package_id": "test.source", "contribution_id": "reader", "version": "2.0.0"}),
 ])
@@ -129,6 +86,13 @@ def test_processing_binding_distinguishes_source_ownership(snapshot, field, valu
     assert processing_binding_key(snapshot) != processing_binding_key(previous)
     assert acquisition_binding_key(binding_for(snapshot, "acquisition.source")) != acquisition_binding_key(
         binding_for(previous, "acquisition.source"))
+
+
+@pytest.mark.parametrize("profile_id", [None, "another-saved-profile"])
+def test_processing_binding_ignores_saved_profile_provenance(snapshot, profile_id):
+    previous = processing_binding_key(snapshot)
+    binding_for(snapshot, "acquisition.source")["profile_id"] = profile_id
+    assert processing_binding_key(snapshot) == previous
 
 
 def test_processing_binding_tracks_mapping_and_type_declarations(snapshot):
@@ -183,7 +147,7 @@ def test_unconfigured_snapshots_do_not_prepare():
 
 
 def test_binding_projection_does_not_create_processing_configuration():
-    from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
+    from omnibci.application.configuration.models import PluginSelection, ProfileBinding
     binding = ProfileBinding("processing.decoder", "decoder", None,
                              PluginSelection("test.decoder", "default", "1"), {})
     result = materialize_processing_binding(binding)
@@ -191,18 +155,12 @@ def test_binding_projection_does_not_create_processing_configuration():
     assert binding.processing_input is None
 
 
-def test_binding_projection_keeps_unsupported_decoder_input_inert():
-    from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
-    value = {"schema_version": 1, "outputs": ["C3"], "reference": {"mode": "average"}}
-    binding = ProfileBinding("processing.decoder", "decoder", None,
-                             PluginSelection("test.decoder", "default", "1"), {},
-                             legacy={"processing_input": value})
-    assert materialize_processing_binding(binding)["processing_input"] == value
 
 
 def test_selected_decoder_without_input_still_requires_source_preparation(snapshot):
     binding_for(snapshot, "processing.decoder").pop("processing_input")
-    assert processing_input(snapshot) == ProcessingInput()
+    with pytest.raises(ValueError, match="explicit processing_input"):
+        processing_input(snapshot)
     assert requires_signal_preparation(snapshot)
 
 

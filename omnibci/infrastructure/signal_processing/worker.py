@@ -24,8 +24,9 @@ class SignalProcessingWorker(mp.Process):
 
     def __init__(self, command_queue, data_manager=None, event_bus=None,
                  baseline_duration: float = 0.0,
-                 settings_snapshot: dict | None = None,
-                 startup_reporter: StartupReporter | None = None) -> None:
+                 *, settings_snapshot: dict,
+                 startup_reporter: StartupReporter | None = None,
+                 runtime_counters=None) -> None:
         super().__init__()
         self.data_manager = data_manager
         self.event_bus = event_bus
@@ -35,13 +36,10 @@ class SignalProcessingWorker(mp.Process):
         self.settings_snapshot = deepcopy(settings_snapshot)
         self.signal_processor: Optional[SignalProcessor] = None
         self.startup_reporter = startup_reporter
-        self._startup_stage = "settings"
+        self.runtime_counters = runtime_counters
 
     def run(self) -> None:
         try:
-            if self.settings_snapshot is not None:
-                from omnibci.conf import settings
-                settings.use_snapshot(self.settings_snapshot)
             self._startup_stage = "processor"
             self._run_processor()
         except BaseException as exc:
@@ -52,12 +50,6 @@ class SignalProcessingWorker(mp.Process):
             if self.startup_reporter is not None:
                 self.startup_reporter.close()
 
-    def _snapshot(self):
-        if self.settings_snapshot is not None:
-            return deepcopy(self.settings_snapshot)
-        from omnibci.conf import settings
-        return settings.snapshot()
-
     def _run_processor(self) -> None:
         self.signal_processor = SignalProcessor(
             decoder=None,
@@ -67,9 +59,12 @@ class SignalProcessingWorker(mp.Process):
             event_bus=self.event_bus,
             baseline_duration=self.baseline_duration,
             filters=[],
-            generation=(self.settings_snapshot or {}).get("CONFIG.generation"),
-            config_revision=(self.settings_snapshot or {}).get("CONFIG.revision"),
-            settings_snapshot=self._snapshot(),
+            generation=self.settings_snapshot.get("CONFIG.generation"),
+            processing_revision=self.settings_snapshot.get("CONFIG.module_revisions", {}).get("processing"),
+            acquisition_revision=self.settings_snapshot.get("CONFIG.module_revisions", {}).get("acquisition"),
+            engine_revision=self.settings_snapshot.get("CONFIG.engine_revision"),
+            settings_snapshot=self.settings_snapshot,
+            runtime_counters=self.runtime_counters,
         )
         if self.startup_reporter is not None:
             self.startup_reporter.ready()

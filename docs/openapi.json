@@ -6,20 +6,20 @@
     "version": "1.0.0"
   },
   "paths": {
-    "/api/v1/system/info": {
+    "/api/v1/server/info": {
       "get": {
         "tags": [
-          "System"
+          "Server"
         ],
-        "summary": "System Info",
-        "operationId": "system_info_api_v1_system_info_get",
+        "summary": "Server Info",
+        "operationId": "server_info_api_v1_server_info_get",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_SystemInfoResponse_"
+                  "$ref": "#/components/schemas/ApiResponse_ServerInfoResponse_"
                 }
               }
             }
@@ -35,7 +35,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -97,20 +107,20 @@
         }
       }
     },
-    "/api/v1/system/logs": {
-      "get": {
+    "/api/v1/server/session": {
+      "post": {
         "tags": [
-          "System"
+          "Server"
         ],
-        "summary": "Backend Logs",
-        "operationId": "backend_logs_api_v1_system_logs_get",
+        "summary": "Create Browser Session",
+        "operationId": "create_browser_session_api_v1_server_session_post",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_BackendLogsResponse_"
+                  "$ref": "#/components/schemas/ApiResponse_ServerInfoResponse_"
                 }
               }
             }
@@ -126,7 +136,217 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Delete Browser Session",
+        "operationId": "delete_browser_session_api_v1_server_session_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_NoneType_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/server/logs": {
+      "get": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Server Logs",
+        "operationId": "server_logs_api_v1_server_logs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ServerLogsResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -217,7 +437,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -308,7 +538,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -370,6 +610,385 @@
         }
       }
     },
+    "/api/v1/engine/modules/{module}/start": {
+      "post": {
+        "tags": [
+          "Engine"
+        ],
+        "summary": "Start an independent engine module",
+        "operationId": "start_module_api_v1_engine_modules__module__start_post",
+        "parameters": [
+          {
+            "name": "module",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "processing",
+                "actuation"
+              ],
+              "type": "string",
+              "title": "Module"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModuleActionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_RuntimeOperationResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Command execution timeout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/engine/modules/{module}/prepare": {
+      "post": {
+        "tags": [
+          "Engine"
+        ],
+        "summary": "Prepare an output module for an external connection",
+        "operationId": "prepare_module_api_v1_engine_modules__module__prepare_post",
+        "parameters": [
+          {
+            "name": "module",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "stimulation",
+                "actuation"
+              ],
+              "type": "string",
+              "title": "Module"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/engine/modules/{module}/stop": {
+      "post": {
+        "tags": [
+          "Engine"
+        ],
+        "summary": "Stop an independent engine module",
+        "operationId": "stop_module_api_v1_engine_modules__module__stop_post",
+        "parameters": [
+          {
+            "name": "module",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "acquisition",
+                "processing",
+                "actuation"
+              ],
+              "type": "string",
+              "title": "Module"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Command execution timeout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/engine/status": {
       "get": {
         "tags": [
@@ -399,7 +1018,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -468,13 +1097,23 @@
         ],
         "summary": "Connect data source and wait for execution",
         "operationId": "connect_api_v1_acquisition_connect_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModuleActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
+                  "$ref": "#/components/schemas/ApiResponse_RuntimeOperationResponse_"
                 }
               }
             }
@@ -490,7 +1129,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -591,7 +1240,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -670,6 +1329,16 @@
         ],
         "summary": "Start EEG data stream and wait for execution",
         "operationId": "start_stream_api_v1_acquisition_stream_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartReadingRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -692,7 +1361,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -793,7 +1472,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -894,7 +1583,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -985,7 +1684,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -1086,7 +1795,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -1197,7 +1916,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -1308,7 +2037,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -1440,7 +2179,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -1575,7 +2324,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -1676,7 +2435,7 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -1685,89 +2444,8 @@
               }
             }
           },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Service unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/stimulation/paradigms": {
-      "get": {
-        "tags": [
-          "Stimulation"
-        ],
-        "summary": "List available stimulation paradigms",
-        "operationId": "list_paradigms_api_v1_stimulation_paradigms_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ParadigmsResponse_"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "API token required or invalid",
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -1834,17 +2512,17 @@
         "tags": [
           "Stimulation"
         ],
-        "summary": "Start stimulation",
+        "summary": "Apply current stimulation and prepare or start it",
         "operationId": "start_stimulation_api_v1_stimulation_start_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/StartStimulationRequest",
-                "default": {}
+                "$ref": "#/components/schemas/ModuleActionRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -1852,7 +2530,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
+                  "$ref": "#/components/schemas/ApiResponse_RuntimeOperationResponse_"
                 }
               }
             }
@@ -1868,7 +2546,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -1959,7 +2647,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2072,7 +2770,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2173,7 +2881,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2289,7 +3007,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2356,7 +3084,7 @@
         "tags": [
           "Config"
         ],
-        "summary": "Saved host settings",
+        "summary": "Server startup settings",
         "operationId": "get_config_api_v1_config_get",
         "responses": {
           "200": {
@@ -2380,7 +3108,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2445,7 +3183,7 @@
         "tags": [
           "Config"
         ],
-        "summary": "Save host settings without applying them",
+        "summary": "Save settings for the next server startup",
         "operationId": "patch_config_api_v1_config_patch",
         "requestBody": {
           "content": {
@@ -2479,7 +3217,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2570,7 +3318,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2671,7 +3429,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2782,7 +3550,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2900,7 +3678,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2999,7 +3787,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3101,7 +3899,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3211,7 +4019,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3321,7 +4139,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3383,20 +4211,20 @@
         }
       }
     },
-    "/api/v1/config/activation": {
+    "/api/v1/config/modules": {
       "get": {
         "tags": [
           "Plugin configuration"
         ],
-        "summary": "Get Activation",
-        "operationId": "get_activation_api_v1_config_activation_get",
+        "summary": "Get Modules",
+        "operationId": "get_modules_api_v1_config_modules_get",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ActivationResponse_"
+                  "$ref": "#/components/schemas/ApiResponse_ModulesResponse_"
                 }
               }
             }
@@ -3412,7 +4240,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3472,30 +4310,39 @@
             }
           }
         }
-      },
-      "put": {
+      }
+    },
+    "/api/v1/config/modules/{module}": {
+      "get": {
         "tags": [
           "Plugin configuration"
         ],
-        "summary": "Accept Activation",
-        "operationId": "accept_activation_api_v1_config_activation_put",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AcceptActivationRequest"
-              }
+        "summary": "Get Module",
+        "operationId": "get_module_api_v1_config_modules__module__get",
+        "parameters": [
+          {
+            "name": "module",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "acquisition",
+                "processing",
+                "stimulation",
+                "actuation"
+              ],
+              "type": "string",
+              "title": "Module"
             }
-          },
-          "required": true
-        },
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ActivationResponse_"
+                  "$ref": "#/components/schemas/ApiResponse_ModuleActivationResponse_"
                 }
               }
             }
@@ -3511,7 +4358,597 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/modules/{module}/history": {
+      "get": {
+        "tags": [
+          "Plugin configuration"
+        ],
+        "summary": "Module History",
+        "operationId": "module_history_api_v1_config_modules__module__history_get",
+        "parameters": [
+          {
+            "name": "module",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "acquisition",
+                "processing",
+                "stimulation",
+                "actuation"
+              ],
+              "type": "string",
+              "title": "Module"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_ModuleHistoryResponse__"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/modules/{module}/history/{entry_id}": {
+      "get": {
+        "tags": [
+          "Plugin configuration"
+        ],
+        "summary": "Module History Entry",
+        "operationId": "module_history_entry_api_v1_config_modules__module__history__entry_id__get",
+        "parameters": [
+          {
+            "name": "module",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "acquisition",
+                "processing",
+                "stimulation",
+                "actuation"
+              ],
+              "type": "string",
+              "title": "Module"
+            }
+          },
+          {
+            "name": "entry_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entry Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ModuleActivationResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/engine": {
+      "get": {
+        "tags": [
+          "Plugin configuration"
+        ],
+        "summary": "Get Engine",
+        "operationId": "get_engine_api_v1_config_engine_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_EngineSettingsResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/plugin-profiles/{profile_id}/history": {
+      "get": {
+        "tags": [
+          "Plugin configuration"
+        ],
+        "summary": "Profile History",
+        "operationId": "profile_history_api_v1_config_plugin_profiles__profile_id__history_get",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_ProfileHistoryResponse__"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/plugin-profiles/{profile_id}/revert": {
+      "post": {
+        "tags": [
+          "Plugin configuration"
+        ],
+        "summary": "Revert Profile",
+        "operationId": "revert_profile_api_v1_config_plugin_profiles__profile_id__revert_post",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevertProfileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PluginProfileResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3617,7 +5054,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3708,7 +5155,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3809,7 +5266,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3910,7 +5377,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4012,7 +5489,145 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/modules/{module}/revert-plan": {
+      "post": {
+        "tags": [
+          "Runtime configuration"
+        ],
+        "summary": "Revert Module",
+        "operationId": "revert_module_api_v1_config_modules__module__revert_plan_post",
+        "parameters": [
+          {
+            "name": "module",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "acquisition",
+                "processing",
+                "stimulation",
+                "actuation"
+              ],
+              "type": "string",
+              "title": "Module"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevertModuleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_RuntimePlanResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4103,7 +5718,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4211,7 +5836,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4332,7 +5967,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4443,7 +6088,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4544,7 +6199,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4645,7 +6310,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4736,7 +6411,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4837,7 +6522,7 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -4846,101 +6531,8 @@
               }
             }
           },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Service unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/plugins/{category}": {
-      "get": {
-        "tags": [
-          "Plugins"
-        ],
-        "summary": "List plugins by category",
-        "description": "Return discovered plugins for *category*.\n\nValid categories: ``paradigm``, ``decoder``, ``acquisition``, ``effector``,\n``trigger``, ``filter``, ``epoch_detector``.",
-        "operationId": "list_plugins_by_category_api_v1_plugins__category__get",
-        "parameters": [
-          {
-            "name": "category",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Category"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ParadigmsResponse_"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "API token required or invalid",
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -5024,70 +6616,6 @@
   },
   "components": {
     "schemas": {
-      "AcceptActivationRequest": {
-        "properties": {
-          "bindings": {
-            "items": {
-              "$ref": "#/components/schemas/SelectProfileBindingRequest"
-            },
-            "type": "array",
-            "title": "Bindings"
-          },
-          "expected_revision": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expected Revision"
-          },
-          "refresh_slots": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Refresh Slots"
-          },
-          "include_host_settings": {
-            "type": "boolean",
-            "title": "Include Host Settings",
-            "default": false
-          },
-          "module": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "acquisition",
-                  "processing",
-                  "stimulation",
-                  "actuation"
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Module"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "bindings"
-        ],
-        "title": "AcceptActivationRequest"
-      },
       "AcquisitionMetadataResponse": {
         "properties": {
           "source_id": {
@@ -5142,7 +6670,7 @@
             "type": "string",
             "title": "Generation"
           },
-          "config_revision": {
+          "acquisition_revision": {
             "anyOf": [
               {
                 "type": "string"
@@ -5151,7 +6679,18 @@
                 "type": "null"
               }
             ],
-            "title": "Config Revision"
+            "title": "Acquisition Revision"
+          },
+          "engine_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine Revision"
           },
           "source_id": {
             "type": "string",
@@ -5239,7 +6778,8 @@
         "required": [
           "capture_id",
           "generation",
-          "config_revision",
+          "acquisition_revision",
+          "engine_revision",
           "source_id",
           "connection_id",
           "sequence_id",
@@ -5381,7 +6921,7 @@
             "type": "string",
             "title": "Generation"
           },
-          "config_revision": {
+          "acquisition_revision": {
             "anyOf": [
               {
                 "type": "string"
@@ -5390,7 +6930,18 @@
                 "type": "null"
               }
             ],
-            "title": "Config Revision"
+            "title": "Acquisition Revision"
+          },
+          "engine_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine Revision"
           },
           "source_id": {
             "anyOf": [
@@ -5512,7 +7063,8 @@
         "required": [
           "capture_id",
           "generation",
-          "config_revision",
+          "acquisition_revision",
+          "engine_revision",
           "source_id",
           "connection_id",
           "status",
@@ -5655,39 +7207,6 @@
         ],
         "title": "AcquisitionStatusResponse"
       },
-      "ActivationResponse": {
-        "properties": {
-          "format_version": {
-            "type": "integer",
-            "const": 2,
-            "title": "Format Version",
-            "default": 2
-          },
-          "revision": {
-            "type": "string",
-            "title": "Revision"
-          },
-          "settings": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Settings"
-          },
-          "bindings": {
-            "items": {
-              "$ref": "#/components/schemas/ProfileBindingResponse"
-            },
-            "type": "array",
-            "title": "Bindings"
-          }
-        },
-        "type": "object",
-        "required": [
-          "revision",
-          "settings",
-          "bindings"
-        ],
-        "title": "ActivationResponse"
-      },
       "ApiResponse": {
         "properties": {
           "success": {
@@ -5817,58 +7336,6 @@
         "type": "object",
         "title": "ApiResponse[AcquisitionStatusResponse]"
       },
-      "ApiResponse_ActivationResponse_": {
-        "properties": {
-          "success": {
-            "type": "boolean",
-            "title": "Success",
-            "default": true
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "ok"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ActivationResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[ActivationResponse]"
-      },
-      "ApiResponse_BackendLogsResponse_": {
-        "properties": {
-          "success": {
-            "type": "boolean",
-            "title": "Success",
-            "default": true
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "ok"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BackendLogsResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[BackendLogsResponse]"
-      },
       "ApiResponse_ConfigResponse_": {
         "properties": {
           "success": {
@@ -5894,6 +7361,32 @@
         },
         "type": "object",
         "title": "ApiResponse[ConfigResponse]"
+      },
+      "ApiResponse_EngineSettingsResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EngineSettingsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[EngineSettingsResponse]"
       },
       "ApiResponse_EngineStatusResponse_": {
         "properties": {
@@ -5947,6 +7440,58 @@
         "type": "object",
         "title": "ApiResponse[EpochListResponse]"
       },
+      "ApiResponse_ModuleActivationResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModuleActivationResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ModuleActivationResponse]"
+      },
+      "ApiResponse_ModulesResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModulesResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ModulesResponse]"
+      },
       "ApiResponse_NodeConfigurationPublicationResponse_": {
         "properties": {
           "success": {
@@ -5972,6 +7517,26 @@
         },
         "type": "object",
         "title": "ApiResponse[NodeConfigurationPublicationResponse]"
+      },
+      "ApiResponse_NoneType_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "type": "null",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[NoneType]"
       },
       "ApiResponse_PackageInstallationResponse_": {
         "properties": {
@@ -6024,32 +7589,6 @@
         },
         "type": "object",
         "title": "ApiResponse[PackageVersionResponse]"
-      },
-      "ApiResponse_ParadigmsResponse_": {
-        "properties": {
-          "success": {
-            "type": "boolean",
-            "title": "Success",
-            "default": true
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "ok"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ParadigmsResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[ParadigmsResponse]"
       },
       "ApiResponse_PatchConfigResponse_": {
         "properties": {
@@ -6233,6 +7772,58 @@
         "type": "object",
         "title": "ApiResponse[RuntimePlanResponse]"
       },
+      "ApiResponse_ServerInfoResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ServerInfoResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ServerInfoResponse]"
+      },
+      "ApiResponse_ServerLogsResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ServerLogsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ServerLogsResponse]"
+      },
       "ApiResponse_SignalPreviewResponse_": {
         "properties": {
           "success": {
@@ -6311,32 +7902,6 @@
         "type": "object",
         "title": "ApiResponse[StimulationStatusResponse]"
       },
-      "ApiResponse_SystemInfoResponse_": {
-        "properties": {
-          "success": {
-            "type": "boolean",
-            "title": "Success",
-            "default": true
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "ok"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SystemInfoResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[SystemInfoResponse]"
-      },
       "ApiResponse_list_MarketPackageResponse__": {
         "properties": {
           "success": {
@@ -6366,6 +7931,36 @@
         },
         "type": "object",
         "title": "ApiResponse[list[MarketPackageResponse]]"
+      },
+      "ApiResponse_list_ModuleHistoryResponse__": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ModuleHistoryResponse"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[ModuleHistoryResponse]]"
       },
       "ApiResponse_list_PackageVersionResponse__": {
         "properties": {
@@ -6457,31 +8052,35 @@
         "type": "object",
         "title": "ApiResponse[list[PluginProfileResponse]]"
       },
-      "BackendLogsResponse": {
+      "ApiResponse_list_ProfileHistoryResponse__": {
         "properties": {
-          "filename": {
-            "type": "string",
-            "title": "Filename"
-          },
-          "lines": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Lines"
-          },
-          "truncated": {
+          "success": {
             "type": "boolean",
-            "title": "Truncated"
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ProfileHistoryResponse"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
           }
         },
         "type": "object",
-        "required": [
-          "filename",
-          "lines",
-          "truncated"
-        ],
-        "title": "BackendLogsResponse"
+        "title": "ApiResponse[list[ProfileHistoryResponse]]"
       },
       "ChannelBindingModel": {
         "properties": {
@@ -6601,21 +8200,30 @@
           },
           "value": {
             "title": "Value",
-            "description": "Saved value; runtime application is separate"
+            "description": "Saved value for the next server startup"
           },
           "type": {
             "type": "string",
             "title": "Type",
-            "description": "int | float"
+            "description": "string | float"
           },
           "requires": {
             "type": "string",
-            "title": "Requires",
-            "description": "engine-restart"
+            "const": "server-restart",
+            "title": "Requires"
           },
           "description": {
             "type": "string",
             "title": "Description"
+          },
+          "active_value": {
+            "title": "Active Value",
+            "description": "Value captured when this server started"
+          },
+          "restart_required": {
+            "type": "boolean",
+            "title": "Restart Required",
+            "description": "Saved value differs from the startup snapshot"
           }
         },
         "type": "object",
@@ -6624,7 +8232,9 @@
           "value",
           "type",
           "requires",
-          "description"
+          "description",
+          "active_value",
+          "restart_required"
         ],
         "title": "ConfigEntry"
       },
@@ -6799,11 +8409,10 @@
         "type": "object",
         "title": "DecoderChannelRequirementsResponse"
       },
-      "DraftSourceBindingRequest": {
+      "DraftPluginBindingRequest": {
         "properties": {
           "slot": {
             "type": "string",
-            "const": "acquisition.source",
             "title": "Slot"
           },
           "selection": {
@@ -6813,6 +8422,29 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Parameters"
+          },
+          "configuration_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configuration Version"
+          },
+          "processing_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingInputModel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required as an explicit object for processing.decoder; omit for other plugin roles."
           }
         },
         "additionalProperties": false,
@@ -6822,7 +8454,33 @@
           "selection",
           "parameters"
         ],
-        "title": "DraftSourceBindingRequest"
+        "title": "DraftPluginBindingRequest"
+      },
+      "EngineSettingsResponse": {
+        "properties": {
+          "revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Settings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "revision",
+          "settings"
+        ],
+        "title": "EngineSettingsResponse"
       },
       "EngineStatusResponse": {
         "properties": {
@@ -6841,6 +8499,14 @@
           "stimulation_connected": {
             "type": "boolean",
             "title": "Stimulation Connected"
+          },
+          "actuation_alive": {
+            "type": "boolean",
+            "title": "Actuation Alive"
+          },
+          "actuation_connected": {
+            "type": "boolean",
+            "title": "Actuation Connected"
           }
         },
         "type": "object",
@@ -6848,7 +8514,9 @@
           "running",
           "acquisition_alive",
           "processor_alive",
-          "stimulation_connected"
+          "stimulation_connected",
+          "actuation_alive",
+          "actuation_connected"
         ],
         "title": "EngineStatusResponse"
       },
@@ -6945,7 +8613,7 @@
             ],
             "title": "Event Id"
           },
-          "config_revision": {
+          "processing_revision": {
             "anyOf": [
               {
                 "type": "string"
@@ -6954,7 +8622,18 @@
                 "type": "null"
               }
             ],
-            "title": "Config Revision"
+            "title": "Processing Revision"
+          },
+          "acquisition_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acquisition Revision"
           },
           "status": {
             "type": "string",
@@ -6974,6 +8653,8 @@
               "next_start",
               "stream_stop",
               "processor_stop",
+              "processing_detached",
+              "source_unavailable",
               "error"
             ],
             "title": "Reason"
@@ -7049,7 +8730,8 @@
           "generation",
           "epoch_number",
           "event_id",
-          "config_revision",
+          "processing_revision",
+          "acquisition_revision",
           "status",
           "reason",
           "sample_rate",
@@ -7081,6 +8763,7 @@
           "COMMAND_REJECTED",
           "COMMAND_EXECUTION_FAILED",
           "COMMAND_TIMEOUT",
+          "PEER_DELIVERY_FAILED",
           "CONFIG_KEY_NOT_ALLOWED",
           "CONFIG_PROFILE_NOT_FOUND"
         ],
@@ -7170,6 +8853,10 @@
       },
       "MarketPackageResponse": {
         "properties": {
+          "domain": {
+            "type": "string",
+            "title": "Domain"
+          },
           "repository_id": {
             "type": "string",
             "title": "Repository Id"
@@ -7258,6 +8945,7 @@
         },
         "type": "object",
         "required": [
+          "domain",
           "repository_id",
           "package_id",
           "version",
@@ -7273,6 +8961,188 @@
           "requires"
         ],
         "title": "MarketPackageResponse"
+      },
+      "ModuleActionRequest": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/ModuleConfigurationRequest"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "operation_id",
+          "configuration"
+        ],
+        "title": "ModuleActionRequest"
+      },
+      "ModuleActivationResponse": {
+        "properties": {
+          "module": {
+            "type": "string",
+            "enum": [
+              "acquisition",
+              "processing",
+              "stimulation",
+              "actuation"
+            ],
+            "title": "Module"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Settings"
+          },
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileBindingResponse"
+            },
+            "type": "array",
+            "title": "Bindings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "module",
+          "revision",
+          "settings",
+          "bindings"
+        ],
+        "title": "ModuleActivationResponse"
+      },
+      "ModuleConfigurationRequest": {
+        "properties": {
+          "expected_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Settings"
+          },
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/DraftPluginBindingRequest"
+            },
+            "type": "array",
+            "title": "Bindings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "settings",
+          "bindings"
+        ],
+        "title": "ModuleConfigurationRequest"
+      },
+      "ModuleHistoryResponse": {
+        "properties": {
+          "entry_id": {
+            "type": "string",
+            "title": "Entry Id"
+          },
+          "revision": {
+            "type": "string",
+            "title": "Revision"
+          },
+          "saved_at": {
+            "type": "string",
+            "title": "Saved At"
+          },
+          "restored_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restored From"
+          },
+          "binding_summary": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Binding Summary"
+          }
+        },
+        "type": "object",
+        "required": [
+          "entry_id",
+          "revision",
+          "saved_at",
+          "binding_summary"
+        ],
+        "title": "ModuleHistoryResponse"
+      },
+      "ModulesResponse": {
+        "properties": {
+          "modules": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ModuleActivationResponse"
+            },
+            "propertyNames": {
+              "enum": [
+                "acquisition",
+                "processing",
+                "stimulation",
+                "actuation"
+              ]
+            },
+            "type": "object",
+            "title": "Modules"
+          },
+          "engine": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EngineSettingsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "errors": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Errors"
+          }
+        },
+        "type": "object",
+        "required": [
+          "modules",
+          "engine"
+        ],
+        "title": "ModulesResponse"
       },
       "NodeConfigurationPublicationResponse": {
         "properties": {
@@ -7310,9 +9180,16 @@
             ],
             "title": "Role"
           },
-          "revision": {
+          "module_revisions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Module Revisions"
+          },
+          "engine_revision": {
             "type": "string",
-            "title": "Revision"
+            "title": "Engine Revision"
           },
           "generation": {
             "anyOf": [
@@ -7338,11 +9215,13 @@
             "title": "Bindings"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "format_version",
           "role",
-          "revision",
+          "module_revisions",
+          "engine_revision",
           "generation",
           "settings",
           "bindings"
@@ -7426,6 +9305,17 @@
       },
       "PackageVersionResponse": {
         "properties": {
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain"
+          },
           "package_id": {
             "type": "string",
             "title": "Package Id"
@@ -7496,6 +9386,7 @@
         },
         "type": "object",
         "required": [
+          "domain",
           "package_id",
           "version",
           "label",
@@ -7507,93 +9398,6 @@
           "error"
         ],
         "title": "PackageVersionResponse"
-      },
-      "ParadigmInfo": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "plugin_type": {
-            "type": "string",
-            "title": "Plugin Type"
-          },
-          "display_name": {
-            "type": "string",
-            "title": "Display Name"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "version": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Version"
-          },
-          "source": {
-            "type": "string",
-            "title": "Source",
-            "default": "user"
-          },
-          "params": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Params"
-          },
-          "controls": {
-            "additionalProperties": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "type": "object",
-            "title": "Controls"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name",
-            "description": "Deprecated alias for display_name.",
-            "readOnly": true
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "plugin_type",
-          "display_name",
-          "name"
-        ],
-        "title": "ParadigmInfo",
-        "description": "Metadata for a discovered stimulation paradigm.\n\nFields\n------\nid           Machine identifier; unique per plugin (= manifest package.id).\nplugin_type  Registry key used to actually start the paradigm.\ndisplay_name Human-readable label shown in the UI.\ndescription  Optional long description.\nversion      Semver string from the manifest, if present.\nsource       \"builtin\" (ships with app) or \"user\" (downloaded / self-written).\n\nDeprecated\n----------\nname         Alias for ``display_name``; kept for one release cycle."
-      },
-      "ParadigmsResponse": {
-        "properties": {
-          "paradigms": {
-            "items": {
-              "$ref": "#/components/schemas/ParadigmInfo"
-            },
-            "type": "array",
-            "title": "Paradigms"
-          }
-        },
-        "type": "object",
-        "required": [
-          "paradigms"
-        ],
-        "title": "ParadigmsResponse"
       },
       "PatchConfigRequest": {
         "properties": {
@@ -7632,22 +9436,33 @@
             "title": "Revision",
             "description": "Revision after saving the host settings"
           },
-          "engine_restart_required": {
+          "server_restart_required": {
             "type": "boolean",
-            "title": "Engine Restart Required",
-            "description": "Whether applying these saved changes requires an engine restart"
+            "title": "Server Restart Required",
+            "description": "Whether any saved server settings differ from the startup snapshot"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "saved",
           "revision",
-          "engine_restart_required"
+          "server_restart_required"
         ],
         "title": "PatchConfigResponse"
       },
       "PluginConfigurationResponse": {
         "properties": {
+          "domain": {
+            "type": "string",
+            "enum": [
+              "acquisition",
+              "processing",
+              "stimulation",
+              "actuation"
+            ],
+            "title": "Domain"
+          },
           "selection": {
             "$ref": "#/components/schemas/PluginSelectionResponse"
           },
@@ -7731,6 +9546,7 @@
         },
         "type": "object",
         "required": [
+          "domain",
           "selection",
           "kind",
           "plugin_type",
@@ -7744,11 +9560,6 @@
       },
       "PluginProfileResponse": {
         "properties": {
-          "processing_input_requires_review": {
-            "type": "boolean",
-            "title": "Processing Input Requires Review",
-            "default": false
-          },
           "format_version": {
             "type": "integer",
             "const": 2,
@@ -7826,14 +9637,9 @@
             "title": "Contribution Id"
           },
           "version": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[0-9][A-Za-z0-9._+\\-]*$",
             "title": "Version"
           }
         },
@@ -7841,7 +9647,8 @@
         "type": "object",
         "required": [
           "package_id",
-          "contribution_id"
+          "contribution_id",
+          "version"
         ],
         "title": "PluginSelectionResponse"
       },
@@ -7965,11 +9772,6 @@
       },
       "ProfileBindingResponse": {
         "properties": {
-          "processing_input_requires_review": {
-            "type": "boolean",
-            "title": "Processing Input Requires Review",
-            "default": false
-          },
           "slot": {
             "type": "string",
             "title": "Slot"
@@ -8035,6 +9837,33 @@
           "profile_revision"
         ],
         "title": "ProfileBindingResponse"
+      },
+      "ProfileHistoryResponse": {
+        "properties": {
+          "profile_id": {
+            "type": "string",
+            "title": "Profile Id"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "saved_at": {
+            "type": "string",
+            "title": "Saved At"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/PluginProfileResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "profile_id",
+          "revision",
+          "saved_at",
+          "profile"
+        ],
+        "title": "ProfileHistoryResponse"
       },
       "ProfileVersionProposalResponse": {
         "properties": {
@@ -8177,6 +10006,41 @@
         ],
         "title": "ResultsResponse"
       },
+      "RevertModuleRequest": {
+        "properties": {
+          "entry_id": {
+            "type": "string",
+            "title": "Entry Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "entry_id"
+        ],
+        "title": "RevertModuleRequest"
+      },
+      "RevertProfileRequest": {
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Revision"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision",
+          "expected_revision"
+        ],
+        "title": "RevertProfileRequest"
+      },
       "RuntimeApplyRequest": {
         "properties": {
           "plan_id": {
@@ -8202,31 +10066,47 @@
             "type": "boolean",
             "title": "Running"
           },
-          "recovery_required": {
-            "type": "boolean",
-            "title": "Recovery Required"
+          "recovery": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Recovery"
           },
-          "accepted_revision": {
+          "accepted": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Accepted"
+          },
+          "applied": {
             "anyOf": [
               {
-                "type": "string"
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Accepted Revision"
-          },
-          "applied_revision": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Applied Revision"
+            "title": "Applied"
           },
           "generation": {
             "anyOf": [
@@ -8239,30 +10119,59 @@
             ],
             "title": "Generation"
           },
-          "operation": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/RuntimeOperationResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "operations": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RuntimeOperationResponse"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Operations"
+          },
+          "errors": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Errors"
           }
         },
         "type": "object",
         "required": [
           "running",
-          "recovery_required",
-          "accepted_revision",
-          "applied_revision",
+          "recovery",
+          "accepted",
+          "applied",
           "generation",
-          "operation"
+          "operations"
         ],
         "title": "RuntimeConfigurationResponse"
       },
       "RuntimeOperationResponse": {
         "properties": {
+          "module": {
+            "type": "string",
+            "enum": [
+              "acquisition",
+              "processing",
+              "stimulation",
+              "actuation",
+              "engine"
+            ],
+            "title": "Module"
+          },
+          "affected_modules": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Affected Modules"
+          },
           "operation_id": {
             "type": "string",
             "title": "Operation Id"
@@ -8271,9 +10180,12 @@
             "type": "string",
             "title": "Plan Id"
           },
-          "target_revision": {
-            "type": "string",
-            "title": "Target Revision"
+          "target_revisions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Target Revisions"
           },
           "status": {
             "type": "string",
@@ -8320,9 +10232,11 @@
         },
         "type": "object",
         "required": [
+          "module",
+          "affected_modules",
           "operation_id",
           "plan_id",
-          "target_revision",
+          "target_revisions",
           "status",
           "stage",
           "error",
@@ -8333,19 +10247,16 @@
       },
       "RuntimePlanRequest": {
         "properties": {
-          "bindings": {
-            "items": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/SelectProfileBindingRequest"
-                },
-                {
-                  "$ref": "#/components/schemas/DraftSourceBindingRequest"
-                }
-              ]
-            },
-            "type": "array",
-            "title": "Bindings"
+          "module": {
+            "type": "string",
+            "enum": [
+              "acquisition",
+              "processing",
+              "stimulation",
+              "actuation",
+              "engine"
+            ],
+            "title": "Module"
           },
           "expected_revision": {
             "anyOf": [
@@ -8372,32 +10283,37 @@
             ],
             "title": "Refresh Slots"
           },
-          "include_host_settings": {
-            "type": "boolean",
-            "title": "Include Host Settings",
-            "default": false
+          "bindings": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SelectProfileBindingRequest"
+                },
+                {
+                  "$ref": "#/components/schemas/DraftPluginBindingRequest"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Bindings"
           },
-          "module": {
+          "settings": {
             "anyOf": [
               {
-                "type": "string",
-                "enum": [
-                  "acquisition",
-                  "processing",
-                  "stimulation",
-                  "actuation"
-                ]
+                "additionalProperties": true,
+                "type": "object"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Module"
+            "title": "Settings"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
+          "module",
           "bindings"
         ],
         "title": "RuntimePlanRequest"
@@ -8419,20 +10335,47 @@
             ],
             "title": "Expected Revision"
           },
-          "target_revision": {
-            "type": "string",
-            "title": "Target Revision"
+          "expected_revisions": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Expected Revisions"
           },
-          "applied_revision": {
+          "target_revisions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Target Revisions"
+          },
+          "applied_revisions": {
             "anyOf": [
               {
-                "type": "string"
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Applied Revision"
+            "title": "Applied Revisions"
           },
           "generation": {
             "anyOf": [
@@ -8493,19 +10436,13 @@
             "title": "Signal Summary"
           },
           "module": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "acquisition",
-                  "processing",
-                  "stimulation",
-                  "actuation"
-                ]
-              },
-              {
-                "type": "null"
-              }
+            "type": "string",
+            "enum": [
+              "acquisition",
+              "processing",
+              "stimulation",
+              "actuation",
+              "engine"
             ],
             "title": "Module"
           }
@@ -8514,14 +10451,16 @@
         "required": [
           "plan_id",
           "expected_revision",
-          "target_revision",
-          "applied_revision",
+          "expected_revisions",
+          "target_revisions",
+          "applied_revisions",
           "generation",
           "running",
           "strategy",
           "changed_slots",
           "changed_settings",
-          "errors"
+          "errors",
+          "module"
         ],
         "title": "RuntimePlanResponse"
       },
@@ -8543,6 +10482,61 @@
           "profile_id"
         ],
         "title": "SelectProfileBindingRequest"
+      },
+      "ServerInfoResponse": {
+        "properties": {
+          "app_version": {
+            "type": "string",
+            "title": "App Version"
+          },
+          "desktop_api_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Desktop Api Version",
+            "default": 1
+          },
+          "instance_id": {
+            "type": "string",
+            "title": "Instance Id"
+          },
+          "auth_enabled": {
+            "type": "boolean",
+            "title": "Auth Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "app_version",
+          "instance_id",
+          "auth_enabled"
+        ],
+        "title": "ServerInfoResponse"
+      },
+      "ServerLogsResponse": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "lines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Lines"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "lines",
+          "truncated"
+        ],
+        "title": "ServerLogsResponse"
       },
       "SetPackageEnabledRequest": {
         "properties": {
@@ -8780,10 +10774,6 @@
               }
             ]
           },
-          "revision": {
-            "type": "string",
-            "title": "Revision"
-          },
           "readiness": {
             "$ref": "#/components/schemas/SignalReadinessModel"
           }
@@ -8791,7 +10781,6 @@
         "type": "object",
         "required": [
           "source_revision",
-          "revision",
           "readiness"
         ],
         "title": "SignalSetupResponse"
@@ -8885,22 +10874,32 @@
         ],
         "title": "StartAcquisitionPreviewRequest"
       },
-      "StartStimulationRequest": {
+      "StartReadingRequest": {
         "properties": {
-          "paradigm": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Paradigm"
+          "expected_revision": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Expected Revision"
+          },
+          "generation": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Generation"
+          },
+          "connection_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Connection Id"
           }
         },
+        "additionalProperties": false,
         "type": "object",
-        "title": "StartStimulationRequest"
+        "required": [
+          "expected_revision",
+          "generation",
+          "connection_id"
+        ],
+        "title": "StartReadingRequest"
       },
       "StartTrialRequest": {
         "properties": {
@@ -8961,7 +10960,7 @@
           "engine_connected"
         ],
         "title": "StimulationStatusResponse",
-        "description": "Live status of the Stimulation subsystem.\n\nactive          — the application service has issued a StartStimulation command.\nprocess_alive   — the Stimulation subprocess is currently running (auto_spawn only).\nengine_connected — the Stimulation process has an active IPC connection to the engine."
+        "description": "Live status of the Stimulation subsystem.\n\nactive          — the application service has started stimulation.\nprocess_alive   — the Stimulation subprocess is currently running (auto_spawn only).\nengine_connected — the Stimulation process has an active IPC connection to the engine."
       },
       "StopAcquisitionPreviewRequest": {
         "properties": {
@@ -8985,35 +10984,6 @@
           "capture_id"
         ],
         "title": "StopAcquisitionPreviewRequest"
-      },
-      "SystemInfoResponse": {
-        "properties": {
-          "app_version": {
-            "type": "string",
-            "title": "App Version"
-          },
-          "desktop_api_version": {
-            "type": "integer",
-            "const": 1,
-            "title": "Desktop Api Version",
-            "default": 1
-          },
-          "instance_id": {
-            "type": "string",
-            "title": "Instance Id"
-          },
-          "auth_enabled": {
-            "type": "boolean",
-            "title": "Auth Enabled"
-          }
-        },
-        "type": "object",
-        "required": [
-          "app_version",
-          "instance_id",
-          "auth_enabled"
-        ],
-        "title": "SystemInfoResponse"
       },
       "TrialResponse": {
         "properties": {
@@ -9053,7 +11023,7 @@
             "format": "date-time",
             "title": "Produced At"
           },
-          "config_revision": {
+          "processing_revision": {
             "anyOf": [
               {
                 "type": "string"
@@ -9062,7 +11032,18 @@
                 "type": "null"
               }
             ],
-            "title": "Config Revision"
+            "title": "Processing Revision"
+          },
+          "acquisition_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acquisition Revision"
           }
         },
         "type": "object",

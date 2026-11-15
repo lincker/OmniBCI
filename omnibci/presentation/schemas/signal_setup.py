@@ -22,7 +22,8 @@ class ChannelBindingModel(SignalModel):
     @model_validator(mode="after")
     def source_reference(self):
         if (self.source_channel_id is None) == (self.source_channel_index is None):
-            raise ValueError("Channel binding requires exactly one source_channel_id or source_channel_index")
+            raise PydanticCustomError("channel_source_reference",
+                                      "Channel binding requires exactly one source_channel_id or source_channel_index")
         return self
 
     @model_serializer(mode="wrap")
@@ -77,7 +78,6 @@ class SignalSetupResponse(BaseModel):
     processing_input: ProcessingInputModel | None = None
     accepted_input: ProcessingInputModel | None = None
     active_input: ProcessingInputModel | None = None
-    revision: str
     readiness: SignalReadinessModel
 
 

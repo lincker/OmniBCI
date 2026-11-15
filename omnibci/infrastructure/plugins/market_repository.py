@@ -26,7 +26,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from omnibci.application.plugin_market import MarketContribution, MarketPackage, PreparedMarketInstall
 from omnibci.infrastructure.plugins.descriptors import PluginSelection
 from omnibci.infrastructure.plugins.package_installer import InstalledPackage, PluginPackageInstaller
-from omnibci.infrastructure.plugins.plugin_catalog import VALID_CATEGORIES
+from omnibci.infrastructure.plugins.plugin_catalog import VALID_CATEGORIES, DOMAIN_KINDS
 
 _IDENTIFIER = r"[A-Za-z0-9][A-Za-z0-9_-]*"
 _INDEX_FIELDS = frozenset({
@@ -34,7 +34,7 @@ _INDEX_FIELDS = frozenset({
 })
 _PACKAGE_FIELDS = frozenset({
     "package_id", "version", "display_name", "description", "download", "sha256", "size",
-    "contributions", "api_version", "platforms", "host_version", "requires",
+    "contributions", "api_version", "platforms", "host_version", "requires", "domain",
 })
 
 
@@ -201,7 +201,7 @@ class StaticMarketRepository:
             raise MarketRepositoryError("Prepared package differs from signed repository metadata")
         return self.installer.install(
             prepared.archive, expected_sha256=selected.sha256,
-            expected_package_id=selected.package_id, expected_version=selected.version,
+            expected_package_id=selected.package_id, expected_version=selected.version, expected_domain=selected.domain,
             expected_contributions={
                 item.selection.contribution_id: item.kind for item in selected.contributions
             },
@@ -276,6 +276,9 @@ class StaticMarketRepository:
             raise MarketRepositoryError("Package downloads must use plain relative URL paths")
         download_url = urljoin(self.repo_url, download)
         self._validate_url(download_url)
+        domain = item.get("domain")
+        if not isinstance(domain, str) or domain not in DOMAIN_KINDS:
+            raise MarketRepositoryError("Missing or invalid package domain")
         contributions = item.get("contributions")
         if not isinstance(contributions, list) or not 0 < len(contributions) <= 128:
             raise MarketRepositoryError("Package requires a bounded non-empty contribution list")
@@ -288,7 +291,7 @@ class StaticMarketRepository:
             kind = contribution["kind"]
             if not re.fullmatch(_IDENTIFIER, identifier) or identifier in identifiers:
                 raise MarketRepositoryError("Invalid or duplicate contribution ID")
-            if not isinstance(kind, str) or kind not in VALID_CATEGORIES:
+            if not isinstance(kind, str) or kind not in DOMAIN_KINDS[domain]:
                 raise MarketRepositoryError("Unknown contribution kind")
             identifiers.add(identifier)
             parsed.append(MarketContribution(kind, PluginSelection(package_id, identifier, version)))
@@ -305,7 +308,7 @@ class StaticMarketRepository:
             raise MarketRepositoryError("Invalid package host requirements")
         return MarketPackage(
             repository_id, package_id, version, display_name, description, download_url,
-            digest, size, tuple(parsed),
+            digest, size, tuple(parsed), domain,
             _text(item["api_version"], "package API version", 32) if "api_version" in item else None,
             tuple(platforms),
             _text(item["host_version"], "package host version", 128) if "host_version" in item else None,

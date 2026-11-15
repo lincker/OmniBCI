@@ -13,7 +13,7 @@ def test_token_protects_rest_and_websocket_without_query_credentials():
     with TestClient(app) as client:
         assert client.get("/healthz").status_code == 200
         for headers in ({}, {"Authorization": "Bearer wrong"}):
-            assert client.get("/api/v1/system/info", headers=headers).status_code == 401
+            assert client.get("/api/v1/server/info", headers=headers).status_code == 401
         with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect("/api/v1/ws/results?token=private-token"):
                 pass
@@ -21,23 +21,23 @@ def test_token_protects_rest_and_websocket_without_query_credentials():
             "/api/v1/ws/results", headers={"Authorization": "Bearer private-token"},
         ):
             pass
-        info = client.get("/api/v1/system/info", headers={"Authorization": "Bearer private-token"}).json()["data"]
+        info = client.get("/api/v1/server/info", headers={"Authorization": "Bearer private-token"}).json()["data"]
         assert info["desktop_api_version"] == 1
         assert info["auth_enabled"] is True
         assert info["instance_id"] == app.state.instance_id
         assert "private-token" not in str(info)
 
 
-def test_environment_token_and_distinct_backend_instances(monkeypatch):
+def test_environment_token_and_distinct_server_instances(monkeypatch):
     monkeypatch.setenv("OMNIBCI_API_TOKEN", "environment-secret")
     first, second = create_app(), create_app()
     assert first.state.instance_id != second.state.instance_id
     client = TestClient(first)
-    assert client.get("/api/v1/system/info").status_code == 401
-    assert client.get("/api/v1/system/info", headers={"Authorization": "Bearer environment-secret"}).status_code == 200
+    assert client.get("/api/v1/server/info").status_code == 401
+    assert client.get("/api/v1/server/info", headers={"Authorization": "Bearer environment-secret"}).status_code == 200
 
 
-def test_prepared_backend_allows_reads_but_rejects_mutations(api_client):
+def test_prepared_server_allows_reads_but_rejects_mutations(api_client):
     api_client.app.state.request_gate.prepared = True
     assert api_client.get("/api/v1/results").status_code == 200
     response = api_client.post("/api/v1/acquisition/stream/start")
@@ -65,7 +65,7 @@ async def test_prepare_waits_for_accepted_write_and_blocks_later_writes():
         await asyncio.sleep(0)
         assert not preparing.done()
         assert (await client.post("/api/v1/test-write")).status_code == 409
-        assert (await client.get("/api/v1/system/info")).status_code == 200
+        assert (await client.get("/api/v1/server/info")).status_code == 200
         released.set()
         assert (await accepted).status_code == 200
         await preparing

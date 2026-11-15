@@ -6,12 +6,14 @@ import pytest
 from omnibci.infrastructure.plugins.loader import PluginLoader, PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginRoot
 from omnibci.sdk import Effector, PluginContext
+from omnibci.application.configuration.models import PluginSelection
 
 
 def descriptor(tmp_path, body="self.parameters = parameters; self.context = context"):
     (tmp_path / "manifest.toml").write_text(dedent('''
         manifest_version = 2
         [package]
+        domain = "actuation"
         id = "example"
         publisher = "test"
         version = "1.0.0"
@@ -31,13 +33,13 @@ def descriptor(tmp_path, body="self.parameters = parameters; self.context = cont
             def play(self, command): pass
     '''), encoding="utf-8")
     catalog = PluginCatalog({"effector": lambda: [PluginRoot(tmp_path, "user", 0)]})
-    return catalog.resolve_legacy("effector", "output")
+    return catalog.resolve_selection("effector", PluginSelection("test.example", "output", "1.0.0"))
 
 
 def test_api_two_needs_no_registry_alias_and_copies_parameters(tmp_path):
     selected = descriptor(tmp_path)
     parameters = {"mapping": [1, 2]}
-    context = PluginContext(sample_rate=250, config_revision="revision-1", resource_root="ignored")
+    context = PluginContext(sample_rate=250, module_revision="revision-1", resource_root="ignored")
     plugin = PluginLoader.instantiate(selected, Effector, parameters=parameters, context=context)
     plugin.parameters["mapping"].append(3)
     assert parameters == {"mapping": [1, 2]}

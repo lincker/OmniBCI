@@ -29,6 +29,7 @@ from omnibci.infrastructure.ipc.protocol import Frame, MAX_FRAME_BODY_BYTES
 from omnibci.infrastructure.ipc.network import (
     NetworkClient,
     NetworkServer,
+    PeerConnectionChanged,
     StreamCleanupError,
 )
 from omnibci.shared.events import Event, EventType
@@ -47,21 +48,22 @@ class TestFrameCodec:
     def test_frame_body_size_counts_bytes_not_chars(self):
         # Multi-byte body: header body_size must equal UTF-8 byte length.
         body = "结果"  # 2 chars, 6 UTF-8 bytes
-        frame = Frame(body).to_bytes()
+        frame = Frame(body, version=PROTOCOL_VERSION).to_bytes()
         header = Frame.Header.from_bytes(frame[: Frame.Header.HEADER_SIZE])
         assert header.body_size == len(body.encode())
         assert frame[Frame.Header.HEADER_SIZE:].decode() == body
 
 # ---------------------------------------------------------------------------
-# Spy event bus — captures put_event calls (sync, like the real bus seam)
+# Event collector — accepts inbound events through the transport handler
 # ---------------------------------------------------------------------------
 
-class _SpyBus:
+class _EventCollector:
     def __init__(self) -> None:
         self.events: list = []
 
-    def put_event(self, event) -> None:
+    def __call__(self, event) -> bool:
         self.events.append(event)
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -78,19 +80,21 @@ async def _serve_one(server: NetworkServer):
 class TestLoopbackRoundTrip:
     def test_server_to_client_delivers_event(self):
         async def scenario():
-            server_bus, client_bus = _SpyBus(), _SpyBus()
-            server = NetworkServer(event_bus=server_bus, host="127.0.0.1", port=0)
+            server_events, client_events = _EventCollector(), _EventCollector()
+            server = NetworkServer(host="127.0.0.1", port=0)
+            server.set_inbound_handler(server_events)
             srv, port = await _serve_one(server)
-            client = NetworkClient(event_bus=client_bus, server_ip="127.0.0.1", server_port=port)
+            client = NetworkClient(server_ip="127.0.0.1", server_port=port)
+            client.set_inbound_handler(client_events)
             client.reader, client.writer = await asyncio.open_connection("127.0.0.1", port)
 
             await asyncio.sleep(0.05)  # let server accept + set self.writer
             await server.send_event(Event(EventType.TrialCompleted, data=7))
 
             await client.receive()  # read one frame
-            assert len(client_bus.events) == 1
-            assert client_bus.events[0].type == EventType.TrialCompleted
-            assert client_bus.events[0].data == 7
+            assert len(client_events.events) == 1
+            assert client_events.events[0].type == EventType.TrialCompleted
+            assert client_events.events[0].data == 7
 
             await client.stop()
             await server.stop()
@@ -99,10 +103,12 @@ class TestLoopbackRoundTrip:
     def test_client_to_server_delivers_event(self):
         """The previously-broken direction (server missed json.loads + key)."""
         async def scenario():
-            server_bus, client_bus = _SpyBus(), _SpyBus()
-            server = NetworkServer(event_bus=server_bus, host="127.0.0.1", port=0)
+            server_events, client_events = _EventCollector(), _EventCollector()
+            server = NetworkServer(host="127.0.0.1", port=0)
+            server.set_inbound_handler(server_events)
             srv, port = await _serve_one(server)
-            client = NetworkClient(event_bus=client_bus, server_ip="127.0.0.1", server_port=port)
+            client = NetworkClient(server_ip="127.0.0.1", server_port=port)
+            client.set_inbound_handler(client_events)
             client.reader, client.writer = await asyncio.open_connection("127.0.0.1", port)
 
             await asyncio.sleep(0.05)
@@ -111,7 +117,7 @@ class TestLoopbackRoundTrip:
 
             assert any(
                 e.type == EventType.StartStimTrial and e.data == 3
-                for e in server_bus.events
+                for e in server_events.events
             )
             await client.stop()
             await server.stop()
@@ -119,8 +125,9 @@ class TestLoopbackRoundTrip:
 
     def test_client_disconnect_does_not_crash_server_handler(self):
         async def scenario():
-            server_bus = _SpyBus()
-            server = NetworkServer(event_bus=server_bus, host="127.0.0.1", port=0)
+            server_events = _EventCollector()
+            server = NetworkServer(host="127.0.0.1", port=0)
+            server.set_inbound_handler(server_events)
             srv, port = await _serve_one(server)
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
             await asyncio.sleep(0.05)
@@ -135,11 +142,14 @@ class TestLoopbackRoundTrip:
 
     def test_send_event_broadcasts_to_all_clients(self):
         async def scenario():
-            server = NetworkServer(event_bus=_SpyBus(), host="127.0.0.1", port=0)
+            server = NetworkServer(host="127.0.0.1", port=0)
+            server.set_inbound_handler(_EventCollector())
             srv, port = await _serve_one(server)
-            bus_a, bus_b = _SpyBus(), _SpyBus()
-            client_a = NetworkClient(event_bus=bus_a, server_ip="127.0.0.1", server_port=port)
-            client_b = NetworkClient(event_bus=bus_b, server_ip="127.0.0.1", server_port=port)
+            events_a, events_b = _EventCollector(), _EventCollector()
+            client_a = NetworkClient(server_ip="127.0.0.1", server_port=port)
+            client_a.set_inbound_handler(events_a)
+            client_b = NetworkClient(server_ip="127.0.0.1", server_port=port)
+            client_b.set_inbound_handler(events_b)
             client_a.reader, client_a.writer = await asyncio.open_connection("127.0.0.1", port)
             client_b.reader, client_b.writer = await asyncio.open_connection("127.0.0.1", port)
             await asyncio.sleep(0.05)
@@ -148,7 +158,7 @@ class TestLoopbackRoundTrip:
             await server.send_event(Event(EventType.TrialCompleted, data=1))
             await client_a.receive()
             await client_b.receive()
-            assert bus_a.events and bus_b.events  # both clients received it
+            assert events_a.events and events_b.events  # both clients received it
 
             await client_a.stop()
             await client_b.stop()
@@ -391,7 +401,7 @@ class TestServerLifecycle:
             writer = _Writer()
             server._clients.add(writer)
 
-            send_task = asyncio.create_task(server.send("before-stop"))
+            send_task = asyncio.create_task(server.send_event(Event(EventType.TrialCompleted, "before-stop")))
             await writer.drain_entered.wait()
             stop_task = asyncio.create_task(server.stop())
             await asyncio.sleep(0)
@@ -404,7 +414,7 @@ class TestServerLifecycle:
             await stop_task
             assert writer.closed is True
             assert server.status == "STOP"
-            assert await server.send("after-stop") is False
+            assert await server.send_event(Event(EventType.TrialCompleted, "after-stop")) is False
             assert writer.write_calls == 1
 
         asyncio.run(scenario())
@@ -424,8 +434,9 @@ class TestSafeFrameRead:
         self, invalid_body
     ):
         async def scenario():
-            bus = _SpyBus()
-            server = NetworkServer(event_bus=bus, host="127.0.0.1", port=0)
+            events = _EventCollector()
+            server = NetworkServer(host="127.0.0.1", port=0)
+            server.set_inbound_handler(events)
             liveness_calls = 0
 
             def on_liveness():
@@ -446,7 +457,7 @@ class TestSafeFrameRead:
             assert await asyncio.wait_for(reader.read(1), timeout=0.2) == b""
             await asyncio.sleep(0)
             assert liveness_calls == 0
-            assert bus.events == []
+            assert events.events == []
             assert server._clients == set()
 
             writer.close()
@@ -493,7 +504,7 @@ class TestSafeFrameRead:
     def test_client_uses_same_acceptance_and_keepalive_liveness_policy(self):
         async def scenario():
             reader = asyncio.StreamReader()
-            client = NetworkClient(event_bus=None)
+            client = NetworkClient()
             client.reader = reader
             seen = []
             liveness_calls = 0
@@ -527,20 +538,20 @@ class TestSafeFrameRead:
     def test_client_rejects_complete_invalid_event_body(self):
         async def scenario():
             reader = asyncio.StreamReader()
-            client = NetworkClient(event_bus=_SpyBus())
+            client = NetworkClient()
+            client.set_inbound_handler(_EventCollector())
             client.reader = reader
-            reader.feed_data(Frame("not json").to_bytes())
+            reader.feed_data(Frame("not json", version=PROTOCOL_VERSION).to_bytes())
 
             with pytest.raises(InvalidEventBody):
                 await client.receive()
 
         asyncio.run(scenario())
 
-    def test_legacy_event_bus_path_counts_successful_injection_as_accepted(self):
+    def test_unhandled_event_does_not_refresh_liveness(self):
         async def scenario():
             reader = asyncio.StreamReader()
-            bus = _SpyBus()
-            client = NetworkClient(event_bus=bus)
+            client = NetworkClient()
             client.reader = reader
             liveness_calls = 0
 
@@ -552,8 +563,7 @@ class TestSafeFrameRead:
             reader.feed_data(encode_event(Event(EventType.TrialCompleted, 7)))
             await client.receive()
 
-            assert [event.data for event in bus.events] == [7]
-            assert liveness_calls == 1
+            assert liveness_calls == 0
 
         asyncio.run(scenario())
 
@@ -617,14 +627,60 @@ class TestSafeFrameRead:
 
 
 class TestSendSemantics:
+    @pytest.mark.parametrize("server_side", [True, False])
+    def test_connection_token_is_checked_inside_write_lock(self, server_side):
+        class Writer:
+            def __init__(self):
+                self.frames = []
+
+            def write(self, frame):
+                self.frames.append(frame)
+
+            async def drain(self):
+                pass
+
+        async def scenario():
+            old, new = Writer(), Writer()
+            if server_side:
+                connection = NetworkServer()
+                connection._clients.add(old)
+            else:
+                connection = NetworkClient()
+                connection.status = "CONNECTED"
+                connection.writer = old
+            token = connection.connection_token
+            await connection._send_lock.acquire()
+            pending = asyncio.create_task(connection.send_event(
+                Event(EventType.TrialCompleted, "old"), connection_token=token,
+            ))
+            await asyncio.sleep(0)
+            if server_side:
+                connection._clients = {new}
+            else:
+                connection.writer = new
+            connection._send_lock.release()
+            with pytest.raises(PeerConnectionChanged):
+                await pending
+            assert old.frames == []
+            assert new.frames == []
+            assert await connection.send_event(
+                Event(EventType.TrialCompleted, "new"),
+                connection_token=connection.connection_token,
+            )
+            assert len(new.frames) == 1
+
+        asyncio.run(scenario())
+
     def test_server_send_returns_delivery_status_and_serializes_frames(self):
         async def scenario():
-            server = NetworkServer(event_bus=_SpyBus(), host="127.0.0.1", port=0)
+            server = NetworkServer(host="127.0.0.1", port=0)
+            server.set_inbound_handler(_EventCollector())
             _, port = await _serve_one(server)
             assert await server.send_event(Event(EventType.TrialCompleted, 0)) is False
 
-            bus = _SpyBus()
-            client = NetworkClient(event_bus=bus)
+            events = _EventCollector()
+            client = NetworkClient()
+            client.set_inbound_handler(events)
             client.reader, client.writer = await asyncio.open_connection(
                 "127.0.0.1", port
             )
@@ -637,7 +693,7 @@ class TestSendSemantics:
             assert delivered == [True, True]
             await client.receive()
             await client.receive()
-            assert {event.data for event in bus.events} == {1, 2}
+            assert {event.data for event in events.events} == {1, 2}
 
             await client.stop()
             await server.stop()
@@ -677,7 +733,7 @@ class TestSendSemantics:
             server = NetworkServer(write_timeout=0.1)
             server._clients.update(writers)
 
-            assert await server.send("message") is True
+            assert await server.send_event(Event(EventType.TrialCompleted, "message")) is True
             assert len(entered) == 2
             assert all(writer.frames for writer in writers)
 
@@ -706,17 +762,17 @@ class TestSendSemantics:
 
         async def scenario():
             client = NetworkClient()
-            assert await client.send("message") is False
+            assert await client.send_event(Event(EventType.TrialCompleted, "message")) is False
 
             good = _Writer()
             client.writer = good
-            assert await client.send("message") is True
+            assert await client.send_event(Event(EventType.TrialCompleted, "message")) is True
             assert good.frames
 
             failed = _Writer(ValueError("closed"))
             client.writer = failed
             client.reader = object()
-            assert await client.send("message") is False
+            assert await client.send_event(Event(EventType.TrialCompleted, "message")) is False
             assert client.writer is None and client.reader is None
             assert failed.closed and failed.waited
 
@@ -746,7 +802,7 @@ class TestSendSemantics:
             client.writer = writer
             client.reader = object()
 
-            assert await asyncio.wait_for(client.send("message"), timeout=0.1) is False
+            assert await asyncio.wait_for(client.send_event(Event(EventType.TrialCompleted, "message")), timeout=0.1) is False
             # A bounded close timeout is not proof of release.  Keep the handle
             # and an explicit failed-cleanup state so a later stop can retry.
             assert client.writer is writer and client.reader is not None
@@ -819,7 +875,7 @@ class TestClientLifecycle:
             client.reader = object()
             client.status = "CONNECTED"
 
-            send_task = asyncio.create_task(client.send("before-stop"))
+            send_task = asyncio.create_task(client.send_event(Event(EventType.TrialCompleted, "before-stop")))
             await writer.drain_entered.wait()
             stop_task = asyncio.create_task(client.stop())
             await asyncio.sleep(0)
@@ -832,7 +888,7 @@ class TestClientLifecycle:
             await stop_task
             assert writer.closed is True
             assert client.status == "STOP"
-            assert await client.send("after-stop") is False
+            assert await client.send_event(Event(EventType.TrialCompleted, "after-stop")) is False
             assert writer.write_calls == 1
 
         asyncio.run(scenario())
@@ -877,7 +933,7 @@ class TestClientLifecycle:
             while client.status != "CONNECTED":
                 await asyncio.sleep(0)
 
-            send_task = asyncio.create_task(client.send("before-stop"))
+            send_task = asyncio.create_task(client.send_event(Event(EventType.TrialCompleted, "before-stop")))
             await writer.drain_entered.wait()
             stop_task = asyncio.create_task(client.stop())
             await asyncio.sleep(0)

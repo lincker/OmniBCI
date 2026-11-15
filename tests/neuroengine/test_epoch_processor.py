@@ -231,7 +231,7 @@ class TestDecoding:
     )
     def test_rejects_non_integer_targets_before_coercion(self, target):
         decoder = FakeDecoder(target=target)
-        mgr = EpochProcessor(decoder=decoder, config_revision="revision-1")
+        mgr = EpochProcessor(decoder=decoder, processing_revision="revision-1")
         mgr.initialize_epoch(_chunk(), start_idx=0, event_id=4)
 
         with pytest.raises(TypeError) as error:
@@ -259,7 +259,7 @@ class TestDecoding:
     def test_rejects_results_other_than_prediction_or_none(self, result, monkeypatch):
         decoder = FakeDecoder()
         monkeypatch.setattr(decoder, "decode", MagicMock(return_value=result))
-        mgr = EpochProcessor(decoder=decoder, config_revision="revision-1")
+        mgr = EpochProcessor(decoder=decoder, processing_revision="revision-1")
         mgr.initialize_epoch(_chunk(), start_idx=0, event_id=4)
 
         with pytest.raises(TypeError) as error:
@@ -281,7 +281,7 @@ class TestDecoding:
     def test_classification_validation_preserves_error_type_and_adds_context(self, prediction, error_type, monkeypatch):
         decoder = FakeDecoder()
         monkeypatch.setattr(decoder, "decode", MagicMock(return_value=prediction))
-        mgr = EpochProcessor(decoder=decoder, config_revision="revision-1")
+        mgr = EpochProcessor(decoder=decoder, processing_revision="revision-1")
         mgr.initialize_epoch(_chunk(), start_idx=0, event_id=4)
 
         with pytest.raises(error_type) as error:

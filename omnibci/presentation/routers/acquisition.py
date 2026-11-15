@@ -1,10 +1,14 @@
 """
 /api/v1/acquisition — Data acquisition control endpoints.
 """
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from fastapi import APIRouter, Depends, Path, Query, status
+from starlette.concurrency import run_in_threadpool
 
-from omnibci.presentation.dependencies import get_acquisition_service
+from omnibci.presentation.dependencies import get_acquisition_service, get_engine_service
+from omnibci.presentation.routers.runtime_config import get_runtime_configuration
+from omnibci.presentation.routers.plugin_config import _configuration_errors
+from omnibci.presentation.schemas.runtime_config import ModuleActionRequest, RuntimeOperationResponse
 from omnibci.presentation.errors import (
     ApiError,
     COMMAND_EXECUTION_RESPONSES,
@@ -15,15 +19,15 @@ from omnibci.presentation.schemas.acquisition import (
     AcquisitionMetadataResponse, AcquisitionStatusResponse,
     AcquisitionPreviewResponse, AcquisitionPreviewChunkResponse,
     StartAcquisitionPreviewRequest, StopAcquisitionPreviewRequest,
+    StartReadingRequest,
 )
 from omnibci.application.commands.acquisition_commands import (
-    ConnectDataProviderCommand,
     DisconnectDataProviderCommand,
-    StartStreamCommand,
     StopStreamCommand,
 )
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 from omnibci.application.services.acquisition_service import AcquisitionAppService
+from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.command_result_service import (
     CommandExecutionError,
     CommandRejectedError,
@@ -35,20 +39,14 @@ router = APIRouter(prefix="/acquisition", tags=["Acquisition"])
 
 @router.post(
     "/connect",
-    response_model=ApiResponse,
+    response_model=ApiResponse[RuntimeOperationResponse],
     responses=COMMAND_EXECUTION_RESPONSES,
     summary="Connect data source and wait for execution",
 )
-def connect(svc: AcquisitionAppService = Depends(get_acquisition_service)):
-    try:
-        svc.handle_connect(ConnectDataProviderCommand())
-        return ApiResponse(message="Data provider connected")
-    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
-        raise command_error_to_api_error(e)
-    except ProfileRevisionConflict:
-        raise
-    except RuntimeError as e:
-        raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
+async def connect(body: ModuleActionRequest, runtime=Depends(get_runtime_configuration)):
+    with _configuration_errors():
+        result = await runtime.execute_current("acquisition", "connect", **body.model_dump())
+        return ApiResponse(data=result)
 
 
 @router.post(
@@ -57,9 +55,15 @@ def connect(svc: AcquisitionAppService = Depends(get_acquisition_service)):
     responses=COMMAND_EXECUTION_RESPONSES,
     summary="Disconnect data source and wait for execution",
 )
-def disconnect(svc: AcquisitionAppService = Depends(get_acquisition_service)):
+async def disconnect(svc: AcquisitionAppService = Depends(get_acquisition_service),
+                     engine: NeuroEngineService = Depends(get_engine_service)):
     try:
-        svc.handle_disconnect(DisconnectDataProviderCommand())
+        try:
+            if engine.is_module_running("acquisition"):
+                await run_in_threadpool(svc.handle_disconnect, DisconnectDataProviderCommand())
+        finally:
+            await engine.stop_module("acquisition")
+            svc.reset()
         return ApiResponse(message="Data provider disconnected")
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
         raise command_error_to_api_error(e)
@@ -75,9 +79,9 @@ def disconnect(svc: AcquisitionAppService = Depends(get_acquisition_service)):
     responses=COMMAND_EXECUTION_RESPONSES,
     summary="Start EEG data stream and wait for execution",
 )
-def start_stream(svc: AcquisitionAppService = Depends(get_acquisition_service)):
+async def start_stream(body: StartReadingRequest, engine: NeuroEngineService = Depends(get_engine_service)):
     try:
-        svc.handle_start_stream(StartStreamCommand())
+        await engine.start_reading(**body.model_dump())
         return ApiResponse(message="Stream started")
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
         raise command_error_to_api_error(e)

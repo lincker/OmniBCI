@@ -1,18 +1,20 @@
 """Composition root for application services and infrastructure adapters."""
 
 import logging
+import os
+from contextlib import contextmanager
+from threading import RLock
 from dataclasses import dataclass
 from typing import Callable, Iterable, Tuple
 
 from omnibci.shared.events import EventType
-from omnibci.application.activation_settings import backend_startup_settings
+from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.acquisition_service import AcquisitionAppService
 from omnibci.application.services.stimulation_service import StimulationAppService
 from omnibci.application.services.command_result_service import CommandResultBroker
-from omnibci.application.services.config_service import ConfigService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.results_service import ResultsService
-from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.node_configuration_service import NodeConfigurationService
@@ -20,9 +22,10 @@ from omnibci.application.services.plugin_installation_service import PluginInsta
 from omnibci.application.services.plugin_package_service import PluginPackageService
 from omnibci.application.services.plugin_market_service import PluginMarketService
 from omnibci.application.plugin_packages import package_references_from_settings
-from omnibci.infrastructure.backend_logging import BackendLogging
+from omnibci.application.configuration.models import ActivationSet
+from omnibci.infrastructure.server_logging import ServerLogging
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 from omnibci.infrastructure.plugins.plugin_catalog import user_plugins_dir
@@ -38,22 +41,30 @@ Subscription = Tuple[EventType, Callable]
 
 
 def load_host_settings() -> dict:
-    """Capture saved inputs once for all backend startup consumers."""
-    from omnibci.conf import settings
-
-    return settings.saved_snapshot()
+    """Capture saved inputs once for all server startup consumers."""
+    return TomlConfigurationRepository().read_server()[0]
 
 
-def create_backend_logging(host_settings: dict) -> BackendLogging:
-    """Configure backend logging from the same snapshot as backend assembly."""
-    return BackendLogging(host_settings)
+def create_server_logging(host_settings: dict) -> ServerLogging:
+    """Configure server logging from the same snapshot as server assembly."""
+    return ServerLogging(host_settings)
 
 
-def _effective_backend_startup_settings(snapshot: dict) -> dict:
-    values = backend_startup_settings(snapshot)
-    directory = user_plugins_dir(host_settings=snapshot)
-    values["PLUGINS.user_dir"] = str(directory.resolve()) if directory is not None else None
-    return values
+@contextmanager
+def server_plugin_environment(host_settings: dict):
+    """Keep catalogues and child processes on the server's startup directory."""
+    previous = os.environ.get("OMNIBCI_PLUGIN_DIR")
+    directory = user_plugins_dir(host_settings=host_settings)
+    if directory is None:
+        raise RuntimeError("User plugin directory is unavailable")
+    os.environ["OMNIBCI_PLUGIN_DIR"] = str(directory.resolve())
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("OMNIBCI_PLUGIN_DIR", None)
+        else:
+            os.environ["OMNIBCI_PLUGIN_DIR"] = previous
 
 
 @dataclass
@@ -64,14 +75,12 @@ class AppContainer:
     stimulation_service: StimulationAppService
     stimulation_process_manager: StimulationProcessManager
     results_service: ResultsService
-    # Optional so existing test constructions stay valid; the composition
-    # root always supplies one (auto_spawn=False when ACTUATION disabled).
+    # The composition root supplies the manager; lightweight service fixtures may omit it.
     actuation_process_manager: "ActuationProcessManager | None" = None
     # Shared correlation rendezvous for commands that must report actual worker
     # execution before REST returns success.
     command_results: "CommandResultBroker | None" = None
-    config_service: "ConfigService | None" = None
-    plugin_profile_service: "PluginProfileService | None" = None
+    configuration_service: "ConfigurationService | None" = None
     runtime_configuration: "RuntimeConfigurationService | None" = None
     node_configuration: "NodeConfigurationService | None" = None
     plugin_installation_service: "PluginInstallationService | None" = None
@@ -89,7 +98,6 @@ def assemble(
     *,
     settings=None,
     acquisition_settings=None,
-    auto_spawn: bool = True,
     actuation_process_manager: "ActuationProcessManager | None" = None,
     stimulation_process_manager: "StimulationProcessManager | None" = None,
     admission=None,
@@ -112,7 +120,7 @@ def assemble(
         preview_provider=engine_service.read_acquisition_preview,
         generation_provider=lambda: engine_service.generation,
     )
-    process_manager = stimulation_process_manager or StimulationProcessManager(auto_spawn=auto_spawn)
+    process_manager = stimulation_process_manager or StimulationProcessManager()
 
     return AppContainer(
         engine_service=engine_service,
@@ -142,25 +150,28 @@ async def build_container(*, host_settings: dict | None = None,
 
 
 async def _build_container_services(host_settings, allow_process_termination):
-    from omnibci.conf import settings
-
-    auto_spawn = bool(host_settings.get("STIMULATION.auto_spawn", True))
-    # Actuation subprocess management: disabled subsystem → auto_spawn=False,
-    # making every lifecycle hook a no-op (multi-machine runs the script).
-    actuation_auto_spawn = (
-        bool(host_settings.get("ACTUATION.enabled", False))
-        and bool(host_settings.get("ACTUATION.auto_spawn", True))
+    package_references_lock = RLock()
+    configuration = ConfigurationService(
+        TomlConfigurationRepository(), CatalogConfigurationAdapter(),
+        active_server_settings=host_settings,
+        change_guard=lambda: package_references_lock,
     )
     actuation_manager = ActuationProcessManager(
-        auto_spawn=actuation_auto_spawn, allow_process_termination=allow_process_termination,
+        allow_process_termination=allow_process_termination,
     )
     stimulation_manager = StimulationProcessManager(
-        auto_spawn=auto_spawn, allow_process_termination=allow_process_termination,
+        allow_process_termination=allow_process_termination,
     )
 
     # Processes are single-use, so every restart requires a fresh engine graph.
     def startup_snapshot():
-        return accepted_runtime_settings(profiles=plugin_profiles)
+        try:
+            engine_settings = configuration.repository.get_engine()
+        except (ValueError, KeyError, RuntimeError, OSError) as exc:
+            raise RuntimeError(f"Engine configuration is invalid: {exc}") from exc
+        if engine_settings is None:
+            configuration.repository.save_engine(configuration.propose_engine(ENGINE_SETTING_DEFAULTS), expected_revision=None)
+        return accepted_runtime_settings(profiles=configuration, active_kinds=set())
 
     engine_service = NeuroEngineService(
         engine_factory=lambda snapshot: NeuroEngineBuilder(
@@ -170,59 +181,50 @@ async def _build_container_services(host_settings, allow_process_termination):
         actuation_process_manager=actuation_manager,
         stimulation_process_manager=stimulation_manager,
     )
-    config_service = ConfigService(
-        settings,
-        change_guard=engine_service.configuration_change,
-    )
-    plugin_profiles = PluginProfileService(
-        TomlPluginProfileRepository(), CatalogConfigurationAdapter(),
-        settings_source=settings.saved_snapshot,
-        change_guard=engine_service.configuration_change,
-        startup_settings_resolver=_effective_backend_startup_settings,
-        loaded_startup_settings=host_settings,
-    )
     await engine_service.startup()
     container = assemble(engine_service,
-                         settings=host_settings, acquisition_settings=_RuntimeSettings(engine_service, plugin_profiles),
-                         auto_spawn=auto_spawn,
+                         settings=host_settings, acquisition_settings=_RuntimeSettings(engine_service, configuration),
                          actuation_process_manager=actuation_manager,
                          stimulation_process_manager=stimulation_manager,
                          admission=engine_service.admission)
-    container.config_service = config_service
-    container.plugin_profile_service = plugin_profiles
+    container.configuration_service = configuration
     container.acquisition_service.set_metadata_binding(lambda: _acquisition_binding(engine_service))
     from omnibci.application.services.signal_setup_service import SignalSetupService
     container.signal_setup_service = SignalSetupService(
-        settings, plugin_profiles, engine_service, container.acquisition_service,
+        configuration, engine_service, container.acquisition_service,
         container.command_results,
     )
-    def prepare_processing():
-        receipt = container.signal_setup_service.prepare()
-        engine_service.prepare_actuation()
-        return receipt
-
-    container.acquisition_service.set_signal_preparer(prepare_processing)
-    container.node_configuration = NodeConfigurationService(engine_service, plugin_profiles)
+    container.acquisition_service.set_signal_preparer(container.signal_setup_service.try_prepare)
+    from omnibci.application.configuration.models import MODULE_KINDS
+    engine_service.configure_modules(
+        container.acquisition_service, container.command_results, container.signal_setup_service,
+        lambda module: accepted_runtime_settings(profiles=configuration, active_kinds=MODULE_KINDS[module]),
+        stimulation=container.stimulation_service,
+    )
+    container.node_configuration = NodeConfigurationService(engine_service, configuration)
     container.runtime_configuration = RuntimeConfigurationService(
-        plugin_profiles, engine_service,
-        executor=RuntimeApplyCoordinator(engine_service, plugin_profiles, container.acquisition_service,
+        configuration, engine_service,
+        reference_guard=lambda: package_references_lock,
+        executor=RuntimeApplyCoordinator(engine_service, configuration, container.acquisition_service,
                                           container.stimulation_service,
                                           container.command_results,
-                                          signal_preparer=container.signal_setup_service.prepare),
+                                          signal_preparer=container.signal_setup_service.prepare,
+                                          signal_detacher=container.signal_setup_service.detach),
     )
     packages = PluginPackageService(
-        ManagedPluginPackageStore(), plugin_profiles,
+        ManagedPluginPackageStore(), configuration,
         runtime_references=lambda: tuple(
             reference
-            for snapshot in engine_service.runtime_package_snapshots
+            for snapshot in (*engine_service.runtime_package_snapshots,
+                             *container.runtime_configuration.pending_package_snapshots)
             for reference in package_references_from_settings(snapshot)
         ),
-        admission_guard=engine_service.admission.transition,
+        admission_guard=lambda: package_references_lock,
     )
     container.plugin_installation_service = packages
     container.plugin_package_service = packages
     container.plugin_market_service = configured_market_service(
-        packages.store, admission_guard=engine_service.admission.transition,
+        packages.store, admission_guard=lambda: package_references_lock,
     )
     return container
 
@@ -244,9 +246,8 @@ class _RuntimeSettings:
         snapshot = self.engine.applied_snapshot
         if snapshot is None or not self.engine.is_engine_ready:
             try:
-                accepted = self.profiles.repository.get_activation()
-                if accepted is None:
-                    return default
+                accepted = ActivationSet({"acquisition": self.profiles.repository.get_module("acquisition")},
+                                         self.profiles.repository.get_engine())
                 snapshot = self.profiles.materialize(accepted)
             except (ValueError, KeyError, RuntimeError, OSError):
                 # Optional status metadata must not block configuration repair.
@@ -287,6 +288,12 @@ def register_engine_listeners(
         (EventType.TrialCompleted, container.results_service.on_trial_completed),
         (EventType.EpochProcessed, container.results_service.on_epoch_processed),
         (EventType.AcquisitionState, container.acquisition_service.on_acquisition_state),
+        (EventType.PeerDeliveryFault, engine.on_peer_delivery_fault),
+        *(
+            ((EventType.ProcessingInputFault, container.signal_setup_service.on_input_fault),)
+            if container.signal_setup_service is not None
+            else ()
+        ),
         *extra_subscriptions,
     ]
     for event_type, handler in subscriptions:

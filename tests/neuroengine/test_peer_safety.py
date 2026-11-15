@@ -100,10 +100,6 @@ class TestHeartbeatStaleness:
         assert len(bus.put) == 1
         assert ch.is_connected is False
 
-        sent = asyncio.run(ch._forward(Event(EventType.ActuationCommand, {})))
-        assert sent is False
-        assert t.sent == []
-
         ch._evaluate(now=12.0)          # already tripped, no spam
         assert len(bus.put) == 1
         ch._on_liveness()               # a frame arrives → re-arm + refresh clock

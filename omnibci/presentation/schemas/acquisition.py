@@ -5,6 +5,13 @@ from pydantic_core import PydanticCustomError
 from omnibci.application.acquisition_preview import MAX_CHUNKS, MAX_ROWS, MAX_SAMPLES, PreviewSelection
 
 
+class StartReadingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_revision: str = Field(min_length=1)
+    generation: str = Field(min_length=1)
+    connection_id: str = Field(min_length=1)
+
+
 class ChannelDescriptorModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -123,7 +130,8 @@ class AcquisitionPreviewResponse(BaseModel):
 
     capture_id: str | None
     generation: str
-    config_revision: str | None
+    acquisition_revision: str | None
+    engine_revision: str | None
     source_id: str | None
     connection_id: str | None
     status: Literal["idle", "capturing", "finished"]
@@ -151,7 +159,8 @@ class AcquisitionPreviewChunkResponse(BaseModel):
 
     capture_id: str
     generation: str
-    config_revision: str | None
+    acquisition_revision: str | None
+    engine_revision: str | None
     source_id: str
     connection_id: str
     sequence_id: int

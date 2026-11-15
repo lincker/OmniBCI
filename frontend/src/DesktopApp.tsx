@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import App from "./App";
+import BrowserApp from "./BrowserApp";
 import { useI18n } from "./i18n";
 import { desktopBridge, setDesktopConnection } from "./desktop";
 import type { ConnectionInfo } from "../../desktop/src/contracts";
@@ -9,8 +10,8 @@ const disconnected: ConnectionInfo = { id: "", kind: null, status: "disconnected
 
 function ConnectionPage({ connection, onError }: { connection: ConnectionInfo; onError: (message: string) => void }) {
   const { language, setLanguage, t } = useI18n();
-  const [kind, setKind] = useState<"local" | "remote">(connection.kind ?? "local");
-  const [url, setUrl] = useState(connection.kind === "remote" ? connection.url ?? "" : "");
+  const [kind, setKind] = useState<"owned" | "existing">(connection.kind ?? "existing");
+  const [url, setUrl] = useState(connection.kind === "existing" ? connection.url ?? "http://127.0.0.1:8000" : "http://127.0.0.1:8000");
   const [token, setToken] = useState("");
   const busy = connection.status === "connecting" || connection.status === "stopping";
   return <main className="desktop-connect">
@@ -27,22 +28,22 @@ function ConnectionPage({ connection, onError }: { connection: ConnectionInfo; o
         event.preventDefault();
         if (busy) return;
         onError("");
-        const target = kind === "local" ? { kind } as const : { kind, url: url.trim(), token } as const;
+        const target = kind === "owned" ? { kind } as const : { kind, url: url.trim(), token } as const;
         setToken("");
         void desktopBridge()!.connect(target).catch((cause) => onError(String(cause)));
       }}>
-        <fieldset disabled={busy} className="connection-options"><legend>{t("desktop.location")}</legend>
-          <label><input type="radio" name="mode" checked={kind === "local"} onChange={() => setKind("local")} /> {t("desktop.local")}</label>
-          <label><input type="radio" name="mode" checked={kind === "remote"} onChange={() => setKind("remote")} /> {t("desktop.remote")}</label>
+        <fieldset disabled={busy} className="connection-options"><legend>{t("desktop.mode")}</legend>
+          <label><input type="radio" name="mode" checked={kind === "existing"} onChange={() => setKind("existing")} /> {t("desktop.existing")}</label>
+          <label><input type="radio" name="mode" checked={kind === "owned"} onChange={() => setKind("owned")} /> {t("desktop.owned")}</label>
         </fieldset>
-        {kind === "remote" ? <>
+        {kind === "existing" ? <>
           <label className="connection-field">{t("desktop.address")}<input type="url" required disabled={busy} placeholder="https://lab.example:8000"
             value={url} onChange={(event) => setUrl(event.target.value)} autoComplete="off" /></label>
-          <label className="connection-field">{t("desktop.token")}<input type="password" required disabled={busy} value={token}
+          <label className="connection-field">{t("desktop.token")}<input type="password" disabled={busy} value={token}
             onChange={(event) => setToken(event.target.value)} autoComplete="off" /></label>
           <p className="meta">{t("desktop.tokenHelp")}</p>
           {url.trim().toLowerCase().startsWith("http:") && <p className="inline-message">{t("desktop.httpWarning")}</p>}
-        </> : <p className="meta">{t("desktop.localHelp")}</p>}
+        </> : <p className="meta">{t("desktop.ownedHelp")}</p>}
         <button className="primary" type="submit" disabled={busy}>{busy ? t("app.connecting") : t("desktop.connect")}</button>
       </form>
       <button className="text-button" onClick={() => void desktopBridge()!.openLogs().catch((cause) => onError(String(cause)))}>{t("desktop.openLogs")}</button>
@@ -50,7 +51,7 @@ function ConnectionPage({ connection, onError }: { connection: ConnectionInfo; o
   </main>;
 }
 
-/** A backend change creates a new React tree and discards all prior runtime state. */
+/** A server change creates a new React tree and discards all prior runtime state. */
 export default function DesktopApp() {
   const { t } = useI18n();
   const bridge = desktopBridge();
@@ -72,14 +73,14 @@ export default function DesktopApp() {
     });
     return () => { alive = false; unsubscribe(); };
   }, [bridge]);
-  if (!bridge) return <App />;
+  if (!bridge) return <BrowserApp />;
   if (!connection) return <main className="desktop-connect" role="status">{t("desktop.opening")}</main>;
   const workspace = !!connection.id && !!connection.kind && connection.status !== "disconnected" && connection.status !== "connecting";
   return <div className="desktop-shell">
     {workspace && <div className="desktop-connection-bar" aria-label={t("desktop.connection")}>
-      <strong>{connection.kind === "local" ? t("desktop.local") : t("desktop.remote")}</strong>
-      <span className="desktop-backend-address" title={connection.url}>{connection.url}</span>
-      {connection.kind === "remote" && connection.url?.startsWith("http:") && <span>{t("desktop.http")}</span>}
+      <strong>{connection.kind === "owned" ? t("desktop.owned") : t("desktop.existing")}</strong>
+      <span className="desktop-server-address" title={connection.url}>{connection.url}</span>
+      {connection.kind === "existing" && connection.url?.startsWith("http:") && <span>{t("desktop.http")}</span>}
       <span role="status">{connection.status === "ready" ? t("app.connected") : connection.status === "stopping" ? t("desktop.stopping") : t("desktop.lost")}</span>
       <button disabled={connection.status === "stopping"} onClick={() => {
         setError("");
@@ -88,7 +89,7 @@ export default function DesktopApp() {
       <button onClick={() => void bridge.openLogs().catch((cause) => setError(String(cause)))}>{t("desktop.logs")}</button>
     </div>}
     {(error || connection.error) && <p className="desktop-error error" role="alert">{error || connection.error}</p>}
-    {workspace ? <App key={connection.id} desktopConnection={connection} />
+    {workspace ? <App key={connection.id} connected={connection.status === "ready"} />
       : <ConnectionPage key={`${connection.kind}-${connection.url ?? ""}`} connection={connection} onError={setError} />}
   </div>;
 }

@@ -1,6 +1,7 @@
 """Configuration remains repairable through the real application lifespan."""
 import logging
 from dataclasses import replace
+from copy import deepcopy
 from threading import Event
 from time import monotonic, sleep
 from types import SimpleNamespace
@@ -11,8 +12,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from omnibci import bootstrap
-from omnibci.application.plugin_profiles import ActivationSnapshot
-from omnibci.conf import OmniBCISettings
+from omnibci.application.configuration.models import ModuleActivation
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.presentation.main import create_app
 from tests.plugin_configuration_helpers import accept_profiles
 
@@ -25,10 +26,25 @@ class MemoryEngine:
         self.stopped = Event()
         self.shutdown_complete = False
         self.event_bus = SimpleNamespace(register_event_listener=lambda *args: None)
-        worker = SimpleNamespace(is_alive=lambda: not self.stopped.is_set())
-        self.acquisition_worker = worker
-        self.signal_processing_worker = worker
+        self.modules = set()
+        self.module_snapshots = {}
+        self.actuation_active = False
+        self.acquisition_worker = SimpleNamespace(is_alive=lambda: "acquisition" in self.modules)
+        self.signal_processing_worker = SimpleNamespace(is_alive=lambda: "processing" in self.modules)
         self.peer_gateway = SimpleNamespace(peer=lambda name: SimpleNamespace(is_connected=False))
+
+    def is_module_running(self, module):
+        return module in self.modules
+
+    async def start_module(self, module, snapshot):
+        self.module_snapshots[module] = deepcopy(snapshot)
+        self.modules.add(module)
+
+    async def stop_module(self, module):
+        self.modules.discard(module)
+
+    async def set_actuation_active(self, active):
+        self.actuation_active = active
 
     @property
     def should_stop(self):
@@ -51,36 +67,10 @@ class MemoryEngine:
 
 @pytest.fixture
 def startup_environment(tmp_path, monkeypatch):
-    import omnibci.conf as conf
-
-    path = tmp_path / "settings.toml"
-    path.write_text('''[ACQUISITION]
-signal_source = "file_reader"
-data_file_path = "recordings/startup.cnt"
-sample_rate = 256
-channel_count = 5
-file_reader_chunk_size = 17
-trigger = ""
-[ALGORITHM]
-decoder = "THUBCI_SSVEP_classic40FBCCA"
-epoch_detector = "DEFAULT_EPOCH_DETECTOR"
-window_duration = 4.25
-offset_time = 0.15
-baseline_duration = 0.4
-filters = []
-[STIMULATION]
-paradigm = "STIMULATION_THUBCI_SSVEP_classic40"
-auto_spawn = false
-[ACTUATION]
-enabled = false
-auto_spawn = false
-effector = ""
-[NEUROENGINE]
-queue_size = 29
-''', encoding="utf-8")
-    settings = OmniBCISettings(path)
-    monkeypatch.setattr(conf, "settings", settings)
     root = tmp_path / "module-config"
+    root.mkdir()
+    (root / "settings.toml").write_text('[LOGGING]\nlevel = "INFO"\n', encoding="utf-8")
+    settings = TomlConfigurationRepository(root)
     monkeypatch.setenv("OMNIBCI_CONFIG_DIR", str(root))
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
     for key in ("OMNIBCI_MARKET_URL", "OMNIBCI_MARKET_REPOSITORY_ID", "OMNIBCI_MARKET_TRUSTED_KEYS"):
@@ -97,7 +87,7 @@ def _data(client, path):
 
 
 def _select_profiles(client):
-    return accept_profiles(client.app.state.container.plugin_profile_service, [
+    return accept_profiles(client.app.state.container.configuration_service, [
         ("acquisition.source", "acquisition", "file_reader", {
             "data_file_path": "recordings/startup.cnt", "sample_rate": 256,
             "channel_count": 5, "file_reader_chunk_size": 17,
@@ -107,7 +97,10 @@ def _select_profiles(client):
         }),
         ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
         ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40", {}),
-    ])
+    ], module_settings={
+        "processing": {"ALGORITHM.baseline_duration": 0.4},
+        "stimulation": {"STIMULATION.auto_spawn": False},
+    })
 
 
 @pytest.mark.parametrize("desktop", [False, True])
@@ -130,35 +123,32 @@ def _assert_management_available(client):
 
 def test_fresh_lifespan_leaves_module_configuration_unselected(startup_environment):
     environment = startup_environment
-    settings_bytes = environment.settings._config_path.read_bytes()
+    settings_bytes = (environment.root / "settings.toml").read_bytes()
 
     with TestClient(create_app()) as client:
         _assert_management_available(client)
-        assert _data(client, "/config/activation") is None
+        assert all(item["revision"] is None for item in _data(client, "/config/modules")["modules"].values())
         assert _data(client, "/config/plugin-profiles") == []
-        assert _data(client, "/config/runtime")["accepted_revision"] is None
+        assert all(value is None for value in _data(client, "/config/runtime")["accepted"].values())
         environment.builder.assert_not_called()
 
-    assert environment.settings._config_path.read_bytes() == settings_bytes
+    assert (environment.root / "settings.toml").read_bytes() == settings_bytes
 
 
-@pytest.mark.parametrize("include_host_settings", [False, True])
-def test_invalid_initial_settings_can_be_repaired_without_restarting_backend(
-    startup_environment, include_host_settings,
+def test_initial_module_configuration_can_be_applied_without_restarting_server(
+    startup_environment, monkeypatch,
 ):
     environment = startup_environment
-    environment.settings.set("ACQUISITION.sample_rate", "invalid")
-    environment.settings.save()
     with TestClient(create_app()) as client:
         _assert_management_available(client)
-        assert _data(client, "/config/activation") is None
+        assert all(item["revision"] is None for item in _data(client, "/config/modules")["modules"].values())
         runtime = _data(client, "/config/runtime")
-        assert runtime["accepted_revision"] is None
-        assert runtime["applied_revision"] is None
-        rejected = client.post("/api/v1/engine/start")
-        assert rejected.status_code == 409, rejected.text
-        assert rejected.json()["code"] == "ENGINE_NOT_READY"
-        environment.builder.assert_not_called()
+        assert all(value is None for value in runtime["accepted"].values())
+        assert runtime["applied"] is None
+        started = client.post("/api/v1/engine/start")
+        assert started.status_code == 200, started.text
+        environment.builder.assert_called_once()
+        assert _data(client, "/engine/status")["acquisition_alive"] is False
 
         bindings = []
         selections = (
@@ -181,9 +171,8 @@ def test_invalid_initial_settings_can_be_repaired_without_restarting_backend(
             })
             assert response.status_code == 201, response.text
             bindings.append({"slot": slot, "profile_id": response.json()["data"]["profile_id"]})
-        response = client.post("/api/v1/config/apply-plan", json={
-            "bindings": bindings, "expected_revision": None,
-            "include_host_settings": include_host_settings,
+        response = client.post("/api/v1/config/apply-plan", json={"settings": {},
+            "module": "acquisition", "bindings": [bindings[0]], "expected_revision": None,
         })
         assert response.status_code == 200, response.text
         plan = response.json()["data"]
@@ -202,18 +191,20 @@ def test_invalid_initial_settings_can_be_repaired_without_restarting_backend(
             assert monotonic() < deadline, operation
             sleep(0.01)
         assert operation["status"] == "succeeded", operation
-        accepted = _data(client, "/config/activation")
-        assert accepted["revision"] == plan["target_revision"]
-        environment.builder.assert_not_called()
-
-        response = client.post("/api/v1/engine/start")
-        assert response.status_code == 200, response.text
+        accepted = _data(client, "/config/modules/acquisition")
+        assert accepted["revision"] == plan["target_revisions"]["acquisition"]
         environment.builder.assert_called_once()
-        snapshot = environment.builder.call_args.kwargs["settings_snapshot"]
-        assert snapshot["CONFIG.revision"] == accepted["revision"]
+
+        monkeypatch.setattr(client.app.state.container.acquisition_service, "handle_connect", Mock())
+        response = _connect_current(client)
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["status"] == "succeeded", response.text
+        environment.builder.assert_called_once()
+        snapshot = client.app.state.engine_service._engine.module_snapshots["acquisition"]
+        assert snapshot["CONFIG.module_revisions"]["acquisition"] == accepted["revision"]
         assert snapshot["ACQUISITION.sample_rate"] == 250
         assert snapshot["ACQUISITION.channel_count"] == 9
-        assert _data(client, "/config/runtime")["applied_revision"] == accepted["revision"]
+        assert _data(client, "/config/runtime")["applied"]["acquisition"] == accepted["revision"]
         assert _data(client, "/engine/status")["running"] is True
         source_status = _data(client, "/acquisition/status")
         assert source_status["sample_rate"] is None
@@ -226,69 +217,105 @@ def _references(snapshot):
     return [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in snapshot.bindings]
 
 
+def _connect_current(client):
+    selected = _data(client, "/config/modules/acquisition")
+    return client.post("/api/v1/acquisition/connect", json={
+        "operation_id": str(uuid4()),
+        "configuration": {
+            "expected_revision": selected["revision"], "settings": selected["settings"],
+            "bindings": [{key: binding[key] for key in (
+                "slot", "selection", "parameters", "configuration_version", "processing_input",
+            ) if key in binding} for binding in selected["bindings"]],
+        },
+    })
+
+
+def _apply_plan(client, plan):
+    operation_id = str(uuid4())
+    response = client.post("/api/v1/config/apply", json={"plan_id": plan["plan_id"], "operation_id": operation_id})
+    assert response.status_code == 202, response.text
+    deadline = monotonic() + 5
+    while True:
+        result = _data(client, f"/config/operations/{operation_id}")
+        if result["status"] not in ("queued", "applying"):
+            assert result["status"] == "succeeded", result
+            return result
+        assert monotonic() < deadline, result
+        sleep(.01)
+
+
 def _assert_invalid_activation(client, environment, snapshot, operation, *, plan_status=200):
-    repository = client.app.state.container.plugin_profile_service.repository
-    previous = repository.get_activation()
-    path = environment.root / "activation.toml"
+    repository = client.app.state.container.configuration_service.repository
+    previous = repository.get_module("acquisition")
+    path = environment.root / "activation" / "acquisition.toml"
     original = path.read_bytes()
-    request = {"bindings": _references(snapshot), "expected_revision": previous.revision,
-               "include_host_settings": True}
+    request = {"settings": {}, "module": "acquisition", "bindings": _references(snapshot), "expected_revision": previous.revision}
     plan = client.post("/api/v1/config/apply-plan", json=request)
     assert plan.status_code == plan_status, plan.text
     if plan_status == 200:
         assert plan.json()["data"]["errors"], plan.text
     if operation == "accept":
-        response = client.put("/api/v1/config/activation", json=request)
-        assert response.status_code == 422, response.text
-        assert response.json()["code"] == "VALIDATION_ERROR"
+        if plan_status == 200:
+            response = client.post("/api/v1/config/apply", json={
+                "plan_id": plan.json()["data"]["plan_id"], "operation_id": str(uuid4())})
+            assert response.status_code == 422, response.text
+            assert response.json()["code"] == "VALIDATION_ERROR"
         assert path.read_bytes() == original
     else:
-        repository.save_activation(snapshot, expected_revision=previous.revision)
+        repository.save_module(snapshot, expected_revision=previous.revision)
         response = client.post("/api/v1/engine/start")
-        assert response.status_code == 409, response.text
-        assert response.json()["code"] == "ENGINE_NOT_READY"
-        assert _data(client, "/engine/status")["running"] is False
-    environment.builder.assert_not_called()
+        assert response.status_code == 200, response.text
+        response = _connect_current(client)
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["status"] == "failed", response.text
+        assert _data(client, "/engine/status")["running"] is True
+        assert _data(client, "/engine/status")["acquisition_alive"] is False
+    if operation == "accept":
+        environment.builder.assert_not_called()
+    else:
+        environment.builder.assert_called_once()
 
 
 @pytest.mark.parametrize("missing_slot", [
     None, "acquisition.source", "processing.decoder", "processing.epoch_detector",
     "stimulation.paradigm", "actuation.effector",
-], ids=["empty", "acquisition", "decoder", "epoch", "paradigm", "enabled-effector"])
-def test_engine_start_requires_only_acquisition_selection(startup_environment, missing_slot):
+], ids=["empty", "acquisition", "decoder", "epoch", "paradigm", "effector"])
+def test_engine_start_does_not_require_any_module_selection(startup_environment, missing_slot):
     environment = startup_environment
     with TestClient(create_app()) as client:
         previous = _select_profiles(client)
+        service = client.app.state.container.configuration_service
+        for module, activation in previous.modules.items():
+            if activation is None:
+                continue
+            references = [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in activation.bindings
+                          if missing_slot is not None and binding.slot != missing_slot]
+            response = client.post("/api/v1/config/apply-plan", json={"settings": {},
+                "module": module, "bindings": references, "expected_revision": activation.revision})
+            assert response.status_code == 200, response.text
+            _apply_plan(client, response.json()["data"])
         if missing_slot == "actuation.effector":
-            environment.settings.set("ACTUATION.enabled", True)
-            environment.settings.save()
-        bindings = tuple(binding for binding in previous.bindings
-                         if missing_slot is not None and binding.slot != missing_slot)
-        snapshot = ActivationSnapshot(environment.settings.snapshot(), bindings)
-        request = {"bindings": _references(snapshot), "expected_revision": previous.revision,
-                   "include_host_settings": True}
-        plan = client.post("/api/v1/config/apply-plan", json=request)
-        assert plan.status_code == 200, plan.text
-        assert plan.json()["data"]["errors"] == []
-        accepted = client.put("/api/v1/config/activation", json=request)
-        assert accepted.status_code == 200, accepted.text
+            service.repository.save_module(service.propose("actuation", [], settings=service.default_module_settings("actuation")), expected_revision=None)
         started = client.post("/api/v1/engine/start")
+        assert started.status_code == 200, started.text
+        environment.builder.assert_called_once()
+        status = _data(client, "/engine/status")
+        assert status["running"] is True
+        assert status["acquisition_alive"] is status["processor_alive"] is status["actuation_alive"] is False
         if missing_slot in (None, "acquisition.source"):
-            assert started.status_code == 409, started.text
-            assert "acquisition.source" in started.json()["message"]
-            environment.builder.assert_not_called()
-        else:
-            assert started.status_code == 200, started.text
-            environment.builder.assert_called_once()
-            assert client.post("/api/v1/engine/stop").status_code == 200
+            response = _connect_current(client)
+            assert response.status_code == 200, response.text
+            assert response.json()["data"]["status"] == "failed", response.text
+            assert "acquisition.source" in response.json()["data"]["error"]
+        assert client.post("/api/v1/engine/stop").status_code == 200
 
 
 @pytest.mark.parametrize("operation", ["accept", "start"])
-def test_unavailable_source_profiles_can_be_saved_but_not_activated(startup_environment, monkeypatch, operation):
+def test_unavailable_source_profiles_can_be_selected_but_not_started(startup_environment, monkeypatch, operation):
     with TestClient(create_app()) as client:
         _select_profiles(client)
-        service = client.app.state.container.plugin_profile_service
-        previous = service.repository.get_activation()
+        service = client.app.state.container.configuration_service
+        previous = service.repository.get_module("acquisition")
         source = next(binding for binding in previous.bindings if binding.kind == "acquisition")
         original_get = service.catalog.get
 
@@ -311,8 +338,23 @@ def test_unavailable_source_profiles_can_be_saved_but_not_activated(startup_envi
         saved = response.json()["data"]
         bindings = tuple(replace(binding, profile_id=saved["profile_id"], profile_revision=saved["revision"])
                          if binding.kind == "acquisition" else binding for binding in previous.bindings)
-        snapshot = ActivationSnapshot(previous.settings, bindings)
-        _assert_invalid_activation(client, startup_environment, snapshot, operation)
+        snapshot = ModuleActivation("acquisition", previous.settings, bindings)
+        if operation == "accept":
+            response = client.post("/api/v1/config/apply-plan", json={"settings": {},
+                "module": "acquisition", "bindings": _references(snapshot), "expected_revision": previous.revision,
+            })
+            assert response.status_code == 200, response.text
+            assert response.json()["data"]["errors"] == []
+            _apply_plan(client, response.json()["data"])
+        else:
+            service.repository.save_module(snapshot, expected_revision=previous.revision)
+        assert client.post("/api/v1/engine/start").status_code == 200
+        response = _connect_current(client)
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["status"] == "failed", response.text
+        assert "unavailable" in response.json()["data"]["error"]
+        status = _data(client, "/engine/status")
+        assert status["running"] is True and status["acquisition_alive"] is False
 
 
 @pytest.mark.parametrize("operation", ["accept", "start"])
@@ -320,8 +362,8 @@ def test_unavailable_source_profiles_can_be_saved_but_not_activated(startup_envi
 def test_invalid_profile_parameters_or_schema_block_accept_and_start(startup_environment, operation, invalid):
     with TestClient(create_app()) as client:
         _select_profiles(client)
-        service = client.app.state.container.plugin_profile_service
-        previous = service.repository.get_activation()
+        service = client.app.state.container.configuration_service
+        previous = service.repository.get_module("acquisition")
         source = next(binding for binding in previous.bindings if binding.kind == "acquisition")
         profile = service.repository.get_profile(source.profile_id)
         changed = (replace(profile, parameters={**profile.parameters, "sample_rate": 0})
@@ -330,71 +372,66 @@ def test_invalid_profile_parameters_or_schema_block_accept_and_start(startup_env
         bindings = tuple(replace(binding, parameters=saved.parameters, configuration_version=saved.configuration_version,
                                  profile_revision=saved.revision)
                          if binding.kind == "acquisition" else binding for binding in previous.bindings)
-        snapshot = ActivationSnapshot(previous.settings, bindings)
+        snapshot = ModuleActivation("acquisition", previous.settings, bindings)
         _assert_invalid_activation(client, startup_environment, snapshot, operation, plan_status=422)
 
 
 def test_inactive_output_plugins_can_retain_portable_selections(startup_environment, monkeypatch):
     with TestClient(create_app()) as client:
         _select_profiles(client)
-        service = client.app.state.container.plugin_profile_service
-        previous = service.repository.get_activation()
-        bindings = _references(previous)
+        service = client.app.state.container.configuration_service
         original_get = service.catalog.get
-
         def get(kind, selection):
             definition = original_get(kind, selection)
             return replace(definition, available=False) if kind in {"paradigm", "trigger", "effector"} else definition
-
         monkeypatch.setattr(service.catalog, "get", get)
         for kind, slot, alias in (("trigger", "stimulation.trigger", "neuroscan_scan45_trigger"),
                                   ("effector", "actuation.effector", "logger")):
-            definition = next(item for item in _data(client, f"/config/plugin-catalog/{kind}")
-                              if item["plugin_type"] == alias)
+            definition = next(item for item in _data(client, f"/config/plugin-catalog/{kind}") if item["plugin_type"] == alias)
             response = client.post("/api/v1/config/plugin-profiles", json={
-                "kind": kind, "selection": definition["selection"], "name": f"Portable {kind}", "parameters": {},
-            })
+                "kind": kind, "selection": definition["selection"], "name": f"Portable {kind}", "parameters": {}})
             assert response.status_code == 201, response.text
-            bindings.append({"slot": slot, "profile_id": response.json()["data"]["profile_id"]})
-        request = {"bindings": bindings, "expected_revision": previous.revision}
-        plan = client.post("/api/v1/config/apply-plan", json=request)
-        assert plan.status_code == 200, plan.text
-        assert plan.json()["data"]["errors"] == []
-        accepted = client.put("/api/v1/config/activation", json=request)
-        assert accepted.status_code == 200, accepted.text
+            module = slot.split(".")[0]
+            previous = service.repository.get_module(module)
+            references = _references(previous) if previous else []
+            references.append({"slot": slot, "profile_id": response.json()["data"]["profile_id"]})
+            plan = client.post("/api/v1/config/apply-plan", json={"settings": {},
+                "module": module, "bindings": references, "expected_revision": previous.revision if previous else None})
+            assert plan.status_code == 200, plan.text
+            assert plan.json()["data"]["errors"] == []
+            _apply_plan(client, plan.json()["data"])
         started = client.post("/api/v1/engine/start")
         assert started.status_code == 200, started.text
         startup_environment.builder.assert_called_once()
         assert client.post("/api/v1/engine/stop").status_code == 200
 
 
-def test_backend_logging_covers_startup_and_shutdown(startup_environment, tmp_path):
-    startup_environment.settings.set("LOGGING.level", "INFO")
-    startup_environment.settings.set("LOGGING.file_path", str(tmp_path / "backend.log"))
-    startup_environment.settings.save()
+def test_server_logging_covers_startup_and_shutdown(startup_environment, tmp_path):
+    startup_environment.settings.save_server({"LOGGING.file_path": str(tmp_path / "server.log")},
+        expected_revision=startup_environment.settings.read_server()[1])
     app = create_app()
 
     with TestClient(app) as client:
-        runtime = app.state.backend_logging
+        runtime = app.state.server_logging
         assert runtime.is_running
         assert client.get("/healthz").json() == {"status": "ok"}
-        logging.getLogger("omnibci.test_backend").info("Backend logging probe")
+        logging.getLogger("omnibci.test_server").info("Server logging probe")
 
     assert not runtime.is_running
     content = runtime.file_path.read_text(encoding="utf-8")
     assert "OmniBCI API server started" in content
-    assert "Backend logging probe" in content
+    assert "Server logging probe" in content
     assert "OmniBCI API server stopped" in content
 
 
-def test_backend_logging_closes_when_startup_fails(startup_environment, tmp_path, monkeypatch):
+def test_server_logging_closes_when_startup_fails(startup_environment, tmp_path, monkeypatch):
     from omnibci.presentation import main
 
-    startup_environment.settings.set("LOGGING.file_path", str(tmp_path / "failed-startup.log"))
-    startup_environment.settings.save()
+    startup_environment.settings.save_server({"LOGGING.file_path": str(tmp_path / "failed-startup.log")},
+        expected_revision=startup_environment.settings.read_server()[1])
 
     async def failed_container(**kwargs):
-        logging.getLogger("omnibci.test_backend").error("Container startup failed")
+        logging.getLogger("omnibci.test_server").error("Container startup failed")
         raise RuntimeError("Container unavailable")
 
     monkeypatch.setattr(main, "build_container", failed_container)
@@ -402,22 +439,22 @@ def test_backend_logging_closes_when_startup_fails(startup_environment, tmp_path
     with pytest.raises(RuntimeError, match="Container unavailable"), TestClient(app):
         pass
 
-    runtime = app.state.backend_logging
+    runtime = app.state.server_logging
     assert not runtime.is_running
     assert "Container startup failed" in runtime.file_path.read_text(encoding="utf-8")
 
 
-def test_backend_logging_closes_when_shutdown_fails(startup_environment, tmp_path, monkeypatch):
-    startup_environment.settings.set("LOGGING.file_path", str(tmp_path / "failed-shutdown.log"))
-    startup_environment.settings.save()
+def test_server_logging_closes_when_shutdown_fails(startup_environment, tmp_path, monkeypatch):
+    startup_environment.settings.save_server({"LOGGING.file_path": str(tmp_path / "failed-shutdown.log")},
+        expected_revision=startup_environment.settings.read_server()[1])
 
     async def failed_shutdown():
-        logging.getLogger("omnibci.test_backend").error("Engine shutdown failed")
+        logging.getLogger("omnibci.test_server").error("Engine shutdown failed")
         raise RuntimeError("Shutdown unavailable")
 
     app = create_app()
     with pytest.raises(RuntimeError, match="Shutdown unavailable"), TestClient(app):
-        runtime = app.state.backend_logging
+        runtime = app.state.server_logging
         monkeypatch.setattr(app.state.engine_service, "shutdown", failed_shutdown)
 
     assert not runtime.is_running
@@ -429,7 +466,7 @@ async def test_lifespan_error_stops_services_before_logging(startup_environment,
     app = create_app()
 
     async def shutdown():
-        assert app.state.backend_logging.is_running
+        assert app.state.server_logging.is_running
 
     stop = AsyncMock(side_effect=shutdown)
     with pytest.raises(RuntimeError, match="Lifespan interrupted"):
@@ -438,43 +475,43 @@ async def test_lifespan_error_stops_services_before_logging(startup_environment,
             raise RuntimeError("Lifespan interrupted")
 
     stop.assert_awaited_once()
-    assert not app.state.backend_logging.is_running
+    assert not app.state.server_logging.is_running
 
 
-def test_saved_logging_edit_during_startup_still_requires_backend_restart(
+def test_saved_logging_edit_during_startup_still_requires_server_restart(
     startup_environment, monkeypatch, tmp_path,
 ):
     from omnibci.presentation import main
 
     initial_log = tmp_path / "loaded.log"
     changed_log = tmp_path / "changed.log"
-    startup_environment.settings.set("LOGGING.file_path", str(initial_log))
-    startup_environment.settings.save()
-    create_logging = main.create_backend_logging
+    startup_environment.settings.save_server({"LOGGING.file_path": str(initial_log)},
+        expected_revision=startup_environment.settings.read_server()[1])
+    create_logging = main.create_server_logging
     loaded = {}
 
     def edit_after_logging_is_configured(*args, **kwargs):
         service = create_logging(*args, **kwargs)
         loaded["path"] = service.file_path
-        startup_environment.settings.set("LOGGING.file_path", str(changed_log))
-        startup_environment.settings.save()
+        startup_environment.settings.save_server({"LOGGING.file_path": str(changed_log)},
+            expected_revision=startup_environment.settings.read_server()[1])
         return service
 
-    monkeypatch.setattr(main, "create_backend_logging", edit_after_logging_is_configured)
+    monkeypatch.setattr(main, "create_server_logging", edit_after_logging_is_configured)
     app = create_app()
     with TestClient(app) as client:
-        assert app.state.backend_logging.file_path == loaded["path"]
-        _select_profiles(client)
-        accepted = _data(client, "/config/activation")
+        assert app.state.server_logging.file_path == loaded["path"]
         response = client.post("/api/v1/config/apply-plan", json={
-            "bindings": [{"slot": binding["slot"], "profile_id": binding["profile_id"]}
-                         for binding in accepted["bindings"]],
-            "expected_revision": accepted["revision"], "include_host_settings": True,
-            "refresh_slots": [],
+            "module": "engine", "bindings": [], "expected_revision": None,
+            "settings": {"NEUROENGINE.queue_size": 42},
         })
-        assert response.status_code == 422, response.text
-        assert "Backend restart required" in response.json()["message"]
-        assert "LOGGING.file_path" in response.json()["message"]
+        assert response.status_code == 200, response.text
+        assert not response.json()["data"]["errors"]
+        entries = client.get("/api/v1/config").json()["data"]["entries"]
+        entry = next(item for item in entries if item["key"] == "LOGGING.file_path")
+        assert entry["value"] == str(changed_log)
+        assert entry["active_value"] == str(initial_log)
+        assert entry["restart_required"]
 
     assert loaded["path"].is_file()
     assert not list(tmp_path.glob("changed*"))

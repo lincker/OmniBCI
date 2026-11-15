@@ -49,6 +49,24 @@ class TestErrorResponseModel:
 
 
 class TestApiError:
+    @pytest.mark.parametrize("execution_unknown", [False, True])
+    def test_delivery_failure_preserves_execution_uncertainty(self, execution_unknown):
+        from omnibci.application.services.command_result_service import CommandDeliveryError
+        from omnibci.presentation.errors import command_error_to_api_error
+
+        error = command_error_to_api_error(CommandDeliveryError(
+            "command-1", "SettleActuation", "Peer connection failed",
+            execution_unknown=execution_unknown,
+        ))
+
+        assert error.status_code == 503
+        assert error.code == "PEER_DELIVERY_FAILED"
+        assert error.detail == {
+            "command_id": "command-1", "command": "SettleActuation",
+            "execution_unknown": execution_unknown,
+        }
+        assert "Peer connection failed" in error.message
+
     def test_carries_fields(self):
         err = ApiError(409, ErrorCode.CONFLICT, "Engine already running", detail={"x": 1})
         assert err.status_code == 409

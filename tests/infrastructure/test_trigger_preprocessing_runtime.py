@@ -44,8 +44,8 @@ class LiveSource:
 def runtime(source):
     data, frames = DataManager(Queue()), Queue()
     acquisition = AcquisitionRuntime(
-        source, Queue(), data, source_id="source", preparation_required=False,
-        generation="generation", config_revision="revision", preview_queue=frames,
+        source, Queue(), data, source_id="source",
+        generation="generation", acquisition_revision="revision", engine_revision="engine", preview_queue=frames,
     )
     return acquisition, data, frames
 

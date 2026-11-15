@@ -50,8 +50,13 @@ class PeerTransport(abc.ABC):
     async def stop(self) -> None: ...
 
     @abc.abstractmethod
-    async def send(self, event: Event) -> bool:
+    async def send(self, event: Event, *, connection_token=None) -> bool:
         """Write to an active socket; True is not a peer/application ack."""
+
+    @property
+    @abc.abstractmethod
+    def connection_token(self):
+        """Process-local socket identity, used to reject stale queued writes."""
 
     @property
     @abc.abstractmethod
@@ -82,7 +87,6 @@ class ListenTransport(PeerTransport):
         if identity is not None:
             timeout_options["identity"] = identity
         self._server = NetworkServer(
-            event_bus=None,
             host=host,
             port=port,
             max_clients=max_clients,
@@ -136,8 +140,12 @@ class ListenTransport(PeerTransport):
             await self._server.stop()
             self._started = False
 
-    async def send(self, event: Event) -> bool:
-        return await self._server.send_event(event)
+    async def send(self, event: Event, *, connection_token=None) -> bool:
+        return await self._server.send_event(event, connection_token=connection_token)
+
+    @property
+    def connection_token(self):
+        return self._server.connection_token
 
     @property
     def is_connected(self) -> bool:
@@ -179,7 +187,6 @@ class ConnectTransport(PeerTransport):
             if value is not None
         })
         self._client = NetworkClient(
-            event_bus=None,
             server_ip=host,
             server_port=port,
             **client_options,
@@ -295,8 +302,12 @@ class ConnectTransport(PeerTransport):
                 exc_info=(type(exc), exc, exc.__traceback__),
             )
 
-    async def send(self, event: Event) -> bool:
-        return await self._client.send_event(event)
+    async def send(self, event: Event, *, connection_token=None) -> bool:
+        return await self._client.send_event(event, connection_token=connection_token)
+
+    @property
+    def connection_token(self):
+        return self._client.connection_token
 
     @property
     def is_connected(self) -> bool:

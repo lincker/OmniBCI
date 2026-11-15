@@ -9,9 +9,8 @@ process manually on the device machine:
 
 Single-machine deployment
 --------------------------
-Leave ``ACTUATION.auto_spawn = true``. With ``ACTUATION.enabled = true`` the
-backend spawns the Actuation subprocess when processing is prepared and terminates
-it when the engine stops (see NeuroEngineService).
+Leave ``ACTUATION.auto_spawn = true``. The server spawns the subprocess when
+Actuation starts and terminates it when Actuation or the engine stops.
 
 In both modes the IPC socket architecture (Actuation → NeuroEngine) is
 unchanged — this class only manages the OS-level process lifecycle. Mirrors
@@ -25,9 +24,11 @@ from copy import deepcopy
 from threading import RLock
 from typing import Any
 
+from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessState,
     StartupReporter,
+    module_runtime_identity,
     wait_for_startup_report,
 )
 
@@ -38,33 +39,26 @@ mp = multiprocessing.get_context("spawn")
 
 
 def _run_actuation(
-    effector: str | None = None,
     stop_event: Any = None,
     startup_connection: Any = None,
     *,
-    settings_snapshot: dict | None = None,
+    settings_snapshot: dict,
 ) -> None:
     """Actuation subprocess entry point.  Runs in the spawned child process.
 
-    A pinned snapshot is required and installed before runtime imports.
+    The application receives the pinned snapshot directly.
     """
     reporter = (
         StartupReporter(
             startup_connection, component="Actuation",
-            config_revision=(settings_snapshot or {}).get("CONFIG.revision"),
-            generation=(settings_snapshot or {}).get("CONFIG.generation"),
+            module_revisions={"actuation": settings_snapshot.get("CONFIG.module_revisions", {}).get("actuation")},
+            engine_revision=settings_snapshot.get("CONFIG.engine_revision"),
+            generation=settings_snapshot.get("CONFIG.generation"),
         )
         if startup_connection is not None
         else None
     )
     try:
-        if settings_snapshot is None:
-            raise RuntimeError("Actuation requires a pinned settings snapshot")
-        from omnibci.conf import settings
-        selected = settings_snapshot.get("ACTUATION.effector")
-        if effector is not None and effector != selected:
-            raise RuntimeError("Apply the effector configuration before starting Actuation")
-        settings.use_snapshot(settings_snapshot)
         from omnibci.infrastructure.actuation.application import Actuation
         kwargs = {"stop_event": stop_event, "settings_snapshot": settings_snapshot}
         if reporter is not None:
@@ -82,10 +76,7 @@ def _run_actuation(
 class ActuationProcessManager:
     """Manages the Actuation OS process.
 
-    When *auto_spawn* is False all public methods are no-ops, so the same
-    engine-lifecycle code path works for both deployment modes (and for
-    ``ACTUATION.enabled = false``, where the composition root passes
-    auto_spawn=False).
+    Each start uses the pinned snapshot's managed or external mode.
     Desktop hosts disable process termination and retain unresponsive children.
     """
 
@@ -96,53 +87,40 @@ class ActuationProcessManager:
 
     def __init__(
         self,
-        auto_spawn: bool = True,
         *,
         startup_timeout_s: float = _STARTUP_TIMEOUT_S,
         allow_process_termination: bool = True,
     ) -> None:
         if startup_timeout_s <= 0:
             raise ValueError("startup_timeout_s must be greater than zero")
-        self._default_auto_spawn = auto_spawn
-        self._auto_spawn = auto_spawn
+        self._auto_spawn = True
         self._settings_snapshot: dict | None = None
         self._startup_timeout_s = float(startup_timeout_s)
         self._allow_process_termination = allow_process_termination
         self._process: mp.Process | None = None
         self._stop_event: Any = None
         self._startup_receiver: Any = None
-        # Effector the *running* subprocess was spawned with (None = config default).
+        # Effector from the running subprocess's pinned snapshot.
         self._effector: str | None = None
         self._state = ChildProcessState.STOPPED
         self._lifecycle_lock = RLock()
 
     # ── Public API ─────────────────────────────────────────────────────────
 
-    def start(
-        self, effector: str | None = None, *, settings_snapshot: dict | None = None,
-    ) -> None:
-        """Spawn the Actuation subprocess (no-op if auto_spawn=False or already running).
+    def start(self, *, settings_snapshot: dict) -> None:
+        """Start a managed child or release it when external mode is selected.
 
-        A snapshot pins every setting and determines the selected effector and
-        managed mode. A differing legacy override requires a configuration apply.
+        The snapshot determines the selected effector and managed mode.
         """
         with self._lifecycle_lock:
-            self._start_locked(effector, settings_snapshot=settings_snapshot)
+            self._start_locked(settings_snapshot)
 
-    def _start_locked(
-        self, effector: str | None = None, *, settings_snapshot: dict | None = None,
-    ) -> None:
+    def _start_locked(self, settings_snapshot: dict) -> None:
         snapshot = deepcopy(settings_snapshot)
-        if snapshot is not None:
-            selected = snapshot.get("ACTUATION.effector")
-            if effector is not None and effector != selected:
-                raise RuntimeError("Apply the effector configuration before starting Actuation")
-            effector = selected
-            auto_spawn = bool(snapshot.get("ACTUATION.enabled", self._default_auto_spawn)) and bool(
-                snapshot.get("ACTUATION.auto_spawn", self._default_auto_spawn)
-            )
-        else:
-            auto_spawn = self._default_auto_spawn
+        effector = snapshot.get("ACTUATION.effector")
+        auto_spawn = snapshot.get(
+            "ACTUATION.auto_spawn", MODULE_SETTING_DEFAULTS["actuation"]["ACTUATION.auto_spawn"],
+        )
         if not auto_spawn:
             self._stop_locked()
             self._auto_spawn = False
@@ -156,7 +134,8 @@ class ActuationProcessManager:
                 process_alive
                 and self._state is ChildProcessState.READY
                 and effector == self._effector
-                and snapshot == self._settings_snapshot
+                and module_runtime_identity(snapshot, "actuation")
+                == module_runtime_identity(self._settings_snapshot, "actuation")
             ):
                 logger.debug(
                     "Actuation process already running requested effector (pid=%s, effector=%s)",
@@ -181,16 +160,12 @@ class ActuationProcessManager:
 
         stop_event = mp.Event()
         startup_receiver, startup_sender = mp.Pipe(duplex=False)
-        process_kwargs = (
-            {"kwargs": {"settings_snapshot": deepcopy(snapshot)}}
-            if snapshot is not None else {}
-        )
         process = mp.Process(
             target=_run_actuation,
-            args=(effector, stop_event, startup_sender),
+            args=(stop_event, startup_sender),
             name="ActuationProcess",
             daemon=self._allow_process_termination,
-            **process_kwargs,
+            kwargs={"settings_snapshot": deepcopy(snapshot)},
         )
         self._state = ChildProcessState.STARTING
         try:
@@ -231,16 +206,14 @@ class ActuationProcessManager:
             effector or "<config>",
         )
         try:
-            expected_identity = ({
-                "expected_revision": snapshot.get("CONFIG.revision"),
-                "expected_generation": snapshot.get("CONFIG.generation"),
-            } if snapshot is not None else {})
             wait_for_startup_report(
                 startup_receiver,
                 process,
                 component="Actuation",
                 timeout_s=self._startup_timeout_s,
-                **expected_identity,
+                expected_module_revisions={"actuation": snapshot.get("CONFIG.module_revisions", {}).get("actuation")},
+                expected_engine_revision=snapshot.get("CONFIG.engine_revision"),
+                expected_generation=snapshot.get("CONFIG.generation"),
             )
         except BaseException as startup_exc:
             self._state = ChildProcessState.FAILED

@@ -5,6 +5,7 @@
 manifest_version = 2
 
 [package]
+domain = "processing"
 # Publisher and id form the case-sensitive installed identity: example.oz-polarity-demo.
 id = "oz-polarity-demo"
 publisher = "example"

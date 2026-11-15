@@ -1,4 +1,5 @@
 """Scan45 events survive numeric input aliases and reach direct web results."""
+from tests.plugin_configuration_helpers import builtin_selection
 
 import asyncio
 from queue import Queue
@@ -8,8 +9,8 @@ from unittest.mock import AsyncMock
 import numpy as np
 import pytest
 
-from omnibci.application.events import CommandRequest, TrialOutcome
-from omnibci.application.plugin_profiles import ProfileBinding
+from omnibci.application.events import CommandRequest, ProcessingInputStart, TrialOutcome
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.application.services.results_service import ResultsService
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime
@@ -38,31 +39,31 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         ChannelBinding(str(index + 1), channel.channel_id, "eeg")
         for index, channel in enumerate(source.channels)
     ))
-    plan = compile_processing_plan(source, inputs, config_revision=revision)
+    plan = compile_processing_plan(source, inputs, acquisition_revision=revision)
     assert [channel.name for channel in plan.output_channels] == [str(index) for index in range(1, 10)]
     assert all(channel.signal_type == "eeg" for channel in plan.output_channels)
 
     catalog = PluginCatalog()
     snapshot = {
-        "CONFIG.generation": generation, "CONFIG.revision": revision,
+        "CONFIG.generation": generation, "CONFIG.module_revisions": {"acquisition": revision, "processing": revision, "stimulation": revision, "actuation": revision}, "CONFIG.engine_revision": "engine",
         "ACQUISITION.signal_source": reader.plugin_type,
         "ACQUISITION.sample_rate": sample_rate, "ACQUISITION.channel_count": 10,
         "PLUGINS.bindings": [
             ProfileBinding(
                 "processing.decoder", "decoder", None,
-                catalog.resolve("decoder", "THUBCI_SSVEP_classic40CCA").selection,
+                builtin_selection("decoder", "THUBCI_SSVEP_classic40CCA"),
                 {"window_duration": 1.0, "offset_time": 0}, processing_input=inputs,
             ).to_dict(),
             ProfileBinding(
                 "processing.epoch_detector", "epoch_detector", None,
-                catalog.resolve("epoch_detector", "DEFAULT_EPOCH_DETECTOR").selection, {},
+                builtin_selection("epoch_detector", "DEFAULT_EPOCH_DETECTOR"), {},
             ).to_dict(),
         ],
     }
     receipt = {
-        "generation": generation, "config_revision": revision,
+        "generation": generation, "acquisition_revision": revision, "processing_revision": revision, "engine_revision": "engine",
         "connection_id": source.connection_id,
-        "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint,
+        "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
     }
     bus = EventBus(Queue())
     data = DataManager(Queue())
@@ -93,7 +94,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
     bus.register_event_listener(EventType.TrialCompleted, on_trial)
     processor = SignalProcessor(
         None, None, Queue(), data, bus, generation=generation,
-        config_revision=revision, settings_snapshot=snapshot,
+        processing_revision=revision, acquisition_revision=revision, engine_revision="engine", settings_snapshot=snapshot,
     )
     await bus.start()
     try:
@@ -103,6 +104,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         confirmation = await asyncio.wait_for(prepared, timeout=2)
         assert confirmation.ok, confirmation.message
         assert confirmation.data == receipt
+        processor._on_input_start(ProcessingInputStart("attach", receipt, -1))
         assert processor.detector.plugin_type == "DEFAULT_EPOCH_DETECTOR"
         assert processor._decoder.plugin_type == "THUBCI_SSVEP_classic40CCA"
 
@@ -134,7 +136,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         monkeypatch.setattr(reader, "stop_stream", AsyncMock())
         acquisition = AcquisitionRuntime(
             reader, Queue(), data, bus, source_id=reader.plugin_type,
-            preparation_required=False, generation=generation, config_revision=revision,
+            generation=generation, acquisition_revision=revision, engine_revision="engine",
         )
         await acquisition.fetch()
         assert acquisition._fetch_failure is None
@@ -155,7 +157,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         outcome = outcomes[0]
         assert isinstance(outcome, TrialOutcome)
         assert outcome.generation == generation and outcome.trial_number == 1
-        assert outcome.config_revision == revision
+        assert outcome.acquisition_revision == revision
         assert outcome.classification.event_id == outcome.classification.target_id == 1
         assert outcome.classification.forced is False
         assert processor.current_epoch is None
@@ -169,6 +171,6 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         message = messages[0]
         assert message.generation == generation and message.trial_number == 1
         assert message.event_id == message.target_id == 1
-        assert message.config_revision == revision
+        assert message.acquisition_revision == revision
     finally:
         await bus.stop()

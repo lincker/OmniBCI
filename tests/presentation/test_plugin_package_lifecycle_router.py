@@ -8,22 +8,23 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from omnibci.application.services.plugin_package_service import PluginPackageService
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.presentation.errors import register_exception_handlers
 from omnibci.presentation.routers.plugin_package_lifecycle import router
 from omnibci.presentation.routers.plugin_packages import router as installation_router
 from tests.infrastructure.test_package_store import package_archive
+from tests.plugin_configuration_helpers import builtin_selection
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
-    profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
-                                    CatalogConfigurationAdapter(), settings_source=lambda: {})
+    profiles = ConfigurationService(TomlConfigurationRepository(tmp_path / "config"),
+                                    CatalogConfigurationAdapter())
     svc = PluginPackageService(ManagedPluginPackageStore(), profiles, runtime_references=lambda: (), admission_guard=nullcontext)
     for version in ("1.0.0", "2.0.0"):
         svc.install(package_archive(tmp_path, version))
@@ -72,21 +73,18 @@ def test_upgrade_preview_then_save_new_profile_with_revision_guard(client):
     assert saved.json()["data"]["selection"]["version"] == "2.0.0"
     body["expected_source_revision"] = 99
     assert http.post("/plugin-packages/version-profiles", json=body).status_code == 409
-    assert svc.profiles.repository.get_activation() is None
+    assert all(module is None for module in svc.profiles.repository.get_activation_set().modules.values())
 
 
 @pytest.mark.parametrize("kind", ["decoder", "acquisition"])
 def test_version_proposal_serializes_channel_configuration(client, monkeypatch, kind):
     http, svc = client
     alias = "THUBCI_SSVEP_classic40CCA" if kind == "decoder" else "file_reader"
-    definition = svc.profiles.catalog.legacy(kind, alias)
-    values = ({"processing_input": ProcessingInput(outputs=(ChannelBinding("O2", "channel-1", "eeg"), ChannelBinding("O1", "channel-0", "eeg")))} if kind == "decoder" else {
-        "manual_montage": {"source_id": "file_reader", "sample_rate": 500, "channels": [{"index": 0, "name": "O1"}]}})
+    definition = svc.profiles.catalog.get(kind, builtin_selection(kind, alias))
+    values = {"processing_input": ProcessingInput(outputs=(ChannelBinding("O2", "channel-1", "eeg"), ChannelBinding("O1", "channel-0", "eeg")))} if kind == "decoder" else {}
     parameters = {} if kind == "decoder" else {"sample_rate": 500, "channel_count": 2}
     source = svc.profiles.create(kind, definition.selection, "Versioned profile", parameters,
                                  **(values if kind == "decoder" else {}))
-    if kind == "acquisition":
-        source = svc.profiles.repository.save_profile(replace(source, legacy=values), expected_revision=source.revision)
     target = replace(definition, selection=replace(definition.selection, version="99.0.0"))
     monkeypatch.setattr(svc.store, "get_package", lambda *_: SimpleNamespace(error=None, available=True, enabled=True))
     monkeypatch.setattr(svc.store, "configuration", lambda *_: target)

@@ -19,6 +19,11 @@ from omnibci.infrastructure.actuation.process_manager import (
 )
 
 
+def _effector_snapshot(effector="logger"):
+    return {"ACTUATION.effector": effector, "CONFIG.module_revisions": {"actuation": "revision"},
+            "CONFIG.engine_revision": "engine", "CONFIG.generation": "run"}
+
+
 def _cooperative_child(stop_event, stopped_flag):
     """Top-level target so the real-process test also works with spawn."""
     stop_event.wait(timeout=10.0)
@@ -48,7 +53,8 @@ def startup_pipe(monkeypatch):
     """Every mocked child reports READY unless a test overrides the receiver."""
     receiver = MagicMock()
     receiver.poll.return_value = True
-    receiver.recv.return_value = StartupReport.ready("Actuation")
+    receiver.recv.return_value = StartupReport.ready(
+        "Actuation", module_revisions={"actuation": "revision"}, engine_revision="engine", generation="run")
     sender = MagicMock()
     pipe = MagicMock(return_value=(receiver, sender))
     monkeypatch.setattr(process_manager_module.mp, "Pipe", pipe)
@@ -57,8 +63,8 @@ def startup_pipe(monkeypatch):
 
 class TestNoSpawnMode:
     def test_all_public_methods_are_noops(self):
-        m = ActuationProcessManager(auto_spawn=False)
-        m.start(effector="logger")
+        m = ActuationProcessManager()
+        m.start(settings_snapshot={**_effector_snapshot(), "ACTUATION.auto_spawn": False})
         assert m.is_alive is False and m.current_effector is None
         assert m.state is ChildProcessState.STOPPED
         m.stop()   # no error
@@ -74,10 +80,11 @@ class TestSpawnMode:
         stop_event = MagicMock()
         mock_proc_cls.return_value = proc
         mock_event_cls.return_value = stop_event
-        m = ActuationProcessManager(auto_spawn=True)
-        m.start(effector="logger")
+        m = ActuationProcessManager()
+        m.start(settings_snapshot=_effector_snapshot())
         kwargs = mock_proc_cls.call_args.kwargs
-        assert kwargs["args"] == ("logger", stop_event, startup_pipe.sender)
+        assert kwargs["args"] == (stop_event, startup_pipe.sender)
+        assert kwargs["kwargs"]["settings_snapshot"] == _effector_snapshot()
         assert kwargs["daemon"] is True
         assert m.is_alive is True and m.is_ready is True
         assert m.state is ChildProcessState.READY
@@ -91,9 +98,9 @@ class TestSpawnMode:
     ):
         proc, _ = _mock_process()
         mock_proc_cls.return_value = proc
-        m = ActuationProcessManager(auto_spawn=True)
-        m.start(effector="logger")
-        m.start(effector="logger")
+        m = ActuationProcessManager()
+        m.start(settings_snapshot=_effector_snapshot())
+        m.start(settings_snapshot=_effector_snapshot())
         assert mock_proc_cls.call_count == 1
         assert mock_event_cls.call_count == 1
         assert startup_pipe.factory.call_count == 1
@@ -105,10 +112,10 @@ class TestSpawnMode:
     ):
         proc, _ = _mock_process()
         mock_proc_cls.return_value = proc
-        manager = ActuationProcessManager(auto_spawn=True)
+        manager = ActuationProcessManager()
 
         threads = [
-            threading.Thread(target=manager.start, kwargs={"effector": "logger"})
+            threading.Thread(target=manager.start, kwargs={"settings_snapshot": _effector_snapshot()})
             for _ in range(2)
         ]
         for thread in threads:
@@ -129,9 +136,9 @@ class TestSpawnMode:
         old_stop, new_stop = MagicMock(), MagicMock()
         mock_proc_cls.side_effect = [old_process, new_process]
         mock_event_cls.side_effect = [old_stop, new_stop]
-        m = ActuationProcessManager(auto_spawn=True)
-        m.start(effector="logger")
-        m.start(effector="arm_v2")
+        m = ActuationProcessManager()
+        m.start(settings_snapshot=_effector_snapshot())
+        m.start(settings_snapshot=_effector_snapshot("arm_v2"))
 
         assert mock_proc_cls.call_count == 2
         old_stop.set.assert_called_once_with()
@@ -148,8 +155,8 @@ class TestSpawnMode:
         stop_event = MagicMock()
         mock_proc_cls.return_value = proc
         mock_event_cls.return_value = stop_event
-        m = ActuationProcessManager(auto_spawn=True)
-        m.start()
+        m = ActuationProcessManager()
+        m.start(settings_snapshot=_effector_snapshot())
         m.stop()
 
         stop_event.set.assert_called_once_with()
@@ -169,7 +176,7 @@ class TestSpawnMode:
         mock_proc_cls.return_value = proc
         mock_event_cls.return_value = stop_event
         m = ActuationProcessManager()
-        m.start(effector="logger")
+        m.start(settings_snapshot=_effector_snapshot())
 
         m.stop()
 
@@ -191,7 +198,7 @@ class TestSpawnMode:
         mock_proc_cls.return_value = proc
         mock_event_cls.return_value = MagicMock()
         m = ActuationProcessManager()
-        m.start()
+        m.start(settings_snapshot=_effector_snapshot())
 
         m.stop()
 
@@ -214,7 +221,7 @@ class TestSpawnMode:
         mock_proc_cls.return_value = proc
         mock_event_cls.return_value = stop_event
         m = ActuationProcessManager()
-        m.start(effector="logger")
+        m.start(settings_snapshot=_effector_snapshot())
 
         with pytest.raises(RuntimeError, match="still alive"):
             m.stop()
@@ -226,7 +233,7 @@ class TestSpawnMode:
         proc.close.assert_not_called()
 
         with pytest.raises(RuntimeError, match="still alive"):
-            m.start(effector="arm_v2")
+            m.start(settings_snapshot=_effector_snapshot("arm_v2"))
         assert mock_proc_cls.call_count == 1
 
     def test_stop_cooperatively_joins_real_child(self):
@@ -269,6 +276,7 @@ class TestSpawnMode:
             "Actuation",
             stage="initialization",
             error=RuntimeError("effector unavailable"),
+            module_revisions={"actuation": "revision"}, engine_revision="engine", generation="run",
         )
         manager = ActuationProcessManager()
 
@@ -276,7 +284,7 @@ class TestSpawnMode:
             ChildProcessStartupError,
             match="effector unavailable",
         ):
-            manager.start("logger")
+            manager.start(settings_snapshot=_effector_snapshot())
 
         assert manager.state is ChildProcessState.FAILED
         assert manager.is_alive is False
@@ -297,7 +305,7 @@ class TestSpawnMode:
         manager = ActuationProcessManager(startup_timeout_s=0.001)
 
         with pytest.raises(ChildProcessStartupTimeout):
-            manager.start("logger")
+            manager.start(settings_snapshot=_effector_snapshot())
 
         assert manager.state is ChildProcessState.FAILED
         assert manager._process is None
@@ -321,7 +329,7 @@ class TestSpawnMode:
             ChildProcessStartupError,
             match=r"exitcode=9",
         ):
-            manager.start("logger")
+            manager.start(settings_snapshot=_effector_snapshot())
 
         assert manager.state is ChildProcessState.FAILED
         assert manager._process is None
@@ -352,7 +360,7 @@ class TestSpawnMode:
 
         def start():
             try:
-                manager.start("logger")
+                manager.start(settings_snapshot=_effector_snapshot())
             except BaseException as exc:  # pragma: no cover - assertion below
                 errors.append(exc)
 
@@ -387,7 +395,7 @@ class TestSpawnMode:
         mock_proc_cls.return_value = process
         mock_event_cls.return_value = MagicMock()
         manager = ActuationProcessManager()
-        manager.start("logger")
+        manager.start(settings_snapshot=_effector_snapshot())
 
         state["alive"] = False
 
@@ -398,7 +406,6 @@ class TestSpawnMode:
 class TestChildEntryPoint:
     @patch("omnibci.infrastructure.actuation.application.Actuation")
     def test_forwards_stop_event_to_application(self, mock_actuation_cls, monkeypatch):
-        monkeypatch.setattr("omnibci.conf.settings.use_snapshot", lambda _: None)
         stop_event = object()
 
         _run_actuation(stop_event=stop_event, settings_snapshot={})
@@ -410,7 +417,6 @@ class TestChildEntryPoint:
     def test_entrypoint_reports_constructor_or_run_failure(
         self, mock_actuation_cls, monkeypatch
     ):
-        monkeypatch.setattr("omnibci.conf.settings.use_snapshot", lambda _: None)
         connection = MagicMock()
         mock_actuation_cls.return_value.run.side_effect = RuntimeError(
             "configuration failed"
@@ -428,36 +434,46 @@ class TestChildEntryPoint:
         assert report.message == "configuration failed"
         connection.close.assert_called_once_with()
 
-    @patch("omnibci.infrastructure.actuation.application.Actuation")
-    def test_alias_without_snapshot_is_rejected(self, mock_actuation_cls):
-        with pytest.raises(RuntimeError, match="pinned settings snapshot"):
-            _run_actuation(effector="logger", stop_event=object())
-        mock_actuation_cls.assert_not_called()
 
 
 class TestEngineLifecycleHook:
-    def test_engine_service_prepares_and_stops_manager(self):
-        # Actuation starts with signal preparation and stops with the engine.
+    def test_actuation_starts_and_stops_without_acquisition_or_processing(self):
         import asyncio
-        from unittest.mock import MagicMock
+        from unittest.mock import AsyncMock, MagicMock
         from omnibci.application.services.engine_service import NeuroEngineService
         from omnibci.application.commands.engine_commands import (
             StartEngineCommand, StopEngineCommand)
 
         manager = MagicMock()
         engine = MagicMock()
+        engine.set_actuation_active = AsyncMock()
+        engine.ensure_output_ready = AsyncMock()
+        engine.is_module_running.return_value = False
+        engine.peer_gateway.peer.return_value.is_connected = False
         stopped = threading.Event()
         engine.run.side_effect = stopped.wait
         svc = NeuroEngineService(engine_factory=lambda snapshot: engine,
-                                 snapshot_provider=lambda: {"ACTUATION.enabled": True},
+                                 snapshot_provider=lambda: {"PLUGINS.bindings": [],
+                                                           "CONFIG.module_revisions": {"actuation": "actuation"},
+                                                           "CONFIG.engine_revision": "engine"},
                                  actuation_process_manager=manager)
         asyncio.run(svc.startup())
         asyncio.run(svc.handle_start_engine(StartEngineCommand()))
         try:
             manager.start.assert_not_called()
-            svc.prepare_actuation()
+            async def start_actuation():
+                async with svc.runtime_transition("actuation"):
+                    await svc.start_module_for_configuration("actuation", svc.applied_snapshot)
+            asyncio.run(start_actuation())
             manager.start.assert_called_once()
+            assert svc.is_module_running("actuation")
+            assert not svc.is_module_running("acquisition")
+            assert not svc.is_module_running("processing")
+            asyncio.run(svc.stop_module("actuation"))
+            assert not svc.is_module_running("actuation")
+            assert svc.is_engine_ready
+            manager.stop.assert_called_once()
+            engine.set_actuation_active.assert_awaited_with(False)
         finally:
             stopped.set()
             asyncio.run(svc.handle_stop_engine(StopEngineCommand()))
-        manager.stop.assert_called_once()

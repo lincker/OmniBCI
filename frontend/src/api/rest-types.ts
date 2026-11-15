@@ -4,15 +4,15 @@
  */
 
 export interface paths {
-    "/api/v1/system/info": {
+    "/api/v1/server/info": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** System Info */
-        get: operations["system_info_api_v1_system_info_get"];
+        /** Server Info */
+        get: operations["server_info_api_v1_server_info_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -21,15 +21,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/system/logs": {
+    "/api/v1/server/session": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Backend Logs */
-        get: operations["backend_logs_api_v1_system_logs_get"];
+        get?: never;
+        put?: never;
+        /** Create Browser Session */
+        post: operations["create_browser_session_api_v1_server_session_post"];
+        /** Delete Browser Session */
+        delete: operations["delete_browser_session_api_v1_server_session_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/server/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Server Logs */
+        get: operations["server_logs_api_v1_server_logs_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -66,6 +84,57 @@ export interface paths {
         put?: never;
         /** Stop NeuroEngine */
         post: operations["stop_engine_api_v1_engine_stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/engine/modules/{module}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start an independent engine module */
+        post: operations["start_module_api_v1_engine_modules__module__start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/engine/modules/{module}/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Prepare an output module for an external connection */
+        post: operations["prepare_module_api_v1_engine_modules__module__prepare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/engine/modules/{module}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop an independent engine module */
+        post: operations["stop_module_api_v1_engine_modules__module__stop_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -293,23 +362,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/stimulation/paradigms": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List available stimulation paradigms */
-        get: operations["list_paradigms_api_v1_stimulation_paradigms_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/stimulation/start": {
         parameters: {
             query?: never;
@@ -319,7 +371,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Start stimulation */
+        /** Apply current stimulation and prepare or start it */
         post: operations["start_stimulation_api_v1_stimulation_start_post"];
         delete?: never;
         options?: never;
@@ -402,14 +454,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Saved host settings */
+        /** Server startup settings */
         get: operations["get_config_api_v1_config_get"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
-        /** Save host settings without applying them */
+        /** Save settings for the next server startup */
         patch: operations["patch_config_api_v1_config_patch"];
         trace?: never;
     };
@@ -501,18 +553,119 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/config/activation": {
+    "/api/v1/config/modules": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Activation */
-        get: operations["get_activation_api_v1_config_activation_get"];
-        /** Accept Activation */
-        put: operations["accept_activation_api_v1_config_activation_put"];
+        /** Get Modules */
+        get: operations["get_modules_api_v1_config_modules_get"];
+        put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/modules/{module}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Module */
+        get: operations["get_module_api_v1_config_modules__module__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/modules/{module}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Module History */
+        get: operations["module_history_api_v1_config_modules__module__history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/modules/{module}/history/{entry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Module History Entry */
+        get: operations["module_history_entry_api_v1_config_modules__module__history__entry_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/engine": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Engine */
+        get: operations["get_engine_api_v1_config_engine_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/plugin-profiles/{profile_id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Profile History */
+        get: operations["profile_history_api_v1_config_plugin_profiles__profile_id__history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/plugin-profiles/{profile_id}/revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revert Profile */
+        post: operations["revert_profile_api_v1_config_plugin_profiles__profile_id__revert_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -598,6 +751,23 @@ export interface paths {
         get: operations["configuration_operation_api_v1_config_operations__operation_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/modules/{module}/revert-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revert Module */
+        post: operations["revert_module_api_v1_config_modules__module__revert_plan_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -740,29 +910,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/plugins/{category}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List plugins by category
-         * @description Return discovered plugins for *category*.
-         *
-         *     Valid categories: ``paradigm``, ``decoder``, ``acquisition``, ``effector``,
-         *     ``trigger``, ``filter``, ``epoch_detector``.
-         */
-        get: operations["list_plugins_by_category_api_v1_plugins__category__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -784,22 +931,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** AcceptActivationRequest */
-        AcceptActivationRequest: {
-            /** Bindings */
-            bindings: components["schemas"]["SelectProfileBindingRequest"][];
-            /** Expected Revision */
-            expected_revision?: string | null;
-            /** Refresh Slots */
-            refresh_slots?: string[] | null;
-            /**
-             * Include Host Settings
-             * @default false
-             */
-            include_host_settings: boolean;
-            /** Module */
-            module?: ("acquisition" | "processing" | "stimulation" | "actuation") | null;
-        };
         /** AcquisitionMetadataResponse */
         AcquisitionMetadataResponse: {
             /** Source Id */
@@ -817,8 +948,10 @@ export interface components {
             capture_id: string;
             /** Generation */
             generation: string;
-            /** Config Revision */
-            config_revision: string | null;
+            /** Acquisition Revision */
+            acquisition_revision: string | null;
+            /** Engine Revision */
+            engine_revision: string | null;
             /** Source Id */
             source_id: string;
             /** Connection Id */
@@ -892,8 +1025,10 @@ export interface components {
             capture_id: string | null;
             /** Generation */
             generation: string;
-            /** Config Revision */
-            config_revision: string | null;
+            /** Acquisition Revision */
+            acquisition_revision: string | null;
+            /** Engine Revision */
+            engine_revision: string | null;
             /** Source Id */
             source_id: string | null;
             /** Connection Id */
@@ -986,23 +1121,6 @@ export interface components {
             /** Connection Id */
             connection_id?: string | null;
         };
-        /** ActivationResponse */
-        ActivationResponse: {
-            /**
-             * Format Version
-             * @default 2
-             * @constant
-             */
-            format_version: 2;
-            /** Revision */
-            revision: string;
-            /** Settings */
-            settings: {
-                [key: string]: unknown;
-            };
-            /** Bindings */
-            bindings: components["schemas"]["ProfileBindingResponse"][];
-        };
         /** ApiResponse */
         ApiResponse: {
             /**
@@ -1074,34 +1192,6 @@ export interface components {
             message: string;
             data?: components["schemas"]["AcquisitionStatusResponse"] | null;
         };
-        /** ApiResponse[ActivationResponse] */
-        ApiResponse_ActivationResponse_: {
-            /**
-             * Success
-             * @default true
-             */
-            success: boolean;
-            /**
-             * Message
-             * @default ok
-             */
-            message: string;
-            data?: components["schemas"]["ActivationResponse"] | null;
-        };
-        /** ApiResponse[BackendLogsResponse] */
-        ApiResponse_BackendLogsResponse_: {
-            /**
-             * Success
-             * @default true
-             */
-            success: boolean;
-            /**
-             * Message
-             * @default ok
-             */
-            message: string;
-            data?: components["schemas"]["BackendLogsResponse"] | null;
-        };
         /** ApiResponse[ConfigResponse] */
         ApiResponse_ConfigResponse_: {
             /**
@@ -1115,6 +1205,20 @@ export interface components {
              */
             message: string;
             data?: components["schemas"]["ConfigResponse"] | null;
+        };
+        /** ApiResponse[EngineSettingsResponse] */
+        ApiResponse_EngineSettingsResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["EngineSettingsResponse"] | null;
         };
         /** ApiResponse[EngineStatusResponse] */
         ApiResponse_EngineStatusResponse_: {
@@ -1144,6 +1248,34 @@ export interface components {
             message: string;
             data?: components["schemas"]["EpochListResponse"] | null;
         };
+        /** ApiResponse[ModuleActivationResponse] */
+        ApiResponse_ModuleActivationResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["ModuleActivationResponse"] | null;
+        };
+        /** ApiResponse[ModulesResponse] */
+        ApiResponse_ModulesResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["ModulesResponse"] | null;
+        };
         /** ApiResponse[NodeConfigurationPublicationResponse] */
         ApiResponse_NodeConfigurationPublicationResponse_: {
             /**
@@ -1157,6 +1289,21 @@ export interface components {
              */
             message: string;
             data?: components["schemas"]["NodeConfigurationPublicationResponse"] | null;
+        };
+        /** ApiResponse[NoneType] */
+        ApiResponse_NoneType_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            /** Data */
+            data?: null;
         };
         /** ApiResponse[PackageInstallationResponse] */
         ApiResponse_PackageInstallationResponse_: {
@@ -1185,20 +1332,6 @@ export interface components {
              */
             message: string;
             data?: components["schemas"]["PackageVersionResponse"] | null;
-        };
-        /** ApiResponse[ParadigmsResponse] */
-        ApiResponse_ParadigmsResponse_: {
-            /**
-             * Success
-             * @default true
-             */
-            success: boolean;
-            /**
-             * Message
-             * @default ok
-             */
-            message: string;
-            data?: components["schemas"]["ParadigmsResponse"] | null;
         };
         /** ApiResponse[PatchConfigResponse] */
         ApiResponse_PatchConfigResponse_: {
@@ -1298,6 +1431,34 @@ export interface components {
             message: string;
             data?: components["schemas"]["RuntimePlanResponse"] | null;
         };
+        /** ApiResponse[ServerInfoResponse] */
+        ApiResponse_ServerInfoResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["ServerInfoResponse"] | null;
+        };
+        /** ApiResponse[ServerLogsResponse] */
+        ApiResponse_ServerLogsResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["ServerLogsResponse"] | null;
+        };
         /** ApiResponse[SignalPreviewResponse] */
         ApiResponse_SignalPreviewResponse_: {
             /**
@@ -1340,20 +1501,6 @@ export interface components {
             message: string;
             data?: components["schemas"]["StimulationStatusResponse"] | null;
         };
-        /** ApiResponse[SystemInfoResponse] */
-        ApiResponse_SystemInfoResponse_: {
-            /**
-             * Success
-             * @default true
-             */
-            success: boolean;
-            /**
-             * Message
-             * @default ok
-             */
-            message: string;
-            data?: components["schemas"]["SystemInfoResponse"] | null;
-        };
         /** ApiResponse[list[MarketPackageResponse]] */
         ApiResponse_list_MarketPackageResponse__: {
             /**
@@ -1368,6 +1515,21 @@ export interface components {
             message: string;
             /** Data */
             data?: components["schemas"]["MarketPackageResponse"][] | null;
+        };
+        /** ApiResponse[list[ModuleHistoryResponse]] */
+        ApiResponse_list_ModuleHistoryResponse__: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            /** Data */
+            data?: components["schemas"]["ModuleHistoryResponse"][] | null;
         };
         /** ApiResponse[list[PackageVersionResponse]] */
         ApiResponse_list_PackageVersionResponse__: {
@@ -1414,14 +1576,20 @@ export interface components {
             /** Data */
             data?: components["schemas"]["PluginProfileResponse"][] | null;
         };
-        /** BackendLogsResponse */
-        BackendLogsResponse: {
-            /** Filename */
-            filename: string;
-            /** Lines */
-            lines: string[];
-            /** Truncated */
-            truncated: boolean;
+        /** ApiResponse[list[ProfileHistoryResponse]] */
+        ApiResponse_list_ProfileHistoryResponse__: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            /** Data */
+            data?: components["schemas"]["ProfileHistoryResponse"][] | null;
         };
         /** ChannelBindingModel */
         ChannelBindingModel: {
@@ -1464,21 +1632,31 @@ export interface components {
             key: string;
             /**
              * Value
-             * @description Saved value; runtime application is separate
+             * @description Saved value for the next server startup
              */
             value: unknown;
             /**
              * Type
-             * @description int | float
+             * @description string | float
              */
             type: string;
             /**
              * Requires
-             * @description engine-restart
+             * @constant
              */
-            requires: string;
+            requires: "server-restart";
             /** Description */
             description: string;
+            /**
+             * Active Value
+             * @description Value captured when this server started
+             */
+            active_value: unknown;
+            /**
+             * Restart Required
+             * @description Saved value differs from the startup snapshot
+             */
+            restart_required: boolean;
         };
         /** ConfigResponse */
         ConfigResponse: {
@@ -1537,16 +1715,26 @@ export interface components {
             /** Default Names */
             default_names?: string[];
         };
-        /** DraftSourceBindingRequest */
-        DraftSourceBindingRequest: {
-            /**
-             * Slot
-             * @constant
-             */
-            slot: "acquisition.source";
+        /** DraftPluginBindingRequest */
+        DraftPluginBindingRequest: {
+            /** Slot */
+            slot: string;
             selection: components["schemas"]["PluginSelectionResponse"];
             /** Parameters */
             parameters: {
+                [key: string]: unknown;
+            };
+            /** Configuration Version */
+            configuration_version?: number | null;
+            /** @description Required as an explicit object for processing.decoder; omit for other plugin roles. */
+            processing_input?: components["schemas"]["ProcessingInputModel"] | null;
+        };
+        /** EngineSettingsResponse */
+        EngineSettingsResponse: {
+            /** Revision */
+            revision: string | null;
+            /** Settings */
+            settings: {
                 [key: string]: unknown;
             };
         };
@@ -1560,6 +1748,10 @@ export interface components {
             processor_alive: boolean;
             /** Stimulation Connected */
             stimulation_connected: boolean;
+            /** Actuation Alive */
+            actuation_alive: boolean;
+            /** Actuation Connected */
+            actuation_connected: boolean;
         };
         /** EpochListResponse */
         EpochListResponse: {
@@ -1591,8 +1783,10 @@ export interface components {
             epoch_number: number;
             /** Event Id */
             event_id: number | null;
-            /** Config Revision */
-            config_revision: string | null;
+            /** Processing Revision */
+            processing_revision: string | null;
+            /** Acquisition Revision */
+            acquisition_revision: string | null;
             /**
              * Status
              * @enum {string}
@@ -1602,7 +1796,7 @@ export interface components {
              * Reason
              * @enum {string}
              */
-            reason: "prediction" | "end_marker" | "next_start" | "stream_stop" | "processor_stop" | "error";
+            reason: "prediction" | "end_marker" | "next_start" | "stream_stop" | "processor_stop" | "processing_detached" | "source_unavailable" | "error";
             /** Sample Rate */
             sample_rate: number | null;
             /** Channel Count */
@@ -1633,7 +1827,7 @@ export interface components {
          *     guessing from the HTTP status.  The string value is the wire format.
          * @enum {string}
          */
-        ErrorCode: "BAD_REQUEST" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "VALIDATION_ERROR" | "SERVICE_UNAVAILABLE" | "GATEWAY_TIMEOUT" | "INTERNAL_ERROR" | "ERROR" | "ENGINE_NOT_READY" | "COMMAND_REJECTED" | "COMMAND_EXECUTION_FAILED" | "COMMAND_TIMEOUT" | "CONFIG_KEY_NOT_ALLOWED" | "CONFIG_PROFILE_NOT_FOUND";
+        ErrorCode: "BAD_REQUEST" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "VALIDATION_ERROR" | "SERVICE_UNAVAILABLE" | "GATEWAY_TIMEOUT" | "INTERNAL_ERROR" | "ERROR" | "ENGINE_NOT_READY" | "COMMAND_REJECTED" | "COMMAND_EXECUTION_FAILED" | "COMMAND_TIMEOUT" | "PEER_DELIVERY_FAILED" | "CONFIG_KEY_NOT_ALLOWED" | "CONFIG_PROFILE_NOT_FOUND";
         /**
          * ErrorResponse
          * @description Unified error envelope — mirrors ApiResponse so clients see one consistent
@@ -1670,6 +1864,8 @@ export interface components {
         };
         /** MarketPackageResponse */
         MarketPackageResponse: {
+            /** Domain */
+            domain: string;
             /** Repository Id */
             repository_id: string;
             /** Package Id */
@@ -1700,6 +1896,64 @@ export interface components {
                 string
             ][];
         };
+        /** ModuleActionRequest */
+        ModuleActionRequest: {
+            /** Operation Id */
+            operation_id: string;
+            configuration: components["schemas"]["ModuleConfigurationRequest"];
+        };
+        /** ModuleActivationResponse */
+        ModuleActivationResponse: {
+            /**
+             * Module
+             * @enum {string}
+             */
+            module: "acquisition" | "processing" | "stimulation" | "actuation";
+            /** Revision */
+            revision: string | null;
+            /** Settings */
+            settings: {
+                [key: string]: unknown;
+            };
+            /** Bindings */
+            bindings: components["schemas"]["ProfileBindingResponse"][];
+        };
+        /** ModuleConfigurationRequest */
+        ModuleConfigurationRequest: {
+            /** Expected Revision */
+            expected_revision: string | null;
+            /** Settings */
+            settings: {
+                [key: string]: unknown;
+            };
+            /** Bindings */
+            bindings: components["schemas"]["DraftPluginBindingRequest"][];
+        };
+        /** ModuleHistoryResponse */
+        ModuleHistoryResponse: {
+            /** Entry Id */
+            entry_id: string;
+            /** Revision */
+            revision: string;
+            /** Saved At */
+            saved_at: string;
+            /** Restored From */
+            restored_from?: string | null;
+            /** Binding Summary */
+            binding_summary: string[];
+        };
+        /** ModulesResponse */
+        ModulesResponse: {
+            /** Modules */
+            modules: {
+                [key: string]: components["schemas"]["ModuleActivationResponse"];
+            };
+            engine: components["schemas"]["EngineSettingsResponse"] | null;
+            /** Errors */
+            errors?: {
+                [key: string]: string;
+            };
+        };
         /** NodeConfigurationPublicationResponse */
         NodeConfigurationPublicationResponse: {
             /**
@@ -1721,8 +1975,12 @@ export interface components {
              * @enum {string}
              */
             role: "stimulation" | "actuation";
-            /** Revision */
-            revision: string;
+            /** Module Revisions */
+            module_revisions: {
+                [key: string]: string;
+            };
+            /** Engine Revision */
+            engine_revision: string;
             /** Generation */
             generation: string | null;
             /** Settings */
@@ -1761,6 +2019,8 @@ export interface components {
         };
         /** PackageVersionResponse */
         PackageVersionResponse: {
+            /** Domain */
+            domain: string | null;
             /** Package Id */
             package_id: string;
             /** Version */
@@ -1781,60 +2041,6 @@ export interface components {
             error: string | null;
             /** References */
             references?: components["schemas"]["PackageReferenceResponse"][];
-        };
-        /**
-         * ParadigmInfo
-         * @description Metadata for a discovered stimulation paradigm.
-         *
-         *     Fields
-         *     ------
-         *     id           Machine identifier; unique per plugin (= manifest package.id).
-         *     plugin_type  Registry key used to actually start the paradigm.
-         *     display_name Human-readable label shown in the UI.
-         *     description  Optional long description.
-         *     version      Semver string from the manifest, if present.
-         *     source       "builtin" (ships with app) or "user" (downloaded / self-written).
-         *
-         *     Deprecated
-         *     ----------
-         *     name         Alias for ``display_name``; kept for one release cycle.
-         */
-        ParadigmInfo: {
-            /** Id */
-            id: string;
-            /** Plugin Type */
-            plugin_type: string;
-            /** Display Name */
-            display_name: string;
-            /** Description */
-            description?: string | null;
-            /** Version */
-            version?: string | null;
-            /**
-             * Source
-             * @default user
-             */
-            source: string;
-            /** Params */
-            params?: {
-                [key: string]: unknown;
-            };
-            /** Controls */
-            controls?: {
-                [key: string]: {
-                    [key: string]: unknown;
-                };
-            };
-            /**
-             * Name
-             * @description Deprecated alias for display_name.
-             */
-            readonly name: string;
-        };
-        /** ParadigmsResponse */
-        ParadigmsResponse: {
-            /** Paradigms */
-            paradigms: components["schemas"]["ParadigmInfo"][];
         };
         /** PatchConfigRequest */
         PatchConfigRequest: {
@@ -1861,13 +2067,18 @@ export interface components {
              */
             revision: string;
             /**
-             * Engine Restart Required
-             * @description Whether applying these saved changes requires an engine restart
+             * Server Restart Required
+             * @description Whether any saved server settings differ from the startup snapshot
              */
-            engine_restart_required: boolean;
+            server_restart_required: boolean;
         };
         /** PluginConfigurationResponse */
         PluginConfigurationResponse: {
+            /**
+             * Domain
+             * @enum {string}
+             */
+            domain: "acquisition" | "processing" | "stimulation" | "actuation";
             selection: components["schemas"]["PluginSelectionResponse"];
             /**
              * Kind
@@ -1898,11 +2109,6 @@ export interface components {
         };
         /** PluginProfileResponse */
         PluginProfileResponse: {
-            /**
-             * Processing Input Requires Review
-             * @default false
-             */
-            processing_input_requires_review: boolean;
             /**
              * Format Version
              * @default 2
@@ -1936,7 +2142,7 @@ export interface components {
             /** Contribution Id */
             contribution_id: string;
             /** Version */
-            version?: string | null;
+            version: string;
         };
         /** PreviewSignalSetupRequest */
         PreviewSignalSetupRequest: {
@@ -1979,11 +2185,6 @@ export interface components {
         };
         /** ProfileBindingResponse */
         ProfileBindingResponse: {
-            /**
-             * Processing Input Requires Review
-             * @default false
-             */
-            processing_input_requires_review: boolean;
             /** Slot */
             slot: string;
             /**
@@ -2003,6 +2204,16 @@ export interface components {
             /** Profile Revision */
             profile_revision: number;
             processing_input?: components["schemas"]["ProcessingInputModel"] | null;
+        };
+        /** ProfileHistoryResponse */
+        ProfileHistoryResponse: {
+            /** Profile Id */
+            profile_id: string;
+            /** Revision */
+            revision: number;
+            /** Saved At */
+            saved_at: string;
+            profile: components["schemas"]["PluginProfileResponse"];
         };
         /** ProfileVersionProposalResponse */
         ProfileVersionProposalResponse: {
@@ -2048,6 +2259,18 @@ export interface components {
             /** Trials */
             trials: components["schemas"]["TrialResponse"][];
         };
+        /** RevertModuleRequest */
+        RevertModuleRequest: {
+            /** Entry Id */
+            entry_id: string;
+        };
+        /** RevertProfileRequest */
+        RevertProfileRequest: {
+            /** Revision */
+            revision: number;
+            /** Expected Revision */
+            expected_revision: number;
+        };
         /** RuntimeApplyRequest */
         RuntimeApplyRequest: {
             /** Plan Id */
@@ -2059,24 +2282,46 @@ export interface components {
         RuntimeConfigurationResponse: {
             /** Running */
             running: boolean;
-            /** Recovery Required */
-            recovery_required: boolean;
-            /** Accepted Revision */
-            accepted_revision: string | null;
-            /** Applied Revision */
-            applied_revision: string | null;
+            /** Recovery */
+            recovery: {
+                [key: string]: string;
+            };
+            /** Accepted */
+            accepted: {
+                [key: string]: string | null;
+            };
+            /** Applied */
+            applied: {
+                [key: string]: string | null;
+            } | null;
             /** Generation */
             generation: string | null;
-            operation: components["schemas"]["RuntimeOperationResponse"] | null;
+            /** Operations */
+            operations: {
+                [key: string]: components["schemas"]["RuntimeOperationResponse"] | null;
+            };
+            /** Errors */
+            errors?: {
+                [key: string]: string;
+            };
         };
         /** RuntimeOperationResponse */
         RuntimeOperationResponse: {
+            /**
+             * Module
+             * @enum {string}
+             */
+            module: "acquisition" | "processing" | "stimulation" | "actuation" | "engine";
+            /** Affected Modules */
+            affected_modules: string[];
             /** Operation Id */
             operation_id: string;
             /** Plan Id */
             plan_id: string;
-            /** Target Revision */
-            target_revision: string;
+            /** Target Revisions */
+            target_revisions: {
+                [key: string]: string;
+            };
             /**
              * Status
              * @enum {string}
@@ -2095,19 +2340,21 @@ export interface components {
         };
         /** RuntimePlanRequest */
         RuntimePlanRequest: {
-            /** Bindings */
-            bindings: (components["schemas"]["SelectProfileBindingRequest"] | components["schemas"]["DraftSourceBindingRequest"])[];
+            /**
+             * Module
+             * @enum {string}
+             */
+            module: "acquisition" | "processing" | "stimulation" | "actuation" | "engine";
             /** Expected Revision */
             expected_revision?: string | null;
             /** Refresh Slots */
             refresh_slots?: string[] | null;
-            /**
-             * Include Host Settings
-             * @default false
-             */
-            include_host_settings: boolean;
-            /** Module */
-            module?: ("acquisition" | "processing" | "stimulation" | "actuation") | null;
+            /** Bindings */
+            bindings: (components["schemas"]["SelectProfileBindingRequest"] | components["schemas"]["DraftPluginBindingRequest"])[];
+            /** Settings */
+            settings?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** RuntimePlanResponse */
         RuntimePlanResponse: {
@@ -2115,10 +2362,18 @@ export interface components {
             plan_id: string;
             /** Expected Revision */
             expected_revision: string | null;
-            /** Target Revision */
-            target_revision: string;
-            /** Applied Revision */
-            applied_revision: string | null;
+            /** Expected Revisions */
+            expected_revisions: {
+                [key: string]: string | null;
+            };
+            /** Target Revisions */
+            target_revisions: {
+                [key: string]: string;
+            };
+            /** Applied Revisions */
+            applied_revisions: {
+                [key: string]: string | null;
+            } | null;
             /** Generation */
             generation: string | null;
             /** Running */
@@ -2136,8 +2391,11 @@ export interface components {
             errors: string[];
             /** Signal Summary */
             signal_summary?: string | null;
-            /** Module */
-            module?: ("acquisition" | "processing" | "stimulation" | "actuation") | null;
+            /**
+             * Module
+             * @enum {string}
+             */
+            module: "acquisition" | "processing" | "stimulation" | "actuation" | "engine";
         };
         /** SelectProfileBindingRequest */
         SelectProfileBindingRequest: {
@@ -2145,6 +2403,30 @@ export interface components {
             slot: string;
             /** Profile Id */
             profile_id: string;
+        };
+        /** ServerInfoResponse */
+        ServerInfoResponse: {
+            /** App Version */
+            app_version: string;
+            /**
+             * Desktop Api Version
+             * @default 1
+             * @constant
+             */
+            desktop_api_version: 1;
+            /** Instance Id */
+            instance_id: string;
+            /** Auth Enabled */
+            auth_enabled: boolean;
+        };
+        /** ServerLogsResponse */
+        ServerLogsResponse: {
+            /** Filename */
+            filename: string;
+            /** Lines */
+            lines: string[];
+            /** Truncated */
+            truncated: boolean;
         };
         /** SetPackageEnabledRequest */
         SetPackageEnabledRequest: {
@@ -2217,8 +2499,6 @@ export interface components {
             processing_input?: components["schemas"]["ProcessingInputModel"] | null;
             accepted_input?: components["schemas"]["ProcessingInputModel"] | null;
             active_input?: components["schemas"]["ProcessingInputModel"] | null;
-            /** Revision */
-            revision: string;
             readiness: components["schemas"]["SignalReadinessModel"];
         };
         /** SourceExpectationsModel */
@@ -2253,10 +2533,14 @@ export interface components {
              */
             continuous: boolean;
         };
-        /** StartStimulationRequest */
-        StartStimulationRequest: {
-            /** Paradigm */
-            paradigm?: string | null;
+        /** StartReadingRequest */
+        StartReadingRequest: {
+            /** Expected Revision */
+            expected_revision: string;
+            /** Generation */
+            generation: string;
+            /** Connection Id */
+            connection_id: string;
         };
         /**
          * StartTrialRequest
@@ -2279,7 +2563,7 @@ export interface components {
          * StimulationStatusResponse
          * @description Live status of the Stimulation subsystem.
          *
-         *     active          — the application service has issued a StartStimulation command.
+         *     active          — the application service has started stimulation.
          *     process_alive   — the Stimulation subprocess is currently running (auto_spawn only).
          *     engine_connected — the Stimulation process has an active IPC connection to the engine.
          */
@@ -2300,21 +2584,6 @@ export interface components {
             /** Capture Id */
             capture_id: string;
         };
-        /** SystemInfoResponse */
-        SystemInfoResponse: {
-            /** App Version */
-            app_version: string;
-            /**
-             * Desktop Api Version
-             * @default 1
-             * @constant
-             */
-            desktop_api_version: 1;
-            /** Instance Id */
-            instance_id: string;
-            /** Auth Enabled */
-            auth_enabled: boolean;
-        };
         /** TrialResponse */
         TrialResponse: {
             /** Generation */
@@ -2334,8 +2603,10 @@ export interface components {
              * Format: date-time
              */
             produced_at: string;
-            /** Config Revision */
-            config_revision?: string | null;
+            /** Processing Revision */
+            processing_revision?: string | null;
+            /** Acquisition Revision */
+            acquisition_revision?: string | null;
         };
         /** UpdatePluginProfileRequest */
         UpdatePluginProfileRequest: {
@@ -2358,7 +2629,7 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    system_info_api_v1_system_info_get: {
+    server_info_api_v1_server_info_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -2373,7 +2644,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse_SystemInfoResponse_"];
+                    "application/json": components["schemas"]["ApiResponse_ServerInfoResponse_"];
                 };
             };
             /** @description Bad request */
@@ -2385,8 +2656,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2441,7 +2721,7 @@ export interface operations {
             };
         };
     };
-    backend_logs_api_v1_system_logs_get: {
+    create_browser_session_api_v1_server_session_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -2456,7 +2736,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse_BackendLogsResponse_"];
+                    "application/json": components["schemas"]["ApiResponse_ServerInfoResponse_"];
                 };
             };
             /** @description Bad request */
@@ -2468,8 +2748,201 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_browser_session_api_v1_server_session_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_NoneType_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token or browser session required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    server_logs_api_v1_server_logs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_ServerLogsResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token or browser session required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2551,8 +3024,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2634,8 +3116,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2690,6 +3181,310 @@ export interface operations {
             };
         };
     };
+    start_module_api_v1_engine_modules__module__start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                module: "processing" | "actuation";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModuleActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_RuntimeOperationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token or browser session required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    prepare_module_api_v1_engine_modules__module__prepare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                module: "stimulation" | "actuation";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token or browser session required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    stop_module_api_v1_engine_modules__module__stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                module: "acquisition" | "processing" | "actuation";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token or browser session required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     get_status_api_v1_engine_status_get: {
         parameters: {
             query?: never;
@@ -2717,8 +3512,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2780,7 +3584,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModuleActionRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -2788,7 +3596,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse"];
+                    "application/json": components["schemas"]["ApiResponse_RuntimeOperationResponse_"];
                 };
             };
             /** @description Bad request */
@@ -2800,8 +3608,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2892,8 +3709,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2964,7 +3790,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartReadingRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -2984,8 +3814,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3076,8 +3915,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3168,8 +4016,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3251,8 +4108,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3343,8 +4209,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3439,8 +4314,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3535,8 +4419,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3630,8 +4523,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3727,8 +4629,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3819,7 +4730,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -3828,82 +4739,8 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Service unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    list_paradigms_api_v1_stimulation_paradigms_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiResponse_ParadigmsResponse_"];
-                };
-            };
-            /** @description Bad request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description API token required or invalid */
-            401: {
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3965,9 +4802,9 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
-                "application/json": components["schemas"]["StartStimulationRequest"];
+                "application/json": components["schemas"]["ModuleActionRequest"];
             };
         };
         responses: {
@@ -3977,7 +4814,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse"];
+                    "application/json": components["schemas"]["ApiResponse_RuntimeOperationResponse_"];
                 };
             };
             /** @description Bad request */
@@ -3989,8 +4826,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4072,8 +4918,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4168,8 +5023,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4260,8 +5124,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4346,8 +5219,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4429,8 +5311,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4516,8 +5407,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4599,8 +5499,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4686,8 +5595,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4771,8 +5689,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4856,8 +5783,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4943,8 +5879,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5028,8 +5973,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5117,8 +6071,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5204,8 +6167,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5260,7 +6232,7 @@ export interface operations {
             };
         };
     };
-    get_activation_api_v1_config_activation_get: {
+    get_modules_api_v1_config_modules_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -5275,7 +6247,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse_ActivationResponse_"];
+                    "application/json": components["schemas"]["ApiResponse_ModulesResponse_"];
                 };
             };
             /** @description Bad request */
@@ -5287,8 +6259,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5343,18 +6324,16 @@ export interface operations {
             };
         };
     };
-    accept_activation_api_v1_config_activation_put: {
+    get_module_api_v1_config_modules__module__get: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                module: "acquisition" | "processing" | "stimulation" | "actuation";
+            };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AcceptActivationRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -5362,7 +6341,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse_ActivationResponse_"];
+                    "application/json": components["schemas"]["ApiResponse_ModuleActivationResponse_"];
                 };
             };
             /** @description Bad request */
@@ -5374,8 +6353,490 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    module_history_api_v1_config_modules__module__history_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                module: "acquisition" | "processing" | "stimulation" | "actuation";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_ModuleHistoryResponse__"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token or browser session required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    module_history_entry_api_v1_config_modules__module__history__entry_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                module: "acquisition" | "processing" | "stimulation" | "actuation";
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_ModuleActivationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token or browser session required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_engine_api_v1_config_engine_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_EngineSettingsResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token or browser session required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    profile_history_api_v1_config_plugin_profiles__profile_id__history_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_ProfileHistoryResponse__"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token or browser session required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    revert_profile_api_v1_config_plugin_profiles__profile_id__revert_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RevertProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PluginProfileResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token or browser session required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5459,8 +6920,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5542,8 +7012,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5629,8 +7108,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5716,8 +7204,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5801,8 +7298,115 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    revert_module_api_v1_config_modules__module__revert_plan_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                module: "acquisition" | "processing" | "stimulation" | "actuation";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RevertModuleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_RuntimePlanResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token or browser session required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5884,8 +7488,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5972,8 +7585,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6062,8 +7684,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6148,8 +7779,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6235,8 +7875,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6322,8 +7971,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6405,8 +8063,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6492,7 +8159,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -6501,84 +8168,8 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Service unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    list_plugins_by_category_api_v1_plugins__category__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                category: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiResponse_ParadigmsResponse_"];
-                };
-            };
-            /** @description Bad request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description API token required or invalid */
-            401: {
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

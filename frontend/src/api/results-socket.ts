@@ -1,4 +1,5 @@
 import { currentConnection, desktopBridge } from "../desktop";
+import { verifyBrowserSession } from "./browser-session";
 import type { ResultsEvent } from "../../../desktop/src/contracts";
 
 export interface ResultsSocket { close: () => void }
@@ -8,7 +9,7 @@ export function openResultsSocket(listener: (event: ResultsEvent) => void): Resu
   const desktop = desktopBridge();
   if (desktop) {
     const owner = currentConnection()?.id;
-    if (!owner) throw new Error("No backend connection selected.");
+    if (!owner) throw new Error("No server connection selected.");
     let closed = false;
     const unsubscribe = desktop.subscribeResults(owner, (event) => {
       if (!closed && currentConnection()?.id === owner) listener(event);
@@ -20,11 +21,24 @@ export function openResultsSocket(listener: (event: ResultsEvent) => void): Resu
       listener({ type: "closed" });
     } };
   }
-  const protocol = location.protocol === "https:" ? "wss" : "ws";
-  const socket = new WebSocket(`${protocol}://${location.host}/api/v1/ws/results`);
-  socket.onopen = () => listener({ type: "open" });
-  socket.onmessage = (event) => listener({ type: "message", data: String(event.data) });
-  socket.onclose = () => listener({ type: "closed" });
-  socket.onerror = () => listener({ type: "error" });
-  return { close: () => socket.close() };
+  let closed = false;
+  let socket: WebSocket | undefined;
+  void verifyBrowserSession().then((valid) => {
+    if (closed) return;
+    if (!valid) { listener({ type: "closed" }); return; }
+    const protocol = location.protocol === "https:" ? "wss" : "ws";
+    socket = new WebSocket(`${protocol}://${location.host}/api/v1/ws/results`);
+    socket.onopen = () => { if (!closed) listener({ type: "open" }); };
+    socket.onmessage = (event) => { if (!closed) listener({ type: "message", data: String(event.data) }); };
+    socket.onclose = () => {
+      if (!closed) void verifyBrowserSession().then(() => { if (!closed) listener({ type: "closed" }); });
+    };
+    socket.onerror = () => { if (!closed) listener({ type: "error" }); };
+  });
+  return { close: () => {
+    if (closed) return;
+    closed = true;
+    socket?.close();
+    listener({ type: "closed" });
+  } };
 }

@@ -1,10 +1,13 @@
 """
 /api/v1/stimulation — Stimulation paradigm control endpoints.
 """
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from fastapi import APIRouter, Depends, Request, status
 
 from omnibci.presentation.dependencies import get_stimulation_service
+from omnibci.presentation.routers.runtime_config import get_runtime_configuration
+from omnibci.presentation.routers.plugin_config import _configuration_errors
+from omnibci.presentation.schemas.runtime_config import ModuleActionRequest, RuntimeOperationResponse
 from omnibci.presentation.errors import (
     ApiError,
     COMMAND_EXECUTION_RESPONSES,
@@ -12,24 +15,20 @@ from omnibci.presentation.errors import (
 )
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.stimulation import (
-    ParadigmsResponse,
-    ParadigmInfo,
-    StartStimulationRequest,
     StartTrialRequest,
     StimulationStatusResponse,
 )
 from omnibci.application.commands.stimulation_commands import (
-    StartStimulationCommand,
     StopStimulationCommand,
     StartStimTrialCommand,
 )
 from omnibci.application.services.stimulation_service import StimulationAppService
 from omnibci.application.services.command_result_service import (
+    CommandDeliveryError,
     CommandExecutionError,
     CommandRejectedError,
     CommandTimeoutError,
 )
-from omnibci.infrastructure.plugins.plugin_catalog import list_plugins
 from omnibci.application.ports.engine_port import STIMULATION_PEER
 
 router = APIRouter(prefix="/stimulation", tags=["Stimulation"])
@@ -53,29 +52,14 @@ def stimulation_status(
     ))
 
 
-@router.get(
-    "/paradigms",
-    response_model=ApiResponse[ParadigmsResponse],
-    summary="List available stimulation paradigms",
-)
-def list_paradigms():
-    # Dual-root manifest-based discovery (pure filesystem + TOML, no OpenGL import).
-    paradigms = [ParadigmInfo.from_plugin_info(p) for p in list_plugins("paradigm")]
-    return ApiResponse(data=ParadigmsResponse(paradigms=paradigms))
-
-
-@router.post("/start", response_model=ApiResponse, summary="Start stimulation")
-def start_stimulation(
-    body: StartStimulationRequest = StartStimulationRequest(),
-    svc: StimulationAppService = Depends(get_stimulation_service),
+@router.post("/start", response_model=ApiResponse[RuntimeOperationResponse], summary="Apply current stimulation and prepare or start it")
+async def start_stimulation(
+    body: ModuleActionRequest,
+    runtime=Depends(get_runtime_configuration),
 ):
-    try:
-        svc.handle_start_stimulation(StartStimulationCommand(paradigm=body.paradigm))
-        return ApiResponse(message="Stimulation started")
-    except ProfileRevisionConflict:
-        raise
-    except (RuntimeError, TimeoutError) as e:
-        raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
+    with _configuration_errors():
+        result = await runtime.execute_current("stimulation", "start", **body.model_dump())
+        return ApiResponse(data=result)
 
 
 @router.post(
@@ -88,7 +72,7 @@ def stop_stimulation(svc: StimulationAppService = Depends(get_stimulation_servic
     try:
         svc.handle_stop_stimulation(StopStimulationCommand())
         return ApiResponse(message="Stimulation stopped")
-    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
+    except (CommandDeliveryError, CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
         raise command_error_to_api_error(e)
     except ProfileRevisionConflict:
         raise
@@ -112,7 +96,7 @@ def start_trial(
             trial_params=body.trial_params,
         ))
         return ApiResponse(message="Trial started")
-    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
+    except (CommandDeliveryError, CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
         raise command_error_to_api_error(e)
     except ProfileRevisionConflict:
         raise

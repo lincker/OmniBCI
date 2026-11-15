@@ -8,14 +8,15 @@ import pytest
 
 from omnibci.application.commands.engine_commands import StartEngineCommand, StopEngineCommand
 from omnibci.application.node_configuration import NodeConfiguration, materialize_node_configuration
-from omnibci.application.plugin_profiles import PluginSelection
+from omnibci.application.configuration.models import PluginSelection
+from omnibci.domain.channel_mapping import ProcessingInput
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.node_configuration_service import NodeConfigurationService
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.infrastructure.ipc.network import NetworkClient, NetworkServer
 from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.shared.events import Event, EventType
 
 
@@ -29,7 +30,7 @@ _SLOTS = {
 class MetadataCatalog:
     """The node catalog has no entries for capabilities owned by another role."""
 
-    def __init__(self, kinds, *, backend=False):
+    def __init__(self, kinds, *, server=False):
         self.definitions = {}
         self.calls = []
         for kind in kinds:
@@ -42,9 +43,9 @@ class MetadataCatalog:
             self.definitions[kind] = PluginConfiguration(
                 selection=PluginSelection(f"test.{kind}", kind, "1.0.0"), kind=kind,
                 plugin_type=f"test_{kind}", label=kind, description=None,
-                configuration_version=1,
+                configuration_version=1, domain=_SLOTS[kind].split(".")[0],
                 schema={"type": "object", "additionalProperties": False, "properties": properties},
-                available=not backend or kind not in {"paradigm", "trigger", "effector"},
+                available=not server or kind not in {"paradigm", "trigger", "effector"},
             )
 
     def get(self, kind, selection):
@@ -62,6 +63,7 @@ class HardwareFreeGraph:
     def __init__(self, snapshot):
         self._started = ThreadEvent()
         self._stopped = ThreadEvent()
+        self.prepared_outputs = {}
         self.acquisition_worker = SimpleNamespace(
             is_alive=lambda: self._started.is_set() and not self._stopped.is_set(),
         )
@@ -75,6 +77,12 @@ class HardwareFreeGraph:
     def should_stop(self, value):
         if value:
             self._stopped.set()
+
+    async def ensure_output_ready(self, role, snapshot):
+        self.prepared_outputs[role] = snapshot
+
+    async def set_actuation_active(self, active):
+        assert active is False
 
     def run(self):
         self._started.set()
@@ -93,7 +101,7 @@ async def wait_for(predicate):
 
 
 def identity(snapshot):
-    return PeerIdentity(snapshot["CONFIG.node_role"], snapshot["CONFIG.revision"], snapshot["CONFIG.generation"])
+    return PeerIdentity(snapshot["CONFIG.node_role"], snapshot["CONFIG.module_revisions"][snapshot["CONFIG.node_role"]], snapshot["CONFIG.engine_revision"], snapshot["CONFIG.generation"])
 
 
 @pytest.mark.parametrize(("role", "kinds", "editable_kind", "event_type"), [
@@ -103,27 +111,33 @@ def identity(snapshot):
 def test_restarted_engine_rejects_cached_node_configuration_and_accepts_fresh_fetch(
     tmp_path, role, kinds, editable_kind, event_type,
 ):
-    backend_catalog = MetadataCatalog(_SLOTS, backend=True)
-    profiles = PluginProfileService(
-        TomlPluginProfileRepository(tmp_path / "profiles"), backend_catalog,
-        settings_source=lambda: {
-            "STIMULATION.auto_spawn": False, "ACTUATION.auto_spawn": False, "ACTUATION.enabled": True,
-        },
+    server_catalog = MetadataCatalog(_SLOTS, server=True)
+    profiles = ConfigurationService(
+        TomlConfigurationRepository(tmp_path / "profiles"), server_catalog,
     )
-    saved = {kind: profiles.create(kind, definition.selection, kind, {})
-             for kind, definition in backend_catalog.definitions.items()}
-    accepted = profiles.propose([{"slot": _SLOTS[kind], "profile_id": profile.profile_id}
-                                 for kind, profile in saved.items()])
-    profiles.accept(accepted, expected_revision=None)
+    saved = {kind: profiles.create(kind, definition.selection, kind, {},
+             **({"processing_input": ProcessingInput()} if kind == "decoder" else {}))
+             for kind, definition in server_catalog.definitions.items()}
+    profiles.repository.save_engine(profiles.propose_engine({}), expected_revision=None)
+    for module in ("acquisition", "processing", "stimulation", "actuation"):
+        selected = [{"slot": _SLOTS[kind], "profile_id": profile.profile_id}
+                    for kind, profile in saved.items() if _SLOTS[kind].startswith(module + ".")]
+        settings = profiles.default_module_settings(module)
+        if module in ("stimulation", "actuation"):
+            settings[f"{module.upper()}.auto_spawn"] = False
+        profiles.repository.save_module(profiles.propose(
+            module, selected, settings=settings,
+        ), expected_revision=None)
     node_catalog = MetadataCatalog(kinds)
 
     async def scenario():
-        engine = NeuroEngineService(HardwareFreeGraph, snapshot_provider=profiles.resolve_settings)
+        engine = NeuroEngineService(HardwareFreeGraph, snapshot_provider=lambda: profiles.materialize(profiles.repository.get_activation_set()))
         publication = NodeConfigurationService(engine, profiles)
         servers, clients, tasks = [], [], []
         try:
             await engine.startup()
             await engine.handle_start_engine(StartEngineCommand())
+            await engine.prepare_output(role)
             first = publication.configuration(role)
             assert first["state"] == "running"
             cached = materialize_node_configuration(
@@ -154,10 +168,11 @@ def test_restarted_engine_rejects_cached_node_configuration_and_accepts_fresh_fe
             await asyncio.wait_for(old_task, 2)
             await engine.handle_stop_engine(StopEngineCommand())
             await engine.handle_start_engine(StartEngineCommand())
+            await engine.prepare_output(role)
 
             fresh = materialize_node_configuration(NodeConfiguration.from_dict(
                 json.loads(json.dumps(publication.configuration(role)["configuration"]))), node_catalog)
-            assert fresh["CONFIG.revision"] == cached["CONFIG.revision"]
+            assert fresh["CONFIG.module_revisions"] == cached["CONFIG.module_revisions"]
             assert fresh["CONFIG.generation"] != cached["CONFIG.generation"]
             assert fresh["PLUGINS.bindings"] == cached["PLUGINS.bindings"]
             server = NetworkServer(host="127.0.0.1", port=0, identity=identity(fresh), max_clients=1)

@@ -7,7 +7,7 @@ from __future__ import annotations
 import importlib
 from copy import deepcopy
 
-from omnibci.conf import settings
+from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
 from omnibci.domain.ports.acquisition import TriggerEmitter
 from omnibci.domain.ports.paradigm import Paradigm
 from omnibci.infrastructure.stimulation.render_loop import RenderLoop
@@ -56,8 +56,8 @@ class _NoTrigger(TriggerEmitter):
 
 
 class Stimulator:
-    def __init__(self, *, settings_snapshot: dict | None = None) -> None:
-        self._snapshot = deepcopy(settings_snapshot) if settings_snapshot is not None else settings.snapshot()
+    def __init__(self, *, settings_snapshot: dict) -> None:
+        self._snapshot = deepcopy(settings_snapshot)
         self.paradigm: Paradigm | None    = None
         self.trigger:  TriggerEmitter | None = None
         self._loop:    RenderLoop | None  = None
@@ -90,7 +90,9 @@ class Stimulator:
         self.trigger  = self._load_trigger()
         self.paradigm = self._load_paradigm(self.trigger)
 
-        renderer_name = self._snapshot.get("STIMULATION.renderer", "pyopengl")
+        renderer_name = self._snapshot.get(
+            "STIMULATION.renderer", MODULE_SETTING_DEFAULTS["stimulation"]["STIMULATION.renderer"],
+        )
         renderer = _create_renderer(renderer_name)
         renderer.initialize(width=1920, height=1080, title="OmniBCI Stimulation")
 

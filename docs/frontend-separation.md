@@ -1,4 +1,4 @@
-# Web and backend contracts
+# Web and server contracts
 
 The React console in `frontend/` is shared by browsers and the Electron desktop
 application. The Python API owns configuration and runtime control. Acquisition
@@ -26,11 +26,47 @@ A trigger must open an epoch with enough usable samples for the selected decoder
 before a result appears.
 
 Acquisition, Signal Processing, Stimulation and Actuation have separate plugin
-profiles. Saving a profile edits it; Apply changes the selected configuration.
-Acquisition Connect operates on the acquisition source. Starting reading prepares
-the selected processing configuration against that source, then starts its stream.
-See [stage2-design.md](stage2-design.md) for the operating sequence and
-[channel-mapping.md](channel-mapping.md) for input mapping.
+profiles and independent current values. Saving preserves a reusable Profile;
+loading copies its values into the editor. Connect applies current Acquisition
+values. Start processing, Launch stimulation, and Start actuation apply their own
+current values independently. Start engine provides shared infrastructure only.
+Starting reading starts the Acquisition stream independently of Processing.
+See [module operation](module-config.md#independent-modules-on-neuroengine)
+for lifecycle and input preparation behavior.
+
+Settings / General separates Engine current values from Server startup values.
+Engine review posts explicit `settings` to `/config/apply-plan` with
+`module: "engine"`; successful application saves `[engine]` in the user
+`settings.toml`. Server Save uses `PATCH /config` with `expected_revision`.
+`GET /config` returns saved `value`, startup `active_value`, and `restart_required`
+for each Server field; PATCH reports `server_restart_required`. Restarting only
+the Engine does not apply pending Server startup values. Sharing a file does not
+combine their revision checks or the four module configurations.
+
+Server diagnostics use `/server/info` and `/server/logs`. Desktop connections
+require `desktop_api_version: 1`; Engine configuration and status use the
+`engine` section and `engine_revision` fields throughout.
+
+## Shared clients and authentication
+
+Web and desktop clients can connect to the same independently running Server.
+They share its Engine, module state and live results. Disconnecting a client does
+not stop that Server. A desktop-owned local Server is a separate convenience mode:
+its owning desktop still confirms and performs shutdown when it exits.
+
+With `OMNIBCI_API_TOKEN` configured, desktop and external-node clients send
+`Authorization: Bearer ...`. The Web console uses `GET /server/info` to check its
+connection; a 401 opens the token form. `POST /server/session` verifies the Bearer
+token and sets an HttpOnly, SameSite=Strict cookie for API and WebSocket requests.
+`DELETE /server/session` clears that browser cookie only. Browser credentials are
+invalid after a Server restart. Tokens are not passed in URLs or browser storage.
+
+The Web console uses a same-origin `/api` proxy. Vite preserves the browser's Host
+header for origin validation. Production proxies must likewise preserve the
+public origin and forward WebSocket upgrades. Cookie-authenticated writes and
+WebSocket handshakes require that origin; broad cross-origin access is not enabled.
+Local loopback Servers may run without authentication, and desktop can attach to
+them without a token. Non-loopback desktop connections require authentication.
 
 ## REST
 
@@ -40,22 +76,31 @@ The API prefix is `/api/v1`. Successful responses use
 on the error code and show the reported detail without inventing a runtime state.
 `GET /healthz` is the health endpoint and returns its own small JSON response.
 
+Plugin discovery uses `GET /config/plugin-catalog/{kind}` for Acquisition,
+Decoder, Epoch Detector, Filter, Paradigm, Trigger and Effector. Setup and Run
+consume the same `PluginConfigurationResponse` list, including exact selections,
+parameter schemas, platform availability and trial controls. The removed
+`/plugins/{category}` and `/stimulation/paradigms` routes return 404 without
+redirects or compatibility aliases.
+
 The complete contract is generated in [openapi.json](openapi.json). Principal Run
 operations are:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/engine/start` | Start the engine and workers |
-| POST | `/engine/stop` | Stop the engine |
-| GET | `/engine/status` | Read engine and worker availability |
-| POST | `/acquisition/connect` | Connect the selected source |
-| POST | `/acquisition/disconnect` | Disconnect the source |
-| POST | `/acquisition/stream/start` | Prepare processing, then start reading |
-| POST | `/acquisition/stream/stop` | Stop reading and drain processing |
+| POST | `/engine/start` | Start shared infrastructure without starting modules |
+| POST | `/engine/stop` | Stop all modules and the engine |
+| POST | `/engine/modules/{module}/start` | Submit current Processing or Actuation and start/prepare it |
+| POST | `/engine/modules/{module}/stop` | Stop the specified module |
+| GET | `/engine/status` | Read foundation readiness, A/P workers, and output availability |
+| POST | `/acquisition/connect` | Submit current Acquisition and connect in one owned operation |
+| POST | `/acquisition/disconnect` | Disconnect the source and stop Acquisition |
+| POST | `/acquisition/stream/start` | Validate source revision, generation and connection ID before reading |
+| POST | `/acquisition/stream/stop` | Stop reading and drain Processing if running |
 | GET | `/acquisition/status` | Read connection and stream state |
 | GET | `/acquisition/metadata` | Read the current source descriptor |
 | POST | `/acquisition/metadata/refresh` | Refresh descriptor while stopped |
-| POST | `/stimulation/start` | Launch the selected native paradigm |
+| POST | `/stimulation/start` | Submit current Stimulation and launch it or prepare its external listener |
 | POST | `/stimulation/stop` | Stop stimulation |
 | POST | `/stimulation/trial/start` | Request trials using the selected paradigm controls |
 | GET | `/results` | Read current live decoded results |
@@ -63,8 +108,8 @@ operations are:
 
 `GET /results` returns `data: {generation: string | null, trials: TrialResponse[]}`.
 Both keys are always present. Each trial contains `generation`, `trial_number`,
-`target_id`, `event_id`, `confidence`, `forced`, `produced_at`, and
-`config_revision`. Results are held in memory for the current engine generation,
+`target_id`, `event_id`, `confidence`, `forced`, `produced_at`,
+`processing_revision`, and `acquisition_revision`. Results are held in memory for the current engine generation,
 limited to the latest 200 trials. Restarting the engine clears them. This is not a
 persistent history or export API.
 
@@ -79,7 +124,7 @@ terminal record yet.
 `GET /results/epochs?offset=0&limit=25` returns `generation`, `total`, `offset`,
 `limit` and `epochs` in descending epoch-number order. The page limit is 100.
 Each record includes its status, closing reason, signal counts, processing times,
-configuration revision and optional classification. Records contain no signal
+Acquisition and Processing revisions and optional classification. Records contain no signal
 matrices, and there is no epoch-data detail endpoint. The internal
 `EpochProcessed` event is separate from `TrialCompleted` and is not forwarded to
 stimulation or actuation.
@@ -93,7 +138,7 @@ clients must use Acquisition stream controls and `/results`.
 
 | Event | Fields |
 | --- | --- |
-| `TrialCompleted` | `generation`, `trial_number`, classification fields, optional `config_revision` |
+| `TrialCompleted` | `generation`, `trial_number`, classification fields, optional `processing_revision` and `acquisition_revision` |
 | `StimulationAck` | `command`, `target_index`, `status`, `message` |
 | `Ping` | No additional fields |
 
@@ -119,9 +164,9 @@ retained by the console.
 ## Browser and desktop transport
 
 Browsers use same-origin REST and WebSocket routes. Electron uses the same UI,
-with a restricted preload API and a main-process backend proxy. The main process
+with a restricted preload API and a main-process server proxy. The main process
 owns credentials, connection identity, local Python startup and shutdown, and the
-local recording-file picker. Switching backends cancels old requests and result
+local recording-file picker. Switching servers cancels old requests and result
 subscriptions. See [desktop.md](desktop.md) for packaging and connection details.
 
 ## Contract verification

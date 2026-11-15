@@ -1,25 +1,12 @@
 """
 Tests for /api/v1/stimulation endpoints.
 """
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from omnibci.application.queries.plugin_queries import PluginInfo
 from omnibci.application.events import CommandResult
 from omnibci.application.services.command_result_service import CommandRejectedError
-
-_FAKE_PARADIGM = PluginInfo(
-    id="classic40SSVEP",
-    plugin_type="STIMULATION_THUBCI_SSVEP_classic40",
-    display_name="Classic 40-target SSVEP",
-    source="builtin",
-    params={"targets": 40, "refresh_rate_hz": 60},
-)
-
-# Patch at the use site: the router imports list_plugins at module top level.
-_PATCH_TARGET = "omnibci.presentation.routers.stimulation.list_plugins"
-
 
 @pytest.fixture(autouse=True)
 def _running_engine(engine_service):
@@ -29,74 +16,24 @@ def _running_engine(engine_service):
     engine_service._engine_thread.is_alive.return_value = True
 
 
-class TestParadigms:
-    @pytest.fixture(autouse=True)
-    def mock_list_paradigms(self):
-        with patch(_PATCH_TARGET, return_value=[_FAKE_PARADIGM]):
-            yield
-
-    def test_list_paradigms_returns_200(self, api_client):
-        resp = api_client.get("/api/v1/stimulation/paradigms")
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert "paradigms" in data
-        assert len(data["paradigms"]) >= 1
-
-    def test_paradigm_has_name_field(self, api_client):
-        resp = api_client.get("/api/v1/stimulation/paradigms")
-        paradigm = resp.json()["data"]["paradigms"][0]
-        assert "name" in paradigm
-
-    def test_paradigm_exposes_manifest_params(self, api_client):
-        resp = api_client.get("/api/v1/stimulation/paradigms")
-        paradigm = resp.json()["data"]["paradigms"][0]
-        assert paradigm["params"] == {"targets": 40, "refresh_rate_hz": 60}
-
-    def test_builtin_paradigm_present(self, api_client):
-        resp = api_client.get("/api/v1/stimulation/paradigms")
-        plugin_types = [p["plugin_type"] for p in resp.json()["data"]["paradigms"]]
-        assert "STIMULATION_THUBCI_SSVEP_classic40" in plugin_types
-
-
-class TestStimulationStart:
-    def test_start_returns_200(self, api_client, mock_engine):
-        resp = api_client.post("/api/v1/stimulation/start")
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-
-    def test_start_with_paradigm_body(self, api_client, mock_engine):
-        resp = api_client.post(
-            "/api/v1/stimulation/start",
-            json={"paradigm": "classic40SSVEP"},
-        )
-        assert resp.status_code == 200
-
-    def test_start_dispatches_event(self, api_client, mock_engine):
-        api_client.post("/api/v1/stimulation/start")
-        mock_engine.event_bus.put_event.assert_called()
-
-    def test_start_without_engine_returns_503(self, api_client, engine_service):
-        engine_service._engine = None
-        resp = api_client.post("/api/v1/stimulation/start")
-        assert resp.status_code == 503
-
-    def test_startup_timeout_returns_engine_not_ready(
-        self, api_client, stimulation_service
-    ):
-        stimulation_service.handle_start_stimulation = MagicMock(
-            side_effect=TimeoutError(
-                "Stimulation subprocess did not become ready within 30s"
-            )
-        )
-
-        resp = api_client.post("/api/v1/stimulation/start")
-
-        assert resp.status_code == 503
-        assert resp.json()["code"] == "ENGINE_NOT_READY"
-        assert "within 30s" in resp.json()["message"]
-
-
 class TestStimulationStop:
+    @pytest.mark.parametrize("execution_unknown", [False, True])
+    def test_delivery_failure_returns_503_with_known_outcome(
+        self, api_client, stimulation_service, execution_unknown,
+    ):
+        from omnibci.application.services.command_result_service import CommandDeliveryError
+
+        stimulation_service.handle_stop_stimulation = MagicMock(side_effect=CommandDeliveryError(
+            "stim-stop", "StopStimulation", "Peer connection failed",
+            execution_unknown=execution_unknown,
+        ))
+
+        response = api_client.post("/api/v1/stimulation/stop")
+
+        assert response.status_code == 503
+        assert response.json()["code"] == "PEER_DELIVERY_FAILED"
+        assert response.json()["detail"]["execution_unknown"] is execution_unknown
+
     def test_stop_returns_200(self, api_client, mock_engine):
         resp = api_client.post("/api/v1/stimulation/stop")
         assert resp.status_code == 200
@@ -108,6 +45,10 @@ class TestStimulationStop:
 
 
 class TestStimulationTrial:
+    @pytest.fixture(autouse=True)
+    def enabled(self, stimulation_service, engine_service):
+        stimulation_service._active_identity = stimulation_service._identity(engine_service.applied_snapshot)
+
     def test_trial_start_returns_200(self, api_client, mock_engine):
         resp = api_client.post("/api/v1/stimulation/trial/start")
         assert resp.status_code == 200
@@ -148,3 +89,10 @@ class TestStimulationTrial:
         assert resp.status_code == 409
         assert resp.json()["code"] == "COMMAND_REJECTED"
         assert resp.json()["detail"]["error_code"] == "STIMULATION_WINDOW_CLOSED"
+
+
+def test_trial_endpoint_requires_explicit_stimulation_start(api_client, mock_engine):
+    response = api_client.post("/api/v1/stimulation/trial/start")
+    assert response.status_code == 503
+    assert response.json()["message"] == "Start stimulation before starting a trial"
+    mock_engine.event_bus.put_event.assert_not_called()

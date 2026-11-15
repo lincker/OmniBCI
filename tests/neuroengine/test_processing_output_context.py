@@ -1,125 +1,62 @@
-"""Output metadata changes preserve the live pipeline and runtime identity."""
+"""Output module edits are independent of processing configuration boundaries."""
 from copy import deepcopy
-from queue import Queue
-from types import SimpleNamespace
 
 import pytest
 
-from tests.processing_helpers import make_processor
-from omnibci.application.events import CommandRequest
-from omnibci.application.plugin_profiles import ProfileBinding
-from omnibci.infrastructure.ipc.data_manager import DataManager
-from omnibci.infrastructure.signal_processing import configuration_transactions as transactions_module
-from omnibci.infrastructure.signal_processing.pipeline_configuration import ConfiguredPipeline, validate_output_context
-from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-from omnibci.shared.events import EventType
-from tests.neuroengine.test_pipeline_configuration import selected_snapshot
-from tests.neuroengine.test_processing_configuration_boundary import Add, Markers, ValueDecoder
+from tests.neuroengine.test_pipeline_configuration import selected_snapshot, _build
+from tests.neuroengine.test_processing_configuration_boundary import configured, _stage, _results, _feed
 
 
-@pytest.fixture
-def context_update():
-    current = selected_snapshot()
-    candidate = deepcopy(current)
-    candidate["CONFIG.revision"] = "new"
-    candidate["ACTUATION.effector"] = "logger"
-    candidate["PLUGINS.bindings"].append(ProfileBinding(
-        "actuation.effector", "effector", None,
-        PluginCatalog().resolve_legacy("effector", "logger").selection, {},
-    ).to_dict())
-    events = []
-    processor = make_processor(
-        detector=Markers(), decoder=ValueDecoder(), filters=[Add(1)],
-        command_queue=Queue(), data_manager=DataManager(buffer=Queue()),
-        event_bus=SimpleNamespace(put_event=events.append), sample_rate=250,
-        baseline_duration=.2, generation="run", config_revision="old", settings_snapshot=current,
-    )
-    return processor, current, candidate, events
+def test_output_changes_do_not_invalidate_processing_replacement():
+    before = selected_snapshot()
+    after = deepcopy(before)
+    after["CONFIG.module_revisions"].update(processing="new", stimulation="new-stimulation", actuation="new-actuation")
+    after.update({"STIMULATION.renderer": "another-renderer", "ACTUATION.max_command_age_s": 2.0,
+                  "ACQUISITION.trigger": "another-trigger"})
+    after["PLUGINS.bindings"][1]["parameters"]["window_duration"] = 1.5
+    after["PLUGINS.bindings"].append({
+        "slot": "stimulation.paradigm", "kind": "paradigm", "profile_id": None,
+        "selection": {"package_id": "remote.only", "contribution_id": "default", "version": "1.0.0"},
+        "parameters": {}, "configuration_version": 1, "profile_revision": 0,
+    })
+    pipeline = _build(before, after)
+    assert pipeline.decoder.SAMPLE_COUNT == 375
+    assert before["CONFIG.module_revisions"]["processing"] == "old"
 
 
-def update(processor, candidate, **overrides):
-    payload = {"settings_snapshot": candidate, "generation": "run", "expected_revision": "old"}
-    payload.update(overrides)
-    processor._execute((SignalProcessorCommand.update_context, CommandRequest("context-update", payload)))
+@pytest.mark.parametrize("field", ["CONFIG.engine_revision", "acquisition"])
+def test_processing_replacement_rejects_changed_dependency(field):
+    before = selected_snapshot()
+    after = deepcopy(before)
+    if field == "acquisition":
+        after["CONFIG.module_revisions"][field] = "different-source"
+    else:
+        after[field] = "different-engine"
+    with pytest.raises(ValueError, match="Source or Engine"):
+        _build(before, after)
 
 
-def result(events):
-    replies = [event.data for event in events if event.type is EventType.CommandResult]
-    assert len(replies) == 1
-    return replies[0]
+def test_module_boundary_preserves_result_epoch_and_source_sequence(configured):
+    processor, events, replacement, builder = configured
+    processor.completed_trials = 12
+    processor._epoch_number = 17
+    processor._last_sequence = 81
+    _stage(processor, boundary="module")
+    result, = _results(events)
+    assert result.ok
+    assert processor._decoder is replacement.decoder
+    assert processor.processing_revision == "new"
+    assert processor.acquisition_revision == "source-revision"
+    assert (processor.completed_trials, processor._epoch_number, processor._last_sequence) == (12, 17, 81)
+    assert builder.call_args.kwargs["boundary"] == "module"
 
 
-def test_confirmed_output_context_keeps_objects_and_updates_next_epoch_revision(context_update):
-    processor, before, candidate, events = context_update
-    decoder, filters, detector = processor._decoder, processor._filters, processor.detector
-    update(processor, candidate)
-    receipt = result(events)
-    assert receipt.ok
-    assert receipt.data == {"status": "applied", "command_id": "context-update",
-                            "applied_revision": "new", "generation": "run"}
-    assert processor._decoder is decoder
-    assert processor._filters is filters
-    assert processor.detector is detector
-    assert processor.generation == "run"
-    assert processor.completed_trials == 0
-    assert processor.new_epoch_processor().config_revision == "new"
-    candidate["PLUGINS.bindings"][-1]["parameters"]["mutated"] = True
-    assert processor._settings_snapshot["PLUGINS.bindings"][-1]["parameters"] == {}
-    assert before["CONFIG.revision"] == "old"
-
-
-@pytest.mark.parametrize("busy", ["epoch", "pending"])
-def test_output_context_rejects_unfinished_epoch_or_staged_pipeline(context_update, busy, monkeypatch):
-    processor, current, candidate, events = context_update
-    processor.current_epoch = processor.new_epoch_processor()
-    if busy == "pending":
-        staged = {**current, "CONFIG.revision": "staged"}
-        monkeypatch.setattr(transactions_module, "build_pipeline_update", lambda *args, **kwargs: ConfiguredPipeline(
-            processor._decoder, tuple(processor._filters), staged,
-        ))
-        processor._execute((SignalProcessorCommand.stage_configuration, CommandRequest("staged", {
-            "settings_snapshot": staged, "generation": "run", "expected_revision": "old",
-        })))
-        processor.current_epoch = None
-    update(processor, candidate)
-    assert not result(events).ok
-    assert processor.config_revision == "old"
-
-
-@pytest.mark.parametrize("overrides", [{"generation": "another-run"}, {"expected_revision": "another-revision"}])
-def test_stale_output_context_is_rejected_before_update(context_update, overrides):
-    processor, _, candidate, events = context_update
-    update(processor, candidate, **overrides)
-    assert not result(events).ok
-    assert processor.config_revision == "old"
-
-
-@pytest.mark.parametrize("changed_slot", [0, 1, 2])
-def test_output_context_cannot_smuggle_source_decoder_or_detector_changes(context_update, changed_slot):
-    processor, _, candidate, events = context_update
-    candidate["PLUGINS.bindings"][changed_slot]["parameters"]["changed"] = True
-    update(processor, candidate)
-    assert not result(events).ok
-    assert processor.config_revision == "old"
-
-
-@pytest.mark.parametrize("key,value", [
-    ("ACQUISITION.sample_rate", 500), ("ALGORITHM.baseline_duration", .5),
-    ("ACTUATION.enabled", True), ("CONFIG.generation", "other-run"),
-])
-def test_output_context_rejects_changed_host_settings(context_update, key, value):
-    processor, before, candidate, events = context_update
-    candidate[key] = value
-    with pytest.raises(ValueError, match="Host context"):
-        validate_output_context(before, candidate)
-    update(processor, candidate)
-    assert not result(events).ok
-    assert processor.config_revision == "old"
-
-
-def test_output_context_requires_pinned_bindings(context_update):
-    _, before, candidate, _ = context_update
-    candidate.pop("PLUGINS.bindings")
-    with pytest.raises(RuntimeError, match="pinned"):
-        validate_output_context(before, candidate)
+@pytest.mark.asyncio
+async def test_module_boundary_rejects_an_open_epoch_without_constructing_plugins(configured):
+    processor, events, _, builder = configured
+    await _feed(processor, [7, 0, 0])
+    _stage(processor, boundary="module")
+    result, = _results(events)
+    assert not result.ok
+    assert processor.processing_revision == "old"
+    builder.assert_not_called()

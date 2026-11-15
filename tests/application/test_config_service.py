@@ -1,167 +1,119 @@
-"""ConfigService exposes saved host settings, separate from plugin profiles."""
+"""Server settings save independently of Engine application and startup state."""
+import math
 
 import pytest
 
-from omnibci.application.config_errors import ConfigProfileConflictError
-from omnibci.application.services.config_service import (
-    ConfigKeyNotAllowedError,
-    ConfigService,
-    ConfigValidationError,
+from omnibci.application.configuration.definitions import SERVER_STARTUP_DEFAULTS
+from omnibci.application.configuration.errors import (
+    ConfigKeyNotAllowedError, ConfigProfileConflictError, ConfigValidationError,
 )
-from omnibci.conf import OmniBCISettings
+from omnibci.application.configuration.service import ConfigurationService
+from omnibci.application.configuration.models import EngineSettings, ModuleActivation
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
 
-@pytest.fixture()
+@pytest.fixture
 def svc(tmp_path):
     path = tmp_path / "settings.toml"
-    path.write_text(
-        '[ACQUISITION]\nsignal_source = "file_reader"\nsample_rate = 1000\n'
-        '[ALGORITHM]\nbaseline_duration = 1.0\nwindow_duration = 3.0\n'
-        '[NEUROENGINE]\nqueue_size = 32\n', encoding="utf-8",
-    )
-    return ConfigService(OmniBCISettings(toml_file=path))
+    path.write_text('[LOGGING]\nlevel="INFO"\nfile_path="omnibci.log"\n'
+                    '[NEUROENGINE]\ncommand_timeout_s=10.0\n[PLUGINS]\nuser_dir=""\n')
+    return ConfigurationService(TomlConfigurationRepository(tmp_path))
 
 
-def test_lists_only_saved_host_settings(svc):
-    entries = svc.list_entries()
-    assert {entry["key"]: entry["value"] for entry in entries} == {
-        "ALGORITHM.baseline_duration": 1.0,
-        "NEUROENGINE.queue_size": 32,
-    }
-    assert all(set(entry) == {"key", "value", "type", "requires", "description"}
-               for entry in entries)
-    assert all(entry["requires"] == "engine-restart" for entry in entries)
+def test_lists_server_settings_and_values_loaded_at_startup(svc):
+    entries, _ = svc.read_server()
+    assert {entry["key"]: entry["value"] for entry in entries} == SERVER_STARTUP_DEFAULTS
+    assert all(entry["active_value"] == entry["value"] and not entry["restart_required"] for entry in entries)
+    assert all(entry["requires"] == "server-restart" for entry in entries)
 
 
 @pytest.mark.parametrize("key,value", [
-    ("ACQUISITION.signal_source", "neuroscan_scan45_reader"),
-    ("ACQUISITION.sample_rate", 500),
-    ("ACQUISITION.channel_count", 32),
-    ("ACQUISITION.data_file_path", "recording.cnt"),
-    ("ACQUISITION.parallel_port_address", "0x378"),
-    ("ALGORITHM.decoder", "other"),
-    ("ALGORITHM.window_duration", 4.0),
-    ("ALGORITHM.offset_time", 0.5),
-    ("ALGORITHM.filters", ["bandpass"]),
-    ("STIMULATION.paradigm", "other"),
-    ("ACTUATION.effector", "logger"),
-    ("LOGGING.level", "DEBUG"),
+    ("NEUROENGINE.queue_size", 64), ("NEUROENGINE.startup_timeout_s", 3), ("debug", True),
+    ("ACQUISITION.sample_rate", 500), ("ALGORITHM.baseline_duration", 1.0),
+    ("STIMULATION.auto_spawn", False), ("ACTUATION.server_port", 8002),
 ])
-def test_plugin_and_internal_keys_rejected_without_partial_write(svc, tmp_path, key, value):
+def test_engine_and_module_keys_cannot_partially_write_server_settings(svc, tmp_path, key, value):
     path = tmp_path / "settings.toml"
     before = path.read_bytes()
     with pytest.raises(ConfigKeyNotAllowedError) as raised:
-        svc.save({"NEUROENGINE.queue_size": 64, key: value}, expected_revision=svc.read()[1])
+        svc.save_server({"LOGGING.level": "DEBUG", key: value}, expected_revision=svc.read_server()[1])
     assert raised.value.keys == [key]
-    assert svc._settings.get("NEUROENGINE.queue_size") == 32
     assert path.read_bytes() == before
 
 
 @pytest.mark.parametrize("key,value", [
-    ("NEUROENGINE.queue_size", "large"),
-    ("NEUROENGINE.queue_size", True),
-    ("NEUROENGINE.queue_size", 3.5),
-    ("ALGORITHM.baseline_duration", "long"),
-    ("ALGORITHM.baseline_duration", False),
+    ("NEUROENGINE.command_timeout_s", "large"), ("NEUROENGINE.command_timeout_s", True),
+    ("NEUROENGINE.command_timeout_s", 0), ("NEUROENGINE.command_timeout_s", -1),
+    ("NEUROENGINE.command_timeout_s", math.inf), ("NEUROENGINE.command_timeout_s", math.nan),
+    ("LOGGING.level", "verbose"), ("LOGGING.level", False),
+    ("LOGGING.file_path", " "), ("LOGGING.file_path", 123), ("PLUGINS.user_dir", False),
 ])
-def test_wrong_types_are_rejected_before_any_write(svc, tmp_path, key, value):
-    path = tmp_path / "settings.toml"
-    before = path.read_bytes()
+def test_invalid_server_values_leave_disk_unchanged(svc, tmp_path, key, value):
+    before = (tmp_path / "settings.toml").read_bytes()
     with pytest.raises(ConfigValidationError) as raised:
-        svc.save({"NEUROENGINE.queue_size": 64, key: value}, expected_revision=svc.read()[1])
+        svc.save_server({key: value}, expected_revision=svc.read_server()[1])
     assert key in raised.value.bad_keys
-    assert svc._settings.get("NEUROENGINE.queue_size") == 32
-    assert path.read_bytes() == before
+    assert (tmp_path / "settings.toml").read_bytes() == before
 
 
 def test_empty_updates_are_rejected(svc):
     with pytest.raises(ConfigValidationError):
-        svc.save({}, expected_revision=svc.read()[1])
+        svc.save_server({}, expected_revision=svc.read_server()[1])
 
 
-def test_saves_both_host_settings_and_normalizes_float(svc, tmp_path):
-    saved, restart, revision = svc.save({
-        "NEUROENGINE.queue_size": 64,
-        "ALGORITHM.baseline_duration": 2,
-    }, expected_revision=svc.read()[1])
-    assert saved == ["ALGORITHM.baseline_duration", "NEUROENGINE.queue_size"]
-    assert restart is True
-    assert revision == svc.read()[1]
-    fresh = OmniBCISettings(tmp_path / "settings.toml")
-    assert fresh.get("NEUROENGINE.queue_size") == 64
-    assert fresh.get("ALGORITHM.baseline_duration") == 2.0
-    assert isinstance(fresh.get("ALGORITHM.baseline_duration"), float)
-    assert fresh.get("ACQUISITION.sample_rate") == 1000
+def test_saved_values_remain_pending_until_server_restart(svc, tmp_path):
+    saved, restart, revision = svc.save_server({"LOGGING.level": "DEBUG", "NEUROENGINE.command_timeout_s": 20},
+                                      expected_revision=svc.read_server()[1])
+    assert saved == ["LOGGING.level", "NEUROENGINE.command_timeout_s"] and restart
+    entries, current_revision = svc.read_server()
+    assert current_revision == revision
+    values = {entry["key"]: entry for entry in entries}
+    assert values["LOGGING.level"]["value"] == "DEBUG"
+    assert values["LOGGING.level"]["active_value"] == "INFO"
+    assert values["LOGGING.level"]["restart_required"]
+    restarted = ConfigurationService(TomlConfigurationRepository(tmp_path))
+    assert all(not entry["restart_required"] for entry in restarted.read_server()[0])
 
 
-def test_save_does_not_change_installed_runtime_snapshot(svc, tmp_path):
-    pinned = svc._settings.snapshot()
-    svc._settings.use_snapshot(pinned)
-    svc.save({"NEUROENGINE.queue_size": 64}, expected_revision=svc.read()[1])
-    assert svc._settings.snapshot() == pinned
-    assert OmniBCISettings(tmp_path / "settings.toml").get("NEUROENGINE.queue_size") == 64
+def test_explicit_startup_snapshot_is_not_replaced_by_file_edits(svc):
+    active = {**SERVER_STARTUP_DEFAULTS, "LOGGING.level": "WARNING"}
+    service = ConfigurationService(svc.repository, active_server_settings=active)
+    active["LOGGING.level"] = "ERROR"
+    item = next(entry for entry in service.read_server()[0] if entry["key"] == "LOGGING.level")
+    assert item["active_value"] == "WARNING" and item["restart_required"]
+    _, restart, _ = service.save_server({"LOGGING.level": "WARNING"}, expected_revision=service.read_server()[1])
+    assert not restart
 
 
-@pytest.mark.parametrize("key,value", [
-    ("NEUROENGINE.queue_size", 0),
-    ("NEUROENGINE.queue_size", -1),
-    ("ALGORITHM.baseline_duration", -0.1),
-    ("ALGORITHM.baseline_duration", float("nan")),
-    ("ALGORITHM.baseline_duration", float("inf")),
-    ("ALGORITHM.baseline_duration", float("-inf")),
-    ("ALGORITHM.baseline_duration", 10 ** 400),
-])
-def test_invalid_numeric_ranges_leave_disk_and_cache_unchanged(svc, tmp_path, key, value):
-    before = (tmp_path / "settings.toml").read_bytes()
-    original = svc.read()
-    with pytest.raises(ConfigValidationError) as raised:
-        svc.save({key: value}, expected_revision=original[1])
-    assert key in raised.value.bad_keys
-    assert (tmp_path / "settings.toml").read_bytes() == before
-    assert svc.read() == original
+def test_server_save_preserves_engine_and_module_configuration(svc):
+    engine = EngineSettings({"NEUROENGINE.queue_size": 32})
+    module = ModuleActivation("stimulation", {"STIMULATION.server_port": 9001}, ())
+    svc.repository.save_engine(engine, expected_revision=None)
+    svc.repository.save_module(module, expected_revision=None)
 
+    svc.save_server({"LOGGING.level": "DEBUG"}, expected_revision=svc.read_server()[1])
 
-def test_zero_baseline_is_valid(svc):
-    svc.save({"ALGORITHM.baseline_duration": 0}, expected_revision=svc.read()[1])
-    assert svc.list_entries()[0]["value"] == 0.0
+    assert svc.repository.get_engine().to_dict() == engine.to_dict()
+    assert svc.repository.get_module("stimulation").to_dict() == module.to_dict()
 
 
 def test_stale_browser_cannot_overwrite_another_save(svc, tmp_path):
-    other = ConfigService(OmniBCISettings(tmp_path / "settings.toml"))
-    before_entries, revision = svc.read()
-    assert other.read()[1] == revision
-    _, _, new_revision = other.save({"NEUROENGINE.queue_size": 64}, expected_revision=revision)
-    assert new_revision != revision
+    other = ConfigurationService(TomlConfigurationRepository(tmp_path))
+    revision = svc.read_server()[1]
+    _, _, new_revision = other.save_server({"LOGGING.level": "DEBUG"}, expected_revision=revision)
     with pytest.raises(ConfigProfileConflictError):
-        svc.save({"ALGORITHM.baseline_duration": 2.0}, expected_revision=revision)
-    entries, actual_revision = svc.read()
-    assert actual_revision == new_revision
-    assert entries[0] == before_entries[0]
-    assert entries[1]["value"] == 64
+        svc.save_server({"LOGGING.level": "WARNING"}, expected_revision=revision)
+    assert svc.read_server()[1] == new_revision
+    assert next(entry["value"] for entry in svc.read_server()[0] if entry["key"] == "LOGGING.level") == "DEBUG"
 
 
-def test_atomic_storage_failure_does_not_change_saved_values(svc, tmp_path, monkeypatch):
-    original = svc.read()
+def test_storage_failure_keeps_saved_and_active_state(svc, tmp_path, monkeypatch):
     before = (tmp_path / "settings.toml").read_bytes()
-
-    def fail_update(updates, *, expected_revision):
-        assert updates == {"NEUROENGINE.queue_size": 64}
-        assert expected_revision == original[1]
+    original = svc.read_server()
+    def fail(*args, **kwargs):
         raise OSError("disk full")
-
-    monkeypatch.setattr(svc._settings, "update", fail_update)
+    monkeypatch.setattr(svc.repository, "save_server", fail)
     with pytest.raises(OSError, match="disk full"):
-        svc.save({"NEUROENGINE.queue_size": 64}, expected_revision=original[1])
-    assert svc.read() == original
+        svc.save_server({"LOGGING.level": "DEBUG"}, expected_revision=original[1])
+    assert svc.read_server() == original
     assert (tmp_path / "settings.toml").read_bytes() == before
-
-
-def test_read_returns_saved_values_even_when_runtime_snapshot_is_pinned(svc):
-    original_revision = svc.read()[1]
-    pinned = svc._settings.snapshot()
-    svc._settings.use_snapshot(pinned)
-    _, _, revision = svc.save({"NEUROENGINE.queue_size": 64}, expected_revision=original_revision)
-    entries, actual_revision = svc.read()
-    assert entries[1]["value"] == 64
-    assert actual_revision == revision != original_revision
-    assert svc._settings.snapshot() == pinned

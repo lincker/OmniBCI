@@ -3,8 +3,8 @@ import { createWriteStream } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { BackendConnection, backendOrigin, handleApiRequest } from "./connection.js";
-import { LocalBackend, type ControlResult } from "./local-backend.js";
+import { ServerConnection, serverOrigin, handleApiRequest } from "./connection.js";
+import { LocalServer, type ControlResult } from "./local-server.js";
 import type { ConnectionTarget } from "./contracts.js";
 import { desktopText } from "./i18n.js";
 
@@ -15,10 +15,10 @@ if (process.env.OMNIBCI_DESKTOP_USER_DATA) {
   app.setPath("userData", process.env.OMNIBCI_DESKTOP_USER_DATA);
 }
 
-const connection = new BackendConnection((url, init) => net.fetch(url, init));
+const connection = new ServerConnection((url, init) => net.fetch(url, init));
 const subscriptions = new Map<string, () => void>();
 let window: BrowserWindow;
-let backend: LocalBackend | undefined;
+let server: LocalServer | undefined;
 let quitAllowed = false;
 let transition = false;
 let editor = { dirty: false, busy: false };
@@ -53,7 +53,7 @@ function clearSubscriptions(): void {
   subscriptions.clear();
 }
 
-async function awaitStop(operation: Promise<ControlResult | void>, owned: LocalBackend): Promise<ControlResult | void> {
+async function awaitStop(operation: Promise<ControlResult | void>, owned: LocalServer): Promise<ControlResult | void> {
   const settled = operation.then(value => ({ value }), error => ({ error: error as Error }));
   while (true) {
     let timer: ReturnType<typeof setTimeout>;
@@ -64,24 +64,24 @@ async function awaitStop(operation: Promise<ControlResult | void>, owned: LocalB
       return result.value;
     }
     const answer = await dialog.showMessageBox(window, {
-      type: "warning", message: t("The local backend is still stopping."),
+      type: "warning", message: t("The local server is still stopping."),
       detail: `${owned.shutdownStage}.\n${t("Continue waiting, or force this app's processes to exit. Forced exit can lose results and does not confirm that physical devices have stopped.")}`,
       buttons: [t("Continue waiting"), t("Force exit")], defaultId: 0, cancelId: 0,
     });
-    if (answer.response === 1) { await owned.force(); return { ok: false, forced: true, errors: [t("Backend was forcibly terminated.")] }; }
+    if (answer.response === 1) { await owned.force(); return { ok: false, forced: true, errors: [t("Server was forcibly terminated.")] }; }
   }
 }
 
-async function resumeStoppedBackend(owned: LocalBackend): Promise<void> {
+async function resumeStoppedServer(owned: LocalServer): Promise<void> {
   let result: ControlResult | void = undefined;
   try { result = await awaitStop(owned.command("resume"), owned); }
   catch (error) {
-    connection.failed(t("The local backend is unavailable; its stop state could not be confirmed."));
+    connection.failed(t("The local server is unavailable; its stop state could not be confirmed."));
     throw error;
   }
   if (!result?.ok) {
-    connection.failed(t("Backend remains stopped; reconnect before sending commands."));
-    throw new Error((result?.errors ?? [t("Could not return to the stopped backend.")]).join("\n"));
+    connection.failed(t("Server remains stopped; reconnect before sending commands."));
+    throw new Error((result?.errors ?? [t("Could not return to the stopped server.")]).join("\n"));
   }
   // This opens API admission only. It never restarts acquisition or the engine.
   connection.stopping(false);
@@ -94,17 +94,11 @@ async function disconnect(): Promise<boolean> {
       buttons: [t("Return to editor"), t("Discard changes")], defaultId: 0, cancelId: 0 });
     if (answer.response === 0) return false;
   }
-  if (!backend) {
-    if (connection.info.id && connection.info.kind === "remote") {
-      const answer = await dialog.showMessageBox(window, { type: "question", message: t("Disconnect from the remote backend?"),
-        detail: t("The remote experiment and service will continue. Results remain in its memory and are lost if that service restarts."),
-        buttons: [t("Cancel"), t("Disconnect")], defaultId: 0, cancelId: 0 });
-      if (answer.response === 0) return false;
-    }
+  if (!server) {
     clearSubscriptions(); connection.disconnect(); return true;
   }
-  const owned = backend;
-  const confirm = await dialog.showMessageBox(window, { type: "question", message: t("Stop the local backend?"),
+  const owned = server;
+  const confirm = await dialog.showMessageBox(window, { type: "question", message: t("Stop the local server?"),
     detail: t("Acquisition, stimulation and outputs will stop. Live results will be cleared."),
     buttons: [t("Cancel"), t("Stop and continue")], defaultId: 0, cancelId: 0 });
   if (confirm.response === 0) return false;
@@ -113,14 +107,14 @@ async function disconnect(): Promise<boolean> {
   try { prepared = await awaitStop(owned.command("prepare_shutdown"), owned); }
   catch (error) { prepared = { ok: false, errors: [(error as Error).message] }; }
   if (prepared?.forced) {
-    backend = undefined; clearSubscriptions(); connection.disconnect(); return true;
+    server = undefined; clearSubscriptions(); connection.disconnect(); return true;
   }
   if (!prepared?.ok) {
     const answer = await dialog.showMessageBox(window, { type: "error", message: t("Normal shutdown could not be confirmed."),
       detail: (prepared?.errors ?? [t("Unknown shutdown result.")]).join("\n"),
       buttons: [t("Keep window open"), t("Force exit")], defaultId: 0, cancelId: 0 });
-    if (answer.response === 0) { await resumeStoppedBackend(owned); return false; }
-    await owned.force(); backend = undefined;
+    if (answer.response === 0) { await resumeStoppedServer(owned); return false; }
+    await owned.force(); server = undefined;
     clearSubscriptions(); connection.disconnect(); return true;
   }
   clearSubscriptions();
@@ -129,18 +123,18 @@ async function disconnect(): Promise<boolean> {
   try { result = await awaitStop(owned.command("shutdown"), owned); }
   catch (error) { shutdownError = error; }
   await awaitStop(owned.waitForExit(), owned);
-  backend = undefined; connection.disconnect();
+  server = undefined; connection.disconnect();
   if (shutdownError) throw shutdownError;
   if (result && !result.ok && !result.forced) throw new Error((result.errors ?? [t("Shutdown failed.")]).join("\n"));
   return true;
 }
 
 async function connect(target: ConnectionTarget): Promise<void> {
-  if (!target || !["local", "remote"].includes(target.kind)) throw new Error(t("Choose a connection mode."));
+  if (!target || !["owned", "existing"].includes(target.kind)) throw new Error(t("Choose a connection mode."));
   if (!await disconnect()) return;
   editor = { dirty: false, busy: false };
-  if (target.kind === "remote") {
-    await connection.connect("remote", target.url, target.token);
+  if (target.kind === "existing") {
+    await connection.connect("existing", target.url, target.token);
   } else {
     let python: string;
     if (app.isPackaged) {
@@ -152,21 +146,21 @@ async function connect(target: ConnectionTarget): Promise<void> {
       python = process.env.OMNIBCI_DESKTOP_PYTHON ?? "";
       if (!path.isAbsolute(python)) throw new Error("Set OMNIBCI_DESKTOP_PYTHON to an absolute Python 3.14 executable path.");
     }
-    const owned = new LocalBackend();
-    backend = owned;
-    connection.launchingLocal();
+    const owned = new LocalServer();
+    server = owned;
+    connection.launchingOwned();
     owned.on("exit", (error: Error) => {
-      if (backend === owned && connection.info.status !== "stopping") { clearSubscriptions(); connection.failed(error.message); }
+      if (server === owned && connection.info.status !== "stopping") { clearSubscriptions(); connection.failed(error.message); }
     });
     owned.on("protocol-error", (error: Error) => {
-      if (backend === owned) { clearSubscriptions(); connection.failed(error.message); }
+      if (server === owned) { clearSubscriptions(); connection.failed(error.message); }
     });
     try {
       const ready = await owned.start(python, app.isPackaged ? app.getPath("userData") : path.resolve(__dirname, "../.."), app.isPackaged, writeLog);
-      await connection.connect("local", ready.url, owned.token, ready.instance_id);
-    } catch (error) { await owned.force(); backend = undefined; connection.failed((error as Error).message); throw error; }
+      await connection.connect("owned", ready.url, owned.token, ready.instance_id);
+    } catch (error) { await owned.force(); server = undefined; connection.failed((error as Error).message); throw error; }
   }
-  const value = { kind: target.kind, url: target.kind === "remote" ? connection.info.url : undefined };
+  const value = { kind: target.kind, url: target.kind === "existing" ? connection.info.url : undefined };
   const temporary = preferencesPath + ".tmp";
   await writeFile(temporary, JSON.stringify(value), { mode: 0o600 });
   await rename(temporary, preferencesPath);
@@ -195,11 +189,11 @@ async function start(): Promise<void> {
   writeLog = text => log.write(text);
   try {
     const saved = JSON.parse(await readFile(preferencesPath, "utf8"));
-    if (saved.kind === "local") connection.info = { ...connection.info, kind: "local" };
-    else if (saved.kind === "remote" && typeof saved.url === "string") {
-      connection.info = { ...connection.info, kind: "remote", url: backendOrigin(saved.url) };
+    if (saved.kind === "owned") connection.info = { ...connection.info, kind: "owned" };
+    else if (saved.kind === "existing" && typeof saved.url === "string") {
+      connection.info = { ...connection.info, kind: "existing", url: serverOrigin(saved.url) };
     }
-  } catch { /* First launch or unreadable preferences: show local mode. */ }
+  } catch { /* First launch or unreadable preferences: offer an existing service. */ }
 
   if (!app.isPackaged && process.env.OMNIBCI_DESKTOP_DEV_URL) {
     const address = new URL(process.env.OMNIBCI_DESKTOP_DEV_URL);
@@ -248,7 +242,7 @@ async function start(): Promise<void> {
   subscribe("connection:connect", target => exclusive(async () => { await connect(target); return { ...connection.info }; }));
   subscribe("connection:disconnect", () => exclusive(async () => { await disconnect(); }));
   subscribe("recording:choose-file", async () => {
-    if (connection.info.kind !== "local" || connection.info.status !== "ready") throw new Error(t("Choose files on the backend machine in remote mode."));
+    if (!connection.info.canChooseRecordingFile || connection.info.status !== "ready") throw new Error(t("Choose a path on the server machine."));
     const owner = connection.info.id;
     const result = await dialog.showOpenDialog(window, { title: t("Choose recording"), buttonLabel: t("Open"), properties: ["openFile"], filters: [{ name: t("CNT recording"), extensions: ["cnt"] }] });
     if (connection.info.id !== owner) throw new Error(t("Connection changed while choosing a file."));

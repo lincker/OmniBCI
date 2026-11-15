@@ -4,6 +4,7 @@ import logging
 import time
 from uuid import uuid4
 from enum import Enum
+from queue import Full
 from typing import Optional, Protocol
 
 from omnibci.application.events import (
@@ -11,7 +12,9 @@ from omnibci.application.events import (
     CommandFailureKind,
     CommandRequest,
     CommandResult,
+    ProcessingInputStart,
     StreamBarrier,
+    StreamDrainReceipt,
 )
 from omnibci.domain.signal_info import SignalInfo
 from omnibci.domain.ports.acquisition import SignalSource
@@ -48,10 +51,11 @@ class AcquisitionCommand(Enum):
     disconnect        = 'disconnect'
     get_checkpoint    = 'get checkpoint'
     restore_checkpoint = 'restore checkpoint'
-    update_revision   = 'update revision'
     start_preview     = 'start preview'
     stop_preview      = 'stop preview'
     get_preview       = 'get preview'
+    attach_processing = 'attach processing input'
+    detach_processing = 'detach processing input'
 
 
 class AcquisitionCommandRejected(RuntimeError):
@@ -70,11 +74,12 @@ _COMMAND_RESULT_NAMES = {
     AcquisitionCommand.stop_and_drain: EventType.StopAndDrain.name,
     AcquisitionCommand.get_checkpoint: EventType.GetSourceCheckpoint.name,
     AcquisitionCommand.restore_checkpoint: EventType.RestoreSourceCheckpoint.name,
-    AcquisitionCommand.update_revision: EventType.UpdateAcquisitionRevision.name,
     AcquisitionCommand.get_metadata: EventType.GetSourceMetadata.name,
     AcquisitionCommand.start_preview: EventType.StartAcquisitionPreview.name,
     AcquisitionCommand.stop_preview: EventType.StopAcquisitionPreview.name,
     AcquisitionCommand.get_preview: EventType.GetAcquisitionPreview.name,
+    AcquisitionCommand.attach_processing: EventType.AttachProcessingInput.name,
+    AcquisitionCommand.detach_processing: EventType.DetachProcessingInput.name,
 }
 
 
@@ -94,10 +99,12 @@ class AcquisitionRuntime:
         event_bus=None,
         *,
         source_id: str,
-        preparation_required: bool,
         generation: str | None = None,
-        config_revision: str | None = None,
+        acquisition_revision: str | None = None,
+        engine_revision: str | None = None,
         preview_queue=None,
+        processing_active=None,
+        runtime_counters=None,
     ) -> None:
         self.data_source = data_source
         self._preprocessors: tuple[ChunkPreprocessor, ...] = (
@@ -109,10 +116,15 @@ class AcquisitionRuntime:
         self.event_bus = event_bus  # Optional for projection-free unit tests.
         self.should_exit = False
         self.source_id = source_id
-        self.preparation_required = preparation_required
+        self.processing_active = processing_active
+        self._processing_receipt = None
+        self._processing_failed = False
         self.generation = generation
-        self.config_revision = config_revision
-        self._last_sequence = -1
+        self.acquisition_revision = acquisition_revision
+        self.engine_revision = engine_revision
+        self._runtime_counters = runtime_counters
+        self._last_sequence = runtime_counters[2] if runtime_counters is not None else -1
+        self._last_processing_sequence = self._last_sequence
         self.stream_chunk_count = 0
         self.stream_sample_count = 0
         self._fetch_failure: str | None = None
@@ -148,14 +160,13 @@ class AcquisitionRuntime:
 
     async def execute(self, item) -> None:
         """Execute a command and emit one result for each correlated request."""
-        if isinstance(item, tuple):
-            command, raw_request = item
-        else:
-            command, raw_request = item, None
+        command, raw_request = item
         request = CommandRequest.from_value(raw_request)
         logger.debug('Acquisition command: %s', command)
-        if command in (AcquisitionCommand.get_checkpoint, AcquisitionCommand.restore_checkpoint,
-                       AcquisitionCommand.update_revision):
+        if command in (AcquisitionCommand.attach_processing, AcquisitionCommand.detach_processing):
+            self._processing_input_command(command, request)
+            return
+        if command in (AcquisitionCommand.get_checkpoint, AcquisitionCommand.restore_checkpoint):
             self._configuration_command(command, request)
             return
         handler = {
@@ -197,10 +208,27 @@ class AcquisitionRuntime:
                 await handler()
             if command is AcquisitionCommand.stop_and_drain:
                 self._require_healthy_stream()
-                self.data_manager.put_data(StreamBarrier(
-                    request.command_id, self.generation, self.config_revision,
-                    self._last_sequence,
-                ))
+                if self._processing_failed:
+                    raise AcquisitionCommandRejected(
+                        "PROCESSING_INPUT_FAILED", "Processing input failed; drain was not confirmed",
+                    )
+                if self.processing_active is not None and not self.processing_active.is_set():
+                    data = StreamDrainReceipt(
+                        generation=self.generation, acquisition_revision=self.acquisition_revision,
+                        engine_revision=self.engine_revision, last_sequence=self._last_sequence,
+                        completed_trials=0, interrupted_epoch=False,
+                    ).to_dict()
+                    self._emit_command_result(request, command, ok=True, data=data)
+                    return
+                try:
+                    self.data_manager.put_data(StreamBarrier(
+                        request.command_id, self.generation, self.acquisition_revision,
+                        self._last_processing_sequence, engine_revision=self.engine_revision,
+                        input_id=(self._processing_receipt or {}).get("input_id"),
+                    ))
+                except Full:
+                    self._fail_processing_input("Processing input queue is full; drain was not confirmed")
+                    raise
                 # The processor alone can confirm consumption of prior data.
                 return
         except asyncio.CancelledError:
@@ -243,7 +271,8 @@ class AcquisitionRuntime:
             self._emit_command_result(request, command, ok=True, data=data)
 
     def _preview_identity(self) -> dict:
-        return {"generation": self.generation, "config_revision": self.config_revision,
+        return {"generation": self.generation, "acquisition_revision": self.acquisition_revision,
+                "engine_revision": self.engine_revision,
                 "source_id": self.source_id, "connection_id": self.connection_id}
 
     def _preview_command(self, command, request) -> dict:
@@ -252,7 +281,7 @@ class AcquisitionRuntime:
             raise AcquisitionCommandRejected("PREVIEW_IDENTITY_MISMATCH", "Preview requires the current runtime generation")
         try:
             if command is AcquisitionCommand.start_preview:
-                if (payload.get("expected_revision") != self.config_revision
+                if (payload.get("expected_revision") != self.acquisition_revision
                         or payload.get("connection_id") != self.connection_id):
                     raise ValueError("Preview belongs to a different source connection or revision")
                 if not self.data_source.is_connected or not self.data_source.is_streaming:
@@ -279,33 +308,26 @@ class AcquisitionRuntime:
         try:
             payload = request.payload
             if (not isinstance(payload, dict) or payload.get("generation") != self.generation
-                    or payload.get("expected_revision") != self.config_revision):
+                    or payload.get("expected_revision") != self.acquisition_revision
+                    or payload.get("engine_revision") != self.engine_revision):
                 raise ValueError("Acquisition command belongs to a different runtime generation or revision")
-            if command is AcquisitionCommand.update_revision:
-                revision = payload.get("target_revision")
-                if not isinstance(revision, str) or len(revision) != 64:
-                    raise ValueError("A pinned target revision is required")
-                if revision != self.config_revision:
-                    self.preview.finish("context_changed")
-                self.config_revision = revision
-                data = {}
+            self._require_healthy_stream()
+            if self.data_source.is_streaming or self.fetch_task is not None:
+                raise ValueError("Stop and join acquisition before accessing a source checkpoint")
+            if command is AcquisitionCommand.get_checkpoint:
+                supported = self.data_source.supports_checkpoint
+                data = {"supported": supported,
+                        "checkpoint": self.data_source.checkpoint() if supported else None,
+                        "resume_without_checkpoint_safe": getattr(
+                            self.data_source, "resume_without_checkpoint_safe", False,
+                        ) is True}
             else:
-                self._require_healthy_stream()
-                if self.data_source.is_streaming or self.fetch_task is not None:
-                    raise ValueError("Stop and join acquisition before accessing a source checkpoint")
-                if command is AcquisitionCommand.get_checkpoint:
-                    supported = self.data_source.supports_checkpoint
-                    data = {"supported": supported,
-                            "checkpoint": self.data_source.checkpoint() if supported else None,
-                            "resume_without_checkpoint_safe": getattr(
-                                self.data_source, "resume_without_checkpoint_safe", False,
-                            ) is True}
-                else:
-                    if not self.data_source.supports_checkpoint:
-                        raise ValueError("The source does not support replay checkpoints")
-                    self.data_source.restore_checkpoint(payload.get("checkpoint"))
-                    data = {"restored": True}
-            data.update(generation=self.generation, config_revision=self.config_revision)
+                if not self.data_source.supports_checkpoint:
+                    raise ValueError("The source does not support replay checkpoints")
+                self.data_source.restore_checkpoint(payload.get("checkpoint"))
+                data = {"restored": True}
+            data.update(generation=self.generation, acquisition_revision=self.acquisition_revision,
+                        engine_revision=self.engine_revision)
             self._emit_command_result(request, command, ok=True, data=data)
         except Exception as exc:
             self._emit_command_result(request, command, ok=False, message=str(exc),
@@ -344,6 +366,9 @@ class AcquisitionRuntime:
             await self._on_stop_stream()
         else:
             await self._cancel_fetch_task()
+        self._publish_source_boundary(detach=True)
+        if self.processing_active is not None:
+            self.processing_active.clear()
         await self.data_source.disconnect()
         if self.data_source.is_connected:
             raise AcquisitionCommandRejected(
@@ -362,8 +387,6 @@ class AcquisitionRuntime:
                 "DATA_SOURCE_NOT_CONNECTED",
                 "Cannot start stream before the data source is connected",
             )
-        if self.preparation_required:
-            self._validate_signal_receipt(receipt)
         if self.data_source.is_streaming:
             self._emit_state()
             return
@@ -505,15 +528,69 @@ class AcquisitionRuntime:
 
     def _validate_signal_receipt(self, receipt) -> None:
         expected = {
-            "generation": self.generation, "config_revision": self.config_revision,
-            "connection_id": self.connection_id,
+            "generation": self.generation, "acquisition_revision": self.acquisition_revision,
+            "engine_revision": self.engine_revision, "connection_id": self.connection_id,
             "source_fingerprint": self._descriptor.fingerprint if self._descriptor else None,
         }
         if (not isinstance(receipt, dict) or self._descriptor is None
                 or any(receipt.get(key) != value for key, value in expected.items())
                 or not isinstance(receipt.get("plan_fingerprint"), str)
                 or len(receipt["plan_fingerprint"]) != 64):
-            raise AcquisitionCommandRejected("SIGNAL_NOT_PREPARED", "Prepare the signal mapping for this connection and configuration before streaming")
+            raise AcquisitionCommandRejected("SIGNAL_NOT_PREPARED", "Prepare the signal mapping for this source connection before attaching processing")
+
+    def _processing_input_command(self, command, request):
+        if request is None:
+            return
+        try:
+            if self.processing_active is None:
+                raise ValueError("Processing input control is unavailable")
+            payload = request.payload
+            if command is AcquisitionCommand.attach_processing:
+                self._validate_signal_receipt(payload)
+                if not isinstance(payload.get("input_id"), str) or not payload["input_id"]:
+                    raise ValueError("Processing attachment requires a prepared input identity")
+                if self.processing_active.is_set():
+                    raise ValueError("Detach the previous processing input before replacing it")
+                # This command and fetch() run on the same event loop. No await
+                # separates the FIFO marker, local identity and delivery gate.
+                self.data_manager.put_data(ProcessingInputStart(request.command_id, dict(payload), self._last_sequence))
+                self._last_processing_sequence = self._last_sequence
+                self._processing_receipt = dict(payload)
+                self._processing_failed = False
+                self.processing_active.set()
+            else:
+                expected = {"generation": self.generation, "engine_revision": self.engine_revision,
+                            "expected_revision": self.acquisition_revision}
+                if not isinstance(payload, dict) or any(payload.get(key) != value for key, value in expected.items()):
+                    raise ValueError("Processing input belongs to another acquisition runtime")
+                if self._processing_failed and payload.get("drain", True):
+                    raise ValueError("Processing input failed; drain was not confirmed")
+                attached = self.processing_active.is_set()
+                self.processing_active.clear()
+                if (attached or self._processing_receipt is not None) and payload.get("drain", True):
+                    self.data_manager.put_data(StreamBarrier(
+                        request.command_id, self.generation, self.acquisition_revision,
+                        self._last_processing_sequence, engine_revision=self.engine_revision,
+                        command=EventType.DetachProcessingInput.name,
+                        input_id=(self._processing_receipt or {}).get("input_id"),
+                    ))
+                else:
+                    data = StreamDrainReceipt(self.generation, self.acquisition_revision,
+                                              self._last_sequence, 0, False,
+                                              engine_revision=self.engine_revision).to_dict()
+                    self._emit_command_result(request, command, ok=True, data=data)
+                self._processing_receipt = None
+        except Full:
+            self._fail_processing_input("Processing input queue is full", receipt=request.payload
+                                        if command is AcquisitionCommand.attach_processing else None)
+            self._emit_command_result(request, command, ok=False,
+                                      message="Processing input queue is full; its boundary was not confirmed",
+                                      error_code="PROCESSING_INPUT_QUEUE_FULL",
+                                      failure_kind=CommandFailureKind.EXECUTION_FAILED)
+        except Exception as exc:
+            self._emit_command_result(request, command, ok=False, message=str(exc),
+                                      error_code="PROCESSING_INPUT_REJECTED",
+                                      failure_kind=CommandFailureKind.REJECTED)
 
     async def fetch(self) -> None:
         self.stream_chunk_count = 0
@@ -536,7 +613,14 @@ class AcquisitionRuntime:
                 for preprocessor in self._preprocessors:
                     chunk = preprocessor.process(chunk)
                 # TODO: Consider validating data matrices against the acquisition descriptor in the future.
-                self.data_manager.put_data(chunk)
+                if self._runtime_counters is not None:
+                    self._runtime_counters[2] = chunk.sequence_id
+                if not self._processing_failed:
+                    try:
+                        if self.data_manager.put_data(chunk) is not False:
+                            self._last_processing_sequence = chunk.sequence_id
+                    except Full:
+                        self._fail_processing_input("Processing input queue is full")
                 self._last_sequence = chunk.sequence_id
                 self.stream_chunk_count += 1
                 self.stream_sample_count += raw_data.shape[1]
@@ -572,7 +656,35 @@ class AcquisitionRuntime:
         except Exception as exc:
             self._fetch_failure = self._fetch_failure or f"{type(exc).__name__}: {exc}"
             logger.error('stop_stream during fetch teardown failed: %s', exc)
+        self._publish_source_boundary()
         self._emit_state()
+
+    def _publish_source_boundary(self, *, detach=False):
+        """End the old stream in FIFO order without waiting for its consumer."""
+        if self.processing_active is not None and self.processing_active.is_set():
+            try:
+                self.data_manager.put_data(StreamBarrier(
+                    None, self.generation, self.acquisition_revision, self._last_processing_sequence,
+                    engine_revision=self.engine_revision,
+                    command=EventType.DetachProcessingInput.name if detach else EventType.StopAndDrain.name,
+                    input_id=(self._processing_receipt or {}).get("input_id"),
+                ))
+            except Full:
+                self._fail_processing_input("Processing input queue is full; stream boundary was not confirmed")
+
+    def _fail_processing_input(self, reason, *, receipt=None):
+        receipt = self._processing_receipt if receipt is None else receipt
+        if self.processing_active is not None:
+            self.processing_active.clear()
+        self._processing_failed = True
+        self._processing_receipt = None
+        logger.error("Processing input disabled: %s", reason)
+        if self.event_bus is not None:
+            self.event_bus.put_event(Event(EventType.ProcessingInputFault, {
+                "generation": self.generation, "engine_revision": self.engine_revision,
+                "acquisition_revision": self.acquisition_revision,
+                "input_id": (receipt or {}).get("input_id"), "reason": reason,
+            }))
 
     def _emit_state(self) -> None:
         """Publish the device's authoritative state to the API-side projection.

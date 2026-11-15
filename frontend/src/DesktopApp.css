@@ -1,7 +1,9 @@
 .desktop-shell { display: flex; flex-direction: column; height: 100dvh; min-height: 360px; }
+.browser-workspace:not([hidden]) { display: flex; flex: 1; min-height: 0; }
+.browser-workspace > .workbench { flex: 1; height: auto; min-height: 0; }
 .desktop-shell > .workbench { flex: 1; height: auto; min-height: 0; }
 .desktop-connection-bar { flex: none; display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--sidebar-bg); }
-.desktop-backend-address { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-server-address { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .desktop-connection-bar button { min-height: 28px; }
 .desktop-error { margin: 0; padding: 10px 16px; border-bottom: 1px solid var(--border); }
 .desktop-connect { display: grid; place-items: center; min-height: 100%; flex: 1; padding: 32px; overflow: auto; }
@@ -15,4 +17,4 @@
 .file-path-field { display: flex; gap: 8px; min-width: 0; width: 100%; max-width: 440px; margin-top: 0.5rem; }
 .file-path-field input { flex: 1; }
 .result-export-actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-@media (max-width: 760px) { .desktop-connection-bar { flex-wrap: wrap; } .desktop-backend-address { flex-basis: 50%; } }
+@media (max-width: 760px) { .desktop-connection-bar { flex-wrap: wrap; } .desktop-server-address { flex-basis: 50%; } }

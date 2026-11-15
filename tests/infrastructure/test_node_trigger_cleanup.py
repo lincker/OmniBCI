@@ -13,7 +13,7 @@ def make_app(monkeypatch, *, external=True, render_error=False, clear_error=Fals
     monkeypatch.setattr(module.mp, "Queue", Mock())
     app = module.Stimulation(settings_snapshot={
         "CONFIG.node_role": "stimulation" if external else None,
-        "CONFIG.revision": "a" * 64,
+        "CONFIG.module_revisions": {'acquisition': "a" * 64, 'processing': "a" * 64, 'stimulation': "a" * 64, 'actuation': "a" * 64}, "CONFIG.engine_revision": "c" * 64,
         "CONFIG.generation": "run-1",
     })
     steps = []

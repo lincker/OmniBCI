@@ -1,5 +1,4 @@
-"""Signal setup remains a draft until review, and preparation precedes streaming."""
-from contextlib import nullcontext
+"""Processing attaches a validated plan without owning source reading."""
 from copy import deepcopy
 from dataclasses import replace
 from threading import RLock
@@ -7,47 +6,61 @@ from types import SimpleNamespace
 
 import pytest
 
-from omnibci.application.config_errors import ConfigProfileValidationError
-from omnibci.application.plugin_profiles import ActivationSnapshot
+from omnibci.application.configuration.errors import ConfigProfileValidationError
+from omnibci.application.events import StreamDrainReceipt
+from omnibci.application.runtime_admission import RuntimeAdmission
+from omnibci.application.configuration.models import ActivationSet, ModuleActivation
 from omnibci.application.services.signal_setup_service import SignalSetupService
-from omnibci.conf import OmniBCISettings
 from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
-from omnibci.shared.events import EventType
+from omnibci.shared.events import Event, EventType
 
 
 @pytest.fixture
 def signal_service(tmp_path):
-    path = tmp_path / "settings.toml"
-    path.write_text('[NEUROENGINE]\nqueue_size = 100\n', encoding="utf-8")
-    settings = OmniBCISettings(path)
     metadata = SignalInfo("source", 500, (
         ChannelDescriptor(0, "O1", unit="uV"), ChannelDescriptor(1, "M1", unit="uV"),
     ), 2, connection_id="connection")
     setup = ProcessingInput(outputs=(ChannelBinding("O1", "channel-0"),)).to_dict()
-    snapshot = { "CONFIG.revision": "a" * 64,
+    snapshot = { "CONFIG.module_revisions": {"acquisition": "a" * 64, "processing": "p" * 64},
+                "CONFIG.engine_revision": "s" * 64,
                 "CONFIG.generation": "generation", "ACQUISITION.sample_rate": 500,
                 "ACQUISITION.signal_source": "source", "PLUGINS.bindings": [
                     {"slot": "processing.decoder", "processing_input": setup,
                      "selection": {"package_id": "test.decoder", "contribution_id": "default", "version": "1"}},
                     {"slot": "processing.epoch_detector", "selection": {
                         "package_id": "test.detector", "contribution_id": "default", "version": "1"}}]}
-    engine = SimpleNamespace(admission=None, is_engine_ready=True, applied_snapshot=snapshot,
-                             configuration_change=lambda idle: nullcontext())
-    profiles = SimpleNamespace(repository=SimpleNamespace(get_activation=lambda: ActivationSnapshot({}, ())),
+    engine = SimpleNamespace(admission=RuntimeAdmission(), is_engine_ready=True, applied_snapshot=snapshot,
+                             is_module_running=lambda module: module in ("acquisition", "processing"))
+    profiles = SimpleNamespace(repository=SimpleNamespace(get_activation_set=lambda: ActivationSet({}, None)),
                                materialize=lambda activation: {},
                                catalog=SimpleNamespace(get=lambda *args: SimpleNamespace(channel_requirements=None)))
+    profiles.repository.get_module = lambda module: profiles.repository.get_activation_set().modules.get(module)
+    profiles.repository.get_engine = lambda: profiles.repository.get_activation_set().engine
     acquisition = SimpleNamespace(lifecycle_lock=RLock(), cached_descriptor=metadata.to_dict(),
-                                  handle_get_status=lambda query: SimpleNamespace(streaming=False))
+                                  handle_get_status=lambda query: SimpleNamespace(streaming=False, connected=True))
     acquisition.cached_descriptor_for = lambda binding: deepcopy(acquisition.cached_descriptor)
     acquisition.get_descriptor = lambda **kwargs: deepcopy(acquisition.cached_descriptor)
     calls = []
 
     def request(event, payload):
         calls.append((event, deepcopy(payload)))
-        return SimpleNamespace(data=deepcopy(payload["receipt"]))
+        if event is EventType.PrepareSignalProcessing:
+            return SimpleNamespace(data=deepcopy(payload["receipt"]))
+        if event is EventType.AttachProcessingInput:
+            return SimpleNamespace(data={**deepcopy(payload), "attached": True, "last_sequence": 0})
+        if event is EventType.DetachProcessingInput:
+            current = engine.applied_snapshot
+            return SimpleNamespace(data=StreamDrainReceipt(
+                current["CONFIG.generation"], current["CONFIG.module_revisions"]["acquisition"],
+                0, 0, False, engine_revision=current["CONFIG.engine_revision"],
+                processing_revision=current["CONFIG.module_revisions"]["processing"] if payload.get("drain", True) else None,
+            ).to_dict())
+        if event is EventType.ResetProcessingInput:
+            return SimpleNamespace(data={"attached": False})
+        raise AssertionError(f"Unexpected command: {event}")
 
-    service = SignalSetupService(settings, profiles, engine, acquisition,
+    service = SignalSetupService(profiles, engine, acquisition,
                                 SimpleNamespace(request=request))
     return service, metadata, setup, calls
 
@@ -67,9 +80,13 @@ def test_preparation_uses_current_observation_and_checks_acknowledgement(signal_
     service, metadata, setup, calls = signal_service
     receipt = service.prepare()
     assert calls[0][0] is EventType.PrepareSignalProcessing
+    assert calls[0][1]["settings_snapshot"] == service.engine.applied_snapshot
     assert receipt["connection_id"] == metadata.connection_id
     assert receipt["source_fingerprint"] == metadata.fingerprint
     assert service.read()["readiness"]["ready"]
+    assert service.prepare() == receipt
+    assert len(calls) == 2
+    service.reset()
     service.commands.request = lambda event, payload: SimpleNamespace(data={})
     with pytest.raises(RuntimeError, match="acknowledge"):
         service.prepare()
@@ -90,7 +107,7 @@ def test_reconnect_requires_new_receipt_and_source_drift_blocks_prepare(signal_s
     assert not service.read()["readiness"]["ready"]
     with pytest.raises(ConfigProfileValidationError, match="metadata changed"):
         service.prepare()
-    assert len(calls) == 2
+    assert len([event for event, _ in calls if event is EventType.PrepareSignalProcessing]) == 2
 
 
 def test_known_rate_conflict_blocks_before_processor_command(signal_service):
@@ -99,6 +116,26 @@ def test_known_rate_conflict_blocks_before_processor_command(signal_service):
     with pytest.raises(ConfigProfileValidationError, match="sample rate"):
         service.prepare()
     assert not calls
+
+
+def test_stopped_processing_does_not_prepare_or_report_stale_readiness(signal_service):
+    service, _, _, calls = signal_service
+    service.prepare()
+    assert service.read()["readiness"]["ready"]
+    service.engine.is_module_running = lambda module: False
+    assert service.prepare() is None
+    assert not service.read()["readiness"]["ready"]
+    assert len(calls) == 2
+
+
+def test_reset_requires_a_new_receipt_after_processing_restarts(signal_service):
+    service, _, _, calls = signal_service
+    service.prepare()
+    service.reset()
+    assert not service.read()["readiness"]["ready"]
+    service.prepare()
+    assert service.read()["readiness"]["ready"]
+    assert len(calls) == 4
 
 
 def test_invalid_preview_does_not_write_or_prepare(signal_service):
@@ -112,11 +149,11 @@ def test_invalid_preview_does_not_write_or_prepare(signal_service):
 @pytest.mark.parametrize("source", [{"source_channel_id": "channel-0"}, {"source_channel_index": 0}])
 def test_processing_input_preview_uses_source_facts_without_writing(signal_service, source):
     service, metadata, _, calls = signal_service
-    before = service.settings.read_saved()
+    before = service.read()
     result = service.preview_input({"outputs": [{**source, 'name': 'O1'}]})
     assert result["plan"]["source_indices"] == [0]
     assert result["plan"]["source"] == metadata.to_dict()
-    assert service.settings.read_saved() == before
+    assert service.read() == before
     assert not calls
 
 
@@ -133,7 +170,7 @@ def test_processing_input_cannot_redeclare_acquisition_metadata(signal_service, 
 
 def test_decoder_input_read_uses_pinned_input_without_saved_draft(signal_service):
     from uuid import uuid4
-    from omnibci.application.plugin_profiles import PluginProfile, PluginSelection, ProfileBinding
+    from omnibci.application.configuration.models import PluginProfile, PluginSelection, ProfileBinding
     from omnibci.domain.channel_mapping import ProcessingInput
     service, _, _, _ = signal_service
     selection = PluginSelection("test.decoder", "default", "1")
@@ -141,8 +178,8 @@ def test_decoder_input_read_uses_pinned_input_without_saved_draft(signal_service
                             processing_input=ProcessingInput(outputs=(ChannelBinding('O1', 'channel-0'),)))
     binding = ProfileBinding("processing.decoder", "decoder", profile.profile_id, selection,
                              {}, profile_revision=1, processing_input=profile.processing_input)
-    accepted = ActivationSnapshot({}, (binding,))
-    service.profiles.repository.get_activation = lambda: accepted
+    accepted = ActivationSet({"processing": ModuleActivation("processing", {}, (binding,))}, None)
+    service.profiles.repository.get_activation_set = lambda: accepted
     service.profiles.repository.get_profile = lambda profile_id: profile
     service.profiles.materialize = lambda activation: {        "PLUGINS.bindings": [binding.to_dict()], "ACQUISITION.signal_source": "source"}
     service.engine.applied_snapshot["PLUGINS.bindings"] = [binding.to_dict()]
@@ -208,13 +245,13 @@ def test_modern_preparation_uses_native_input_without_global_setup(signal_servic
     service, metadata, _, calls = signal_service
     snapshot = modern_binding(service, metadata)
     service.prepare()
-    plan = calls[-1][1]["plan"]
+    plan = [payload for event, payload in calls if event is EventType.PrepareSignalProcessing][-1]["plan"]
     assert "SIGNAL.setup" not in snapshot
     assert "setup" not in plan
     assert plan["processing_input"]["outputs"] == [{"source_channel_id": "channel-0", "name": "O1"}]
     assert plan["source"] == metadata.to_dict()
     assert service.read()["readiness"]["ready"]
-    assert len(calls) == 1
+    assert len(calls) == 2
 
 
 def test_source_switch_waits_for_connected_metadata_and_recompiles_mapping(signal_service):
@@ -229,7 +266,8 @@ def test_source_switch_waits_for_connected_metadata_and_recompiles_mapping(signa
     reordered = replace(metadata, connection_id="new", channels=(
         replace(metadata.channels[1], index=0), replace(metadata.channels[0], index=1)))
     selected["PLUGINS.bindings"][0]["profile_id"] = "source-b"
-    selected["CONFIG.revision"] = "b" * 64
+    selected["PLUGINS.bindings"][0]["parameters"]["data_file_path"] = "another-recording.cnt"
+    selected["CONFIG.module_revisions"]["processing"] = "b" * 64
     after = service.read()
     assert after["source_binding"]["profile_id"] == "source-b"
     assert after["source_binding"]["state"] == "selected"
@@ -241,17 +279,39 @@ def test_source_switch_waits_for_connected_metadata_and_recompiles_mapping(signa
         service.preview_input({"outputs": [{'source_channel_id': 'channel-0', 'name': 'O1'}]})
     # Runtime preparation keeps the applied source until the new selection is applied.
     service.prepare()
-    assert calls[-1][1]["plan"]["source_indices"] == [0]
+    assert [payload for event, payload in calls if event is EventType.PrepareSignalProcessing][-1]["plan"]["source_indices"] == [0]
     service.engine.applied_snapshot = deepcopy(selected)
     service.acquisition.cached_descriptor = reordered.to_dict()
     owner = acquisition_binding_key(selected["PLUGINS.bindings"][0])
     service.prepare()
-    assert calls[-1][1]["plan"]["source_indices"] == [1]
+    assert [payload for event, payload in calls if event is EventType.PrepareSignalProcessing][-1]["plan"]["source_indices"] == [1]
     assert service.read()["readiness"]["ready"]
 
 
+def test_current_source_with_unchanged_values_preserves_metadata_and_preparation(signal_service):
+    from omnibci.application.processing_source import acquisition_binding_key
+    service, metadata, _, calls = signal_service
+    selected = modern_binding(service, metadata)
+    owner = acquisition_binding_key(selected["PLUGINS.bindings"][0])
+    service.acquisition.cached_descriptor_for = lambda binding: (
+        deepcopy(service.acquisition.cached_descriptor) if acquisition_binding_key(binding) == owner else None)
+    service.prepare()
+    before = service.read()
+    selected["PLUGINS.bindings"][0].pop("profile_id")
+    selected["PLUGINS.bindings"][0]["profile_revision"] = 0
+    current = service.read()
+    assert service.engine.applied_snapshot["PLUGINS.bindings"][0]["profile_id"] == "source-a"
+    assert current["source_binding"]["profile_id"] is None
+    assert current["source_binding"]["state"] == "active"
+    assert current["acquisition_descriptor"] == metadata.to_dict()
+    assert current["source_revision"] == before["source_revision"]
+    assert current["readiness"] == before["readiness"]
+    assert current["readiness"]["ready"]
+    assert len(calls) == 2
+
+
 def test_stale_preview_revision_rejected_after_reconnect(signal_service):
-    from omnibci.application.plugin_profiles import ProfileRevisionConflict
+    from omnibci.application.configuration.errors import ProfileRevisionConflict
     service, metadata, _, calls = signal_service
     modern_binding(service, metadata)
     revision = service.read()["source_revision"]
@@ -318,7 +378,7 @@ def test_explicit_runtime_rebuild_resolves_changed_source_observation(signal_ser
     selected["CONFIG.generation"] = "rebuilt"
     service.engine.applied_snapshot = deepcopy(selected)
     service.prepare()
-    assert calls[-1][1]["plan"]["output_channels"][0]["name"] == "O2"
+    assert [payload for event, payload in calls if event is EventType.PrepareSignalProcessing][-1]["plan"]["output_channels"][0]["name"] == "O2"
     assert service.read()["readiness"]["ready"]
 
 
@@ -331,32 +391,6 @@ def test_stopped_engine_discards_source_facts_even_if_old_cache_survives(signal_
     assert context["source_binding"]["metadata_origin"] == "unavailable"
     assert context["acquisition_descriptor"] is None
     assert not context["readiness"]["ready"]
-
-
-def test_legacy_selected_input_remains_readable_and_can_preview_a_replacement(signal_service):
-    from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
-    service, metadata, _, calls = signal_service
-    source = ProfileBinding("acquisition.source", "acquisition", None,
-                            PluginSelection("test.source", "default", "1"), {})
-    decoder = ProfileBinding("processing.decoder", "decoder", None,
-                             PluginSelection("test.decoder", "default", "1"), {},
-                             legacy={"processing_input": {"schema_version": 1,
-                                 "reference": {"mode": "single", "channels": ["M1"]}}})
-    accepted = ActivationSnapshot({}, (source, decoder))
-    service.profiles.repository.get_activation = lambda: accepted
-    service.profiles.materialize = lambda _: (_ for _ in ()).throw(ValueError("Reconfigure legacy mapping"))
-    service.profiles.catalog.get = lambda *args: SimpleNamespace(plugin_type="source", channel_requirements=None)
-
-    context = service.read()
-    assert context["selected_source_id"] == "source"
-    assert context["processing_input"] is None
-    assert context["accepted_input"] is None
-    assert context["source_error"] == "Reconfigure legacy mapping"
-    assert context["acquisition_descriptor"] == metadata.to_dict()
-    assert not context["readiness"]["ready"]
-    preview = service.preview_input({"outputs": [{"source_channel_id": "channel-0", "name": "Oz"}]})
-    assert preview["plan"]["source_indices"] == [0]
-    assert not calls
 
 
 @pytest.mark.parametrize("value", [
@@ -414,31 +448,112 @@ def test_prepare_uses_observed_metadata_when_expectations_are_optional(signal_se
     assert service.read()["readiness"]["ready"]
 
 
-def test_no_explicit_mapping_still_prepares_using_observed_signal(signal_service):
+def test_identity_mapping_prepares_using_observed_signal(signal_service):
     service, metadata, _, calls = signal_service
-    service.engine.applied_snapshot["PLUGINS.bindings"][0].pop("processing_input")
+    service.engine.applied_snapshot["PLUGINS.bindings"][0]["processing_input"] = ProcessingInput().to_dict()
     service.prepare()
     assert calls[0][1]["plan"]["source_indices"] == [0, 1]
     assert calls[0][1]["plan"]["source"]["sample_rate"] == metadata.sample_rate
 
 
-@pytest.mark.parametrize("active_legacy", [True, False])
-def test_legacy_default_selected_input_matches_equivalent_running_input(signal_service, active_legacy):
-    service, metadata, _, _ = signal_service
-    selected = modern_binding(service, metadata, outputs=())
-    selected["PLUGINS.bindings"][1]["processing_input"] = {
-        "schema_version": 1, "outputs": [], "excluded_channels": [],
-        "reference": {"mode": "original", "channels": []},
-    }
-    original = deepcopy(selected)
-    if active_legacy:
-        service.engine.applied_snapshot = deepcopy(selected)
+def test_processing_waits_for_acquisition_then_attaches_without_restarting(signal_service):
+    service, _, _, calls = signal_service
+    service.engine.is_module_running = lambda module: module == "processing"
+    assert service.prepare() is None
+    assert not calls and not service.read()["readiness"]["ready"]
+    service.engine.is_module_running = lambda module: True
+    receipt = service.prepare()
+    assert receipt["input_id"]
+    assert [event for event, _ in calls] == [EventType.PrepareSignalProcessing, EventType.AttachProcessingInput]
+    assert service.read()["readiness"]["ready"]
 
+
+def test_processing_trial_update_preserves_attachment_and_prepared_plan(signal_service):
+    service, _, _, calls = signal_service
+    original = service.prepare()
+    service.engine.applied_snapshot["CONFIG.module_revisions"]["processing"] = "new-processing"
+    current = service.prepare()
+    assert current["input_id"] == original["input_id"]
+    assert current["processing_revision"] == "new-processing"
+    assert len(calls) == 2
+    assert service.read()["readiness"]["ready"]
+
+
+def test_attachment_is_not_ready_until_consumer_confirms_and_failure_closes_gate(signal_service):
+    service, _, _, calls = signal_service
+    request = service.commands.request
+    def reject_attach(event, payload):
+        result = request(event, payload)
+        if event is EventType.AttachProcessingInput:
+            assert not service.read()["readiness"]["ready"]
+            return SimpleNamespace(data={})
+        return result
+    service.commands.request = reject_attach
+    with pytest.raises(RuntimeError, match="input boundary"):
+        service.prepare()
+    assert [event for event, _ in calls] == [EventType.PrepareSignalProcessing,
+                                          EventType.AttachProcessingInput, EventType.DetachProcessingInput]
+    assert service._receipt is None
+    assert not service.read()["readiness"]["ready"]
+
+
+def test_gone_source_resets_old_input_without_claiming_a_drain(signal_service):
+    service, _, _, calls = signal_service
     service.prepare()
-    context = service.read()
+    service.engine.is_module_running = lambda module: module == "processing"
+    assert not service.read()["readiness"]["ready"]
+    assert service.prepare() is None
+    assert calls[-1][0] is EventType.ResetProcessingInput
+    assert service._receipt is None
 
-    assert context["accepted_input"] == ProcessingInput().to_dict()
-    assert context["active_input"] == context["accepted_input"]
-    assert context["source_error"] is None
-    assert context["readiness"]["ready"]
-    assert selected == original
+
+def test_dead_processor_closes_producer_gate_without_waiting_for_drain(signal_service):
+    service, _, _, calls = signal_service
+    service.prepare()
+    service.engine.is_module_running = lambda module: module == "acquisition"
+    result = service.detach()
+    assert result.processing_revision is None
+    assert calls[-1][0] is EventType.DetachProcessingInput
+    assert calls[-1][1]["drain"] is False
+    assert service._receipt is None
+
+
+def test_metadata_drift_detaches_but_is_not_silently_accepted_on_retry(signal_service):
+    service, metadata, _, calls = signal_service
+    service.prepare()
+    service.acquisition.cached_descriptor = replace(metadata, sample_rate=1000).to_dict()
+    for _ in range(2):
+        with pytest.raises(ConfigProfileValidationError, match="metadata changed"):
+            service.prepare()
+        assert calls[-1][0] is EventType.DetachProcessingInput
+    assert len([event for event, _ in calls if event is EventType.PrepareSignalProcessing]) == 1
+    assert not service.read()["readiness"]["ready"]
+
+
+def test_current_input_fault_is_visible_and_quarantines_only_processing(signal_service):
+    service, _, _, _ = signal_service
+    receipt = service.prepare()
+    fault = {key: receipt[key] for key in ("generation", "engine_revision", "acquisition_revision", "input_id")}
+    service.on_input_fault(Event(EventType.ProcessingInputFault, {**fault, "input_id": "old-input", "reason": "old failure"}))
+    assert service.read()["readiness"]["ready"]
+    service.on_input_fault(Event(EventType.ProcessingInputFault, {**fault, "reason": "Processing input queue is full"}))
+    assert "queue is full" in service.read()["source_error"]
+    assert not service.read()["readiness"]["ready"]
+    assert service.engine.admission.requires_recovery("processing")
+    assert not service.engine.admission.requires_recovery("acquisition")
+
+
+def test_fault_before_attachment_acknowledgement_cannot_publish_ready(signal_service):
+    service, _, _, calls = signal_service
+    request = service.commands.request
+    def fault_during_attach(event, payload):
+        result = request(event, payload)
+        if event is EventType.AttachProcessingInput:
+            service.on_input_fault(Event(EventType.ProcessingInputFault, {**payload, "reason": "Input overflow"}))
+        return result
+    service.commands.request = fault_during_attach
+    with pytest.raises(RuntimeError, match="Input overflow"):
+        service.prepare()
+    assert service._receipt is None and service._pending_receipt is None
+    assert not service.read()["readiness"]["ready"]
+    assert calls[-1][0] is EventType.DetachProcessingInput

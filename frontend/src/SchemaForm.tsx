@@ -48,6 +48,23 @@ const canonical = (value: unknown) => JSON.stringify(value, (_key, item) =>
 );
 export const sameParameters = (left: unknown, right: unknown) => canonical(left) === canonical(right);
 
+/** Apply explicit schema defaults without changing the editor's values. */
+export function normalizedParameters(parameters: Record<string, unknown>, schema?: ConfigurationSchema | null): Record<string, unknown> {
+  const normalize = (value: unknown, definition?: ConfigurationSchema): unknown => {
+    if (definition?.type === "object" && object(value)) {
+      const result = { ...value };
+      for (const [key, child] of Object.entries(definition.properties ?? {})) {
+        if (Object.prototype.hasOwnProperty.call(result, key)) result[key] = normalize(result[key], child);
+        else if (child.default !== undefined) result[key] = normalize(structuredClone(child.default), child);
+      }
+      return result;
+    }
+    return definition?.type === "array" && Array.isArray(value)
+      ? value.map((item) => normalize(item, definition.items)) : value;
+  };
+  return normalize(structuredClone(parameters), schema ?? undefined) as Record<string, unknown>;
+}
+
 export function initialSchemaValue(schema: ConfigurationSchema): unknown {
   if (schema.enum?.length) return clone(schema.default !== undefined ? schema.default : schema.enum[0]);
   if (schema.type === "object") {
@@ -165,7 +182,7 @@ function SchemaField({ schema, value, onChange, disabled, label }: FieldProps) {
       : schema.type === "string" ? <div className="file-path-field"><input id={id} type={schema["x-scope"] === "secret" ? "password" : "text"}
         value={typeof value === "string" ? value : ""} minLength={schema.minLength} maxLength={schema.maxLength} disabled={disabled}
         onChange={(event) => onChange(event.target.value)} />
-        {schema["x-widget"] === "file-path" && desktopBridge() && currentConnection()?.kind === "local" &&
+        {schema["x-widget"] === "file-path" && desktopBridge() && currentConnection()?.canChooseRecordingFile &&
           <button type="button" disabled={disabled} onClick={() => {
             const owner = currentConnection()?.id;
             setFileError("");
@@ -176,7 +193,7 @@ function SchemaField({ schema, value, onChange, disabled, label }: FieldProps) {
         : <input id={id} type="number" value={typeof value === "number" || typeof value === "string" ? value : ""}
           min={schema.minimum} max={schema.maximum} step={schema.type === "integer" ? 1 : "any"} disabled={disabled}
           onChange={(event) => onChange(event.target.value === "" ? "" : Number(event.target.value))} />}
-    {schema["x-widget"] === "file-path" && <span className="setting-detail">{t("schema.backendPath")}</span>}
+    {schema["x-widget"] === "file-path" && <span className="setting-detail">{t("schema.serverPath")}</span>}
     {schema["x-scope"] === "machine" && <span className="setting-detail">{t("schema.machineSpecific")}</span>}
     {fileError && <span className="error" role="alert">{fileError}</span>}
   </div>;

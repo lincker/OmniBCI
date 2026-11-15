@@ -13,7 +13,8 @@ class TrialOutcome:
     generation: str
     trial_number: int
     classification: Classification
-    config_revision: str | None = None
+    processing_revision: str | None = None
+    acquisition_revision: str | None = None
 
 
 @dataclass(frozen=True)
@@ -23,7 +24,7 @@ class EpochProcessed:
     generation: str
     epoch_number: int
     event_id: int | None
-    config_revision: str | None
+    processing_revision: str | None
     sample_rate: int | None
     channel_count: int
     sample_count: int
@@ -35,6 +36,7 @@ class EpochProcessed:
     classification: Classification | None = None
     trial_number: int | None = None
     error: str | None = None
+    acquisition_revision: str | None = None
 
 
 @dataclass(frozen=True)
@@ -47,11 +49,23 @@ class AcquisitionSnapshot:
 
 @dataclass(frozen=True)
 class StreamBarrier:
-    """In-band marker written by acquisition after its producer has stopped."""
+    """Ordered completion marker after acquisition stops downstream delivery."""
+
+    command_id: str | None
+    generation: str | None
+    acquisition_revision: str | None
+    last_sequence: int
+    engine_revision: str | None = None
+    command: str = "StopAndDrain"
+    input_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ProcessingInputStart:
+    """First message of one prepared input attachment, before its samples."""
 
     command_id: str
-    generation: str | None
-    config_revision: str | None
+    receipt: dict
     last_sequence: int
 
 
@@ -60,11 +74,13 @@ class StreamDrainReceipt:
     """Signal Processing completion evidence; physical outputs are not acknowledged."""
 
     generation: str | None
-    config_revision: str | None
+    acquisition_revision: str | None
     last_sequence: int
     completed_trials: int
     interrupted_epoch: bool
     outputs_settled: bool = False
+    processing_revision: str | None = None
+    engine_revision: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -72,11 +88,12 @@ class StreamDrainReceipt:
     @classmethod
     def from_value(cls, value) -> "StreamDrainReceipt":
         if not isinstance(value, Mapping) or set(value) != {
-            "generation", "config_revision", "last_sequence",
+            "generation", "acquisition_revision", "last_sequence",
             "completed_trials", "interrupted_epoch", "outputs_settled",
+            "processing_revision", "engine_revision",
         }:
             raise ValueError("Missing or invalid stream drain receipt")
-        for field in ("generation", "config_revision"):
+        for field in ("generation", "acquisition_revision", "processing_revision", "engine_revision"):
             if value[field] is not None and (
                 not isinstance(value[field], str) or not value[field]
             ):

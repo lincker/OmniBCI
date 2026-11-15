@@ -1,9 +1,9 @@
 """Stable public contracts for OmniBCI plugins.
 
-New plugins accept keyword constructor inputs ``parameters: PluginParameters``
+Plugins accept keyword constructor inputs ``parameters: PluginParameters``
 and ``context: PluginContext``. The host validates and copies the JSON-compatible
 parameter mapping before construction. Plugins should keep runtime state separate
-from those inputs. Existing port constructors remain supported by legacy hosts.
+from those inputs.
 
 The context contains host-provided metadata only; devices, renderers and services
 are supplied through their existing lifecycle contracts, never serialized here.
@@ -32,16 +32,12 @@ from omnibci.domain.signal_info import SignalInfo
 
 PluginParameters = Mapping[str, Any]
 
-# Preserve the public import used by plugins built before the SignalInfo rename.
-AcquisitionDescriptor = SignalInfo
-
-
 @dataclass(frozen=True, slots=True)
 class PluginContext:
     """Immutable metadata that can cross a multiprocessing spawn boundary.
 
     ``sample_rate`` describes the acquired signal and can be absent before a
-    source connects. ``config_revision`` identifies the host's applied snapshot.
+    source connects. ``module_revision`` identifies the module that loaded the plugin.
     ``resource_root`` is the trusted asset directory of the selected package,
     supplied as an absolute string path by the host; no filesystem access occurs
     while creating this context.
@@ -49,17 +45,12 @@ class PluginContext:
     ``acquired_signal`` describes normalized acquisition rows. ``input_signal``
     describes the channel IDs, names, types and units supplied to this processing
     plugin after channel selection and ordering. Their ``channels`` exclude the
-    event/trigger row. Both are absent in the legacy path.
-
-    ``channel_names`` is deprecated and retained for existing plugins. Prepared
-    contexts populate it from ``acquired_signal.channels`` for compatibility;
-    it never describes mapped input rows. New plugins should read channel
-    records from ``acquired_signal`` or ``input_signal`` as appropriate.
+    event/trigger row. These values are supplied when Processing prepares its
+    input; acquisition and output plugins can run without prepared signal metadata.
     """
 
     sample_rate: float | None = None
-    channel_names: tuple[str, ...] = ()
-    config_revision: str | None = None
+    module_revision: str | None = None
     resource_root: str | None = None
     acquired_signal: SignalInfo | None = None
     input_signal: SignalInfo | None = None
@@ -76,16 +67,7 @@ class PluginContext:
             or self.sample_rate <= 0
         ):
             raise ValueError("sample_rate must be a positive finite number")
-        if isinstance(self.channel_names, (str, bytes)):
-            raise ValueError("channel_names must be a sequence of strings")
-        try:
-            names = tuple(self.channel_names)
-        except TypeError as exc:
-            raise ValueError("channel_names must be a sequence of strings") from exc
-        if any(not isinstance(name, str) or not name for name in names):
-            raise ValueError("channel_names must contain non-empty strings")
-        object.__setattr__(self, "channel_names", names)
-        for field in ("config_revision", "resource_root"):
+        for field in ("module_revision", "resource_root"):
             value = getattr(self, field)
             if value is not None and (not isinstance(value, str) or not value.strip()):
                 raise ValueError(f"{field} must be a non-empty string or None")
@@ -94,5 +76,5 @@ class PluginContext:
 __all__ = [
     "Color", "Decoder", "Effector", "EpochDetector", "Filter", "FilterContext",
     "Paradigm", "PluginContext", "PluginParameters", "Prediction", "Rect",
-    "Renderer", "SignalChunk", "SignalSource", "SignalInfo", "AcquisitionDescriptor", "TextureHandle", "TriggerEmitter",
+    "Renderer", "SignalChunk", "SignalSource", "SignalInfo", "TextureHandle", "TriggerEmitter",
 ]

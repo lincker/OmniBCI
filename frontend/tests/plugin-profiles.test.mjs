@@ -1,4 +1,5 @@
-/** Exercise profile browsing and explicit activation through component events. */
+import { runtimeController } from "./module-fixtures.mjs";
+/** Exercise profile browsing and module actions through component events. */
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import React from "react";
@@ -12,7 +13,10 @@ const { PluginProfiles } = await server.ssrLoadModule("/src/PluginProfiles.tsx")
 const { pluginConfigApi: api, selectionKey } = await server.ssrLoadModule("/src/api/plugin-config.ts");
 const { api: controlApi } = await server.ssrLoadModule("/src/api/client.ts");
 const { runtimeConfigApi } = await server.ssrLoadModule("/src/api/runtime-config.ts");
-const { connectSource } = await server.ssrLoadModule("/src/source-lifecycle.ts");
+const { useCurrentConfiguration } = await server.ssrLoadModule("/src/hooks/useCurrentConfiguration.ts");
+const { useRuntimeControls } = await server.ssrLoadModule("/src/hooks/useRuntimeControls.ts");
+const { ModuleRuntime } = await server.ssrLoadModule("/src/ModuleRuntime.tsx");
+const { signalConfigApi } = await server.ssrLoadModule("/src/api/signal-config.ts");
 
 const selection = (packageId, version = "1.0.0") => ({ package_id: packageId, contribution_id: "main", version });
 const scanV1 = selection("example.scan45");
@@ -37,8 +41,8 @@ const schema = {
     calibration: { type: "array", default: [1, 2], items: { type: "integer" } },
   },
 };
-const definition = (kind, choice, label) => ({ kind, selection: choice, label, available: true, schema: clone(schema), controls: {} });
-const profile = (id, kind, choice, name, gain) => ({ profile_id: id, kind, selection: choice, name, parameters: { gain, calibration: [3, 4] }, revision: 2 });
+const definition = (kind, choice, label) => ({ kind, selection: choice, label, configuration_version: 1, available: true, schema: clone(schema), controls: {} });
+const profile = (id, kind, choice, name, gain) => ({ profile_id: id, kind, selection: choice, name, configuration_version: 1, parameters: { gain, calibration: [3, 4] }, revision: 2 });
 
 function fixture() {
   const profiles = [
@@ -51,19 +55,21 @@ function fixture() {
     profile("notch-a", "filter", notch, "Notch A", 8),
     { ...profile("decoder-a", "decoder", decoder, "Decoder A", 1), processing_input: decoderInput(["C3", "C4"]) },
     { ...profile("decoder-b", "decoder", decoder, "Decoder B", 2), processing_input: decoderInput(["P3", "P4"]) },
+    profile("detector-a", "epoch_detector", selection("example.detector"), "Detector", 1),
     profile("trigger-a", "trigger", trigger, "Hardware trigger", 1),
     profile("paradigm-a", "paradigm", paradigm, "Visual stimulation", 1),
     profile("effector-a", "effector", effector, "Test effector", 1),
   ];
   const bind = (slot, id) => {
     const saved = profiles.find((item) => item.profile_id === id);
-    return { slot, profile_id: id, profile_revision: saved.revision, kind: saved.kind, selection: clone(saved.selection), parameters: clone(saved.parameters), ...(saved.processing_input ? { processing_input: clone(saved.processing_input) } : {}) };
+    return { slot, configuration_version: 1, profile_id: id, profile_revision: saved.revision, kind: saved.kind, selection: clone(saved.selection), parameters: clone(saved.parameters), ...(saved.processing_input ? { processing_input: clone(saved.processing_input) } : {}) };
   };
   return { profiles, definitions: [
     definition("acquisition", scanV1, "Scan45"), definition("acquisition", scanV2, "Scan45"),
     definition("acquisition", replay, "Replay"), definition("acquisition", unsavedPlugin, "New source"),
     definition("filter", bandpass, "Bandpass"), definition("filter", notch, "Notch"),
     definition("filter", emptyFilter, "New filter"), { ...definition("decoder", decoder, "Decoder"), channel_requirements: clone(channelRequirements) },
+    definition("epoch_detector", selection("example.detector"), "Epoch detector"),
     definition("trigger", trigger, "Hardware trigger"), definition("paradigm", paradigm, "Visual stimulation"),
     definition("effector", effector, "Effector"),
   ], activation: { revision: "accepted-revision", bindings: [bind("acquisition.source", "lab-a"),
@@ -109,7 +115,14 @@ function componentHarness(props) {
     const previous = internals.current;
     internals.current = dispatcher;
     cursor = 0; needsRender = false;
-    try { tree = PluginProfiles(props); } finally { internals.current = previous; }
+    try {
+      props.current = useCurrentConfiguration(props.runtime.status.accepted, props.runtime.completedRestorations);
+      const runtime = runtimeController(props.runtime);
+      const engine = { data: { running: props.engineRunning, processor_alive: false, actuation_alive: false, actuation_connected: false, ...props.engine },
+        error: props.engineAvailable === false ? new Error("Engine unavailable") : null, refresh: async () => {} };
+      const runtimeControls = useRuntimeControls(runtime, props.current, props.acquisition, engine);
+      tree = PluginProfiles({ ...props, runtime, runtimeControls });
+    } finally { internals.current = previous; }
     const effects = pendingEffects; pendingEffects = [];
     effects.forEach((effect) => effect());
   }
@@ -130,10 +143,12 @@ function componentHarness(props) {
 function elements(tree) {
   if (Array.isArray(tree)) return tree.flatMap(elements);
   if (!React.isValidElement(tree)) return [];
+  if (tree.type === ModuleRuntime) return elements(ModuleRuntime(tree.props));
   return [tree, ...elements(tree.props.children)];
 }
 function text(tree) {
   if (Array.isArray(tree)) return tree.map(text).join("");
+  if (React.isValidElement(tree) && tree.type === ModuleRuntime) return text(ModuleRuntime(tree.props));
   if (React.isValidElement(tree)) return text(tree.props.children);
   return tree === null || tree === undefined || typeof tree === "boolean" ? "" : String(tree);
 }
@@ -190,43 +205,13 @@ async function saveShortcut(harness, overrides = {}) {
   return prevented;
 }
 
-test("profile search keeps a hidden draft open and searches only the selected plugin version", async () => {
-  await withProfiles("acquisition", async (harness, calls) => {
-    form(harness).props.onChange({ gain: 19, calibration: [3, 4] }); await harness.settle();
-    await change(harness, "Search saved profiles", "  LAB B  ", "input");
-    assert.deepEqual(listedProfiles(harness).map(text), ["Lab B"]);
-    assert.match(text(harness.tree), /Showing 1 of 2 profiles/);
-    assert.match(text(harness.tree), /The open profile is hidden by this search/);
-    assert.equal(form(harness).props.value.gain, 19);
-    assert.equal(control(harness, "Profile").props.value, "lab-a");
-    assert.equal(dialog(harness), undefined);
-    await click(harness, "Clear search");
-    assert.equal(listedProfiles(harness).length, 2);
-    assert.doesNotMatch(text(harness.tree), /The open profile is hidden by this search/);
-    await change(harness, "Search saved profiles", "lab-a", "input");
-    assert.equal(listedProfiles(harness).length, 1);
-    assert.equal(listedProfiles(harness)[0].props["aria-current"], "true");
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  });
-});
-
-test("profile lists distinguish no search matches from no saved profiles", async () => {
-  await withProfiles("acquisition", async (harness) => {
-    await change(harness, "Search saved profiles", "Version 2", "input");
-    assert.equal(listedProfiles(harness).length, 0);
-    assert.match(text(harness.tree), /No profiles match this search/);
-    await change(harness, "Search saved profiles", "   ", "input");
-    assert.equal(listedProfiles(harness).length, 2);
-    await change(harness, "Plugin and version", selectionKey(unsavedPlugin));
-    assert.match(text(harness.tree), /No saved profiles for this plugin version/);
-    assert.doesNotMatch(text(harness.tree), /No profiles match this search/);
-  });
-});
-
-async function withProfiles(module, action, { engineRunning = false, streaming = false, applySucceeds = true, configure } = {}) {
+async function withProfiles(module, action, { engineRunning = false, streaming = false, connectSucceeds = true, configure } = {}) {
   const originalApi = { ...api };
   const originalControlApi = { ...controlApi };
   const originalRuntimeApi = { ...runtimeConfigApi };
+  const originalSignalApi = { ...signalConfigApi };
+  const originalDocument = globalThis.document;
+  globalThis.document = { hidden: false };
   const data = fixture();
   data.source = { connected: engineRunning, streaming, connection_id: engineRunning ? "connection-a" : null };
   data.metadata = { source_id: "scan45", connection_id: "connection-a",
@@ -234,65 +219,65 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
   data.events = [];
   data.profileKinds = [];
   configure?.(data);
-  const runtimeStatus = { recovery_required: false, operation: null, running: engineRunning, accepted_revision: data.activation?.revision ?? null,
-    applied_revision: engineRunning ? data.activation?.revision ?? null : null, generation: engineRunning ? "generation-a" : null };
-  const calls = { create: [], update: [], apply: [], review: [] };
+  const modules = ["acquisition", "processing", "stimulation", "actuation"];
+  data.revisions = Object.fromEntries([...modules, "engine"].map((module) => [module, data.activation ? `${module}-accepted` : null]));
+  data.modules = () => ({ modules: Object.fromEntries(modules.map((module) => [module, {
+    module, revision: data.revisions[module], settings: Object.fromEntries(Object.entries(data.activation?.settings ?? {})
+      .filter(([key]) => key.startsWith(`${module.toUpperCase()}.`) || module === "processing" && key === "ALGORITHM.baseline_duration")),
+    bindings: clone((data.activation?.bindings ?? []).filter((binding) => binding.slot.startsWith(`${module}.`))),
+  }])), engine: { revision: data.revisions.engine, settings: {} } });
+  const runtimeStatus = { recovery: {}, operations: {}, running: engineRunning, accepted: clone(data.revisions),
+    applied: engineRunning ? clone(data.revisions) : null, generation: engineRunning ? "generation-a" : null };
+  const calls = { create: [], connect: [] };
   api.catalog = async (kind) => clone(data.definitions.filter((item) => item.kind === kind));
   api.profiles = async (kind) => {
     data.profileKinds.push(kind);
     return clone(data.profiles.filter((item) => kind === undefined || item.kind === kind));
   };
-  api.activation = async () => clone(data.activation);
+  api.modules = async () => data.modules();
+  api.module = async (module) => data.modules().modules[module];
   api.create = async (kind, choice, name, parameters, processing_input) => {
     const input = processing_input === undefined ? {} : { processing_input: clone(processing_input) };
     calls.create.push(clone({ kind, selection: choice, name, parameters, ...input }));
-    const saved = { profile_id: `created-${calls.create.length}`, kind, selection: clone(choice), name, parameters: clone(parameters), revision: 1, ...input };
+    const saved = { profile_id: `created-${calls.create.length}`, kind, selection: clone(choice), name, parameters: clone(parameters), revision: 1, configuration_version: 1, ...input };
     data.profiles.push(saved); return clone(saved);
   };
-  api.update = async (saved, name, parameters, processing_input) => {
-    const input = processing_input === undefined ? {} : { processing_input: clone(processing_input) };
-    calls.update.push(clone({ profile: saved, name, parameters, ...input }));
-    const updated = { ...saved, name, parameters: clone(parameters), revision: saved.revision + 1, ...input };
-    data.profiles = data.profiles.map((item) => item.profile_id === saved.profile_id ? updated : item); return clone(updated);
-  };
   controlApi.acquisitionStatus = async () => clone(data.source);
-  controlApi.engineStart = async () => { data.events.push("start"); runtimeStatus.running = true; runtimeStatus.applied_revision = data.activation.revision; runtimeStatus.generation = "generation-a"; };
-  controlApi.acqConnect = async () => { data.events.push("connect"); data.source.connected = true; data.source.connection_id = "connection-a"; };
+  controlApi.stimulationStatus = async () => ({ active: false, process_alive: false, engine_connected: false, paradigm: null });
+  signalConfigApi.get = async () => null;
+  data.moduleRequests = [];
+  const startModule = async (module, { operation_id, configuration }) => {
+    data.moduleRequests.push({ module, configuration: clone(configuration) });
+    data.activation ??= { bindings: [] };
+    data.activation.bindings = [...data.activation.bindings.filter((item) => !item.slot.startsWith(`${module}.`)),
+      ...clone(configuration.bindings)];
+    data.revisions[module] = `${module}-started`;
+    runtimeStatus.accepted = clone(data.revisions); runtimeStatus.applied = clone(data.revisions);
+    return { operation_id, module, status: "succeeded", target_revisions: { [module]: data.revisions[module] },
+      result: { configuration_applied: true, action: "started" } };
+  };
+  controlApi.moduleStart = startModule;
+  controlApi.stimStart = (body) => startModule("stimulation", body);
+  controlApi.engineStart = async () => { data.events.push("start"); runtimeStatus.running = true; runtimeStatus.applied = clone(data.revisions); runtimeStatus.generation = "generation-a"; };
+  controlApi.acqConnect = async ({ operation_id, configuration: body }) => {
+    data.events.push("connect"); calls.connect.push(clone(body));
+    if (!connectSucceeds) return { operation_id, module: "acquisition", status: "failed", error: "Source configuration rejected", result: null };
+    data.activation ??= { revision: null, bindings: [] };
+    data.activation.bindings = [...data.activation.bindings.filter((item) => !item.slot.startsWith("acquisition.")),
+      ...body.bindings.map((item) => ({ ...clone(item), kind: "acquisition", configuration_version: item.configuration_version ?? 1,
+        profile_id: null, profile_revision: null }))];
+    data.revisions.acquisition = `connection-${calls.connect.length}`;
+    data.revisions.engine ??= "engine-first";
+    runtimeStatus.running = true; runtimeStatus.generation = "generation-a";
+    runtimeStatus.accepted = clone(data.revisions); runtimeStatus.applied = clone(data.revisions);
+    data.source.connected = true; data.source.connection_id = "connection-a";
+    return { operation_id, module: "acquisition", status: "succeeded", target_revisions: { acquisition: data.revisions.acquisition },
+      result: { configuration_applied: true, action: "connected" } };
+  };
   controlApi.acqDisconnect = async () => { data.events.push("disconnect"); data.source.connected = false; data.source.connection_id = null; };
   controlApi.acqMetadata = async () => { data.events.push("metadata"); return clone(data.metadata); };
   runtimeConfigApi.status = async () => runtimeStatus;
-  data.reviewDrafts = [];
-  data.expectedProfiles = [];
-  const runtime = {
-    blocked: false, status: runtimeStatus,
-    review: async (body, draft, expectedProfiles = []) => {
-      data.reviewDrafts.push(clone(draft));
-      data.expectedProfiles.push(clone(expectedProfiles));
-      runtime.profileReview = null;
-      calls.review.push(clone(body));
-      runtime.plan = { plan_id: `plan-${calls.review.length}`, expected_revision: body.expected_revision,
-        target_revision: `accepted-${calls.review.length}`, errors: [], strategy: "select_on_start",
-        changed_slots: body.refresh_slots, changed_settings: [], module: body.module };
-      return clone(runtime.plan);
-    },
-    dismissPlan: () => { runtime.plan = null; runtime.profileReview = null; },
-    apply: async (...args) => { calls.apply.push(args); },
-    applySelection: async (body) => {
-      data.events.push("apply");
-      calls.apply.push(clone(body));
-      if (!applySucceeds) return false;
-      const retained = body.module ? (data.activation?.bindings ?? []).filter((item) => !item.slot.startsWith(`${body.module}.`)) : [];
-      data.activation ??= { revision: null, bindings: [] };
-      data.activation.bindings = [...retained, ...body.bindings.map((item) => {
-        if (!item.profile_id) return { slot: item.slot, kind: "acquisition", selection: clone(item.selection),
-          parameters: clone(item.parameters), profile_id: null, profile_revision: null };
-        const profile = data.profiles.find((profile) => profile.profile_id === item.profile_id);
-        return { ...clone(profile), slot: item.slot, profile_revision: profile.revision };
-      })];
-      return true;
-    },
-    refresh: async () => {},
-  };
+  const runtime = { blocked: false, status: runtimeStatus, refresh: async () => {} };
   data.runtime = runtime;
   let harness;
   const acquisition = {
@@ -317,15 +302,17 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
     } };
     return state;
   };
-  acquisition.connect = command(connectSource);
+  acquisition.connect = command(async (body) => {
+    const result = await controlApi.acqConnect({ operation_id: crypto.randomUUID(), configuration: body });
+    if (result.result?.configuration_applied) data.current().acknowledge("acquisition", body, result.target_revisions.acquisition);
+    if (result.status !== "succeeded") throw new Error(result.error);
+  });
   acquisition.disconnect = command(() => controlApi.acqDisconnect());
   acquisition.read = command(() => controlApi.acqStreamStart());
   acquisition.stopRead = command(() => controlApi.acqStreamStop());
   data.acquisition = acquisition;
-  data.dirty = false;
-  data.openRunStates = [];
-  const props = { module, engineRunning, acquisition, runtime,
-    onDirtyChange: (dirty) => { data.dirty = dirty; }, onRun: () => { data.openRunStates.push(data.dirty); } };
+  data.openRunCalls = 0;
+  const props = { module, engineRunning, acquisition, runtime, onRun: () => { data.openRunCalls += 1; } };
   harness = componentHarness(props);
   data.remount = async () => {
     harness.dispose();
@@ -335,806 +322,331 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
   };
   try {
     await harness.settle();
+    data.current = () => props.current;
     await action(harness, calls, data);
   }
-  finally { harness.dispose(); Object.assign(api, originalApi); Object.assign(controlApi, originalControlApi); Object.assign(runtimeConfigApi, originalRuntimeApi); }
+  finally {
+    harness.dispose(); Object.assign(api, originalApi); Object.assign(controlApi, originalControlApi);
+    Object.assign(runtimeConfigApi, originalRuntimeApi); Object.assign(signalConfigApi, originalSignalApi);
+    if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument;
+  }
 }
 
-async function acceptReviewed(harness, calls, data, { revision, request = calls.review.at(-1), plan = data.runtime.plan } = {}) {
-  const applied = await data.runtime.applySelection(request);
-  const targetRevision = revision ?? plan.target_revision;
-  data.runtime.operation = { operation_id: `operation-${calls.apply.length}`, plan_id: plan.plan_id, target_revision: targetRevision, status: applied ? "succeeded" : "failed" };
-  if (applied) {
-    data.activation.revision = targetRevision;
-    data.runtime.status.accepted_revision = targetRevision;
-    data.runtime.status.applied_revision = data.runtime.status.running ? targetRevision : null;
-  }
-  data.runtime.status.operation = data.runtime.operation;
-  if (applied) data.runtime.completedOperation = clone(data.runtime.operation);
-  data.runtime.plan = null; data.runtime.profileReview = null;
-  harness.updateProps({ runtime: data.runtime });
+async function saveDraft(harness, { name = "Saved current values" } = {}) {
+  await click(harness, "Save as profile");
+  dialog(harness).props.onConfirm(name);
   await harness.settle();
 }
 
-async function saveDraft(harness, { mode, name } = {}) {
-  if (mode === "create") {
-    await click(harness, "Duplicate profile");
-    dialog(harness).props.onConfirm(name ?? dialog(harness).props.initialValue);
-    await harness.settle();
-    return;
-  }
-  if (name || !control(harness, "Profile name", "input").props.value.trim()) {
-    await change(harness, "Profile name", name ?? "New source", "input");
-  }
-  if (!button(harness, "Save profile").props.disabled) await click(harness, "Save profile");
-}
-
-async function applyReviewed(harness, calls, data, options = {}) {
-  await saveDraft(harness, options);
-  await click(harness, "Review and apply profile");
-  await acceptReviewed(harness, calls, data);
-}
-
-test("the profile selector is scoped to the selected plugin and exact version", async () => {
-  await withProfiles("acquisition", async (harness, calls) => {
-    assert.equal(control(harness, "Plugin and version").props.value, selectionKey(scanV1));
-    assert.equal(control(harness, "Profile").props.value, "lab-a");
-    assert.deepEqual(options(control(harness, "Profile")).map((item) => item.value), ["lab-b", "lab-a"]);
-    assert.equal(!!control(harness, "Plugin and version").props.disabled, false);
-    await change(harness, "Plugin and version", selectionKey(scanV2));
-    assert.equal(control(harness, "Profile").props.value, "lab-v2");
-    assert.deepEqual(options(control(harness, "Profile")).map((item) => item.value), ["lab-v2"]);
-    assert.equal(text(harness.tree).includes("Lab B"), false);
-    await change(harness, "Plugin and version", selectionKey(scanV1));
-    assert.equal(control(harness, "Profile").props.value, "lab-a", "Return to the bound profile before the first saved profile");
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  });
-});
-
-for (const modifiers of [{ ctrlKey: true }, { ctrlKey: false, metaKey: true, key: "S" }]) {
-  test(`the profile save shortcut saves only the draft (${JSON.stringify(modifiers)})`, async () => {
-    await withProfiles("processing", async (harness, calls) => {
-      await change(harness, "Profile name", "Keyboard edit", "input");
-      assert.equal(await saveShortcut(harness, modifiers), true);
-      assert.equal(calls.update.length, 1);
-      assert.equal(calls.update[0].name, "Keyboard edit");
-      assert.equal(calls.review.length, 0);
-      assert.equal(calls.apply.length, 0);
-    });
-  });
-}
-
-test("save shortcuts respect validation, dialogs, key repeats and composition", async () => {
-  await withProfiles("processing", async (harness, calls) => {
-    await change(harness, "Profile name", "", "input");
-    await saveShortcut(harness);
-    assert.equal(calls.update.length, 0);
-    await change(harness, "Profile name", "Keep this draft", "input");
-    await saveShortcut(harness, { repeat: true });
-    await saveShortcut(harness, { nativeEvent: { isComposing: true } });
-    await saveShortcut(harness, { defaultPrevented: true });
-    assert.equal(await saveShortcut(harness, { shiftKey: true }), false);
-    await click(harness, "New profile");
-    assert.ok(dialog(harness));
-    await saveShortcut(harness);
-    assert.equal(calls.update.length, 0);
-    dialog(harness).props.onCancel(); await harness.settle();
-    assert.equal(control(harness, "Profile name", "input").props.value, "Keep this draft");
-  });
-});
-
-test("keyboard saving restores the edited field after busy controls are enabled again", async () => {
-  const originalDocument = globalThis.document;
-  let restored = 0;
-  globalThis.document = { activeElement: { isConnected: true, getClientRects: () => [{}], focus: () => { restored += 1; } } };
-  try {
-    await withProfiles("processing", async (harness) => {
-      await change(harness, "Profile name", "Continue editing here", "input");
-      await saveShortcut(harness);
-      assert.equal(restored, 1);
-      assert.equal(control(harness, "Profile name", "input").props.disabled, false);
-    });
-  } finally { if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument; }
-});
-
-test("processing stage navigation retains the decoder draft and guards cross-profile changes", async () => {
-  await withProfiles("processing", async (harness, calls) => {
-    await change(harness, "Profile name", "Unfinished decoder", "input");
-    input(harness).props.onChange(decoderInput(["C4"])); await harness.settle();
-    await click(harness, "Channel mapping");
-    assert.equal(dialog(harness), undefined);
-    assert.equal(control(harness, "Profile name", "input").props.value, "Unfinished decoder");
-    assert.deepEqual(input(harness).props.value, decoderInput(["C4"]));
-    await click(harness, "Epoching");
-    assert.ok(dialog(harness));
-    dialog(harness).props.onCancel(); await harness.settle();
-    assert.deepEqual(input(harness).props.value, decoderInput(["C4"]));
-    await click(harness, "Epoching");
-    dialog(harness).props.onConfirm(""); await harness.settle();
-    assert.equal(input(harness), undefined);
-    assert.equal(calls.create.length + calls.update.length + calls.review.length + calls.apply.length, 0);
-  });
-});
-
-test("processing anchors align the focused section at the top and library expansion does not select a profile", async () => {
-  const originalDocument = globalThis.document;
-  const focused = [], scrolled = [];
-  globalThis.document = { getElementById: (id) => ({
-    focus(options) { focused.push([id, options]); }, scrollIntoView(options) { scrolled.push([id, options]); },
-  }) };
-  try {
-    await withProfiles("processing", async (harness, calls) => {
-      const toggle = button(harness, "Profiles & tools +");
-      assert.equal(toggle.props["aria-expanded"], false);
-      toggle.props.onClick(); await harness.settle();
-      assert.equal(button(harness, "Profiles & tools −").props["aria-expanded"], true);
-      await click(harness, "Channel mapping");
-      assert.deepEqual(focused.at(-1), ["processing-channel-mapping", { preventScroll: true }]);
-      assert.deepEqual(scrolled.at(-1), ["processing-channel-mapping", { block: "start" }]);
-      let finishCatalog;
-      api.catalog = () => new Promise((resolve) => { finishCatalog = resolve; });
-      const beforeLoad = focused.length;
-      await click(harness, "Epoching");
-      assert.equal(focused.length, beforeLoad, "Keep pending focus until the target editor finishes loading");
-      finishCatalog([]); await harness.settle();
-      assert.equal(focused.at(-1)[0], "processing-parameters");
-      assert.equal(calls.apply.length, 0);
-      assert.equal(calls.review.length, 0);
-    });
-  } finally { if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument; }
-});
-
-test("acquisition shows the plugin selector before its profiles on entry", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    const selectors = elements(harness.tree).filter((item) => item.type === "select");
-    assert.equal(selectors[0], control(harness, "Plugin and version"));
-    assert.equal(selectors[1], control(harness, "Profile"));
-    assert.equal(control(harness, "Plugin and version").props.value, selectionKey(scanV1));
-    assert.equal(control(harness, "Profile").props.value, "lab-a");
-    assert.equal(!!button(harness, "New profile").props.disabled, false);
-    assert.equal(form(harness).props.value.gain, 2);
-    assert.deepEqual(data.events, []);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  });
-});
-
-test("acquisition keeps one review and apply action visible outside collapsed profile details", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    const heading = elements(harness.tree).find((item) => item.type === "header" && item.props.className === "editor-heading");
-    const action = button(harness, "Review and apply profile", heading);
-    assert.equal(!!action.props.disabled, false);
-    assert.equal(elements(harness.tree).filter((item) => item.type === "button" && text(item) === "Review and apply profile").length, 1);
-    assert.equal(elements(harness.tree).filter((item) => item.type === "details").some((item) => elements(item).includes(action)), false);
-    await click(harness, "New profile");
-    assert.equal(!!button(harness, "Review and apply profile").props.disabled, false, "A new draft can open the save-required prompt");
-    assert.deepEqual(data.events, []);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  });
-});
-
-test("switching plugins from a new acquisition draft selects the target plugin's own profile", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    await click(harness, "New profile");
-    assert.equal(control(harness, "Plugin and version").props.value, selectionKey(scanV1));
-    assert.equal(control(harness, "Profile").props.value, "");
-    assert.deepEqual(options(control(harness, "Profile")).map((item) => item.value), ["", "lab-b", "lab-a"]);
-    assert.ok(control(harness, "Profile name", "input"));
-    assert.equal(form(harness).props.value.gain, 1);
-    await change(harness, "Plugin and version", selectionKey(scanV2));
-    assert.equal(dialog(harness), undefined);
-    assert.equal(control(harness, "Profile").props.value, "lab-v2");
-    assert.deepEqual(options(control(harness, "Profile")).map((item) => item.value), ["lab-v2"]);
-    assert.equal(control(harness, "Profile").props.value, "lab-v2");
-    assert.equal(form(harness).props.value.gain, 4);
-    await change(harness, "Plugin and version", selectionKey(scanV1));
-    assert.equal(control(harness, "Profile").props.value, "lab-a");
-    assert.equal(form(harness).props.value.gain, 2);
-    assert.deepEqual(data.events, []);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  });
-});
-
-test("creating or selecting acquisition profiles requires discarding unsaved parameters", async () => {
-  await withProfiles("acquisition", async (harness, calls) => {
-    form(harness).props.onChange({ gain: 9, calibration: [3, 4] }); await harness.settle();
-    await click(harness, "New profile");
-    assert.ok(dialog(harness));
-    dialog(harness).props.onCancel(); await harness.settle();
-    assert.equal(form(harness).props.value.gain, 9);
-    await click(harness, "New profile");
-    dialog(harness).props.onConfirm(""); await harness.settle();
-    form(harness).props.onChange({ gain: 11, calibration: [1, 2] }); await harness.settle();
-    await change(harness, "Profile", "lab-a");
-    assert.ok(dialog(harness));
-    dialog(harness).props.onCancel(); await harness.settle();
-    assert.equal(form(harness).props.value.gain, 11);
-    await change(harness, "Profile", "lab-a");
-    dialog(harness).props.onConfirm(""); await harness.settle();
-    assert.equal(form(harness).props.value.gain, 2);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  });
-});
-
-test("metadata is fetched explicitly without changing profiles or applied configuration", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    const savedProfiles = clone(data.profiles);
-    const accepted = clone(data.activation);
-    assert.equal(metadata(harness).props.value, null);
-    assert.equal(metadata(harness).props.onChange, undefined);
-    metadata(harness).props.onRead(); await harness.settle();
-    assert.deepEqual(data.events, ["metadata"]);
-    assert.deepEqual(metadata(harness).props.value, data.metadata);
-    assert.deepEqual(form(harness).props.value, { gain: 2, calibration: [3, 4] });
-    assert.deepEqual(data.profiles, savedProfiles);
-    assert.deepEqual(data.activation, accepted);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  }, { engineRunning: true });
-});
-
-test("failed metadata retrieval clears stale data and retains unsaved profile edits", async () => {
-  await withProfiles("acquisition", async (harness, calls) => {
-    metadata(harness).props.onRead(); await harness.settle();
-    assert.ok(metadata(harness).props.value);
-    controlApi.acqMetadata = async () => { throw new Error("Device metadata request timed out."); };
-    metadata(harness).props.onRead(); await harness.settle();
-    assert.match(text(harness.tree), /Device metadata request timed out/);
-    assert.equal(metadata(harness).props.value, null);
-    assert.equal(metadata(harness).props.busy, false);
-    assert.equal(form(harness).props.value.gain, 2);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  }, { engineRunning: true });
-});
-
-for (const [label, action] of [
-  ["profile", async (harness) => change(harness, "Profile", "lab-b")],
-  ["plugin", async (harness) => change(harness, "Plugin and version", selectionKey(replay))],
-  ["parameters", async (harness) => { form(harness).props.onChange({ gain: 8, calibration: [3, 4] }); await harness.settle(); }],
-  ["connection state", async (harness) => click(harness, "Disconnect")],
+for (const [module, slot, profileId] of [
+  ["acquisition", "acquisition.source", "lab-a"], ["processing", "processing.decoder", "decoder-a"],
+  ["stimulation", "stimulation.paradigm", "paradigm-a"], ["actuation", "actuation.effector", "effector-a"],
 ]) {
-  test(`changing ${label} clears metadata from the previous source`, async () => {
-    await withProfiles("acquisition", async (harness, calls) => {
-      metadata(harness).props.onRead(); await harness.settle();
-      assert.ok(metadata(harness).props.value);
-      await action(harness);
-      assert.equal(metadata(harness).props.value, null);
-      assert.equal(metadata(harness).props.canRead, false);
-      assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-    }, { engineRunning: true });
+  test(`${module} initializes from the selected snapshot instead of a newer saved profile`, async () => {
+    await withProfiles(module, async (h, calls, data) => {
+      assert.equal(form(h).props.value.gain, 2);
+      assert.equal(control(h, "Load saved profile").props.value, "");
+      assert.equal(data.current().hasChanges(module, data.modules().modules[module]), false);
+      assert.deepEqual(calls.create, []);
+    }, { configure: (data) => {
+      const saved = data.profiles.find((item) => item.profile_id === profileId);
+      data.activation.bindings = data.activation.bindings.filter((item) => item.slot !== slot);
+      data.activation.bindings.push({ ...clone(saved), slot, profile_revision: saved.revision,
+        parameters: { gain: 2, calibration: [3, 4] } });
+      saved.parameters.gain = 17; saved.revision += 1;
+    } });
+  });
+  test(`${module} retains edited current values without manual Apply or profile Update actions`, async () => {
+    await withProfiles(module, async (h, calls, data) => {
+      const saved = clone(data.profiles);
+      form(h).props.onChange({ gain: 23, calibration: [4, 5] }); await h.settle();
+      const labels = elements(h.tree).filter((item) => item.type === "button").map(text);
+      assert.ok(!labels.includes("Apply current configuration"));
+      assert.ok(!labels.includes("Update saved profile"));
+      assert.equal(dialog(h), undefined);
+      const request = data.current().request(module);
+      assert.ok(request.bindings.every((item) => item.slot.startsWith(`${module}.`) && !item.profile_id));
+      assert.equal(request.bindings.find((item) => item.slot === slot).parameters.gain, 23);
+      assert.deepEqual(data.profiles, saved);
+      assert.equal(data.current().hasChanges(module, data.modules().modules[module]), true);
+      assert.deepEqual(calls, { create: [], connect: [] });
+    });
   });
 }
 
-test("reconnecting between polls clears metadata even while connected and runtime generation stay unchanged", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    metadata(harness).props.onRead(); await harness.settle();
-    assert.equal(metadata(harness).props.value.connection_id, "connection-a");
-    const generation = (await runtimeConfigApi.status()).generation;
-    data.source.connection_id = "connection-b";
-    await data.acquisition.refresh(); await harness.settle();
-    assert.equal(data.source.connected, true);
-    assert.equal((await runtimeConfigApi.status()).generation, generation);
-    assert.equal(metadata(harness).props.value, null, "The previous connection's metadata must be removed");
-    assert.equal(metadata(harness).props.canRead, true, "The reconnected source can be read explicitly");
-    assert.deepEqual(data.events, ["metadata"], "A status update must not fetch metadata implicitly");
-    data.metadata.connection_id = "connection-b";
-    metadata(harness).props.onRead(); await harness.settle();
-    assert.equal(metadata(harness).props.value.connection_id, "connection-b");
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  }, { engineRunning: true });
-});
-
-
-test("changed source parameters require separate Save and Apply before connecting", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    const otherBindings = clone(data.activation.bindings.filter((item) => item.kind !== "acquisition"));
-    form(harness).props.onChange({ gain: 9, calibration: [3, 4] }); await harness.settle();
-    assert.equal(button(harness, "Connect").props.disabled, true);
-    assert.equal(!!button(harness, "Review and apply profile").props.disabled, false);
-    assert.deepEqual(data.events, []);
-    await applyReviewed(harness, calls, data);
-    await click(harness, "Connect");
-    assert.deepEqual(data.events, ["apply", "start", "connect"]);
-    assert.deepEqual(calls.apply[0].refresh_slots, ["acquisition.source"]);
-    assert.equal(calls.apply[0].module, "acquisition");
-    assert.equal(calls.apply[0].bindings.length, 1);
-    assert.deepEqual(data.activation.bindings.filter((item) => item.kind !== "acquisition"), otherBindings);
-    assert.equal(metadata(harness).props.value, null);
-    assert.deepEqual(calls.review[0].bindings, [{ slot: "acquisition.source", profile_id: "lab-a" }]);
-    assert.equal(calls.update.length, 1);
-    await click(harness, "Disconnect");
-    assert.equal(metadata(harness).props.canRead, false);
+test("Connect applies displayed source values without touching profiles or other modules", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    const others = clone(data.activation.bindings.filter((item) => item.kind !== "acquisition"));
+    form(h).props.onChange({ gain: 9, calibration: [3, 4] }); await h.settle();
+    await click(h, "Connect");
+    assert.deepEqual(data.events, ["connect"]);
+    assert.equal(calls.connect[0].bindings[0].parameters.gain, 9);
+    assert.equal(calls.create.length, 0);
+    assert.deepEqual(data.activation.bindings.filter((item) => item.kind !== "acquisition"), others);
+    assert.equal(metadata(h).props.value, null);
   });
 });
 
-test("Acquisition connects without loading or submitting unrelated processing profiles", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    const accepted = clone(data.activation);
-    await click(harness, "Connect");
-    assert.deepEqual(data.events, ["start", "connect"]);
-    assert.equal(calls.apply.length, 0);
-    assert.ok(data.profileKinds.every((kind) => kind === "acquisition"));
-    assert.deepEqual(data.activation, accepted);
+test("a first-use source connects without saved profiles or an existing activation", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    assert.equal(form(h).props.value.gain, 1);
+    await click(h, "Connect");
+    assert.deepEqual(data.events, ["connect"]);
+    assert.equal(calls.connect[0].expected_revision, null);
+    assert.equal(calls.create.length, 0);
+  }, { configure: (data) => { data.profiles = []; data.activation = null; } });
+});
+
+test("failed application retains current edits and stops before connecting", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    form(h).props.onChange({ gain: 9, calibration: [3, 4] }); await h.settle();
+    await click(h, "Connect");
+    assert.deepEqual(data.events, ["connect"]);
+    assert.equal(form(h).props.value.gain, 9);
+    assert.equal(data.current().hasChanges("acquisition", data.modules().modules.acquisition), true);
+    assert.equal(calls.create.length, 0);
+  }, { connectSucceeds: false });
+});
+
+test("loading copies a profile without applying it or linking subsequent edits to saved values", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    const activation = clone(data.activation);
+    await change(h, "Load saved profile", "lab-b");
+    assert.equal(form(h).props.value.gain, 3);
+    form(h).props.onChange({ gain: 12, calibration: [5, 6] }); await h.settle();
+    assert.equal(data.profiles.find((profile) => profile.profile_id === "lab-b").parameters.gain, 3);
+    assert.deepEqual(data.activation, activation);
+    assert.deepEqual(calls, { create: [], connect: [] });
+  });
+});
+
+test("Save as creates a snapshot without overwriting the loaded profile or applying values", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    const originalProfiles = clone(data.profiles);
+    const activation = clone(data.activation);
+    await change(h, "Load saved profile", "lab-a");
+    form(h).props.onChange({ gain: 12, calibration: [5, 6] }); await h.settle();
+    await saveDraft(h, { name: "New experiment" });
+    assert.equal(calls.create[0].parameters.gain, 12);
+    assert.equal(calls.create[0].name, "New experiment");
+    await saveDraft(h, { name: "Another experiment" });
+    assert.equal(calls.create.length, 2);
+    assert.equal(calls.connect.length, 0);
+    assert.deepEqual(data.profiles.slice(0, originalProfiles.length), originalProfiles);
+    assert.deepEqual(data.activation, activation);
+    assert.equal(control(h, "Load saved profile").props.value, "created-2");
+    assert.equal(form(h).props.value.gain, 12);
+  });
+});
+
+test("failed saves retain current values and their loaded profile", async () => {
+  await withProfiles("acquisition", async (h, calls) => {
+    await change(h, "Load saved profile", "lab-a");
+    form(h).props.onChange({ gain: 11, calibration: [5, 6] }); await h.settle();
+    api.create = async () => { throw new Error("Save unavailable"); };
+    await saveDraft(h);
+    assert.match(text(h.tree), /Save unavailable/);
+    assert.equal(form(h).props.value.gain, 11);
+    assert.equal(control(h, "Load saved profile").props.value, "lab-a");
+    assert.equal(calls.connect.length, 0);
+  });
+});
+
+test("replacing edited current values requires explicit confirmation", async () => {
+  await withProfiles("acquisition", async (h) => {
+    form(h).props.onChange({ gain: 12, calibration: [5, 6] }); await h.settle();
+    await change(h, "Load saved profile", "lab-b");
+    assert.equal(form(h).props.value.gain, 12);
+    dialog(h).props.onCancel(); await h.settle();
+    assert.equal(form(h).props.value.gain, 12);
+    await change(h, "Load saved profile", "lab-b");
+    dialog(h).props.onConfirm(); await h.settle();
+    assert.equal(form(h).props.value.gain, 3);
+  });
+});
+
+test("switching processing stages retains decoder values and mapping without discarding", async () => {
+  await withProfiles("processing", async (h, calls, data) => {
+    form(h).props.onChange({ gain: 12, calibration: [5, 6] }); await h.settle();
+    input(h).props.onChange(decoderInput(["P3", "P4"])); await h.settle();
+    await click(h, "Epoch boundary detector");
+    assert.equal(dialog(h), undefined);
+    form(h).props.onChange({ gain: 8, calibration: [7, 8] }); await h.settle();
+    await click(h, "Decoder");
+    assert.equal(form(h).props.value.gain, 12);
+    assert.deepEqual(input(h).props.value.outputs.map((item) => item.name), ["P3", "P4"]);
+    const request = data.current().request("processing");
+    assert.equal(request.bindings.find((item) => item.slot === "processing.epoch_detector").parameters.gain, 8);
+    assert.equal(request.bindings.find((item) => item.slot === "processing.decoder").processing_input.outputs[0].name, "P3");
+    assert.equal(data.current().dirty, true);
+    assert.equal(calls.connect.length, 0);
+  });
+});
+
+test("Open Run retains current edits in the shared controller without a save prompt", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    form(h).props.onChange({ gain: 12, calibration: [5, 6] }); await h.settle();
+    await click(h, "Open Run");
+    assert.equal(data.openRunCalls, 1);
+    assert.equal(dialog(h), undefined);
+    assert.equal(data.current().dirty, true);
+    assert.equal(data.current().request("acquisition").bindings[0].parameters.gain, 12);
+    assert.equal(calls.create.length + calls.connect.length, 0);
+  });
+});
+
+test("filter instances retain independent values and order without saved profiles", async () => {
+  await withProfiles("processing", async (h, calls, data) => {
+    await click(h, "Filters");
+    await change(h, "Plugin and version", selectionKey(emptyFilter));
+    form(h).props.onChange({ gain: 12, calibration: [5, 6] }); await h.settle();
+    await click(h, "Add filter instance");
+    const added = data.current().filterOrder.at(-1);
+    await click(h, "New filter instance");
+    form(h).props.onChange({ gain: 23, calibration: [7, 8] }); await h.settle();
+    await click(h, "Add filter instance");
+    const second = data.current().filterOrder.at(-1);
+    assert.equal(data.current().entries[added].parameters.gain, 12);
+    assert.equal(data.current().entries[second].parameters.gain, 23);
+    assert.equal(data.current().entries[added].profile, null);
+    await click(h, "Move up", filterRows(h).at(-1));
+    assert.ok(!elements(h.tree).some((item) => item.type === "button" && text(item) === "Apply current filter chain"));
+    const filters = data.current().request("processing").bindings.filter((item) => item.slot.startsWith("processing.filter."));
+    assert.deepEqual(filters.map((item) => item.slot), data.current().filterOrder);
+    assert.equal(filters.at(-2).parameters.gain, 23);
+    assert.equal(filters.at(-1).parameters.gain, 12);
+    assert.deepEqual(calls, { create: [], connect: [] });
+  });
+});
+
+test("adding a valid filter edits current configuration while runtime or decoder application is blocked", async () => {
+  await withProfiles("processing", async (h, calls, data) => {
+    data.runtime.blocked = true;
+    h.updateProps({ runtime: data.runtime }); await h.settle();
+    await click(h, "Filters");
+    await change(h, "Plugin and version", selectionKey(emptyFilter));
+    form(h).props.onChange({ gain: 12, calibration: [5, 6] }); await h.settle();
+    assert.equal(button(h, "Add filter instance").props.disabled, false);
+    await click(h, "Add filter instance");
+    assert.equal(data.current().entries[data.current().filterOrder.at(-1)].parameters.gain, 12);
+    assert.throws(() => data.current().request("processing"), /Configure the decoder input/);
+    assert.equal(data.activation.bindings.filter((item) => item.kind === "filter").length, 2);
+    assert.deepEqual(calls, { create: [], connect: [] });
   }, { configure: (data) => {
-    const decoder = data.activation.bindings.find((item) => item.slot === "processing.decoder");
-    decoder.profile_id = null;
+    const decoder = data.activation.bindings.find((binding) => binding.slot === "processing.decoder");
     decoder.processing_input = null;
-    decoder.processing_input_requires_review = true;
   } });
 });
 
-test("a new plugin draft cannot connect and does not save implicitly", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    await click(harness, "New profile");
-    await change(harness, "Plugin and version", selectionKey(unsavedPlugin));
-    const prepare = button(harness, "Connect");
-    assert.equal(prepare.props.disabled, true);
-    prepare.props.onClick(); await harness.settle();
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-    assert.deepEqual(data.events, []);
-    assert.ok(control(harness, "Profile name", "input"));
+test("editing one filter cannot mutate another instance with the same profile", async () => {
+  await withProfiles("processing", async (h, calls, data) => {
+    await click(h, "Filters");
+    elements(filterRows(h)[0]).find((item) => item.type === "button" && text(item).startsWith("Edit filter 1")).props.onClick(); await h.settle();
+    form(h).props.onChange({ gain: 44, calibration: [1, 2] }); await h.settle();
+    assert.equal(data.current().entries["processing.filter.first"].parameters.gain, 44);
+    assert.equal(data.current().entries["processing.filter.second"].parameters.gain, 6);
+    const request = data.current().request("processing");
+    assert.equal(request.bindings.find((item) => item.slot === "processing.filter.first").parameters.gain, 44);
+    assert.equal(calls.connect.length, 0);
+  }, { configure: (data) => {
+    const first = data.activation.bindings.find((item) => item.slot === "processing.filter.first");
+    const second = data.activation.bindings.find((item) => item.slot === "processing.filter.second");
+    Object.assign(second, clone(first), { slot: "processing.filter.second" });
+  } });
+});
+
+test("removing filters leaves the runtime unchanged until application", async () => {
+  await withProfiles("processing", async (h, calls, data) => {
+    await click(h, "Filters"); await click(h, "Remove", filterRows(h)[0]);
+    assert.equal(data.activation.bindings.filter((item) => item.kind === "filter").length, 2);
+    const request = data.current().request("processing");
+    assert.deepEqual(request.bindings.filter((item) => item.slot.startsWith("processing.filter.")).map((item) => item.slot), ["processing.filter.second"]);
+    assert.equal(calls.connect.length, 0);
   });
 });
 
-test("an unsuccessful explicit apply keeps Connect unavailable for the changed profile", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    await change(harness, "Profile", "lab-b");
-    await click(harness, "Review and apply profile");
-    assert.equal(await data.runtime.applySelection(calls.review[0]), false);
-    await harness.settle();
-    assert.equal(button(harness, "Connect").props.disabled, true);
-    assert.deepEqual(data.events, ["apply"]);
-    assert.equal(metadata(harness).props.canRead, false);
-  }, { applySucceeds: false });
+test("no trigger removes only the current trigger binding until the next runtime action", async () => {
+  await withProfiles("stimulation", async (h, calls, data) => {
+    await click(h, "Trigger"); await change(h, "Plugin and version", "");
+    const request = data.current().request("stimulation");
+    assert.ok(!request.bindings.some((item) => item.slot === "stimulation.trigger"));
+    assert.deepEqual(calls, { create: [], connect: [] });
+    assert.ok(data.activation.bindings.some((item) => item.slot === "stimulation.trigger"));
+  }, { configure: (data) => {
+    const saved = data.profiles.find((item) => item.profile_id === "trigger-a");
+    data.activation.bindings.push({ ...clone(saved), slot: "stimulation.trigger", profile_revision: saved.revision });
+  } });
 });
 
-test("Connect refuses a startup revision changed by another client", async () => {
-  await withProfiles("acquisition", async (harness, _, data) => {
-    runtimeConfigApi.status = async () => ({ ...data.runtime.status, accepted_revision: "another-selection", applied_revision: "another-selection" });
-    await click(harness, "Connect");
-    assert.deepEqual(data.events, []);
-    assert.match(text(harness.tree), /configuration changed/);
+test("invalid parameters block saving and connection", async () => {
+  await withProfiles("acquisition", async (h, calls) => {
+    form(h).props.onChange({ gain: 0, calibration: [3, 4] }); await h.settle();
+    for (const label of ["Save as profile", "Connect"]) assert.equal(button(h, label).props.disabled, true);
+    assert.equal(calls.connect.length, 0);
   });
 });
 
-test("metadata cannot read a disconnected, streaming, different or edited source", async () => {
-  await withProfiles("acquisition", async (harness) => {
-    assert.equal(metadata(harness).props.canRead, true);
-    await change(harness, "Profile", "lab-b");
-    assert.equal(metadata(harness).props.canRead, false);
-    await change(harness, "Profile", "lab-a");
-    form(harness).props.onChange({ gain: 8, calibration: [3, 4] }); await harness.settle();
-    assert.equal(metadata(harness).props.canRead, false);
+test("profile search stays scoped to the plugin version and leaves current edits intact", async () => {
+  await withProfiles("acquisition", async (h) => {
+    form(h).props.onChange({ gain: 12, calibration: [5, 6] }); await h.settle();
+    await change(h, "Search saved profiles", "Lab B", "input");
+    assert.equal(listedProfiles(h).length, 1);
+    assert.equal(form(h).props.value.gain, 12);
+    assert.ok(!options(control(h, "Load saved profile")).some((item) => item.value === "lab-v2"));
+  });
+});
+
+test("Save shortcut opens Save as and respects repeated keys and validation", async () => {
+  await withProfiles("acquisition", async (h, calls) => {
+    await saveShortcut(h, { repeat: true }); assert.equal(dialog(h), undefined);
+    await saveShortcut(h); assert.equal(dialog(h).props.title, "Save as profile");
+    assert.equal(calls.create.length, 0);
+    dialog(h).props.onCancel(); await h.settle();
+    form(h).props.onChange({ gain: 0, calibration: [3, 4] }); await h.settle();
+    await saveShortcut(h); assert.equal(dialog(h), undefined);
+  });
+});
+
+test("metadata is fetched explicitly and current parameter edits invalidate it", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    await inspectSource(h);
+    assert.deepEqual(data.events, ["metadata"]);
+    assert.equal(metadata(h).props.value.metadata, data.metadata.metadata);
+    assert.equal(calls.create.length + calls.connect.length, 0);
+    form(h).props.onChange({ gain: 9, calibration: [3, 4] }); await h.settle();
+    assert.equal(metadata(h).props.value, null);
+    assert.equal(metadata(h).props.canRead, false);
+    assert.equal(button(h, "Connect").props.disabled, true);
+    assert.match(text(h.tree), /Current parameters differ from the connected source/);
   }, { engineRunning: true });
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    assert.equal(metadata(harness).props.canRead, false);
-    assert.equal(button(harness, "Connect").props.disabled, true);
-    assert.equal(calls.update.length, 0);
-    assert.deepEqual(data.events, []);
+});
+
+test("a replaced connection invalidates metadata even while still connected", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    await inspectSource(h); data.source.connection_id = "replacement";
+    await data.acquisition.refresh(); await h.settle();
+    assert.equal(metadata(h).props.value, null);
+    assert.equal(metadata(h).props.canRead, true);
+    assert.equal(calls.connect.length, 0);
+  }, { engineRunning: true });
+});
+
+test("streaming blocks connection changes and metadata retrieval", async () => {
+  await withProfiles("acquisition", async (h) => {
+    form(h).props.onChange({ gain: 9, calibration: [3, 4] }); await h.settle();
+    assert.equal(button(h, "Connect").props.disabled, true);
+    assert.equal(button(h, "Disconnect").props.disabled, true);
+    assert.equal(metadata(h).props.canRead, false);
   }, { engineRunning: true, streaming: true });
 });
 
-test("browsing profiles and a plugin without profiles never selects a runtime binding", async () => {
-  await withProfiles("acquisition", async (harness, calls) => {
-    await change(harness, "Profile", "lab-b");
-    assert.equal(form(harness).props.value.gain, 3);
-    await change(harness, "Plugin and version", selectionKey(unsavedPlugin));
-    assert.equal(control(harness, "Plugin and version").props.value, selectionKey(unsavedPlugin));
-    assert.equal(control(harness, "Profile").props.value, "");
-    assert.deepEqual(options(control(harness, "Profile")).map((item) => item.value), [""]);
-    assert.equal(control(harness, "Profile name", "input").props.value, "new profile 1");
-    assert.deepEqual(form(harness).props.value, { gain: 1, calibration: [1, 2] });
-    assert.equal(!!button(harness, "Review and apply profile").props.disabled, false);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  });
-});
-
-test("New profile uses current plugin defaults and is named before saving", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    await change(harness, "Plugin and version", selectionKey(scanV2));
-    await click(harness, "New profile");
-    assert.deepEqual(form(harness).props.value, { gain: 1, calibration: [1, 2] });
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-    await applyReviewed(harness, calls, data, { name: "New version 2 lab" });
-    assert.deepEqual(calls.create, [{ kind: "acquisition", selection: scanV2, name: "New version 2 lab", parameters: { gain: 1, calibration: [1, 2] } }]);
-    assert.equal(calls.update.length, 0);
-    assert.equal(control(harness, "Profile").props.value, "created-1");
-    assert.equal(data.dirty, false);
-  });
-});
-
-test("duplicating edited acquisition parameters preserves the original profile and runtime", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    const original = clone(data.profiles.find((item) => item.profile_id === "lab-a"));
-    const accepted = clone(data.activation);
-    form(harness).props.onChange({ gain: 9, calibration: [10, 11] }); await harness.settle();
-    await click(harness, "Review and apply profile");
-    assert.ok(dialog(harness));
-    assert.equal(calls.create.length + calls.review.length, 0);
-    dialog(harness).props.onCancel(); await harness.settle();
-    await saveDraft(harness, { mode: "create", name: "Lab A alternative" });
-    assert.deepEqual(calls.create, [{ kind: "acquisition", selection: scanV1, name: "Lab A alternative", parameters: { gain: 9, calibration: [10, 11] } }]);
-    assert.deepEqual(data.profiles.find((item) => item.profile_id === "lab-a"), original);
-    assert.deepEqual(data.activation, accepted);
-    assert.equal(calls.update.length + calls.review.length + calls.apply.length, 0);
-    assert.equal(control(harness, "Profile").props.value, "created-1");
-    await applyReviewed(harness, calls, data);
-    assert.equal(sourceBinding(data).profile_id, "created-1");
-  });
-});
-test("plugin changes require an explicit discard when the edited profile is dirty", async () => {
-  await withProfiles("acquisition", async (harness, calls) => {
-    form(harness).props.onChange({ gain: 11, calibration: [3, 4] }); await harness.settle();
-    await change(harness, "Plugin and version", selectionKey(scanV2));
-    assert.ok(dialog(harness));
-    assert.equal(control(harness, "Plugin and version").props.value, selectionKey(scanV1));
-    dialog(harness).props.onCancel(); await harness.settle();
-    assert.equal(dialog(harness), undefined);
-    assert.equal(form(harness).props.value.gain, 11);
-    await change(harness, "Plugin and version", selectionKey(scanV2));
-    dialog(harness).props.onConfirm(""); await harness.settle();
-    assert.equal(control(harness, "Plugin and version").props.value, selectionKey(scanV2));
-    assert.equal(control(harness, "Profile").props.value, "lab-v2");
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  });
-});
-
-test("selecting no trigger reviews only trigger removal and preserves an inline acquisition source", async () => {
-  await withProfiles("stimulation", async (harness, calls, data) => {
-    const accepted = clone(data.activation);
-    await click(harness, "Trigger");
-    assert.deepEqual(options(control(harness, "Plugin and version"))[0], { value: "", label: "None (no trigger output)" });
-    await change(harness, "Plugin and version", "");
-    assert.equal(form(harness), undefined);
-    assert.equal(elements(harness.tree).some((item) => item.type === "button" && text(item) === "Save profile"), false);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-    assert.deepEqual(data.activation, accepted, "Browsing None must not change the accepted trigger");
-    await click(harness, "Review and apply profile");
-    assert.deepEqual(calls.review, [{
-      bindings: accepted.bindings.filter((item) => item.slot === "stimulation.paradigm")
-        .map((item) => ({ slot: item.slot, profile_id: item.profile_id })),
-      module: "stimulation", expected_revision: accepted.revision, refresh_slots: [], include_host_settings: false,
-    }]);
-    assert.equal(calls.create.length, 0); assert.equal(calls.update.length, 0); assert.equal(calls.apply.length, 0);
-    assert.deepEqual(data.activation, accepted, "Review still requires explicit application");
-  }, { configure: (data) => {
-    for (const [slot, profileId] of [["stimulation.trigger", "trigger-a"], ["stimulation.paradigm", "paradigm-a"]]) {
-      const saved = data.profiles.find((item) => item.profile_id === profileId);
-      data.activation.bindings.push({ ...clone(saved), slot, profile_revision: saved.revision });
-    }
-    const source = data.activation.bindings.find((item) => item.slot === "acquisition.source");
-    source.profile_id = null; source.profile_revision = null;
-    source.parameters = { gain: 8, calibration: [5, 6] };
-  } });
-});
-
-test("an unbound trigger opens as None and can browse a saved hardware profile", async () => {
-  await withProfiles("stimulation", async (harness, calls) => {
-    await click(harness, "Trigger");
-    assert.equal(control(harness, "Plugin and version").props.value, "");
-    assert.equal(form(harness), undefined);
-    await change(harness, "Plugin and version", selectionKey(trigger));
-    assert.equal(control(harness, "Profile").props.value, "trigger-a");
-    assert.equal(control(harness, "Profile name", "input").props.value, "Hardware trigger");
-    await change(harness, "Plugin and version", "");
-    assert.equal(control(harness, "Plugin and version").props.value, "");
-    assert.equal(form(harness), undefined);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  });
-});
-
-test("selecting no trigger asks before discarding an edited hardware profile", async () => {
-  await withProfiles("stimulation", async (harness, calls) => {
-    await click(harness, "Trigger");
-    await change(harness, "Plugin and version", selectionKey(trigger));
-    await change(harness, "Profile name", "Unsaved trigger name", "input");
-    await change(harness, "Plugin and version", "");
-    assert.ok(dialog(harness));
-    assert.equal(control(harness, "Plugin and version").props.value, selectionKey(trigger));
-    dialog(harness).props.onCancel(); await harness.settle();
-    assert.equal(control(harness, "Profile name", "input").props.value, "Unsaved trigger name");
-    await change(harness, "Plugin and version", "");
-    dialog(harness).props.onConfirm(""); await harness.settle();
-    assert.equal(control(harness, "Plugin and version").props.value, "");
-    assert.equal(form(harness), undefined);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  });
-});
-
-test("required plugin slots do not offer the no-trigger option", async () => {
-  for (const module of ["acquisition", "processing", "stimulation"]) {
-    await withProfiles(module, async (harness) => {
-      assert.equal(options(control(harness, "Plugin and version")).some((item) => item.value === ""), false);
-    });
-  }
-});
-
-test("reviewing changed parameters requires a separate save and shows the changed values", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    const accepted = clone(data.activation), original = clone(data.profiles);
-    form(harness).props.onChange({ gain: 12, calibration: [3, 4] }); await harness.settle();
-    assert.equal(button(harness, "Connect").props.disabled, true);
-    await click(harness, "Review and apply profile");
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-    assert.deepEqual(data.activation, accepted);
-    assert.deepEqual(data.profiles, original);
-    assert.ok(dialog(harness));
-    assert.match(dialog(harness).props.message, /save/i);
-    assert.match(text(dialog(harness).props.details), /gain/);
-    assert.match(text(dialog(harness).props.details), /12/);
-    dialog(harness).props.onCancel(); await harness.settle();
-    await click(harness, "Save profile");
-    assert.equal(calls.update.length, 1);
-    assert.deepEqual(data.activation, accepted);
-    await click(harness, "Review and apply profile");
-    assert.deepEqual(calls.review[0].bindings, [{ slot: "acquisition.source", profile_id: "lab-a" }]);
-    assert.equal(data.reviewDrafts[0], undefined);
-    assert.deepEqual(calls.review[0].refresh_slots, ["acquisition.source"]);
-  });
-});
-test("profile save failures preserve edits and require saving before review", async () => {
-  await withProfiles("processing", async (harness, calls) => {
-    api.update = async () => { throw new Error("Profile changed in another console"); };
-    input(harness).props.onChange(decoderInput(["C4"])); await harness.settle();
-    await click(harness, "Save profile");
-    assert.match(text(harness.tree), /Profile changed in another console/);
-    assert.match(text(harness.tree), /Unsaved changes/);
-    assert.deepEqual(input(harness).props.value.outputs, decoderInput(["C4"]).outputs);
-    await click(harness, "Review and apply profile");
-    assert.ok(dialog(harness));
-    assert.equal(calls.review.length, 0);
-    assert.equal(button(harness, "Save profile").props.disabled, false);
-    assert.equal(calls.apply.length, 0);
-  });
-});
-
-test("profile saving preserves and distinguishes unapplied filter order", async () => {
-  await withProfiles("processing", async (harness, calls) => {
-    await click(harness, "Filters");
-    await click(harness, "Move down", filterRows(harness)[0]);
-    await change(harness, "Profile name", "Renamed filter", "input");
-    await click(harness, "Save profile");
-    assert.match(text(harness.tree), /Profile saved/);
-    assert.match(text(harness.tree), /Filter order not applied/);
-    assert.equal(control(harness, "Filter 1 profile").props.value, "notch-a");
-    assert.equal(calls.review.length, 0);
-    assert.equal(calls.apply.length, 0);
-  });
-});
-
-test("new acquisition drafts are named and saved before runtime review", async () => {
-  await withProfiles("acquisition", async (harness, calls) => {
-    await click(harness, "New profile");
-    assert.equal(control(harness, "Profile name", "input").props.value, "new profile 1");
-    assert.equal(button(harness, "Save profile").props.disabled, false);
-    assert.equal(button(harness, "Connect").props.disabled, true);
-    await click(harness, "Review and apply profile");
-    assert.ok(dialog(harness));
-    assert.equal(calls.review.length + calls.create.length, 0);
-    dialog(harness).props.onCancel(); await harness.settle();
-    await change(harness, "Profile name", "Named source", "input");
-    await click(harness, "Save profile");
-    assert.equal(calls.create[0].name, "Named source");
-    assert.equal(calls.review.length + calls.apply.length, 0);
-  });
-});
-test("filter instances select a plugin and its profiles while retaining stable order", async () => {
-  await withProfiles("processing", async (harness, calls) => {
-    await click(harness, "Filters");
-    assert.equal(control(harness, "Filter 1 plugin").props.value, selectionKey(bandpass));
-    assert.deepEqual(options(control(harness, "Filter 1 profile")).map((item) => item.value), ["band-a", "band-b"]);
-    await change(harness, "Filter 1 profile", "band-b");
-    await click(harness, "Move down", filterRows(harness)[0]);
-    assert.equal(control(harness, "Filter 1 profile").props.value, "notch-a");
-    assert.equal(control(harness, "Filter 2 profile").props.value, "band-b");
-    await change(harness, "Plugin and version", selectionKey(notch));
-    assert.equal(dialog(harness), undefined, "Browsing an editor must retain pending filter chain changes");
-    assert.equal(control(harness, "Filter 1 profile").props.value, "notch-a");
-    assert.equal(control(harness, "Filter 2 profile").props.value, "band-b");
-    await click(harness, "Review and apply filter chain");
-    assert.deepEqual(calls.review[0].bindings.filter((item) => item.slot.startsWith("processing.filter.")), [
-      { slot: "processing.filter.second", profile_id: "notch-a" },
-      { slot: "processing.filter.first", profile_id: "band-b" },
-    ]);
-    assert.equal(calls.apply.length, 0);
-  });
-});
-
-for (const target of ["decoder", "filter chain"]) {
-  test(`reviewing a ${target} preserves an active inline acquisition source`, async () => {
-    await withProfiles("processing", async (harness, calls, data) => {
-      const accepted = clone(data.activation);
-      if (target === "decoder") {
-        await change(harness, "Profile", "decoder-b");
-        await click(harness, "Review and apply profile");
-      } else {
-        await click(harness, "Filters");
-        await change(harness, "Filter 1 profile", "band-b");
-        await click(harness, "Review and apply filter chain");
-      }
-      assert.equal(calls.review.length, 1);
-      assert.equal(calls.review[0].module, "processing");
-      assert.ok(calls.review[0].bindings.every((item) => item.slot.startsWith("processing.")));
-      const changedSlot = target === "decoder" ? "processing.decoder" : "processing.filter.first";
-      assert.deepEqual(calls.review[0].bindings.find((item) => item.slot === changedSlot), {
-        slot: changedSlot, profile_id: target === "decoder" ? "decoder-b" : "band-b",
-      });
-      assert.equal(calls.review[0].bindings.length, accepted.bindings.filter((item) => item.slot.startsWith("processing.")).length);
-      assert.deepEqual(data.activation, accepted, "Review does not save or apply the inline source");
-      assert.equal(calls.create.length, 0);
-      assert.equal(calls.update.length, 0);
-      assert.equal(calls.apply.length, 0);
-    }, { configure: (data) => {
-      const source = data.activation.bindings.find((item) => item.slot === "acquisition.source");
-      source.profile_id = null;
-      source.profile_revision = null;
-      source.parameters = { gain: 8, calibration: [5, 6] };
-    } });
-  });
-}
-
-test("a filter plugin without a profile cannot be applied until a saved profile is chosen", async () => {
-  await withProfiles("processing", async (harness, calls) => {
-    await click(harness, "Filters");
-    await change(harness, "Filter 1 plugin", selectionKey(emptyFilter));
-    assert.equal(control(harness, "Filter 1 profile").props.value, "");
-    assert.equal(!!button(harness, "Review and apply filter chain").props.disabled, true);
-    await change(harness, "Filter 1 plugin", selectionKey(notch));
-    assert.equal(control(harness, "Filter 1 profile").props.value, "notch-a");
-    assert.equal(!!button(harness, "Review and apply filter chain").props.disabled, false);
-    assert.equal(calls.review.length, 0); assert.equal(calls.apply.length, 0);
-  });
-});
-
-test("discarding an editor change preserves pending filter order, while Discard resets both", async () => {
-  await withProfiles("processing", async (harness, calls) => {
-    await click(harness, "Filters");
-    await click(harness, "Move down", filterRows(harness)[0]);
-    await change(harness, "Profile name", "Unsaved filter name", "input");
-    await change(harness, "Plugin and version", selectionKey(notch));
-    assert.ok(dialog(harness));
-    dialog(harness).props.onConfirm(""); await harness.settle();
-    assert.equal(control(harness, "Plugin and version").props.value, selectionKey(notch));
-    assert.equal(control(harness, "Filter 1 profile").props.value, "notch-a");
-    assert.equal(control(harness, "Filter 2 profile").props.value, "band-a");
-    await click(harness, "Discard");
-    assert.equal(dialog(harness).props.cancelLabel, "Keep editing");
-    dialog(harness).props.onCancel(); await harness.settle();
-    assert.equal(control(harness, "Filter 1 profile").props.value, "notch-a");
-    await click(harness, "Discard");
-    dialog(harness).props.onConfirm(""); await harness.settle();
-    assert.equal(control(harness, "Filter 1 profile").props.value, "band-a");
-    assert.equal(control(harness, "Filter 2 profile").props.value, "notch-a");
-    assert.equal(!!button(harness, "Review and apply filter chain").props.disabled, true);
-    assert.equal(calls.review.length, 0); assert.equal(calls.apply.length, 0);
-  });
-});
-
-
-test("decoder profiles retain independent ordered channels and wait for reviewed activation", async () => {
-  await withProfiles("processing", async (harness, calls, data) => {
-    const accepted = clone(data.activation);
-    assert.deepEqual(input(harness).props.value.outputs, decoderInput(["C3", "C4"]).outputs);
-    assert.deepEqual(input(harness).props.decoderSelection, decoder);
-    assert.deepEqual(input(harness).props.channelRequirements, channelRequirements);
-    assert.equal(metadata(harness), undefined, "Source metadata belongs on the acquisition page");
-    const updatedInput = decoderInput(["C4", "C3"]);
-    updatedInput.outputs[0].signal_type = "eeg";
-    input(harness).props.onChange(updatedInput); await harness.settle();
-    await click(harness, "Review and apply profile");
-    assert.ok(dialog(harness));
-    assert.match(text(dialog(harness).props.details), /Channel mapping/);
-    assert.match(text(dialog(harness).props.details), /sample-1/);
-    assert.equal(calls.review.length, 0);
-    dialog(harness).props.onCancel(); await harness.settle();
-    await click(harness, "Save profile");
-    assert.deepEqual(calls.update[0].processing_input, updatedInput);
-    assert.deepEqual(data.activation, accepted);
-    assert.match(text(harness.tree), /saved changes that are not selected/);
-    await change(harness, "Profile", "decoder-b");
-    assert.deepEqual(input(harness).props.value.outputs, decoderInput(["P3", "P4"]).outputs);
-    await change(harness, "Profile", "decoder-a");
-    assert.deepEqual(input(harness).props.value, updatedInput);
-    await click(harness, "Review and apply profile");
-    assert.deepEqual(calls.review[0].refresh_slots, ["processing.decoder"]);
-    assert.equal(calls.apply.length, 0);
-    assert.deepEqual(data.activation, accepted);
-  });
-});
-
-test("new decoder profiles start with all channels until descriptor IDs are available", async () => {
-  await withProfiles("processing", async (harness, calls, data) => {
-    data.profiles.find((item) => item.profile_id === "decoder-a").processing_input.outputs = [];
-    await click(harness, "Reload");
-    assert.deepEqual(input(harness).props.value.outputs, []);
-    await click(harness, "New profile");
-    assert.deepEqual(input(harness).props.value, decoderInput([]));
-    await change(harness, "Profile name", "Identity mapping", "input");
-    await click(harness, "Save profile");
-    assert.deepEqual(calls.create[0].processing_input.outputs, []);
-    await change(harness, "Profile", "decoder-a");
-    assert.deepEqual(input(harness).props.value.outputs, []);
-    assert.equal(calls.update.length, 0);
-  });
-});
-
-test("manual channel mappings save independently to decoder profiles without a connected source", async () => {
-  await withProfiles("processing", async (harness, calls, data) => {
-    const accepted = clone(data.activation);
-    const first = { schema_version: 2, outputs: [
-      { name: "Oz", source_channel_index: 4, signal_type: "eeg" },
-      { name: "O1", source_channel_index: 2, signal_type: "eeg" },
-    ] };
-    const second = { schema_version: 2, outputs: [{ name: "Eye", source_channel_index: 0, signal_type: "eog" }] };
-    input(harness).props.onChange(first); await harness.settle();
-    await click(harness, "Save profile");
-    assert.deepEqual(calls.update[0].processing_input, first);
-    await change(harness, "Profile", "decoder-b");
-    input(harness).props.onChange(second); await harness.settle();
-    await click(harness, "Save profile");
-    assert.deepEqual(calls.update[1].processing_input, second);
-    await change(harness, "Profile", "decoder-a");
-    assert.deepEqual(input(harness).props.value, first);
-    await change(harness, "Profile", "decoder-b");
-    assert.deepEqual(input(harness).props.value, second);
-    assert.equal(calls.create.length + calls.review.length + calls.apply.length, 0);
-    assert.deepEqual(data.activation, accepted);
-    assert.deepEqual(data.events, []);
-  });
-});
-
-test("invalid manual source rows block decoder profile saving", async () => {
-  await withProfiles("processing", async (harness, calls) => {
-    input(harness).props.onChange({ schema_version: 2, outputs: [{ name: "Oz", source_channel_index: -1 }] });
-    await harness.settle();
-    assert.equal(button(harness, "Save profile").props.disabled, true);
-    assert.equal(calls.update.length + calls.create.length, 0);
-  });
-});
-
-test("the input editor receives the browsed decoder requirements independently of the active decoder", async () => {
-  await withProfiles("processing", async (harness, calls, data) => {
-    const otherDecoder = selection("example.other-decoder");
-    const otherRequirements = { min_count: 1, required_names: ["P3"], default_names: ["P3", "P4"] };
-    data.definitions.push({ ...definition("decoder", otherDecoder, "Other decoder"), channel_requirements: otherRequirements });
-    await click(harness, "Reload");
-    await change(harness, "Plugin and version", selectionKey(otherDecoder));
-    assert.deepEqual(input(harness).props.decoderSelection, otherDecoder);
-    assert.deepEqual(input(harness).props.channelRequirements, otherRequirements);
-    assert.deepEqual(input(harness).props.value.outputs, []);
-    assert.deepEqual(data.activation.bindings.find((binding) => binding.slot === "processing.decoder").selection, decoder);
-    assert.equal(calls.review.length, 0);
-  });
-});
-
-test("discard and duplication keep channel input inside its decoder profile", async () => {
-  await withProfiles("processing", async (harness, calls) => {
-    input(harness).props.onChange(decoderInput(["C4"])); await harness.settle();
-    await click(harness, "Discard");
-    dialog(harness).props.onCancel(); await harness.settle();
-    assert.deepEqual(input(harness).props.value.outputs, decoderInput(["C4"]).outputs);
-    await click(harness, "Discard");
-    dialog(harness).props.onConfirm(""); await harness.settle();
-    assert.deepEqual(input(harness).props.value.outputs, decoderInput(["C3", "C4"]).outputs);
-    input(harness).props.onChange(decoderInput(["C4"])); await harness.settle();
-    await click(harness, "Duplicate profile");
-    dialog(harness).props.onConfirm("Decoder C"); await harness.settle();
-    assert.deepEqual(calls.create[0].processing_input.outputs, decoderInput(["C4"]).outputs);
-    assert.equal(calls.update.length, 0);
-    await change(harness, "Profile", "decoder-a");
-    assert.deepEqual(input(harness).props.value.outputs, decoderInput(["C3", "C4"]).outputs);
-  });
-});
-
-test("renaming a decoder without channel mappings does not create a mapping implicitly", async () => {
-  await withProfiles("processing", async (harness, calls, data) => {
-    delete data.profiles.find((item) => item.profile_id === "decoder-a").processing_input;
-    await click(harness, "Reload");
-    assert.equal(input(harness).props.value, null);
-    assert.equal(button(harness, "Duplicate profile").props.disabled, true);
-    assert.match(text(harness.tree), /before duplicating this profile/);
-    await change(harness, "Profile name", "Renamed decoder", "input");
-    await click(harness, "Save profile");
-    assert.equal("processing_input" in calls.update[0], false);
-    assert.equal(input(harness).props.value, null);
+test("refreshing the library preserves current values despite changed saved profiles", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    form(h).props.onChange({ gain: 8, calibration: [3, 4] }); await h.settle();
+    data.profiles.find((item) => item.profile_id === "lab-a").parameters.gain = 17;
+    await click(h, "Reload");
+    assert.equal(form(h).props.value.gain, 8);
+    assert.equal(calls.create.length + calls.connect.length, 0);
   });
 });
 
@@ -1167,27 +679,86 @@ function observedCurryLabels(data, expected = null) {
     channel_labels: curryLabels, protocol_version: 803, data_size: 4, allow_amplifier_control: true });
 }
 
-test("Curry8 adopts ordered metadata labels including Trigger only after an explicit action", async () => {
+
+test("metadata is fetched explicitly without changing profiles or applied configuration", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
-    assert.equal(form(harness).props.schema.properties.channel_labels, undefined);
-    await inspectSource(harness);
-    assert.equal(form(harness).props.value.channel_labels, undefined);
-    metadata(harness).props.onUseObserved(); await harness.settle();
-    assert.deepEqual(form(harness).props.value, { gain: 2, calibration: [3, 4], sample_rate: 500,
-      channel_count: 3, channel_labels: curryLabels }, "Use descriptor dimensions and ordered native labels");
-    assert.match(text(harness.tree), /Channel labelsC3, C4, Trigger/);
-    assert.equal(calls.update.length, 0);
-    assert.equal(data.activation.bindings[0].parameters.channel_labels, undefined);
-    await click(harness, "Review and apply profile");
-    assert.ok(dialog(harness));
-    assert.equal(calls.update.length + calls.review.length, 0);
-    assert.equal(data.activation.bindings[0].parameters.channel_labels, undefined);
-    dialog(harness).props.onCancel(); await harness.settle();
-    await applyReviewed(harness, calls, data);
-    assert.deepEqual(calls.update[0].parameters.channel_labels, curryLabels);
-    await inspectSource(harness);
-    assert.deepEqual(data.activation.bindings.find((item) => item.slot === "acquisition.source").parameters.channel_labels, curryLabels);
-  }, { configure: observedCurryLabels });
+    const savedProfiles = clone(data.profiles);
+    const accepted = clone(data.activation);
+    assert.equal(metadata(harness).props.value, null);
+    assert.equal(metadata(harness).props.onChange, undefined);
+    metadata(harness).props.onRead(); await harness.settle();
+    assert.deepEqual(data.events, ["metadata"]);
+    assert.deepEqual(metadata(harness).props.value, data.metadata);
+    assert.deepEqual(form(harness).props.value, { gain: 2, calibration: [3, 4] });
+    assert.deepEqual(data.profiles, savedProfiles);
+    assert.deepEqual(data.activation, accepted);
+    assert.deepEqual(calls, { create: [], connect: [] });
+  }, { engineRunning: true });
+});
+
+test("failed metadata retrieval clears stale data and retains unsaved profile edits", async () => {
+  await withProfiles("acquisition", async (harness, calls) => {
+    metadata(harness).props.onRead(); await harness.settle();
+    assert.ok(metadata(harness).props.value);
+    controlApi.acqMetadata = async () => { throw new Error("Device metadata request timed out."); };
+    metadata(harness).props.onRead(); await harness.settle();
+    assert.match(text(harness.tree), /Device metadata request timed out/);
+    assert.equal(metadata(harness).props.value, null);
+    assert.equal(metadata(harness).props.busy, false);
+    assert.equal(form(harness).props.value.gain, 2);
+    assert.deepEqual(calls, { create: [], connect: [] });
+  }, { engineRunning: true });
+});
+
+test("reconnecting between polls clears metadata even while connected and runtime generation stay unchanged", async () => {
+  await withProfiles("acquisition", async (harness, calls, data) => {
+    metadata(harness).props.onRead(); await harness.settle();
+    assert.equal(metadata(harness).props.value.connection_id, "connection-a");
+    const generation = (await runtimeConfigApi.status()).generation;
+    data.source.connection_id = "connection-b";
+    await data.acquisition.refresh(); await harness.settle();
+    assert.equal(data.source.connected, true);
+    assert.equal((await runtimeConfigApi.status()).generation, generation);
+    assert.equal(metadata(harness).props.value, null, "The previous connection's metadata must be removed");
+    assert.equal(metadata(harness).props.canRead, true, "The reconnected source can be read explicitly");
+    assert.deepEqual(data.events, ["metadata"], "A status update must not fetch metadata implicitly");
+    data.metadata.connection_id = "connection-b";
+    metadata(harness).props.onRead(); await harness.settle();
+    assert.equal(metadata(harness).props.value.connection_id, "connection-b");
+    assert.deepEqual(calls, { create: [], connect: [] });
+  }, { engineRunning: true });
+});
+
+test("required plugin slots do not offer the no-trigger option", async () => {
+  for (const module of ["acquisition", "processing", "stimulation"]) {
+    await withProfiles(module, async (harness) => {
+      assert.equal(options(control(harness, "Plugin and version")).some((item) => item.value === ""), false);
+    });
+  }
+});
+
+test("invalid manual source rows block decoder profile saving", async () => {
+  await withProfiles("processing", async (harness, calls) => {
+    input(harness).props.onChange({ schema_version: 2, outputs: [{ name: "Oz", source_channel_index: -1 }] });
+    await harness.settle();
+    assert.equal(button(harness, "Save as profile").props.disabled, true);
+    assert.equal(calls.create.length, 0);
+  });
+});
+
+test("the input editor receives the browsed decoder requirements independently of the active decoder", async () => {
+  await withProfiles("processing", async (harness, calls, data) => {
+    const otherDecoder = selection("example.other-decoder");
+    const otherRequirements = { min_count: 1, required_names: ["P3"], default_names: ["P3", "P4"] };
+    data.definitions.push({ ...definition("decoder", otherDecoder, "Other decoder"), channel_requirements: otherRequirements });
+    await click(harness, "Reload");
+    await change(harness, "Plugin and version", selectionKey(otherDecoder));
+    assert.deepEqual(input(harness).props.decoderSelection, otherDecoder);
+    assert.deepEqual(input(harness).props.channelRequirements, otherRequirements);
+    assert.deepEqual(input(harness).props.value.outputs, []);
+    assert.deepEqual(data.activation.bindings.find((binding) => binding.slot === "processing.decoder").selection, decoder);
+    assert.equal(calls.connect.length, 0);
+  });
 });
 
 test("Curry8 label adoption preserves duplicate and blank names without synthesizing a trigger label", async () => {
@@ -1197,29 +768,9 @@ test("Curry8 label adoption preserves duplicate and blank names without synthesi
     metadata(harness).props.onRead(); await harness.settle();
     metadata(harness).props.onUseObserved(); await harness.settle();
     assert.deepEqual(form(harness).props.value.channel_labels, labels);
-    assert.equal(calls.update.length, 0);
+    assert.equal(calls.create.length, 0);
   }, { engineRunning: true, configure: observedCurryLabels });
 });
-
-for (const raw of ["Device information", "null", "[]", "{}", '{"channel_labels":null}',
-  '{"channel_labels":"C3,C4,Trigger"}', '{"channel_labels":[]}', '{"channel_labels":["C3","C4"]}',
-  '{"channel_labels":["C3",4,"Trigger"]}', '{"channel_labels":["C3",null,"Trigger"]}']) {
-  test(`Curry8 adoption omits stale labels when metadata is ${raw}`, async () => {
-    await withProfiles("acquisition", async (harness, calls, data) => {
-      assert.deepEqual(form(harness).props.value.channel_labels, curryLabels);
-      data.metadata.metadata = raw;
-      metadata(harness).props.onRead(); await harness.settle();
-      metadata(harness).props.onUseObserved(); await harness.settle();
-      assert.equal(form(harness).props.value.channel_labels, undefined);
-      assert.equal(form(harness).props.value.sample_rate, 500);
-      assert.equal(form(harness).props.value.channel_count, 3);
-      assert.equal(calls.create.length, 0);
-      assert.equal(calls.update.length, 0);
-    }, { engineRunning: true, configure: (data) => observedCurryLabels(data, {
-      sample_rate: 1000, channel_count: 3, channel_labels: curryLabels,
-    }) });
-  });
-}
 
 test("File Reader does not import Curry8 labels from opaque metadata", async () => {
   await withProfiles("acquisition", async (harness) => {
@@ -1233,59 +784,6 @@ test("File Reader does not import Curry8 labels from opaque metadata", async () 
   } });
 });
 
-for (const mode of ["create", "update"]) {
-  test(`Curry8 saved labels change only after explicit adoption and ${mode} confirmation`, async () => {
-    const previousLabels = ["F3", "F4", "Event"];
-    await withProfiles("acquisition", async (harness, calls, data) => {
-      metadata(harness).props.onRead(); await harness.settle();
-      metadata(harness).props.onUseObserved(); await harness.settle();
-      assert.deepEqual(form(harness).props.value.channel_labels, curryLabels);
-      assert.deepEqual(sourceBinding(data).parameters.channel_labels, previousLabels);
-      await applyReviewed(harness, calls, data, { mode });
-      assert.deepEqual(sourceBinding(data).parameters.channel_labels, curryLabels);
-      assert.deepEqual((mode === "create" ? calls.create : calls.update)[0].parameters.channel_labels, curryLabels);
-      if (mode === "create") assert.deepEqual(data.profiles.find((item) => item.profile_id === "lab-a").parameters.channel_labels, previousLabels);
-    }, { engineRunning: true, configure: (data) => observedCurryLabels(data, {
-      sample_rate: 1000, channel_count: 3, channel_labels: previousLabels,
-    }) });
-  });
-}
-
-for (const pluginType of ["neuroscan_curry8_reader", "file_reader"]) {
-  test(`${pluginType} saves connection parameters before connecting and adopts expectations explicitly`, async () => {
-    await withProfiles("acquisition", async (harness, calls, data) => {
-      const originalProfiles = clone(data.profiles);
-      await click(harness, "New profile");
-      assert.equal(button(harness, "Connect").props.disabled, true);
-      assert.deepEqual(data.events, []);
-      await applyReviewed(harness, calls, data);
-      assert.deepEqual(calls.create[0].parameters, { gain: 1, calibration: [1, 2] });
-      await inspectSource(harness);
-      assert.equal(metadata(harness).props.value.comparison.status, "unconfirmed");
-      assert.equal(form(harness).props.value.sample_rate, undefined);
-      assert.equal(form(harness).props.value.channel_count, undefined);
-      assert.match(text(harness.tree), /Experiment expectations are not fully captured/);
-      metadata(harness).props.onUseObserved(); await harness.settle();
-      assert.equal(form(harness).props.value.sample_rate, 500);
-      assert.equal(form(harness).props.value.channel_count, 3);
-      assert.equal(calls.update.length, 0);
-      assert.equal(data.activation.bindings.find((item) => item.slot === "acquisition.source").parameters.sample_rate, undefined);
-      await applyReviewed(harness, calls, data, { mode: "update" });
-      data.metadata.comparison = { status: "matched", sample_rate: { expected: 500, actual: 500 },
-        channel_count: { expected: 3, actual: 3 } };
-      await inspectSource(harness);
-      assert.equal(metadata(harness).props.value.comparison.status, "matched");
-      data.metadata.descriptor.sample_rate = 1000;
-      data.metadata.comparison = { status: "mismatched", sample_rate: { expected: 500, actual: 1000 },
-        channel_count: { expected: 3, actual: 3 } };
-      metadata(harness).props.onRead(); await harness.settle();
-      assert.equal(form(harness).props.value.sample_rate, 500);
-      assert.equal(metadata(harness).props.value.comparison.status, "mismatched");
-      assert.deepEqual(data.profiles.filter((item) => item.profile_id !== "created-1"), originalProfiles);
-    }, { configure: (data) => observedSource(data, null, pluginType) });
-  });
-}
-
 test("explicit metadata inspection can repeat on a connected source without promoting expectations", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
     await inspectSource(harness);
@@ -1294,44 +792,8 @@ test("explicit metadata inspection can repeat on a connected source without prom
     assert.equal(form(harness).props.value.sample_rate, undefined);
     assert.equal(form(harness).props.value.channel_labels, undefined);
     assert.equal(data.activation.bindings[0].parameters.sample_rate, undefined);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
+    assert.deepEqual(calls, { create: [], connect: [] });
   }, { engineRunning: true, configure: observedCurryLabels });
-});
-
-test("a failed independent save retains adopted observations for retry", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    metadata(harness).props.onRead(); await harness.settle();
-    metadata(harness).props.onUseObserved(); await harness.settle();
-    const original = clone(data.profiles), update = api.update;
-    api.update = async () => { throw new Error("Profile could not be saved."); };
-    await click(harness, "Save profile");
-    assert.match(text(harness.tree), /Profile could not be saved/);
-    assert.deepEqual(form(harness).props.value, { gain: 2, calibration: [3, 4], sample_rate: 500, channel_count: 3 });
-    assert.deepEqual(data.profiles, original);
-    assert.equal(calls.apply.length + calls.review.length, 0);
-    assert.equal(data.dirty, true);
-    api.update = update;
-    await applyReviewed(harness, calls, data);
-    assert.equal(calls.update.length, 1);
-    assert.equal(control(harness, "Profile").props.value, "lab-a");
-    assert.equal(data.dirty, false);
-  }, { engineRunning: true, configure: observedSource });
-});
-test("a metadata failure leaves the connected source visible and releases the editor for retry", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    controlApi.acqMetadata = async () => { throw new Error("Device metadata request timed out."); };
-    await inspectSource(harness);
-    assert.match(text(harness.tree), /Device metadata request timed out/);
-    assert.match(text(harness.tree), /The current source is connected/);
-    assert.equal(metadata(harness).props.busy, false);
-    assert.equal(metadata(harness).props.value, null);
-    assert.equal(button(harness, "Connect").props.disabled, true);
-    assert.equal(button(harness, "Disconnect").props.disabled, false);
-    assert.equal(metadata(harness).props.canRead, true);
-    assert.equal(form(harness).props.value.sample_rate, undefined);
-    assert.deepEqual(data.events, ["start", "connect"]);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  }, { configure: observedCurryLabels });
 });
 
 test("a delayed inspection response cannot be adopted after the source reconnects", async () => {
@@ -1346,72 +808,9 @@ test("a delayed inspection response cannot be adopted after the source reconnect
     assert.equal(metadata(harness).props.canUseObserved, false);
     assert.equal(form(harness).props.value.sample_rate, undefined);
     assert.equal(form(harness).props.value.channel_labels, undefined);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
+    assert.deepEqual(calls, { create: [], connect: [] });
   }, { engineRunning: true, configure: observedCurryLabels });
 });
-
-for (const pluginType of ["neuroscan_curry8_reader", "file_reader"]) {
-  test(`${pluginType} establishes its baseline only after explicit adoption and saves a new revision`, async () => {
-    await withProfiles("acquisition", async (harness, calls, data) => {
-      assert.match(text(harness.tree), /Expected experiment parameters/);
-      assert.equal(elements(harness.tree).filter((item) => item.type.name === "SchemaForm").length, 1);
-      metadata(harness).props.onRead(); await harness.settle();
-      assert.equal(metadata(harness).props.value.comparison.status, "unconfirmed");
-      assert.equal(metadata(harness).props.canUseObserved, true);
-      assert.equal(form(harness).props.value.sample_rate, undefined);
-      metadata(harness).props.onUseObserved(); await harness.settle();
-      assert.deepEqual(form(harness).props.value, { gain: 2, calibration: [3, 4], sample_rate: 500, channel_count: 3 });
-      assert.equal(metadata(harness).props.value, null);
-      assert.equal(calls.update.length, 0);
-      assert.equal(data.activation.bindings[0].parameters.sample_rate, undefined);
-      await applyReviewed(harness, calls, data, { mode: "update" });
-      assert.equal(calls.update[0].profile.revision, 2);
-      assert.equal(calls.update[0].parameters.channel_count, 3);
-      await inspectSource(harness);
-      const applied = data.activation.bindings.find((item) => item.slot === "acquisition.source");
-      assert.equal(applied.profile_revision, 3);
-      assert.equal(applied.parameters.sample_rate, 500);
-      assert.deepEqual(metadata(harness).props.value, data.metadata);
-    }, { engineRunning: true, configure: (data) => observedSource(data, null, pluginType) });
-  });
-}
-
-test("a mismatched source never overwrites expected values without explicit adoption save and apply", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    metadata(harness).props.onRead(); await harness.settle();
-    assert.equal(metadata(harness).props.value.comparison.status, "mismatched");
-    assert.equal(form(harness).props.value.sample_rate, 1000);
-    assert.equal(data.activation.bindings[0].parameters.sample_rate, 1000);
-    metadata(harness).props.onUseObserved(); await harness.settle();
-    assert.equal(button(harness, "Connect").props.disabled, true);
-    await applyReviewed(harness, calls, data, { mode: "update" });
-    await inspectSource(harness);
-    assert.equal(calls.update[0].parameters.sample_rate, 500);
-    assert.equal(calls.update[0].parameters.channel_count, 3);
-    assert.equal(data.activation.bindings.find((item) => item.slot === "acquisition.source").profile_revision, 3);
-  }, { engineRunning: true, configure: (data) => observedSource(data, { sample_rate: 1000, channel_count: 10 }) });
-});
-
-for (const pluginType of ["neuroscan_curry8_reader", "file_reader"]) {
-  test(`${pluginType} observed values can be explicitly duplicated before review`, async () => {
-    await withProfiles("acquisition", async (harness, calls, data) => {
-      const original = clone(data.profiles.find((item) => item.profile_id === "lab-a"));
-      metadata(harness).props.onRead(); await harness.settle();
-      assert.equal(metadata(harness).props.onSaveObservedProfile, undefined);
-      metadata(harness).props.onUseObserved(); await harness.settle();
-      await click(harness, "Review and apply profile");
-      assert.ok(dialog(harness));
-      assert.equal(calls.create.length + calls.review.length, 0);
-      dialog(harness).props.onCancel(); await harness.settle();
-      assert.equal(form(harness).props.value.sample_rate, 500);
-      assert.deepEqual(data.profiles.find((item) => item.profile_id === "lab-a"), original);
-      await applyReviewed(harness, calls, data, { mode: "create", name: "Observed experiment" });
-      assert.equal(sourceBinding(data).profile_id, "created-1");
-      assert.equal(sourceBinding(data).parameters.sample_rate, 500);
-      assert.deepEqual(data.profiles.find((item) => item.profile_id === "lab-a"), original);
-    }, { engineRunning: true, configure: (data) => observedSource(data, { sample_rate: 1000, channel_count: 10 }, pluginType) });
-  });
-}
 
 test("a stale adoption callback cannot apply metadata from an earlier source connection", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
@@ -1422,7 +821,7 @@ test("a stale adoption callback cannot apply metadata from an earlier source con
     staleAdopt(); await harness.settle();
     assert.equal(form(harness).props.value.sample_rate, undefined);
     assert.equal(form(harness).props.value.channel_labels, undefined);
-    assert.equal(calls.update.length, 0);
+    assert.equal(calls.create.length, 0);
     assert.equal(metadata(harness).props.canUseObserved, false);
   }, { engineRunning: true, configure: observedCurryLabels });
 });
@@ -1434,7 +833,7 @@ test("observations from an unexpected connection cannot be adopted", async () =>
     assert.equal(metadata(harness).props.canUseObserved, false);
     metadata(harness).props.onUseObserved(); await harness.settle();
     assert.equal(form(harness).props.value.sample_rate, undefined);
-    assert.equal(calls.update.length, 0);
+    assert.equal(calls.create.length, 0);
   }, { engineRunning: true, configure: observedSource });
 });
 
@@ -1446,7 +845,7 @@ test("streaming prevents adoption of a previously observed source", async () => 
     assert.equal(metadata(harness).props.canUseObserved, false);
     metadata(harness).props.onUseObserved(); await harness.settle();
     assert.equal(form(harness).props.value.sample_rate, undefined);
-    assert.equal(calls.update.length, 0);
+    assert.equal(calls.create.length, 0);
   }, { engineRunning: true, configure: observedSource });
 });
 
@@ -1459,7 +858,7 @@ test("Scan45 retains editable declarations and cannot adopt them as verified obs
     assert.equal(metadata(harness).props.canUseObserved, false);
     assert.equal(metadata(harness).props.onUseObserved, undefined);
     assert.equal(metadata(harness).props.onSaveObservedProfile, undefined);
-    assert.equal(calls.update.length, 0);
+    assert.equal(calls.create.length, 0);
   }, { engineRunning: true, configure: (data) => {
     observedSource(data, { sample_rate: 500, channel_count: 3 }, "neuroscan_scan45_reader");
     data.metadata.descriptor.provenance = "user-declared";
@@ -1467,56 +866,15 @@ test("Scan45 retains editable declarations and cannot adopt them as verified obs
   } });
 });
 
-test("new observed-source profiles leave expectations absent instead of inventing defaults", async () => {
-  await withProfiles("acquisition", async (harness) => {
-    await click(harness, "New profile");
-    assert.equal(form(harness).props.value.sample_rate, undefined);
-    assert.equal(form(harness).props.value.channel_count, undefined);
-    assert.equal(button(harness, "Connect").props.disabled, true);
-    assert.match(text(harness.tree), /Use source value/);
-  }, { configure: observedSource });
-});
-
-test("acquisition naming, saving and duplication are available without connecting", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    assert.equal(control(harness, "Profile name", "input").props.value, "Lab A");
-    assert.ok(button(harness, "Save profile"));
-    assert.ok(button(harness, "Duplicate profile"));
-    await saveDraft(harness, { mode: "create", name: "Offline source" });
-    assert.equal(calls.create[0].name, "Offline source");
-    assert.equal(calls.review.length + calls.apply.length, 0);
-    assert.deepEqual(data.events, []);
-  });
-});
-test("a saved source connects from a stopped engine without inspecting metadata, saving or applying", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    await click(harness, "Connect");
-    assert.deepEqual(data.events, ["start", "connect"]);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-    assert.equal(metadata(harness).props.value, null);
-  });
-});
-
-test("a new reported source can be saved before observing optional expectations", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    await click(harness, "New profile");
-    await applyReviewed(harness, calls, data, { name: "Connection only" });
-    assert.equal(calls.create.length, 1);
-    assert.equal(calls.create[0].parameters.sample_rate, undefined);
-    assert.equal(calls.create[0].parameters.channel_count, undefined);
-    assert.equal(!!button(harness, "Connect").props.disabled, false);
-    assert.deepEqual(data.events, ["apply"]);
-  }, { configure: observedSource });
-});
-
 test("source controls disconnect the shared current source while browsing another profile, but never while streaming", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
-    await change(harness, "Profile", "lab-b");
-    assert.match(text(harness.tree), /Current source.*Lab A/);
+    await change(harness, "Load saved profile", "lab-b");
+    assert.match(text(harness.tree), /Loaded profile: Lab B/);
+    assert.doesNotMatch(text(harness.tree), /Current source.*Lab A/);
     assert.equal(button(harness, "Disconnect").props.disabled, false);
     await button(harness, "Disconnect").props.onClick(); await harness.settle();
     assert.deepEqual(data.events, ["disconnect"]);
-    assert.equal(control(harness, "Profile").props.value, "lab-b");
+    assert.equal(control(harness, "Load saved profile").props.value, "lab-b");
   }, { engineRunning: true });
   await withProfiles("acquisition", async (harness, calls, data) => {
     assert.equal(button(harness, "Disconnect").props.disabled, true);
@@ -1525,20 +883,21 @@ test("source controls disconnect the shared current source while browsing anothe
   }, { engineRunning: true, streaming: true });
 });
 
-test("same-render Connect clicks launch one source operation", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    const prepare = button(harness, "Connect").props.onClick;
-    prepare(); prepare(); await harness.settle();
-    assert.deepEqual(data.events, ["start", "connect"]);
-    assert.equal(metadata(harness).props.busy, false);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  });
+for (const streaming of [false, true]) test(`source recovery allows Disconnect with stale streaming=${streaming}`, async () => {
+  await withProfiles("acquisition", async (harness, _calls, data) => {
+    data.runtime.status.recovery = { acquisition: "Worker state unknown" };
+    data.runtime.scopes = { acquisition: { blocked: true, recoveryRequired: true } };
+    harness.updateProps({ runtime: data.runtime }); await harness.settle();
+    assert.equal(button(harness, "Connect").props.disabled, true);
+    await click(harness, "Disconnect");
+    assert.deepEqual(data.events, ["disconnect"]);
+  }, { streaming });
 });
 
 test("shared connection updates immediately enable or disable metadata and connection actions", async () => {
   await withProfiles("acquisition", async (harness, _, data) => {
     assert.equal(button(harness, "Connect").props.disabled, false);
-    Object.assign(data.runtime.status, { running: true, applied_revision: data.activation.revision, generation: "generation-a" });
+    Object.assign(data.runtime.status, { running: true, applied: clone(data.revisions), generation: "generation-a" });
     Object.assign(data.source, { connected: true, connection_id: "external-connection" });
     await data.acquisition.refresh(); await harness.settle();
     assert.equal(button(harness, "Connect").props.disabled, true);
@@ -1563,521 +922,537 @@ test("shared status errors suppress a previously connected source", async () => 
   }, { engineRunning: true });
 });
 
-test("connecting does not inspect metadata and disables inspection if another client starts reading", async () => {
-  await withProfiles("acquisition", async (harness, _, data) => {
-    const connect = controlApi.acqConnect;
-    controlApi.acqConnect = async () => { await connect(); data.source.streaming = true; };
-    await click(harness, "Connect");
-    assert.deepEqual(data.events, ["start", "connect"]);
-    assert.equal(metadata(harness).props.value, null);
-    assert.equal(metadata(harness).props.busy, false);
-    assert.match(metadata(harness).props.readHint, /Stop reading in Run before getting fresh metadata/);
-  });
-});
-
-test("acquisition save shortcut updates the profile without reviewing or applying", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    const accepted = clone(data.activation);
-    form(harness).props.onChange({ gain: 12, calibration: [3, 4] }); await harness.settle();
-    assert.equal(await saveShortcut(harness), true);
-    assert.equal(calls.update.length, 1);
-    assert.equal(calls.update[0].parameters.gain, 12);
-    assert.equal(calls.create.length + calls.review.length + calls.apply.length, 0);
-    assert.deepEqual(data.activation, accepted);
-    assert.equal(data.dirty, false);
-  });
-});
-test("a connection failure stays beside Connect and keeps the started engine available for retry", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    const connect = controlApi.acqConnect;
-    controlApi.acqConnect = async () => { data.events.push("connect"); throw new Error("Command execution failed"); };
-    await click(harness, "Connect");
-    assert.match(text(harness.tree), /Connect:.*Command execution failed/);
-    assert.deepEqual(data.events, ["start", "connect"]);
-    assert.equal(data.runtime.status.running, true);
-    assert.equal(metadata(harness).props.busy, false);
-    assert.equal(button(harness, "Connect").props.disabled, false);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-    controlApi.acqConnect = connect;
-    await click(harness, "Connect");
-    assert.deepEqual(data.events, ["start", "connect", "connect"]);
-    assert.equal(metadata(harness).props.value, null);
-  });
-});
-
-
-test("Connect only connects the shared source and leaves metadata inspection explicit", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    assert.equal(elements(harness.tree).some((item) => item.type === "button" && text(item) === "Prepare & inspect"), false);
-    await click(harness, "Connect");
-    assert.deepEqual(data.events, ["start", "connect"]);
-    assert.equal(metadata(harness).props.value, null);
-    assert.equal(button(harness, "Connect").props.disabled, true);
-    assert.equal(button(harness, "Disconnect").props.disabled, false);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  });
-});
-
-
-const sourceBinding = (data) => data.activation.bindings.find((item) => item.slot === "acquisition.source");
-const withoutProfiles = (data) => { data.profiles = []; data.activation = null; };
-
-test("a first-use source saves independently before selecting the startup configuration", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    assert.ok(button(harness, "New profile"));
-    assert.equal(control(harness, "Profile name", "input").props.value, "new profile 1");
-    assert.equal(button(harness, "Connect").props.disabled, true);
-    form(harness).props.onChange({ gain: 7, calibration: [5, 6] }); await harness.settle();
-    await click(harness, "Review and apply profile");
-    assert.ok(dialog(harness));
-    assert.equal(calls.review.length, 0);
-    assert.equal(data.activation, null);
-    dialog(harness).props.onCancel(); await harness.settle();
-    await saveDraft(harness, { name: "First source" });
-    assert.equal(calls.create.length, 1);
-    assert.equal(data.activation, null);
-    assert.equal(data.dirty, false);
-    await click(harness, "Review and apply profile");
-    assert.deepEqual(calls.review, [{ module: "acquisition", bindings: [{ slot: "acquisition.source", profile_id: "created-1" }],
-      expected_revision: null, refresh_slots: ["acquisition.source"], include_host_settings: false }]);
-    await acceptReviewed(harness, calls, data);
-    assert.equal(sourceBinding(data).profile_id, "created-1");
-    assert.equal(data.dirty, false);
-    await click(harness, "Connect");
-    await inspectSource(harness);
-    assert.deepEqual(data.events, ["apply", "start", "connect", "metadata"]);
-    await click(harness, "Open Run");
-    assert.deepEqual(data.openRunStates, [false]);
-    assert.equal(calls.create.length, 1);
-    assert.equal(calls.update.length, 0);
-  }, { configure: withoutProfiles });
-});
-for (const pluginType of ["neuroscan_curry8_reader", "file_reader"]) {
-  test(`refresh restores an inline ${pluginType} selection, parameters and expected source values`, async () => {
+for (const raw of ["Device information", "null", "[]", "{}", '{"channel_labels":null}',
+  '{"channel_labels":"C3,C4,Trigger"}', '{"channel_labels":[]}', '{"channel_labels":["C3","C4"]}',
+  '{"channel_labels":["C3",4,"Trigger"]}', '{"channel_labels":["C3",null,"Trigger"]}']) {
+  test(`Curry8 adoption omits stale labels when metadata is ${raw}`, async () => {
     await withProfiles("acquisition", async (harness, calls, data) => {
-      const expected = clone(sourceBinding(data).parameters);
-      assert.equal(control(harness, "Plugin and version").props.value, selectionKey(scanV1));
-      assert.deepEqual(form(harness).props.value, expected);
-      assert.ok(control(harness, "Profile name", "input"));
-      assert.equal(data.dirty, false);
-      assert.equal(!!button(harness, "Connect").props.disabled, false);
-      const refreshed = await data.remount();
-      assert.deepEqual(form(refreshed).props.value, expected);
-      assert.equal(data.dirty, false);
-      await click(refreshed, "Connect");
-      assert.equal(metadata(refreshed).props.canRead, true);
-      assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-    }, { configure: (data) => {
-      observedSource(data, { sample_rate: 500, channel_count: 3,
-        ...(pluginType === "neuroscan_curry8_reader" ? { channel_labels: curryLabels } : {}) }, pluginType);
-      const source = sourceBinding(data);
-      source.profile_id = null; source.profile_revision = null;
-      source.parameters.gain = 19;
-      // A matching saved template and an earlier catalog entry must not replace the current inline setup.
-      data.definitions.unshift(definition("acquisition", unsavedPlugin, "Other default source"));
-    } });
-  });
-}
-
-test("reapplying a saved source does not create duplicate profiles", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    await applyReviewed(harness, calls, data);
-    const savedId = sourceBinding(data).profile_id;
-    await click(harness, "Connect");
-    const connection = clone(data.source), events = [...data.events];
-    await applyReviewed(harness, calls, data);
-    assert.equal(calls.create.length, 1);
-    assert.equal(calls.update.length, 0);
-    assert.equal(sourceBinding(data).profile_id, savedId);
-    assert.deepEqual(data.source, connection);
-    assert.deepEqual(data.events, [...events, "apply"]);
-    assert.equal(data.dirty, false);
-  }, { configure: withoutProfiles });
-});
-
-for (const outcome of ["cancelled", "review failed", "apply failed"]) {
-  test(`a ${outcome} configuration review retains the saved source and leaves Connect disabled`, async () => {
-    await withProfiles("acquisition", async (harness, calls, data) => {
-      form(harness).props.onChange({ gain: 11, calibration: [7, 8] }); await harness.settle();
-      await click(harness, "Save profile");
-      if (outcome === "review failed") data.runtime.review = async (body) => {
-        calls.review.push(clone(body)); data.runtime.requestError = "Configuration changed elsewhere"; return null;
-      };
-      await click(harness, "Review and apply profile");
-      if (outcome === "cancelled") data.runtime.dismissPlan();
-      if (outcome === "apply failed") await acceptReviewed(harness, calls, data);
-      harness.updateProps({ runtime: data.runtime }); await harness.settle();
-      assert.deepEqual(form(harness).props.value, { gain: 11, calibration: [7, 8] });
-      assert.equal(data.dirty, false);
-      assert.equal(button(harness, "Connect").props.disabled, true);
-      assert.equal(calls.create.length, 0); assert.equal(calls.update.length, 1);
-      assert.equal(control(harness, "Profile").props.value, "lab-a");
-    }, { applySucceeds: outcome !== "apply failed" });
-  });
-}
-
-test("applying an earlier reviewed snapshot does not erase subsequent parameter edits", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    form(harness).props.onChange({ gain: 8, calibration: [3, 4] }); await harness.settle();
-    await click(harness, "Save profile");
-    await click(harness, "Review and apply profile");
-    form(harness).props.onChange({ gain: 9, calibration: [10, 11] }); await harness.settle();
-    await acceptReviewed(harness, calls, data);
-    assert.equal(sourceBinding(data).parameters.gain, 8);
-    assert.deepEqual(form(harness).props.value, { gain: 9, calibration: [10, 11] });
-    assert.equal(data.dirty, true);
-    assert.equal(button(harness, "Connect").props.disabled, true);
-  });
-});
-
-test("successful Apply keeps the independently saved profile clean", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    form(harness).props.onChange({ gain: 8, calibration: [3, 4] }); await harness.settle();
-    await applyReviewed(harness, calls, data, { mode: "create", name: "Tested alternative" });
-    assert.equal(form(harness).props.value.gain, 8);
-    assert.equal(control(harness, "Profile").props.value, "created-1");
-    assert.equal(calls.create[0].name, "Tested alternative");
-    assert.equal(data.dirty, false);
-    await click(harness, "Open Run");
-    assert.deepEqual(data.openRunStates, [false]);
-    assert.equal(dialog(harness), undefined);
-  });
-});
-
-test("a successful unrelated operation never claims or discards the pending source draft", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    form(harness).props.onChange({ gain: 12, calibration: [3, 4] }); await harness.settle();
-    await click(harness, "Save profile");
-    await click(harness, "Review and apply profile");
-    form(harness).props.onChange({ gain: 13, calibration: [3, 4] }); await harness.settle();
-    const unrelated = { operation_id: "other-client", plan_id: "other-plan", status: "succeeded",
-      target_revision: data.runtime.plan.target_revision };
-    sourceBinding(data).parameters = { gain: 20, calibration: [3, 4] };
-    data.activation.revision = unrelated.target_revision;
-    Object.assign(data.runtime.status, { accepted_revision: unrelated.target_revision, operation: unrelated });
-    data.runtime.operation = unrelated; data.runtime.completedOperation = unrelated;
-    harness.updateProps({ runtime: data.runtime }); await harness.settle();
-    assert.equal(form(harness).props.value.gain, 13);
-    assert.equal(data.dirty, true);
-    assert.equal(button(harness, "Connect").props.disabled, true);
-    assert.equal(calls.apply.length, 0);
-  });
-});
-
-test("saving adopts normalized server parameters and clears the saved draft before applying", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    form(harness).props.onChange({ gain: 6, calibration: [3, 4] }); await harness.settle();
-    const update = api.update;
-    api.update = (profile, name, parameters) => update(profile, name, { ...parameters, timeout: 1000 });
-    await click(harness, "Save profile");
-    assert.deepEqual(form(harness).props.value, { gain: 6, calibration: [3, 4], timeout: 1000 });
-    assert.equal(data.dirty, false);
-    assert.equal(calls.review.length + calls.apply.length, 0);
-    await applyReviewed(harness, calls, data);
-    assert.equal(data.dirty, false);
-    assert.equal(!!button(harness, "Connect").props.disabled, false);
-  }, { configure: (data) => { data.definitions[0].schema.properties.timeout = { type: "integer", default: 1000 }; } });
-});
-test("a successful profile Apply with an unchanged activation revision still settles its draft", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    const revision = data.activation.revision;
-    const parameters = clone(sourceBinding(data).parameters);
-    await click(harness, "New profile");
-    form(harness).props.onChange(parameters); await harness.settle();
-    assert.equal(data.dirty, true);
-    const review = data.runtime.review;
-    data.runtime.review = async (body, draft) => {
-      await review(body, draft); data.runtime.plan.target_revision = revision; return clone(data.runtime.plan);
-    };
-    await saveDraft(harness, { name: "Same configuration" });
-    await click(harness, "Review and apply profile");
-    assert.equal(calls.review[0].bindings[0].profile_id, "created-1");
-    await acceptReviewed(harness, calls, data, { revision });
-    assert.equal(data.activation.revision, revision);
-    assert.equal(sourceBinding(data).profile_id, "created-1");
-    assert.deepEqual(form(harness).props.value, parameters);
-    assert.equal(data.dirty, false);
-    assert.equal(!!button(harness, "Connect").props.disabled, false);
-  });
-});
-
-for (const pluginType of ["neuroscan_curry8_reader", "file_reader"]) {
-  test(`a new ${pluginType} source saves before applying adopted expectations`, async () => {
-    await withProfiles("acquisition", async (harness, calls, data) => {
-      assert.equal(form(harness).props.value.sample_rate, undefined);
-      await applyReviewed(harness, calls, data);
-      await inspectSource(harness);
-      assert.equal(metadata(harness).props.canUseObserved, true);
+      assert.deepEqual(form(harness).props.value.channel_labels, curryLabels);
+      data.metadata.metadata = raw;
+      metadata(harness).props.onRead(); await harness.settle();
       metadata(harness).props.onUseObserved(); await harness.settle();
+      assert.equal(form(harness).props.value.channel_labels, undefined);
       assert.equal(form(harness).props.value.sample_rate, 500);
       assert.equal(form(harness).props.value.channel_count, 3);
-      assert.equal(data.dirty, true);
-      assert.equal(sourceBinding(data).parameters.sample_rate, undefined);
-      await applyReviewed(harness, calls, data);
-      assert.equal(sourceBinding(data).parameters.sample_rate, 500);
-      assert.equal(sourceBinding(data).parameters.channel_count, 3);
-      assert.equal(data.dirty, false);
-      assert.equal(calls.create.length, 1); assert.equal(calls.update.length, 1);
-      const refreshed = await data.remount();
-      assert.equal(form(refreshed).props.value.sample_rate, 500);
-      assert.equal(form(refreshed).props.value.channel_count, 3);
-      assert.equal(data.dirty, false);
-    }, { configure: (data) => { observedSource(data, null, pluginType); withoutProfiles(data); } });
+      assert.equal(calls.create.length, 0);
+    }, { engineRunning: true, configure: (data) => observedCurryLabels(data, {
+      sample_rate: 1000, channel_count: 3, channel_labels: curryLabels,
+    }) });
   });
 }
 
-test("new source defaults matching the applied configuration allow metadata adoption after connecting", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    await click(harness, "New profile");
-    assert.deepEqual(form(harness).props.value, { gain: 1, calibration: [1, 2] });
-    assert.equal(!!button(harness, "Connect").props.disabled, false);
-    await inspectSource(harness);
-    assert.equal(metadata(harness).props.canUseObserved, true);
-    assert.equal(typeof metadata(harness).props.onUseObserved, "function");
-    metadata(harness).props.onUseObserved(); await harness.settle();
-    assert.equal(form(harness).props.value.sample_rate, 500);
-    assert.equal(form(harness).props.value.channel_count, 3);
-    assert.equal(sourceBinding(data).parameters.sample_rate, undefined);
-    assert.equal(data.dirty, true, "Adopting observations still requires explicit reviewed Apply");
-    assert.deepEqual(data.events, ["start", "connect", "metadata"]);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  }, { configure: (data) => {
-    observedSource(data);
-    sourceBinding(data).parameters = { gain: 1, calibration: [1, 2] };
-  } });
-});
 
-for (const module of ["acquisition", "processing", "stimulation", "actuation"]) {
-  test(`${module} profiles require independent saving before review`, async () => {
-    await withProfiles(module, async (harness, calls, data) => {
-      const accepted = clone(data.activation);
-      const original = clone(data.profiles);
-      await change(harness, "Profile name", "Unsaved renamed profile", "input");
-      form(harness).props.onChange({ gain: 23, calibration: [3, 4] }); await harness.settle();
-      await click(harness, "Review and apply profile");
-      assert.ok(dialog(harness), "An unsaved profile opens a save-required prompt");
-      assert.match(dialog(harness).props.message, /save/i);
-      assert.equal(dialog(harness).props.confirmLabel, "Continue editing");
-      assert.equal(dialog(harness).props.cancelLabel, null);
-      assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-      assert.deepEqual(data.profiles, original);
-      assert.deepEqual(data.activation, accepted);
-      dialog(harness).props.onCancel(); await harness.settle();
-      await click(harness, "Save profile");
-      assert.equal(calls.update.length, 1);
-      assert.equal(calls.update[0].name, "Unsaved renamed profile");
-      assert.equal(calls.update[0].parameters.gain, 23);
-      assert.deepEqual(data.activation, accepted);
-      assert.equal(data.dirty, false);
-      await click(harness, "Review and apply profile");
-      assert.equal(calls.review.length, 1);
-      assert.ok(calls.review[0].bindings.every((item) => item.slot.startsWith(`${module}.`)));
-      assert.ok(calls.review[0].bindings.every((item) => item.profile_id));
-      assert.equal(data.reviewDrafts[0], undefined);
-      assert.equal(calls.apply.length, 0);
-    });
-  });
-  test(`${module} new profiles have an editable default name and require saving before apply`, async () => {
-    await withProfiles(module, async (harness, calls, data) => {
-      await click(harness, "New profile");
-      assert.equal(control(harness, "Profile name", "input").props.value, "new profile 1");
-      await click(harness, "Review and apply profile");
-      assert.ok(dialog(harness));
-      assert.match(dialog(harness).props.message, /save/i);
-      assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-      dialog(harness).props.onCancel(); await harness.settle();
-      await change(harness, "Profile name", `${module} independent`, "input");
-      await click(harness, "Save profile");
-      assert.equal(calls.create.length, 1);
-      assert.equal(calls.create[0].name, `${module} independent`);
-      assert.equal(calls.update.length + calls.review.length + calls.apply.length, 0);
-      assert.equal(data.dirty, false);
-    });
-  });
-}
-
-for (const [module, kind, choice, tab] of [
-  ["acquisition", "acquisition", scanV1],
-  ["processing", "decoder", decoder],
-  ["processing", "epoch_detector", selection("example.epoch"), "Epoch boundary detector"],
-  ["processing", "filter", bandpass, "Filters"],
-  ["stimulation", "paradigm", paradigm],
-  ["stimulation", "trigger", trigger, "Trigger"],
-  ["actuation", "effector", effector],
+for (const [label, action] of [
+  ["profile", async (harness) => change(harness, "Load saved profile", "lab-b")],
+  ["plugin", async (harness) => change(harness, "Plugin and version", selectionKey(replay))],
+  ["parameters", async (harness) => { form(harness).props.onChange({ gain: 8, calibration: [3, 4] }); await harness.settle(); }],
+  ["connection state", async (harness) => click(harness, "Disconnect")],
 ]) {
-  test(`${kind} new profile names skip saved conflicts, including hidden profiles`, async () => {
-    await withProfiles(module, async (harness, calls, data) => {
-      if (tab) await click(harness, tab);
-      if (kind === "trigger") await change(harness, "Plugin and version", selectionKey(choice));
-      await change(harness, "Search saved profiles", "no matching profiles", "input");
-      await click(harness, "New profile");
-      assert.equal(control(harness, "Profile name", "input").props.value, "new profile 3");
-      assert.equal(data.dirty, false);
-      await click(harness, "New profile");
-      assert.equal(control(harness, "Profile name", "input").props.value, "new profile 3");
-      await click(harness, "Save profile");
-      assert.equal(calls.create[0].name, "new profile 3");
-      assert.equal(calls.update.length + calls.review.length + calls.apply.length, 0);
-      await click(harness, "New profile");
-      assert.equal(control(harness, "Profile name", "input").props.value, "new profile 5");
-    }, { configure: (data) => {
-      if (kind === "epoch_detector") data.definitions.push(definition(kind, choice, "Epoch detector"));
-      for (const index of [1, 2, 4]) data.profiles.push(profile(`numbered-${index}`, kind, choice, `new profile ${index}`, 1));
-    } });
-  });
-}
-
-test("new profile numbering is scoped to the current plugin version", async () => {
-  await withProfiles("acquisition", async (harness) => {
-    await click(harness, "New profile");
-    assert.equal(control(harness, "Profile name", "input").props.value, "new profile 1");
-    await change(harness, "Plugin and version", selectionKey(scanV2));
-    await click(harness, "New profile");
-    assert.equal(control(harness, "Profile name", "input").props.value, "new profile 2");
-  }, { configure: (data) => {
-    data.profiles.find((item) => item.profile_id === "lab-v2").name = "new profile 1";
-    data.profiles.find((item) => item.profile_id === "replay").name = "new profile 1";
-  } });
-});
-
-
-test("save-required details include renamed fields and mask secret before and after values", async () => {
-  await withProfiles("acquisition", async (harness, calls) => {
-    await change(harness, "Profile name", "Renamed source", "input");
-    form(harness).props.onChange({ gain: 21, calibration: [3, 4], token: "new-sensitive-token" });
-    await harness.settle();
-    await click(harness, "Review and apply profile");
-    const details = text(dialog(harness).props.details);
-    assert.match(details, /Profile name/);
-    assert.match(details, /Lab A/);
-    assert.match(details, /Renamed source/);
-    assert.match(details, /gain/);
-    assert.match(details, /21/);
-    assert.match(details, /Access token/);
-    assert.doesNotMatch(details, /old-sensitive-token|new-sensitive-token/);
-    assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-  }, { configure: (data) => {
-    data.definitions[0].schema.properties.token = { type: "string", title: "Access token", "x-scope": "secret" };
-    data.profiles.find((item) => item.profile_id === "lab-a").parameters.token = "old-sensitive-token";
-    sourceBinding(data).parameters.token = "old-sensitive-token";
-  } });
-});
-
-test("Continue editing returns to the profile name without saving or applying", async () => {
-  const originalDocument = globalThis.document;
-  const focused = [];
-  globalThis.document = { getElementById: (id) => ({ focus() { focused.push(id); }, scrollIntoView() {} }) };
-  try {
+  test(`changing ${label} clears metadata from the previous source`, async () => {
     await withProfiles("acquisition", async (harness, calls) => {
-      await click(harness, "New profile");
-      await click(harness, "Review and apply profile");
-      assert.ok(dialog(harness));
-      assert.equal(dialog(harness).props.confirmLabel, "Continue editing");
-      assert.equal(dialog(harness).props.cancelLabel, null);
-      assert.match(dialog(harness).props.message, /Save this profile before applying it/);
-      assert.match(text(dialog(harness).props.details), /new profile 1/);
-      dialog(harness).props.onConfirm(""); await harness.settle();
-      assert.equal(dialog(harness), undefined);
-      assert.equal(focused.at(-1), "profile-name");
-      assert.equal(control(harness, "Profile name", "input").props.value, "new profile 1");
-      assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-    });
-  } finally { if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument; }
-});
-
-for (const target of ["Add filter instance", "Review saved values", "Review and apply filter chain"]) {
-  test(`${target} refuses unsaved filter edits before any runtime review`, async () => {
-    await withProfiles("processing", async (harness, calls) => {
-      await click(harness, "Filters");
-      if (target === "Review and apply filter chain") await click(harness, "Move down", filterRows(harness)[0]);
-      await change(harness, "Profile name", "Unsaved filter", "input");
-      await click(harness, target, target === "Review saved values" ? filterRows(harness)[0] : undefined);
-      assert.ok(dialog(harness));
-      assert.match(text(dialog(harness).props.details), /Unsaved filter/);
-      assert.equal(filterRows(harness).length, 2);
-      assert.deepEqual(calls, { create: [], update: [], apply: [], review: [] });
-    });
+      metadata(harness).props.onRead(); await harness.settle();
+      assert.ok(metadata(harness).props.value);
+      await action(harness);
+      assert.equal(metadata(harness).props.value, null);
+      assert.equal(metadata(harness).props.canRead, false);
+      assert.deepEqual(calls, { create: [], connect: [] });
+    }, { engineRunning: true });
   });
 }
 
-test("an applied source snapshot differing from its saved revision cannot silently apply that revision", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    assert.equal(form(harness).props.value.gain, 2, "Keep the actual current source visible");
-    assert.equal(data.dirty, true, "Current values differ from the saved profile");
-    await click(harness, "Review and apply profile");
-    assert.ok(dialog(harness));
-    const changes = text(dialog(harness).props.details);
-    assert.match(changes, /gain/);
-    assert.match(changes, /17/);
-    assert.match(changes, /2/);
-    assert.equal(calls.review.length, 0);
-    dialog(harness).props.onCancel(); await harness.settle();
-    await click(harness, "Save profile");
-    assert.equal(calls.update[0].parameters.gain, 2);
-    assert.equal(calls.update[0].profile.revision, 3);
-    assert.equal(data.dirty, false);
+
+test("invalid decoder mappings require explicit configuration before a processing request", async () => {
+  await withProfiles("processing", async (h, calls, data) => {
+    assert.equal(input(h).props.value, null);
+    assert.equal(button(h, "Save as profile").props.disabled, true);
+    assert.match(data.current().validationError("processing"), /Configure the decoder input/);
+    assert.throws(() => data.current().request("processing"), /Configure the decoder input/);
+    await click(h, "Filters");
+    assert.throws(() => data.current().request("processing"), /Configure the decoder input/);
+    await click(h, "Decoder");
+    input(h).props.onChange({ schema_version: 2, outputs: [] }); await h.settle();
+    assert.equal(data.current().validationError("processing"), null);
+    const request = data.current().request("processing");
+    assert.deepEqual(request.bindings.find((binding) => binding.slot === "processing.decoder").processing_input,
+      { schema_version: 2, outputs: [] });
+    assert.equal(calls.connect.length, 0);
   }, { configure: (data) => {
-    const saved = data.profiles.find((item) => item.profile_id === "lab-a");
-    saved.parameters.gain = 17;
-    saved.revision = 3;
+    const binding = data.activation.bindings.find((item) => item.slot === "processing.decoder");
+    binding.processing_input = null;
   } });
 });
 
-test("a confirmed profile save remains clean if subsequent catalog reads are unavailable", async () => {
-  await withProfiles("acquisition", async (harness, calls, data) => {
-    await click(harness, "New profile");
-    await change(harness, "Profile name", "Saved offline", "input");
-    api.catalog = api.profiles = api.activation = async () => { throw new Error("Read unavailable"); };
-    await click(harness, "Save profile");
-    assert.equal(calls.create.length, 1);
-    assert.equal(control(harness, "Profile").props.value, "created-1");
-    assert.equal(control(harness, "Profile name", "input").props.value, "Saved offline");
-    assert.equal(data.dirty, false);
-    assert.doesNotMatch(text(harness.tree), /Read unavailable/);
-    assert.equal(button(harness, "Save profile").props.disabled, true);
+test("loading a invalid decoder profile cannot silently select all channels", async () => {
+  await withProfiles("processing", async (h, _, data) => {
+    await change(h, "Load saved profile", "decoder-b");
+    assert.equal(input(h).props.value, null);
+    assert.throws(() => data.current().request("processing"), /Configure the decoder input/);
+    assert.equal(button(h, "Save as profile").props.disabled, true);
+  }, { configure: (data) => { data.profiles.find((item) => item.profile_id === "decoder-b").processing_input = null; } });
+});
+
+test("Connect normalizes schema defaults for application and comparison", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    form(h).props.onChange({ gain: 9 }); await h.settle();
+    await click(h, "Connect");
+    assert.deepEqual(calls.connect[0].bindings[0].parameters, { gain: 9, calibration: [1, 2] });
+    assert.equal(data.current().dirty, false);
+    assert.equal(data.current().hasChanges("acquisition", data.modules().modules.acquisition), false);
+    assert.equal(metadata(h).props.canRead, true);
+    assert.equal(form(h).props.value.calibration, undefined, "Normalization does not mutate the editable object");
+  }, { configure: (data) => {
+    data.definitions.find((item) => selectionKey(item.selection) === selectionKey(scanV1)).schema.required = ["gain"];
+  } });
+});
+
+test("reloading after an activation read fails blocks further commands until retry succeeds", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    form(h).props.onChange({ gain: 9, calibration: [1, 2] }); await h.settle();
+    const activation = api.module;
+    api.module = async () => { throw new Error("Configuration unavailable"); };
+    await click(h, "Reload");
+    assert.equal(data.current().modules.acquisition.ready, false);
+    assert.match(text(h.tree), /Configuration unavailable/);
+    assert.equal(button(h, "Connect").props.disabled, true);
+    assert.equal(form(h).props.value.gain, 9);
+    api.module = activation;
+    await click(h, "Reload");
+    assert.equal(data.current().modules.acquisition.ready, true);
+    assert.equal(button(h, "Connect").props.disabled, false);
+    assert.equal(form(h).props.value.gain, 9);
+    assert.equal(calls.connect.length, 0);
   });
 });
 
-for (const module of ["acquisition", "processing", "stimulation", "actuation"]) {
-  test(`${module} profiles can save while runtime configuration is unavailable`, async () => {
-    await withProfiles(module, async (harness, calls, data) => {
-      data.runtime.blocked = true;
-      harness.updateProps({ runtime: data.runtime, engineAvailable: false }); await harness.settle();
-      await change(harness, "Profile name", `${module} offline edit`, "input");
-      await click(harness, "Save profile");
-      assert.equal(calls.update.length, 1);
-      assert.equal(calls.review.length + calls.apply.length, 0);
-      assert.equal(data.dirty, false);
+test("same-render Connect clicks submit the current configuration only once", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    const connect = button(h, "Connect").props.onClick;
+    connect(); connect(); await h.settle();
+    assert.deepEqual(data.events, ["connect"]);
+    assert.equal(calls.connect.length, 1);
+    assert.equal(calls.create.length, 0);
+  });
+});
+
+test("confirmed profile saving remains successful when subsequent catalog reads fail", async () => {
+  await withProfiles("acquisition", async (h, calls) => {
+    form(h).props.onChange({ gain: 9, calibration: [1, 2] }); await h.settle();
+    const create = api.create;
+    api.create = async (...args) => {
+      const saved = await create(...args);
+      api.catalog = async () => { throw new Error("Catalog unavailable"); };
+      return saved;
+    };
+    await saveDraft(h);
+    assert.equal(calls.create.length, 1);
+    assert.equal(control(h, "Load saved profile").props.value, "created-1");
+    assert.equal(form(h).props.value.gain, 9);
+    assert.doesNotMatch(text(h.tree), /Catalog unavailable/);
+  });
+});
+
+test("an unavailable inline plugin remains visible without a saved profile", async () => {
+  await withProfiles("acquisition", async (h, calls) => {
+    const plugins = options(control(h, "Plugin and version"));
+    assert.ok(plugins.some((item) => item.value === selectionKey(scanV1) && /unavailable/.test(item.label)));
+    assert.equal(control(h, "Plugin and version").props.value, selectionKey(scanV1));
+    assert.equal(button(h, "Connect").props.disabled, true);
+    assert.equal(calls.connect.length, 0);
+  }, { configure: (data) => {
+    data.profiles = data.profiles.filter((item) => selectionKey(item.selection) !== selectionKey(scanV1));
+    data.definitions = data.definitions.filter((item) => selectionKey(item.selection) !== selectionKey(scanV1));
+    const source = data.activation.bindings.find((item) => item.slot === "acquisition.source");
+    source.profile_id = null; source.profile_revision = null;
+  } });
+});
+
+test("a failed processing refresh leaves unrelated module requests available", async () => {
+  await withProfiles("processing", async (h, calls, data) => {
+    const current = data.current();
+    assert.equal(current.modules.processing.ready, true);
+    let rejectRefresh;
+    const pending = new Promise((resolve, reject) => { rejectRefresh = reject; });
+    api.module = () => pending;
+    const refresh = current.reload("processing");
+    await h.settle();
+    assert.equal(data.current().modules.acquisition.ready, true);
+    const request = data.current().request("actuation");
+    assert.equal(request.expected_revision, data.revisions.actuation, "A newer projection must not replace the draft baseline");
+    rejectRefresh(new Error("Baseline refresh failed"));
+    await refresh; await h.settle();
+    assert.equal(data.current().modules.processing.ready, false);
+    assert.match(data.current().modules.processing.error, /Baseline refresh failed/);
+    assert.doesNotThrow(() => data.current().request("actuation"));
+    assert.equal(calls.connect.length, 0);
+  });
+});
+
+
+test("unrelated module revisions do not invalidate a connected source or replace current drafts", async () => {
+  await withProfiles("acquisition", async (h, _, data) => {
+    assert.equal(metadata(h).props.canRead, true);
+    const processing = data.current().get("processing.decoder");
+    data.current().set("processing.decoder", { ...processing, parameters: { gain: 91, calibration: [1, 2] } });
+    data.revisions.stimulation = "stimulation-next";
+    data.runtime.status.accepted = clone(data.revisions);
+    data.runtime.status.applied = clone(data.revisions);
+    h.updateProps({ runtime: data.runtime }); await h.settle();
+    assert.equal(metadata(h).props.canRead, true);
+    assert.equal(data.current().get("processing.decoder").parameters.gain, 91);
+    assert.equal(data.current().request("acquisition").expected_revision, "acquisition-accepted");
+  }, { engineRunning: true });
+});
+
+test("a successful history revert replaces only that module current values and filter order", async () => {
+  await withProfiles("acquisition", async (h, _, data) => {
+    form(h).props.onChange({ gain: 91, calibration: [1, 2] }); await h.settle();
+    const decoder = data.activation.bindings.find((binding) => binding.slot === "processing.decoder");
+    decoder.parameters.gain = 44;
+    const filters = data.activation.bindings.filter((binding) => binding.kind === "filter");
+    data.activation.bindings = [...data.activation.bindings.filter((binding) => binding.kind !== "filter"), ...filters.reverse()];
+    data.revisions.processing = "restored-processing";
+    data.runtime.status.accepted = clone(data.revisions);
+    data.runtime.completedRestorations = { processing: { module: "processing", operationId: "restore-operation", revision: "restored-processing" } };
+    h.updateProps({ runtime: data.runtime }); await h.settle();
+    assert.equal(data.current().get("processing.decoder").parameters.gain, 44);
+    assert.deepEqual(data.current().filterOrder, filters.map((binding) => binding.slot));
+    assert.equal(form(h).props.value.gain, 91);
+    assert.equal(data.current().hasChanges("processing", data.modules().modules.processing), false);
+    assert.equal(data.current().hasChanges("acquisition", data.modules().modules.acquisition), true);
+  });
+});
+
+test("a changed shared engine revision invalidates source observations without changing its module hash", async () => {
+  await withProfiles("acquisition", async (h, _, data) => {
+    assert.equal(metadata(h).props.canRead, true);
+    data.runtime.status.accepted = { ...data.runtime.status.accepted, engine: "new-engine" };
+    h.updateProps({ runtime: data.runtime }); await h.settle();
+    assert.equal(metadata(h).props.canRead, false);
+  }, { engineRunning: true });
+});
+
+
+test("an intervening module change after revert preserves current edits and allows explicit recovery", async () => {
+  await withProfiles("acquisition", async (h, _, data) => {
+    form(h).props.onChange({ gain: 91, calibration: [1, 2] }); await h.settle();
+    data.revisions.processing = "newer-than-restore";
+    data.runtime.status.accepted = clone(data.revisions);
+    data.runtime.completedRestorations = { processing: { module: "processing", operationId: "restore-operation", revision: "restored-processing" } };
+    h.updateProps({ runtime: data.runtime }); await h.settle();
+    assert.equal(data.current().modules.processing.ready, false);
+    assert.equal(data.current().modules.acquisition.ready, true);
+    assert.match(data.current().modules.processing.error, /restored module changed again/);
+    assert.equal(form(h).props.value.gain, 91);
+    await data.current().reload("processing"); await h.settle();
+    assert.equal(data.current().modules.acquisition.ready, true);
+    assert.equal(form(h).props.value.gain, 91);
+  });
+});
+
+test("Processing edits pre-trigger duration as current module settings without saving defaults or a profile", async () => {
+  await withProfiles("processing", async (h, calls, data) => {
+    const duration = () => elements(h.tree).find((item) => item.type === "input" && item.props.id === "processing-pre-trigger-duration");
+    assert.equal(duration().props.value, "0");
+    duration().props.onChange({ target: { value: "1.5" } }); await h.settle();
+    const body = data.current().request("processing");
+    assert.equal(body.settings["ALGORITHM.baseline_duration"], 1.5);
+    assert.equal(data.current().dirty, true);
+    assert.deepEqual(calls, { create: [], connect: [] });
+    duration().props.onChange({ target: { value: "-1" } }); await h.settle();
+    assert.throws(() => data.current().request("processing"), /non-negative/);
+  });
+});
+
+for (const module of ["stimulation", "actuation"]) {
+  test(`${module} settings stay with the module across plugin profiles and navigation`, async () => {
+    await withProfiles(module, async (h, calls, data) => {
+      const prefix = module.toUpperCase();
+      assert.equal(control(h, "Run mode").props.value, "managed");
+      assert.equal(control(h, "Listen port", "input").props.value, module === "stimulation" ? "8765" : "8001");
+      await change(h, "Run mode", "external");
+      await change(h, "Listen address", "192.0.2.50", "input");
+      await change(h, "Listen port", "9012", "input");
+      if (module === "stimulation") await change(h, "Renderer", "pyopengl");
+      else {
+        await change(h, "Watchdog timeout (s)", "2.5", "input");
+        await change(h, "Maximum command age (s)", "0", "input");
+      }
+      const expected = clone(data.current().request(module).settings);
+      assert.equal(expected[`${prefix}.auto_spawn`], false);
+      assert.equal(expected[`${prefix}.server_ip`], "192.0.2.50");
+      assert.equal(expected[`${prefix}.server_port`], 9012);
+      const choice = module === "stimulation" ? paradigm : effector;
+      await change(h, "Plugin and version", selectionKey(choice));
+      await change(h, "Load saved profile", module === "stimulation" ? "paradigm-a" : "effector-a");
+      assert.deepEqual(data.current().request(module).settings, expected);
+      await click(h, "Save as profile");
+      dialog(h).props.onConfirm("Module plugin copy"); await h.settle();
+      assert.equal(calls.create.length, 1);
+      assert.deepEqual(calls.create[0].parameters, { gain: 1, calibration: [3, 4] });
+      assert.equal("settings" in calls.create[0], false);
+      h.updateProps({ module: "acquisition" }); await h.settle();
+      h.updateProps({ module }); await h.settle();
+      assert.equal(control(h, "Run mode").props.value, "external");
+      assert.equal(control(h, "Listen port", "input").props.value, "9012");
+      assert.deepEqual(data.current().request(module).settings, expected);
+      assert.deepEqual(data.current().request(module === "stimulation" ? "actuation" : "stimulation").settings, {});
+    });
+  });
+
+  test(`${module} rejects invalid current module settings without changing other modules`, async () => {
+    await withProfiles(module, async (h, _, data) => {
+      const prefix = module.toUpperCase();
+      const invalid = [["auto_spawn", "false"], ["server_ip", "  "], ["server_ip", 127],
+        ["server_port", ""], ["server_port", 0], ["server_port", 65536], ["server_port", 12.5], ["server_port", Infinity],
+        ...(module === "stimulation" ? [["renderer", "unsupported"]]
+          : [["watchdog_timeout_s", 0], ["watchdog_timeout_s", -1], ["watchdog_timeout_s", NaN],
+            ["max_command_age_s", -1], ["max_command_age_s", Infinity]])];
+      const original = clone(data.current().modules[module].activation);
+      for (const [setting, value] of invalid) {
+        data.current().setSetting(module, `${prefix}.${setting}`, value); await h.settle();
+        assert.throws(() => data.current().request(module), /mode|address|port|renderer|timeout|age/i, `${setting}=${value}`);
+        assert.doesNotThrow(() => data.current().request("acquisition"));
+        data.current().restoreModule(original); await h.settle();
+      }
     });
   });
 }
 
-
-for (const [module, id] of [["acquisition", "lab-a"], ["processing", "decoder-a"],
-  ["stimulation", "paradigm-a"], ["actuation", "effector-a"]]) {
-  test(`${module} review verifies the displayed saved revision without rereading retained module bindings`, async () => {
-    await withProfiles(module, async (harness, calls, data) => {
-      await click(harness, "Review and apply profile");
-      assert.equal(calls.review.length, 1);
-      assert.deepEqual(data.expectedProfiles, [[data.profiles.find((item) => item.profile_id === id)]]);
-      assert.equal(data.reviewDrafts[0], undefined);
-    });
+test("a remote accepted revision cannot rebase an edited module draft", async () => {
+  await withProfiles("acquisition", async (h, _, data) => {
+    const original = data.current().request("acquisition");
+    form(h).props.onChange({ gain: 23, calibration: [4, 5] }); await h.settle();
+    data.revisions.acquisition = "other-client";
+    data.activation.bindings.find((binding) => binding.slot === "acquisition.source").parameters.gain = 88;
+    await data.current().reload("acquisition"); await h.settle();
+    assert.equal(data.current().modules.acquisition.activation.revision, "other-client");
+    assert.equal(data.current().request("acquisition").expected_revision, original.expected_revision);
+    assert.equal(form(h).props.value.gain, 23);
   });
-}
+});
 
-for (const scenario of ["reordered", "replaced", "added", "refreshed"]) {
-  test(`${scenario} filters verify only profiles whose saved values enter the reviewed configuration`, async () => {
-    await withProfiles("processing", async (harness, calls, data) => {
-      await click(harness, "Filters");
-      if (scenario === "reordered") await click(harness, "Move down", filterRows(harness)[0]);
-      if (scenario === "replaced") await change(harness, "Filter 1 profile", "band-b");
-      if (scenario === "added") await click(harness, "Add filter instance");
-      if (scenario === "refreshed") await click(harness, "Review saved values", filterRows(harness)[0]);
-      else await click(harness, "Review and apply filter chain");
-      assert.equal(calls.review.length, 1);
-      const expected = scenario === "reordered" ? [] : [data.profiles.find((item) =>
-        item.profile_id === (scenario === "replaced" ? "band-b" : "band-a"))];
-      assert.deepEqual(data.expectedProfiles, [expected]);
-    });
+test("confirming an interrupted action preserves edits made after submission and advances only its own baseline", async () => {
+  await withProfiles("acquisition", async (h, _, data) => {
+    form(h).props.onChange({ gain: 12, calibration: [1, 2] }); await h.settle();
+    const submitted = data.current().request("acquisition");
+    form(h).props.onChange({ gain: 31, calibration: [4, 5] }); await h.settle();
+    data.revisions.acquisition = "own-confirmed";
+    data.activation.bindings.find((binding) => binding.slot === "acquisition.source").parameters = clone(submitted.bindings[0].parameters);
+    data.current().acknowledge("acquisition", submitted, "own-confirmed");
+    await h.settle();
+    assert.equal(form(h).props.value.gain, 31);
+    assert.equal(data.current().request("acquisition").expected_revision, "own-confirmed");
+    assert.equal(data.current().dirty, true);
+    data.revisions.acquisition = "other-client";
+    await data.current().reload("acquisition"); await h.settle();
+    assert.equal(form(h).props.value.gain, 31);
+    assert.equal(data.current().request("acquisition").expected_revision, "own-confirmed");
   });
-}
+});
+
+for (const editedAfterSubmission of [false, true]) test(`a module read started before confirmation cannot overwrite its accepted draft (later edits=${editedAfterSubmission})`, async () => {
+  await withProfiles("acquisition", async (h, _, data) => {
+    form(h).props.onChange({ gain: 12, calibration: [1, 2] }); await h.settle();
+    const submitted = data.current().request("acquisition");
+    const old = data.modules().modules.acquisition;
+    let finish;
+    const read = api.module;
+    let reads = 0;
+    api.module = (module) => ++reads === 1 ? new Promise((resolve) => { finish = resolve; }) : read(module);
+    const loading = data.current().reload("acquisition");
+    data.revisions.acquisition = "confirmed";
+    data.activation.bindings.find((binding) => binding.slot === "acquisition.source").parameters = clone(submitted.bindings[0].parameters);
+    data.current().acknowledge("acquisition", submitted, "confirmed");
+    if (editedAfterSubmission) form(h).props.onChange({ gain: 31, calibration: [4, 5] });
+    finish(old); await loading; await h.settle();
+    assert.equal(data.current().request("acquisition").expected_revision, "confirmed");
+    assert.equal(form(h).props.value.gain, editedAfterSubmission ? 31 : 12);
+  });
+});
+
+test("an explicit conflict reload replaces only that module and uses the newly fetched revision", async () => {
+  await withProfiles("processing", async (h, calls, data) => {
+    assert.equal(elements(h.tree).some((item) => item.type === "button" && text(item) === "Load accepted configuration"), false);
+    form(h).props.onChange({ gain: 23, calibration: [4, 5] });
+    data.current().setSetting("processing", "ALGORITHM.baseline_duration", 3);
+    const source = data.current().get("acquisition.source");
+    data.current().set("acquisition.source", { ...source, parameters: { gain: 42, calibration: [1, 2] } });
+    await h.settle();
+    data.revisions.processing = "remote-first";
+    await data.current().reload("processing"); await h.settle();
+    assert.equal(form(h).props.value.gain, 23);
+    assert.match(text(h.tree), /replaces this module's current edits/);
+    data.revisions.processing = "remote-latest";
+    data.activation.settings = { "ALGORITHM.baseline_duration": 0.75 };
+    data.activation.bindings.find((binding) => binding.slot === "processing.decoder").parameters.gain = 88;
+    const filters = data.activation.bindings.filter((binding) => binding.kind === "filter");
+    data.activation.bindings = [...data.activation.bindings.filter((binding) => binding.kind !== "filter"), ...filters.reverse()];
+    await button(h, "Load accepted configuration").props.onClick(); await h.settle();
+    const request = data.current().request("processing");
+    assert.equal(request.expected_revision, "remote-latest");
+    assert.equal(request.settings["ALGORITHM.baseline_duration"], 0.75);
+    assert.equal(request.bindings.find((binding) => binding.slot === "processing.decoder").parameters.gain, 88);
+    assert.deepEqual(data.current().filterOrder, filters.map((binding) => binding.slot));
+    assert.equal(data.current().get("acquisition.source").parameters.gain, 42);
+    assert.equal(elements(h.tree).some((item) => item.type === "button" && text(item) === "Load accepted configuration"), false);
+    assert.deepEqual(calls, { create: [], connect: [] });
+  });
+});
+
+test("confirmation refreshes the accepted module after invalidating an already observed revision read", async () => {
+  await withProfiles("acquisition", async (h, _, data) => {
+    form(h).props.onChange({ gain: 12, calibration: [1, 2] }); await h.settle();
+    const submitted = data.current().request("acquisition");
+    data.revisions.acquisition = "confirmed";
+    data.activation.bindings.find((binding) => binding.slot === "acquisition.source").parameters = clone(submitted.bindings[0].parameters);
+    const accepted = data.modules().modules.acquisition;
+    const read = api.module;
+    let finish;
+    let calls = 0;
+    api.module = async (module) => module === "acquisition" && ++calls === 1
+      ? new Promise((resolve) => { finish = resolve; }) : read(module);
+    data.runtime.status.accepted = clone(data.revisions);
+    h.updateProps({ runtime: data.runtime }); await h.settle();
+    assert.ok(finish, "The accepted revision must already have triggered its read");
+    data.current().acknowledge("acquisition", submitted, "confirmed");
+    finish(accepted); await h.settle();
+    const current = data.current();
+    assert.equal(current.modules.acquisition.activation.revision, "confirmed");
+    assert.equal(current.modules.acquisition.conflicted, false);
+    assert.equal(current.hasChanges("acquisition", current.modules.acquisition.activation), false);
+    assert.equal(current.request("acquisition").expected_revision, "confirmed");
+  });
+});
+
+test("loading a profile with already accepted values reports Loaded without an applied profile badge", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    await change(h, "Load saved profile", "lab-a");
+    const loaded = listedProfiles(h).find((item) => text(item).startsWith("Lab A"));
+    assert.ok(loaded);
+    assert.match(text(loaded), /Loaded/);
+    assert.doesNotMatch(text(loaded), /Applied|Selected/);
+    assert.equal(elements(h.tree).some((item) => item.props.className === "active-indicator"), false);
+    assert.match(text(h.tree), /Loaded profile: Lab A/);
+    assert.equal(data.current().hasChanges("acquisition", data.current().modules.acquisition.activation), false);
+    assert.deepEqual(calls, { create: [], connect: [] });
+  }, { engineRunning: true });
+});
+
+test("restoring loaded profile values clears Modified without saving or applying", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    await change(h, "Load saved profile", "lab-b");
+    const original = clone(form(h).props.value);
+    form(h).props.onChange({ ...original, gain: 17 }); await h.settle();
+    assert.match(text(h.tree), /Loaded profile: Lab B · Modified/);
+    form(h).props.onChange(original); await h.settle();
+    assert.match(text(h.tree), /Loaded profile: Lab B/);
+    assert.doesNotMatch(text(h.tree), /Loaded profile: Lab B · Modified/);
+    assert.equal(data.current().get("acquisition.source").profile.profile_id, "lab-b");
+    assert.deepEqual(calls, { create: [], connect: [] });
+  });
+});
+
+test("saving a modified profile reports the new saved copy without using it at runtime", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    await change(h, "Load saved profile", "lab-b");
+    const accepted = clone(data.activation);
+    form(h).props.onChange({ gain: 13, calibration: [5, 6] }); await h.settle();
+    await saveDraft(h, { name: "Saved draft" });
+    assert.match(text(h.tree), /Current values saved as a new profile/);
+    assert.match(text(h.tree), /Loaded profile: Saved draft/);
+    assert.doesNotMatch(text(h.tree), /Loaded profile: Saved draft · Modified/);
+    assert.equal(calls.create.length, 1);
+    assert.equal(calls.connect.length, 0);
+    assert.deepEqual(data.activation, accepted);
+    assert.equal(data.profiles.find((item) => item.profile_id === "lab-b").parameters.gain, 3);
+  });
+});
+
+for (const [module, slot, profileId] of [
+  ["acquisition", "acquisition.source", "lab-b"],
+  ["processing", "processing.decoder", "decoder-b"],
+]) test(`deleting a loaded ${module} profile retains its current parameters and mapping`, async () => {
+  await withProfiles(module, async (h, calls, data) => {
+    await change(h, "Load saved profile", profileId);
+    const before = clone(data.current().get(slot));
+    const request = clone(data.current().request(module));
+    const accepted = clone(data.activation);
+    const deleted = [];
+    api.delete = async (profile) => {
+      deleted.push(profile.profile_id);
+      data.profiles = data.profiles.filter((item) => item.profile_id !== profile.profile_id);
+    };
+    await click(h, "Delete profile");
+    dialog(h).props.onConfirm(); await h.settle();
+    const current = data.current().get(slot);
+    assert.deepEqual(deleted, [profileId]);
+    assert.equal(current.profile, null);
+    assert.equal(current.sourceOrigin, "current");
+    assert.deepEqual(current.selection, before.selection);
+    assert.deepEqual(current.parameters, before.parameters);
+    assert.deepEqual(current.processingInput, before.processingInput);
+    assert.deepEqual(data.current().request(module), request);
+    assert.equal(control(h, "Load saved profile").props.value, "");
+    assert.ok(!options(control(h, "Load saved profile")).some((item) => item.value === profileId));
+    assert.doesNotMatch(text(h.tree), /Loaded profile:/);
+    assert.equal(button(h, "Save as profile").props.disabled, false);
+    assert.deepEqual(data.activation, accepted);
+    assert.deepEqual(calls, { create: [], connect: [] });
+  });
+});
+
+test("a loaded filter remains explicitly outside the processing chain until added", async () => {
+  await withProfiles("processing", async (h, calls, data) => {
+    const before = clone(data.current().request("processing"));
+    await click(h, "Filters");
+    await change(h, "Load saved profile", "band-b");
+    assert.match(text(h.tree), /This filter is not in the processing chain\. Add it before starting processing\./);
+    assert.deepEqual(data.current().request("processing"), before);
+    assert.equal(data.current().hasChanges("processing", data.current().modules.processing.activation), false);
+    await click(h, "Add filter instance");
+    const after = data.current().request("processing");
+    assert.equal(after.bindings.length, before.bindings.length + 1);
+    assert.equal(after.bindings.find((item) => item.slot === data.current().filterOrder.at(-1)).parameters.gain, 7);
+    assert.equal(data.current().hasChanges("processing", data.current().modules.processing.activation), true);
+    assert.doesNotMatch(text(h.tree), /This filter is not in the processing chain|Filter changes will be used when reading starts/);
+    assert.deepEqual(calls, { create: [], connect: [] });
+  });
+});
+
+for (const [module, start, slot] of [
+  ["processing", "Start processing", "processing.decoder"],
+  ["stimulation", "Launch stimulation", "stimulation.paradigm"],
+  ["actuation", "Start actuation", "actuation.effector"],
+]) test(`${module} starts from Setup with current parameters and no Profile save or acquisition connection`, async () => {
+  await withProfiles(module, async (h, calls, data) => {
+    const others = clone(data.activation.bindings.filter((item) => !item.slot.startsWith(`${module}.`)));
+    if (module === "processing") {
+      assert.equal(button(h, start).props.disabled, true);
+      assert.match(text(h.tree), /requires an epoch detector/);
+      await click(h, "Epoch boundary detector");
+      await click(h, "Decoder");
+    }
+    form(h).props.onChange({ gain: 19, calibration: [3, 4] }); await h.settle();
+    await click(h, start);
+    assert.equal(data.moduleRequests.length, 1);
+    const request = data.moduleRequests[0];
+    assert.equal(request.module, module);
+    assert.ok(request.configuration.bindings.every((item) => item.slot.startsWith(`${module}.`)));
+    assert.equal(request.configuration.bindings.find((item) => item.slot === slot).parameters.gain, 19);
+    assert.deepEqual(calls, { create: [], connect: [] });
+    assert.deepEqual(data.activation.bindings.filter((item) => !item.slot.startsWith(`${module}.`)), others);
+    assert.equal(form(h).props.value.gain, 19);
+    assert.equal(data.current().hasChanges(module, data.current().modules[module].activation), false);
+  }, { engineRunning: true, configure: (data) => { data.source.connected = false; } });
+});
+
+test("invalid current parameters block module startup locally without requiring a Profile", async () => {
+  await withProfiles("actuation", async (h, calls, data) => {
+    form(h).props.onChange({ gain: 0, calibration: [3, 4] }); await h.settle();
+    const start = button(h, "Start actuation");
+    assert.equal(start.props.disabled, true);
+    await start.props.onClick(); await h.settle();
+    assert.deepEqual(data.moduleRequests, []);
+    assert.deepEqual(calls, { create: [], connect: [] });
+  }, { engineRunning: true });
+});

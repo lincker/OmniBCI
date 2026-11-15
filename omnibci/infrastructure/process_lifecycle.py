@@ -34,6 +34,13 @@ class ChildProcessState(StrEnum):
     STOPPED = "stopped"
 
 
+def module_runtime_identity(snapshot: dict | None, module: str) -> tuple:
+    """Only owned configuration and its runtime determine child reuse."""
+    snapshot = snapshot or {}
+    return (snapshot.get("CONFIG.module_revisions", {}).get(module),
+            snapshot.get("CONFIG.engine_revision"), snapshot.get("CONFIG.generation"))
+
+
 @dataclass(frozen=True, slots=True)
 class StartupReport:
     """One terminal startup result sent from a child to its parent."""
@@ -43,17 +50,20 @@ class StartupReport:
     stage: str
     error_type: str | None = None
     message: str | None = None
-    config_revision: str | None = None
+    module_revisions: dict[str, str] | None = None
+    engine_revision: str | None = None
     generation: str | None = None
 
     @classmethod
-    def ready(cls, component: str, *, config_revision: str | None = None,
+    def ready(cls, component: str, *, module_revisions: dict[str, str] | None = None,
+              engine_revision: str | None = None,
               generation: str | None = None) -> "StartupReport":
         return cls(
             component=component,
             state=ChildProcessState.READY,
             stage="ready",
-            config_revision=config_revision,
+            module_revisions=dict(module_revisions) if module_revisions is not None else None,
+            engine_revision=engine_revision,
             generation=generation,
         )
 
@@ -64,7 +74,8 @@ class StartupReport:
         *,
         stage: str,
         error: BaseException,
-        config_revision: str | None = None,
+        module_revisions: dict[str, str] | None = None,
+        engine_revision: str | None = None,
         generation: str | None = None,
     ) -> "StartupReport":
         return cls(
@@ -73,7 +84,8 @@ class StartupReport:
             stage=stage,
             error_type=type(error).__name__,
             message=str(error),
-            config_revision=config_revision,
+            module_revisions=dict(module_revisions) if module_revisions is not None else None,
+            engine_revision=engine_revision,
             generation=generation,
         )
 
@@ -104,11 +116,13 @@ class StartupReporter:
     """Child-side exactly-once sender for a startup result."""
 
     def __init__(self, connection: Any, *, component: str,
-                 config_revision: str | None = None, generation: str | None = None) -> None:
+                 module_revisions: dict[str, str] | None = None,
+                 engine_revision: str | None = None, generation: str | None = None) -> None:
         self._connection = connection
         self._component = component
         self._reported = False
-        self._config_revision = config_revision
+        self._module_revisions = dict(module_revisions) if module_revisions is not None else None
+        self._engine_revision = engine_revision
         self._generation = generation
 
     @property
@@ -117,7 +131,8 @@ class StartupReporter:
 
     def ready(self) -> bool:
         return self._send(StartupReport.ready(
-            self._component, config_revision=self._config_revision, generation=self._generation,
+            self._component, module_revisions=self._module_revisions,
+            engine_revision=self._engine_revision, generation=self._generation,
         ))
 
     def failed(self, stage: str, error: BaseException) -> bool:
@@ -126,7 +141,7 @@ class StartupReporter:
                 self._component,
                 stage=stage,
                 error=error,
-                config_revision=self._config_revision,
+                module_revisions=self._module_revisions, engine_revision=self._engine_revision,
                 generation=self._generation,
             )
         )
@@ -184,7 +199,8 @@ def wait_for_startup_report(
     *,
     component: str,
     timeout_s: float,
-    expected_revision: str | None = None,
+    expected_module_revisions: dict[str, str] | None = None,
+    expected_engine_revision: str | None = None,
     expected_generation: str | None = None,
 ) -> StartupReport:
     """Wait boundedly for one valid READY/FAILED report.
@@ -229,7 +245,8 @@ def wait_for_startup_report(
                     f"{report.component!r}"
                 )
             for label, expected, actual in (
-                ("configuration revision", expected_revision, report.config_revision),
+                ("module revisions", expected_module_revisions, report.module_revisions),
+                ("Engine revision", expected_engine_revision, report.engine_revision),
                 ("generation", expected_generation, report.generation),
             ):
                 if expected is not None and actual != expected:

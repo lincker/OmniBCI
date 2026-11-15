@@ -5,13 +5,13 @@ import pytest
 
 from omnibci.application.acquisition_preview import PreviewSelection, limits
 from omnibci.application.events import CommandResult
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.services.command_result_service import CommandRejectedError, CommandTimeoutError
 
 
 @pytest.fixture
 def preview_service(acquisition_service):
-    state = {"capture_id": "capture", "generation": "generation", "config_revision": "a" * 64,
+    state = {"capture_id": "capture", "generation": "generation", "acquisition_revision": "a" * 64, "engine_revision": "engine",
              "source_id": "source", "connection_id": "connection", "status": "finished", "reason": "timeout",
              "selection": PreviewSelection().to_dict(), "observed": 1, "enqueued": 1, "dropped": 0,
              "oversized": 0, "enqueued_bytes": 128, "limits": limits(),
@@ -20,7 +20,7 @@ def preview_service(acquisition_service):
     for method in ("start_preview", "stop_preview", "get_preview"):
         setattr(acquisition_service, method, MagicMock(return_value=state))
     acquisition_service.get_preview_chunk = MagicMock(return_value={
-        "capture_id": "capture", "generation": "generation", "config_revision": "a" * 64,
+        "capture_id": "capture", "generation": "generation", "acquisition_revision": "a" * 64, "engine_revision": "engine",
         "source_id": "source", "connection_id": "connection", "sequence_id": 7,
         "timestamp_ns": "1780000000000000001", "original_shape": [3, 5], "dtype": "float64",
         "row_indices": [1, 2], "sample_start": 1, "sample_count": 3, "trigger_row_index": 2,

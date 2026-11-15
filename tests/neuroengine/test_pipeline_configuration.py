@@ -1,4 +1,5 @@
 """Only compatible exact selections can be prepared for a trial boundary."""
+from tests.plugin_configuration_helpers import builtin_selection
 
 from copy import deepcopy
 from dataclasses import replace
@@ -6,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from omnibci.application.plugin_profiles import ProfileBinding
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.channel_mapping import ChannelDescriptor, ProcessingInput, SignalInfo, compile_processing_plan
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.infrastructure.signal_processing import pipeline_configuration as configuration
@@ -14,7 +15,7 @@ from omnibci.infrastructure.signal_processing import pipeline_configuration as c
 
 def selected_snapshot(revision="old"):
     catalog = PluginCatalog()
-    bindings = [ProfileBinding(slot, kind, None, catalog.resolve_legacy(kind, alias).selection, parameters,
+    bindings = [ProfileBinding(slot, kind, None, builtin_selection(kind, alias), parameters,
                                processing_input=ProcessingInput() if kind == "decoder" else None).to_dict()
                 for slot, kind, alias, parameters in (
                     ("acquisition.source", "acquisition", "file_reader", {"sample_rate": 250}),
@@ -22,29 +23,29 @@ def selected_snapshot(revision="old"):
                      {"window_duration": 1.0, "offset_time": 0.0}),
                     ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
                 )]
-    return {"CONFIG.revision": revision, "CONFIG.generation": "run",
+    return {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": revision}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "run",
             "ACQUISITION.signal_source": "file_reader",
             "ACQUISITION.sample_rate": 250, "ALGORITHM.baseline_duration": 0.2,
             "PLUGINS.bindings": bindings}
 
 
-def _build(before, after):
+def _build(before, after, boundary="module"):
     channels = tuple(ChannelDescriptor(index, name, signal_type="eeg", unit="V")
                      for index, name in enumerate(("O1", "O2")))
     source = SignalInfo(before["ACQUISITION.signal_source"], before["ACQUISITION.sample_rate"],
                             channels, len(channels), connection_id="test-connection")
     plan = compile_processing_plan(source, ProcessingInput.from_dict(
-        before["PLUGINS.bindings"][1]["processing_input"]), config_revision=before["CONFIG.revision"])
+        before["PLUGINS.bindings"][1]["processing_input"]), acquisition_revision=before["CONFIG.module_revisions"]["acquisition"])
     return configuration.build_pipeline_update(before, after, sample_rate=250, baseline_duration=0.2,
-                                               signal_plan=plan)
+                                               signal_plan=plan, boundary=boundary)
 
 
 def test_bundle_uses_new_parameters_and_ordered_distinct_filter_instances():
     before = selected_snapshot()
     after = deepcopy(before)
-    after["CONFIG.revision"] = "new"
+    after["CONFIG.module_revisions"]["processing"] = "new"
     after["PLUGINS.bindings"][1]["parameters"]["window_duration"] = 1.5
-    selection = PluginCatalog().resolve_legacy("filter", "BASELINE_CORRECTION").selection
+    selection = builtin_selection("filter", "BASELINE_CORRECTION")
     after["PLUGINS.bindings"].extend(ProfileBinding(
         f"processing.filter.{uuid4()}", "filter", None, selection, {},
     ).to_dict() for _ in range(2))
@@ -57,18 +58,29 @@ def test_bundle_uses_new_parameters_and_ordered_distinct_filter_instances():
     assert before["PLUGINS.bindings"][1]["parameters"]["window_duration"] == 1
 
 
+def test_source_binding_position_does_not_change_processing_topology():
+    before = selected_snapshot()
+    after = deepcopy(before)
+    after["CONFIG.module_revisions"]["processing"] = "new"
+    source = after["PLUGINS.bindings"].pop(0)
+    after["PLUGINS.bindings"].append(source)
+    after["PLUGINS.bindings"][0]["parameters"]["window_duration"] = 1.5
+    bundle = _build(before, after, boundary="trial")
+    assert bundle.decoder.SAMPLE_COUNT == 375
+
+
 @pytest.mark.parametrize("provenance", ["device-reported", "file-reported"])
 def test_trial_update_uses_prepared_source_rate_instead_of_legacy_flat_mirror(provenance):
     before = selected_snapshot()
     before["PLUGINS.bindings"][0]["parameters"].update(sample_rate=500, channel_count=3)
     after = deepcopy(before)
-    after["CONFIG.revision"] = "new"
+    after["CONFIG.module_revisions"]["processing"] = "new"
     after["PLUGINS.bindings"][1]["parameters"]["window_duration"] = 1.5
     source = SignalInfo("file_reader", 500, (
         ChannelDescriptor(0, "O1", signal_type="eeg", unit="V"),
         ChannelDescriptor(1, "O2", signal_type="eeg", unit="V"),
     ), 2, connection_id="test-connection", provenance=provenance)
-    plan = compile_processing_plan(source, ProcessingInput(), config_revision="old")
+    plan = compile_processing_plan(source, ProcessingInput(), acquisition_revision="source-revision")
 
     bundle = configuration.build_pipeline_update(
         before, after, sample_rate=500, baseline_duration=0.2, signal_plan=plan,
@@ -81,29 +93,29 @@ def test_trial_update_uses_prepared_source_rate_instead_of_legacy_flat_mirror(pr
 def test_unprepared_update_validates_settings_and_defers_plugin_construction(monkeypatch):
     before = selected_snapshot()
     after = deepcopy(before)
-    after["CONFIG.revision"] = "new"
+    after["CONFIG.module_revisions"]["processing"] = "new"
     after["PLUGINS.bindings"][1]["parameters"]["window_duration"] = 1.5
     monkeypatch.setattr(configuration, "load_configured_plugin", lambda *a, **kw: pytest.fail("premature construction"))
-    bundle = configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2)
+    bundle = configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2, boundary="module")
     assert bundle.decoder is None and bundle.filters == ()
-    assert bundle.settings_snapshot["CONFIG.revision"] == "new"
+    assert bundle.settings_snapshot["CONFIG.module_revisions"]["processing"] == "new"
     after["PLUGINS.bindings"][1]["parameters"]["window_duration"] = -1
     with pytest.raises(ValueError):
-        configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2)
+        configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2, boundary="module")
 
 
 def test_filter_can_be_applied_before_selecting_a_decoder(monkeypatch):
     before = selected_snapshot()
     before["PLUGINS.bindings"] = [before["PLUGINS.bindings"][0]]
     after = deepcopy(before)
-    after["CONFIG.revision"] = "new"
-    selection = PluginCatalog().resolve_legacy("filter", "BASELINE_CORRECTION").selection
+    after["CONFIG.module_revisions"]["processing"] = "new"
+    selection = builtin_selection("filter", "BASELINE_CORRECTION")
     after["PLUGINS.bindings"].append(ProfileBinding(
         f"processing.filter.{uuid4()}", "filter", None, selection, {},
     ).to_dict())
     monkeypatch.setattr(configuration, "load_configured_plugin", lambda *a, **kw: pytest.fail("premature construction"))
 
-    bundle = configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2)
+    bundle = configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2, boundary="module")
 
     assert bundle.decoder is None and bundle.filters == ()
     assert bundle.settings_snapshot == after
@@ -148,19 +160,19 @@ def test_same_selection_parameter_changes_require_explicit_trial_policy(monkeypa
 
     monkeypatch.setattr(configuration.CatalogConfigurationAdapter, "get", get)
     with pytest.raises(ValueError, match="restart"):
-        _build(before, after)
+        _build(before, after, boundary="trial")
 
 
 def test_decoder_replacement_and_filter_removal_build_complete_bundle():
     before = selected_snapshot()
-    filter_selection = PluginCatalog().resolve_legacy("filter", "BASELINE_CORRECTION").selection
+    filter_selection = builtin_selection("filter", "BASELINE_CORRECTION")
     before["PLUGINS.bindings"].append(ProfileBinding(
         f"processing.filter.{uuid4()}", "filter", None, filter_selection, {},
     ).to_dict())
     after = deepcopy(before)
     after["PLUGINS.bindings"].pop()
-    after["CONFIG.revision"] = "new"
-    decoder = PluginCatalog().resolve_legacy("decoder", "THUBCI_SSVEP_classic40FBCCA")
+    after["CONFIG.module_revisions"]["processing"] = "new"
+    decoder = PluginCatalog().resolve_selection("decoder", builtin_selection("decoder", "THUBCI_SSVEP_classic40FBCCA"))
     after["PLUGINS.bindings"][1] = ProfileBinding(
         "processing.decoder", "decoder", None, decoder.selection,
         {"window_duration": 1.0, "offset_time": 0.0}, processing_input=ProcessingInput(),
@@ -185,18 +197,12 @@ def test_decoder_input_change_cannot_reuse_existing_prepared_plan(changed_select
     after = deepcopy(before)
     after["PLUGINS.bindings"][1]["processing_input"] = {"schema_version": 2, "outputs": [{"source_channel_id": "channel-1", "name": "O2"}]}
     if changed_selection:
-        selection = PluginCatalog().resolve_legacy("decoder", "THUBCI_SSVEP_classic40FBCCA").selection
+        selection = builtin_selection("decoder", "THUBCI_SSVEP_classic40FBCCA")
         after["PLUGINS.bindings"][1]["selection"] = selection.to_dict()
     with pytest.raises(ValueError, match="Processing input changes"):
         _build(before, after)
 
 
-def test_output_context_cannot_change_decoder_input():
-    before = selected_snapshot()
-    after = deepcopy(before)
-    after["PLUGINS.bindings"][1]["processing_input"] = {"schema_version": 2, "outputs": [{"source_channel_id": "channel-1", "name": "O2"}]}
-    with pytest.raises(ValueError, match="Signal Processing or source changes"):
-        configuration.validate_output_context(before, after)
 
 
 @pytest.mark.parametrize("change,message", [
@@ -206,8 +212,8 @@ def test_output_context_cannot_change_decoder_input():
 def test_unprepared_replacement_checks_plugin_contract_before_acknowledgement(monkeypatch, change, message):
     before = selected_snapshot()
     after = deepcopy(before)
-    after["CONFIG.revision"] = "new"
-    replacement = PluginCatalog().resolve_legacy("decoder", "THUBCI_SSVEP_classic40FBCCA")
+    after["CONFIG.module_revisions"]["processing"] = "new"
+    replacement = PluginCatalog().resolve_selection("decoder", builtin_selection("decoder", "THUBCI_SSVEP_classic40FBCCA"))
     after["PLUGINS.bindings"][1]["selection"] = replacement.selection.to_dict()
     original_get = configuration.CatalogConfigurationAdapter.get
 
@@ -218,4 +224,4 @@ def test_unprepared_replacement_checks_plugin_contract_before_acknowledgement(mo
     monkeypatch.setattr(configuration.CatalogConfigurationAdapter, "get", get)
     monkeypatch.setattr(configuration, "load_configured_plugin", lambda *a, **kw: pytest.fail("premature construction"))
     with pytest.raises(ValueError, match=message):
-        configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2)
+        configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2, boundary="module")

@@ -11,7 +11,7 @@ const { api } = await server.ssrLoadModule("/src/api/client.ts");
 const desktop = await server.ssrLoadModule("/src/desktop.ts");
 const trial = (trial_number, generation = "engine-1") => ({
   generation, trial_number, target_id: 2, event_id: 8, confidence: null,
-  forced: false, produced_at: "2026-01-01T00:00:00Z", config_revision: "revision-1",
+  forced: false, produced_at: "2026-01-01T00:00:00Z", processing_revision: "revision-1",
 });
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
@@ -26,7 +26,7 @@ function harness() {
   globalThis.setTimeout = (callback) => { reconnect = callback; return 1; };
   globalThis.clearTimeout = () => {};
   globalThis.window = { omnibciDesktop: { subscribeResults(_id, listener) { deliver = listener; return () => {}; } } };
-  desktop.setDesktopConnection({ id: "backend", kind: "local", status: "ready" });
+  desktop.setDesktopConnection({ id: "server", kind: "owned", status: "ready" });
   const values = [], effects = [];
   let cursor = 0;
   const dispatcher = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;

@@ -1,4 +1,5 @@
 """Unit tests for the AcquisitionWorker process boundary orchestration."""
+from tests.plugin_configuration_helpers import builtin_selection
 
 from queue import Queue
 from pathlib import Path
@@ -40,8 +41,7 @@ def test_run_loads_source_before_running_runtime():
     worker._load_data_source = lambda: calls.append("load")
     worker._run = lambda: calls.append("run")
 
-    with patch("omnibci.conf.settings.use_snapshot"):
-        worker.run()
+    worker.run()
 
     assert calls == ["load", "run"]
 
@@ -54,7 +54,7 @@ def test_run_loads_source_before_running_runtime():
 def test_connect_does_not_require_decoder_configuration(bindings):
     commands = Queue()
     commands.put((AcquisitionCommand.connect, CommandRequest("connect")))
-    commands.put(AcquisitionCommand.stop_acquisition)
+    commands.put((AcquisitionCommand.stop_acquisition, None))
     events = MagicMock()
     source = MagicMock(spec=SignalSource)
     source.is_connected = source.is_streaming = False
@@ -71,7 +71,6 @@ def test_connect_does_not_require_decoder_configuration(bindings):
                   if call.args[0].type is EventType.CommandResult)
     assert result.ok
     source.get_metadata.assert_not_called()
-    assert worker.runtime.preparation_required is bool(bindings)
 
 
 @pytest.mark.parametrize("decoder", [
@@ -86,24 +85,23 @@ def test_connect_does_not_require_decoder_configuration(bindings):
      "processing_input": {"schema_version": 2, "outputs": "invalid"}},
 ])
 def test_file_source_worker_connects_with_unconfigured_processing(decoder):
-    from omnibci.application.plugin_profiles import ProfileBinding
+    from omnibci.application.configuration.models import ProfileBinding
     from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 
-    descriptor = PluginCatalog().resolve("acquisition", "file_reader")
+    descriptor = PluginCatalog().resolve_selection("acquisition", builtin_selection("acquisition", "file_reader"))
     source = ProfileBinding("acquisition.source", "acquisition", None, descriptor.selection, {
         "data_file_path": str(Path(__file__).parents[1] / "fixture" / "train.cnt"),
     }).to_dict()
     commands = Queue()
     commands.put((AcquisitionCommand.connect, CommandRequest("connect")))
     commands.put((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
-    commands.put(AcquisitionCommand.stop_acquisition)
+    commands.put((AcquisitionCommand.stop_acquisition, None))
     events = MagicMock()
     worker = AcquisitionWorker(commands, MagicMock(), events, settings_snapshot={
         "ACQUISITION.signal_source": "file_reader",
         "PLUGINS.bindings": [source] + ([decoder] if decoder else []),
     })
-    with patch("omnibci.conf.settings.use_snapshot"):
-        worker.run()
+    worker.run()
 
     results = {call.args[0].data.command_id: call.args[0].data
                for call in events.put_event.call_args_list if call.args[0].type is EventType.CommandResult}
@@ -122,7 +120,7 @@ def test_run_constructs_runtime_with_explicit_context(processing_input):
     data_source = MagicMock(spec=SignalSource)
     snapshot = {
         "ACQUISITION.signal_source": "selected-source",
-        "CONFIG.generation": "generation", "CONFIG.revision": "revision",
+        "CONFIG.generation": "generation", "CONFIG.module_revisions": {"acquisition": "revision", "processing": "revision", "stimulation": "revision", "actuation": "revision"}, "CONFIG.engine_revision": "engine",
         "PLUGINS.bindings": [{"slot": "processing.decoder", "processing_input": processing_input}],
     }
     worker = AcquisitionWorker(command_queue, data_manager, event_bus, settings_snapshot=snapshot)
@@ -140,9 +138,9 @@ def test_run_constructs_runtime_with_explicit_context(processing_input):
         data_manager=data_manager,
         event_bus=event_bus,
         source_id="selected-source",
-        preparation_required=True,
         generation="generation",
-        config_revision="revision",
+        acquisition_revision="revision", engine_revision="engine",
+        processing_active=None, runtime_counters=None,
     )
     runtime_class.return_value.run.assert_called_once_with()
     assert worker.runtime is runtime_class.return_value
@@ -161,37 +159,33 @@ def test_runtime_source_identity_falls_back_to_plugin_type_or_class_name(plugin_
         worker._run()
 
     assert runtime_class.call_args.kwargs["source_id"] == (plugin_type or "Source")
-    assert runtime_class.call_args.kwargs["preparation_required"] is False
 
 
-def test_global_settings_are_pinned_once_for_source_and_runtime():
+def test_explicit_settings_are_shared_by_source_and_runtime():
     snapshot = {
-        "ACQUISITION.signal_source": "global-source",
-        "CONFIG.generation": "global-generation", "CONFIG.revision": "global-revision",
+        "ACQUISITION.signal_source": "selected-source",
+        "CONFIG.generation": "generation", "CONFIG.module_revisions": {"acquisition": "revision"}, "CONFIG.engine_revision": "engine",
         "PLUGINS.bindings": [{"slot": "processing.decoder", "processing_input": ProcessingInput().to_dict()}],
     }
-    worker = AcquisitionWorker(command_queue=MagicMock())
-    with patch("omnibci.conf.settings.snapshot", side_effect=[snapshot, {}]) as read_snapshot, patch(
-        "omnibci.conf.settings.use_snapshot"
-    ) as install_snapshot, patch(
+    worker = AcquisitionWorker(command_queue=MagicMock(), settings_snapshot=snapshot)
+    with patch(
         "omnibci.infrastructure.plugins.runtime_configuration.load_configured_plugin"
     ) as load_source, patch(
         "omnibci.infrastructure.acquisition.worker.AcquisitionRuntime"
     ) as runtime_class:
         worker.run()
 
-    read_snapshot.assert_called_once_with()
-    install_snapshot.assert_called_once_with(snapshot)
     load_source.assert_called_once_with(snapshot, "acquisition.source", "acquisition", SignalSource)
     runtime_class.assert_called_once_with(
         data_source=load_source.return_value, command_queue=worker.command_queue,
-        data_manager=None, event_bus=None, source_id="global-source", preparation_required=True,
-        generation="global-generation", config_revision="global-revision",
+        data_manager=None, event_bus=None, source_id="selected-source",
+        generation="generation", acquisition_revision="revision", engine_revision="engine",
+        processing_active=None, runtime_counters=None,
     )
 
 
 def test_historical_decoder_projection_requires_preparation():
-    from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
+    from omnibci.application.configuration.models import PluginSelection, ProfileBinding
     from omnibci.application.processing_source import materialize_processing_binding
 
     binding = ProfileBinding("processing.decoder", "decoder", None,
@@ -204,17 +198,15 @@ def test_historical_decoder_projection_requires_preparation():
     with patch("omnibci.infrastructure.acquisition.worker.AcquisitionRuntime") as runtime_class:
         worker._run()
 
-    assert runtime_class.call_args.kwargs["preparation_required"] is True
     assert binding.processing_input is None
 
 
-def test_load_data_source_uses_pinned_parameters_without_registry_or_global_settings(monkeypatch):
-    from omnibci.application.plugin_profiles import ProfileBinding
-    from omnibci.conf import settings
+def test_load_data_source_uses_pinned_parameters_without_registry_or_global_settings():
+    from omnibci.application.configuration.models import ProfileBinding
     from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
     from omnibci.infrastructure.plugins.loader import PluginLoader
 
-    descriptor = PluginCatalog().resolve_legacy("acquisition", "file_reader")
+    descriptor = PluginCatalog().resolve_selection("acquisition", builtin_selection("acquisition", "file_reader"))
     binding = ProfileBinding(
         slot="acquisition.source", kind="acquisition", profile_id=None,
         selection=descriptor.selection,
@@ -225,7 +217,6 @@ def test_load_data_source_uses_pinned_parameters_without_registry_or_global_sett
         "PLUGINS.bindings": [binding.to_dict()], "ACQUISITION.sample_rate": 250,
         "ACQUISITION.signal_source": "must_not_be_used",
     })
-    monkeypatch.setattr(settings, "get", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("global settings read")))
     with patch.object(
         PluginLoader, "load_entrypoint", wraps=PluginLoader.load_entrypoint
     ) as load_entrypoint:

@@ -16,9 +16,9 @@ loaded Effector plugin. Differences from stimulation:
     the engine's link watchdog treats inbound silence past the timeout as
     LINK_LOST, so a dialled-in peer must keep talking;
   - one failed command → ActuationFault + keep serving; only a failed
-    setup() exits the process (with a Fault as its last word). Stopping is
-    process-level (ActuationProcessManager stop event / Ctrl-C) — there is no
-    StopActuation wire value in v1.
+    setup() exits the process (with a Fault as its last word). SettleActuation
+    pauses commands and confirms device quiescence; ResumeActuation accepts
+    new commands. A managed stop also releases the subprocess.
 """
 
 import asyncio
@@ -29,6 +29,7 @@ import time
 from queue import Empty, Full, Queue
 from typing import Any
 
+from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.ipc.event_bus import EventBus
@@ -56,30 +57,27 @@ class Actuation:
         stop_event: Any = None,
         startup_reporter: StartupReporter | None = None,
         *,
-        settings_snapshot: dict | None = None,
+        settings_snapshot: dict,
     ):
         self._event_queue = mp.Queue()
         self._event_queue_closed = False
         self.event_bus = EventBus(self._event_queue)
 
-        from omnibci.conf import settings
-        self._runtime_snapshot = (deepcopy(settings_snapshot) if settings_snapshot is not None
-                                  else settings.snapshot())
-        source = self._runtime_snapshot
-        host = source.get("ACTUATION.server_ip", "127.0.0.1")
-        port = int(source.get("ACTUATION.server_port", 8001))
-        self._heartbeat_interval = float(
-            source.get("ACTUATION.watchdog_timeout_s", 1.0)) / 2.0
+        self._runtime_snapshot = deepcopy(settings_snapshot)
+        source = MODULE_SETTING_DEFAULTS["actuation"] | self._runtime_snapshot
+        host = source["ACTUATION.server_ip"]
+        port = int(source["ACTUATION.server_port"])
+        self._heartbeat_interval = float(source["ACTUATION.watchdog_timeout_s"]) / 2.0
         # Age gate for the slow-trickle case (old commands arriving one at a
         # time on a live-but-slow link, where drain-to-latest cannot help).
         # 0 = disabled; requires engine/device clocks roughly in sync to use.
-        self._max_command_age = float(
-            source.get("ACTUATION.max_command_age_s", 0.0))
+        self._max_command_age = float(source["ACTUATION.max_command_age_s"])
         self._external_node = source.get("CONFIG.node_role") == "actuation"
         self._reconnect_requested = False
         identity = None
         if self._external_node:
-            identity = PeerIdentity("actuation", source["CONFIG.revision"], source["CONFIG.generation"])
+            identity = PeerIdentity("actuation", source["CONFIG.module_revisions"]["actuation"],
+                                    source["CONFIG.engine_revision"], source["CONFIG.generation"])
         self.peer_channel = PeerChannel(engine_peer_config(
             host, port, identity=identity, reconnect=not self._external_node,
             on_disconnect=self._connection_lost if self._external_node else None,
@@ -108,6 +106,12 @@ class Actuation:
         self._reconnect_requested = True
         self._paused = True
         self.should_stop = True
+
+    def _on_delivery_fault(self, event: Event) -> None:
+        fault = event.data
+        if (isinstance(fault, dict) and fault.get("peer") == "engine"
+                and fault.get("channel_id") == self.peer_channel.channel_id):
+            self._connection_lost()
 
     async def serve(self):
         startup_complete = False
@@ -193,9 +197,13 @@ class Actuation:
         # Install the route before a newly connected peer can deliver its first
         # command.  The command remains queued until setup completes.
         self.event_bus.register_event_listener(
+            event_type=EventType.PeerDeliveryFault, handler=self._on_delivery_fault)
+        self.event_bus.register_event_listener(
             event_type=EventType.ActuationCommand, handler=self._enqueue_command)
         self.event_bus.register_event_listener(
             event_type=EventType.SettleActuation, handler=self._request_settlement)
+        self.event_bus.register_event_listener(
+            event_type=EventType.ResumeActuation, handler=self._request_resume)
         await self.event_bus.start()
         if getattr(self, "_external_node", False):
             # The engine must not recognize this node until its device is ready.
@@ -369,6 +377,7 @@ class Actuation:
             cancelled += 1
         try:
             async with self._settlement_lock:
+                self._paused = True
                 execution = getattr(self, "_execution_task", None)
                 if execution is not None:
                     await asyncio.shield(execution)
@@ -382,7 +391,8 @@ class Actuation:
                     "paused": True, "pending_cancelled": cancelled,
                     "execution_complete": True, "outputs_settled": True,
                     "generation": snapshot.get("CONFIG.generation"),
-                    "config_revision": snapshot.get("CONFIG.revision"),
+                    "module_revision": snapshot.get("CONFIG.module_revisions", {}).get("actuation"),
+                    "engine_revision": snapshot.get("CONFIG.engine_revision"),
                 },
             )
         except Exception as exc:
@@ -391,6 +401,35 @@ class Actuation:
                 error_code="ACTUATION_SETTLE_FAILED", message=str(exc),
                 failure_kind=CommandFailureKind.EXECUTION_FAILED,
             )
+        self.event_bus.put_event(Event(EventType.CommandResult, result))
+
+    def _request_resume(self, event: Event) -> None:
+        if CommandRequest.from_value(event.data) is None:
+            return
+        task = asyncio.create_task(self._resume_actuation(event))
+        self._settlement_tasks.add(task)
+        task.add_done_callback(self._settlement_tasks.discard)
+
+    async def _resume_actuation(self, event: Event) -> None:
+        request = CommandRequest.from_value(event.data)
+        if request is None:
+            return
+        async with self._settlement_lock:
+            if self._stop_requested():
+                result = CommandResult(
+                    request.command_id, EventType.ResumeActuation.name, ok=False,
+                    error_code="ACTUATION_STOPPING", message="Actuation is shutting down",
+                    failure_kind=CommandFailureKind.REJECTED,
+                )
+            else:
+                self._paused = False
+                snapshot = self._runtime_snapshot
+                result = CommandResult(
+                    request.command_id, EventType.ResumeActuation.name, ok=True,
+                    data={"resumed": True, "paused": False, "generation": snapshot.get("CONFIG.generation"),
+                          "module_revision": snapshot.get("CONFIG.module_revisions", {}).get("actuation"),
+                          "engine_revision": snapshot.get("CONFIG.engine_revision")},
+                )
         self.event_bus.put_event(Event(EventType.CommandResult, result))
 
     def _stop_requested(self) -> bool:

@@ -6,15 +6,16 @@ from types import SimpleNamespace
 import pytest
 
 from omnibci.application.plugin_packages import PackageReference, PluginPackageConflictError
-from omnibci.application.plugin_profiles import ActivationSnapshot, ProfileBinding, ProfileRevisionConflict
-from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
+from omnibci.application.configuration.errors import ProfileRevisionConflict
+from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.services.plugin_package_service import PluginPackageService
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from tests.infrastructure.test_package_store import package_archive
+from tests.plugin_configuration_helpers import builtin_selection
 
 
 @pytest.fixture
@@ -32,8 +33,8 @@ def service(tmp_path, monkeypatch):
         finally:
             state["held"] = False
     store = ManagedPluginPackageStore()
-    profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
-                                    CatalogConfigurationAdapter(), settings_source=lambda: {})
+    profiles = ConfigurationService(TomlConfigurationRepository(tmp_path / "config"),
+                                    CatalogConfigurationAdapter())
     svc = PluginPackageService(store, profiles, runtime_references=lambda: state["references"], admission_guard=guard)
     for version in ("1.0.0", "2.0.0"):
         svc.install(package_archive(tmp_path, version))
@@ -46,36 +47,20 @@ def source_profile(service):
     return service.profiles.create("effector", selection, "Output", {"gain": 2.0})
 
 
-def complete_snapshot(profiles, snapshot):
-    bindings = []
-    for slot, kind, plugin_type in (
-        ("acquisition.source", "acquisition", "file_reader"),
-        ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40FBCCA"),
-        ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR"),
-        ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40"),
-    ):
-        definition = next(item for item in profiles.catalog.list(kind) if item.plugin_type == plugin_type)
-        bindings.append(ProfileBinding(
-            slot, kind, None, definition.selection, validate_parameters(definition.schema, {}),
-            configuration_version=definition.configuration_version,
-        ))
-    return ActivationSnapshot(settings=snapshot.settings, bindings=(*bindings, *snapshot.bindings))
-
-
 def test_saved_profile_and_accepted_binding_references_are_listed_and_block_disable(service):
     svc, _ = service
     profile = source_profile(svc)
-    active = complete_snapshot(svc.profiles, svc.profiles.propose([
+    active = svc.profiles.propose("actuation", [
         {"slot": "actuation.effector", "profile_id": profile.profile_id},
-    ]))
-    svc.profiles.accept(active, expected_revision=None)
+    ], settings=svc.profiles.default_module_settings("actuation"))
+    svc.profiles.repository.save_module(active, expected_revision=None)
     references = svc.list()[0].references
     assert {item.scope for item in references} == {"profile", "accepted"}
     with pytest.raises(PluginPackageConflictError, match="profile:.*accepted:"):
         svc.set_enabled("acme.device", "1.0.0", False)
     with pytest.raises(PluginPackageConflictError):
         svc.remove("acme.device", "1.0.0")
-    assert svc.profiles.repository.get_activation() == active
+    assert svc.profiles.repository.get_module("actuation") == active
     assert svc.store.get_package("acme.device", "1.0.0").enabled
 
 
@@ -100,14 +85,6 @@ def test_other_version_references_do_not_prevent_unused_version_removal(service)
     assert len(svc.list()) == 1
 
 
-def test_unversioned_reference_conservatively_blocks_removal(service):
-    svc, state = service
-    selection = svc.store.get_package("acme.device", "1.0.0").contributions[0].selection
-    state["references"] = [PackageReference("running", "legacy", replace(selection, version=None))]
-    with pytest.raises(PluginPackageConflictError):
-        svc.remove("acme.device", "2.0.0")
-
-
 def test_busy_apply_rejects_package_mutations(service):
     svc, state = service
     state["busy"] = True
@@ -120,10 +97,10 @@ def test_busy_apply_rejects_package_mutations(service):
 def test_proposal_and_new_profile_do_not_mutate_accepted_or_source_profile(service):
     svc, _ = service
     original = source_profile(svc)
-    snapshot = complete_snapshot(svc.profiles, svc.profiles.propose([
+    snapshot = svc.profiles.propose("actuation", [
         {"slot": "actuation.effector", "profile_id": original.profile_id},
-    ]))
-    svc.profiles.accept(snapshot, expected_revision=None)
+    ], settings=svc.profiles.default_module_settings("actuation"))
+    svc.profiles.repository.save_module(snapshot, expected_revision=None)
     proposal = svc.propose_profile(original.profile_id, "2.0.0", name="Output v2")
     assert proposal.parameters == {"gain": 2.0} and not proposal.target_enabled
     assert len(svc.profiles.repository.list_profiles()) == 1
@@ -134,7 +111,7 @@ def test_proposal_and_new_profile_do_not_mutate_accepted_or_source_profile(servi
     assert new.profile_id != original.profile_id and new.selection.version == "2.0.0"
     assert new.parameters == original.parameters
     assert svc.profiles.repository.get_profile(original.profile_id) == original
-    assert svc.profiles.repository.get_activation() == snapshot
+    assert svc.profiles.repository.get_module("actuation") == snapshot
     rollback = svc.propose_profile(new.profile_id, "1.0.0")
     assert rollback.selection.version == "1.0.0" and rollback.parameters == original.parameters
 
@@ -168,10 +145,10 @@ def test_added_target_defaults_are_visible_in_preview(service, tmp_path):
     assert svc.propose_profile(original.profile_id, "3.0.0").parameters == {"gain": 2.0, "new_option": True}
 
 
-@pytest.mark.parametrize("channel_input", [None, ProcessingInput(outputs=(ChannelBinding("O2", "channel-1"), ChannelBinding("O1", "channel-0")))])
-def test_decoder_version_copy_preserves_input_including_legacy_absence(service, monkeypatch, channel_input):
+@pytest.mark.parametrize("channel_input", [ProcessingInput(), ProcessingInput(outputs=(ChannelBinding("O2", "channel-1"), ChannelBinding("O1", "channel-0")))])
+def test_decoder_version_copy_preserves_input(service, monkeypatch, channel_input):
     svc, _ = service
-    definition = svc.profiles.catalog.legacy("decoder", "THUBCI_SSVEP_classic40CCA")
+    definition = svc.profiles.catalog.get("decoder", builtin_selection("decoder", "THUBCI_SSVEP_classic40CCA"))
     source = svc.profiles.create("decoder", definition.selection, "Decoder", {}, processing_input=channel_input)
     target = replace(definition, selection=replace(definition.selection, version="99.0.0"))
     monkeypatch.setattr(svc.store, "get_package", lambda *_: SimpleNamespace(error=None, available=True, enabled=True))
@@ -184,27 +161,6 @@ def test_decoder_version_copy_preserves_input_including_legacy_absence(service, 
     assert copied.processing_input == channel_input
     assert copied.profile_id != source.profile_id
     assert svc.profiles.repository.get_profile(source.profile_id) == source
-
-
-def test_acquisition_version_copy_discards_retired_montage(service, monkeypatch):
-    svc, _ = service
-    definition = svc.profiles.catalog.legacy("acquisition", "file_reader")
-    montage = {"source_id": "file_reader", "sample_rate": 500, "channels": [{"index": 0, "name": "O1"}]}
-    source = svc.profiles.create("acquisition", definition.selection, "Reader", {
-        "sample_rate": 500, "channel_count": 2})
-    source = svc.profiles.repository.save_profile(replace(source, legacy={"acquisition_montage": montage, "manual_montage": montage}),
-                                                   expected_revision=source.revision)
-    target = replace(definition, selection=replace(definition.selection, version="99.0.0"))
-    monkeypatch.setattr(svc.store, "get_package", lambda *_: SimpleNamespace(error=None, available=True, enabled=True))
-    monkeypatch.setattr(svc.store, "configuration", lambda *_: target)
-    monkeypatch.setattr(svc.profiles.catalog, "get", lambda *_: target)
-
-    proposal = svc.propose_profile(source.profile_id, "99.0.0")
-    assert not hasattr(proposal, "manual_montage")
-    copied = svc.create_version_profile(source.profile_id, "99.0.0", expected_source_revision=source.revision)
-    assert copied.legacy == {}
-    changed = svc.propose_profile(source.profile_id, "99.0.0", parameters={**source.parameters, "sample_rate": 250})
-    assert changed.parameters["sample_rate"] == 250
 
 
 def test_after_all_references_are_released_disable_and_remove_work(service):

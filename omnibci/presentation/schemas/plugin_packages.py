@@ -18,6 +18,7 @@ class PackageContributionResponse(BaseModel):
 
 
 class PackageVersionResponse(BaseModel):
+    domain: str | None
     package_id: str
     version: str
     label: str

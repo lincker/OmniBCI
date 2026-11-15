@@ -32,14 +32,13 @@ def test_enable_disable_persists_without_import_or_alias_fallback(store, tmp_pat
         PluginCatalog().resolve_selection("effector", selection)
 
 
-def test_multiple_enabled_versions_are_exact_addressable_and_alias_is_ambiguous(store, tmp_path):
+def test_multiple_enabled_versions_are_exact_addressable(store, tmp_path):
     for version in ("1.0.0", "2.0.0"):
         package = store.install_archive(package_archive(tmp_path, version)).package
         store.set_enabled(package.package_id, version, True)
         assert PluginCatalog().resolve_selection("effector", package.contributions[0].selection).version == version
     assert len([item for item in PluginCatalog().list_contributions("effector") if item.identifier == "acme.device"]) == 2
-    with pytest.raises(AmbiguousPluginError):
-        PluginCatalog().resolve_legacy("effector", "test_output")
+    assert len(PluginCatalog().list_contributions("effector")) >= 2
 
 
 def test_enabled_catalog_descriptor_loads_only_the_selected_version(store, tmp_path):

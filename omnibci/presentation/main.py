@@ -16,8 +16,7 @@ Endpoints:
     POST /api/v1/acquisition/stream/stop   Stop data stream
     GET  /api/v1/acquisition/status        Acquisition status
 
-    GET  /api/v1/stimulation/paradigms     List paradigms (legacy)
-    GET  /api/v1/plugins/{category}        List plugins by category
+    GET  /api/v1/config/plugin-catalog/{kind}  List configurable plugins
     POST /api/v1/stimulation/start         Start stimulation
     POST /api/v1/stimulation/stop          Stop stimulation
     POST /api/v1/stimulation/trial/start   Trigger a trial
@@ -28,21 +27,23 @@ Endpoints:
 import asyncio
 import logging
 import os
+import secrets
 from uuid import uuid4
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket
-from fastapi.middleware.cors import CORSMiddleware
 
-from omnibci.presentation.routers import engine, acquisition, stimulation, results, config, plugins
+from omnibci.presentation.routers import engine, acquisition, stimulation, results, config
 from omnibci.presentation.routers import plugin_config, runtime_config, plugin_packages
 from omnibci.presentation.routers import plugin_package_lifecycle, plugin_market
 from omnibci.presentation.routers import signal_setup
-from omnibci.presentation.routers import system
+from omnibci.presentation.routers import server
 from omnibci.presentation.security import ApiAccessMiddleware, RequestGate
-from omnibci.application.services.shutdown_service import BackendShutdownService
+from omnibci.application.services.shutdown_service import ServerShutdownService
 from omnibci.presentation.websockets.results import results_broadcaster, results_ws_endpoint
-from omnibci.bootstrap import build_container, create_backend_logging, load_host_settings, register_engine_listeners
+from omnibci.bootstrap import (
+    server_plugin_environment, build_container, create_server_logging, load_host_settings, register_engine_listeners,
+)
 from omnibci.presentation.errors import register_exception_handlers
 from omnibci.presentation.schemas.common import ErrorResponse
 from omnibci.shared.events import EventType
@@ -53,7 +54,8 @@ logger = logging.getLogger(__name__)
 # appears in the OpenAPI spec and the generated frontend types.
 ERROR_RESPONSES = {
     400: {"model": ErrorResponse, "description": "Bad request"},
-    401: {"model": ErrorResponse, "description": "API token required or invalid"},
+    401: {"model": ErrorResponse, "description": "API token or browser session required or invalid"},
+    403: {"model": ErrorResponse, "description": "Browser origin rejected"},
     404: {"model": ErrorResponse, "description": "Not found"},
     409: {"model": ErrorResponse, "description": "Conflict"},
     422: {"model": ErrorResponse, "description": "Validation error"},
@@ -67,8 +69,8 @@ async def lifespan(app: FastAPI):
     """Keep logging available throughout startup and service shutdown."""
     app.state.shutdown_complete = False
     host_settings = load_host_settings()
-    with create_backend_logging(host_settings) as backend_logging:
-        app.state.backend_logging = backend_logging
+    with server_plugin_environment(host_settings), create_server_logging(host_settings) as server_logging:
+        app.state.server_logging = server_logging
         async with _services_lifespan(app, host_settings):
             yield
     # A stopped runtime alone does not confirm successful lifespan/log cleanup.
@@ -97,16 +99,11 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
     app.state.acquisition_service = container.acquisition_service
     app.state.stimulation_service = container.stimulation_service
     app.state.stimulation_process_manager = container.stimulation_process_manager
-    app.state.config_service = container.config_service
     app.state.plugin_installation_service = container.plugin_installation_service
     app.state.plugin_package_service = container.plugin_package_service
     app.state.plugin_market_service = container.plugin_market_service
-    app.state.shutdown_service = BackendShutdownService(
+    app.state.shutdown_service = ServerShutdownService(
         engine=container.engine_service,
-        stimulation=container.stimulation_service,
-        stimulation_process=container.stimulation_process_manager,
-        actuation_process=container.actuation_process_manager,
-        acquisition=container.acquisition_service,
         configuration=container.runtime_configuration,
     )
 
@@ -153,19 +150,14 @@ def create_app(*, api_token: str | None = None, desktop: bool = False) -> FastAP
     token = api_token if api_token is not None else os.environ.get("OMNIBCI_API_TOKEN")
     app.state.instance_id = str(uuid4())
     app.state.auth_enabled = bool(token)
+    app.state.session_token = secrets.token_urlsafe(32)
     app.state.allow_process_termination = not desktop
     app.state.request_gate = RequestGate()
     app.state.shutdown_errors = []
     app.state.shutdown_complete = False
     app.state.shutdown_progress = None
-    app.add_middleware(ApiAccessMiddleware, token=token, gate=app.state.request_gate)
-
     app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        ApiAccessMiddleware, token=token, session_token=app.state.session_token, gate=app.state.request_gate,
     )
 
     # Unified error envelope for every failure (ApiError / HTTPException /
@@ -173,7 +165,7 @@ def create_app(*, api_token: str | None = None, desktop: bool = False) -> FastAP
     register_exception_handlers(app)
 
     prefix = "/api/v1"
-    app.include_router(system.router, prefix=prefix, responses=ERROR_RESPONSES)
+    app.include_router(server.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(engine.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(acquisition.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(stimulation.router, prefix=prefix, responses=ERROR_RESPONSES)
@@ -185,7 +177,6 @@ def create_app(*, api_token: str | None = None, desktop: bool = False) -> FastAP
     app.include_router(plugin_packages.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(plugin_package_lifecycle.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(plugin_market.router, prefix=prefix, responses=ERROR_RESPONSES)
-    app.include_router(plugins.router, prefix=prefix, responses=ERROR_RESPONSES)
 
     @app.websocket("/api/v1/ws/results")
     async def ws_results(websocket: WebSocket):

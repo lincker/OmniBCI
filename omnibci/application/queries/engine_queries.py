@@ -16,4 +16,6 @@ class EngineStatusResult:
     acquisition_alive: bool
     processor_alive: bool
     stimulation_connected: bool = False
+    actuation_alive: bool = False
+    actuation_connected: bool = False
     extra: Optional[Dict[str, Any]] = None

@@ -23,7 +23,8 @@ class TrialCompletedMessage(BaseModel):
     event: Literal["TrialCompleted"] = "TrialCompleted"
     generation: str
     trial_number: int
-    config_revision: Optional[str] = None
+    processing_revision: Optional[str] = None
+    acquisition_revision: Optional[str] = None
     target_id: int = Field(..., description="Index of the recognised stimulus target")
     event_id: int = Field(..., description="Trigger event that opened the epoch")
     confidence: Optional[float] = Field(

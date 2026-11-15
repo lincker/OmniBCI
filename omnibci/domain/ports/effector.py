@@ -5,8 +5,8 @@ An Effector is the pluggable device driver the actuation subsystem loads to
 carry out decoded intent — the output-side analogue of a stimulation Paradigm
 (actuation : Effector :: stimulation : Paradigm). The engine emits
 ActuationCommand events (neuroengine/actuation_translator); the actuation
-subsystem (infrastructure/actuation) — gated by ACTUATION.enabled and
-selected via ACTUATION.effector — receives them over the actuation peer
+subsystem (infrastructure/actuation), started independently with its selected
+Effector, receives them over the actuation peer
 channel and drives the concrete device through this interface.
 """
 from abc import ABC, abstractmethod

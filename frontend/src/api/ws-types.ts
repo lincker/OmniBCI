@@ -3,7 +3,7 @@
  *
  * Hand-written mirror of omnibci/presentation/schemas/ws.py (WsMessage union).
  * Kept manually because WebSocket payloads are not part of the OpenAPI spec;
- * the shape is protected on the backend by the contract-freeze tests.
+ * the shape is protected on the server by the contract-freeze tests.
  * If schemas/ws.py changes, update this file in the same commit.
  *
  * Server → client only. The top-level `event` field is the discriminator.
@@ -14,7 +14,8 @@ export interface TrialCompletedMessage {
   event: "TrialCompleted";
   generation: string;
   trial_number: number;
-  config_revision?: string | null;
+  processing_revision?: string | null;
+  acquisition_revision?: string | null;
   target_id: number;
   event_id: number;
   confidence: number | null;

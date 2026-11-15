@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 import pytest
 
 from omnibci.application.services.signal_setup_service import SignalSetupService
-from omnibci.conf import OmniBCISettings
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.presentation.errors import register_exception_handlers
 from omnibci.presentation.routers.signal_setup import router
@@ -14,11 +13,10 @@ from omnibci.presentation.routers.signal_setup import router
 
 @pytest.fixture
 def signal_client(tmp_path):
-    path = tmp_path / "settings.toml"
-    path.write_text('[NEUROENGINE]\nqueue_size = 100\n', encoding="utf-8")
     service = SignalSetupService(
-        OmniBCISettings(path), SimpleNamespace(repository=SimpleNamespace(get_activation=lambda: None)),
-        SimpleNamespace(admission=None, applied_snapshot=None, is_engine_ready=False),
+        SimpleNamespace(repository=SimpleNamespace(get_module=lambda module: None, get_engine=lambda: None), materialize=lambda _: {}),
+        SimpleNamespace(admission=None, applied_snapshot=None, is_engine_ready=False,
+                        is_module_running=lambda module: False),
         SimpleNamespace(cached_descriptor_for=lambda binding: None), None,
     )
     app = FastAPI()
@@ -31,7 +29,7 @@ def signal_client(tmp_path):
 
 def test_global_signal_writer_and_montage_read_contract_are_removed(signal_client):
     before = signal_client.get("/config/signal").json()["data"]
-    assert not {"setup", "legacy_setup", "accepted_setup", "active_setup", "source_metadata"} & before.keys()
+    assert not {"setup", "legacy_setup", "accepted_setup", "active_setup", "source_metadata", "revision"} & before.keys()
     assert signal_client.put("/config/signal", json={"setup": {"source_id": "fixture"}}).status_code == 405
     assert signal_client.get("/config/signal").json()["data"] == before
 
@@ -52,13 +50,13 @@ def test_malformed_drafts_are_rejected_without_writes(signal_client, patch):
     response = signal_client.post("/config/signal/preview", json={"processing_input": patch})
     assert response.status_code == 422
     assert response.json()["code"] == "VALIDATION_ERROR"
-    assert signal_client.get("/config/signal").json()["data"]["revision"] == initial["revision"]
+    assert signal_client.get("/config/signal").json()["data"] == initial
 
 
 def connected_descriptor(signal_client, signal_type="unknown"):
     service = signal_client.app.state.container.signal_setup_service
     service.engine.is_engine_ready = True
-    service.engine.applied_snapshot = {"ACQUISITION.signal_source": "fixture"}
+    service.engine.applied_snapshot = {"ACQUISITION.signal_source": "fixture", "PLUGINS.bindings": [{"slot": "acquisition.source", "kind": "acquisition", "selection": {"package_id": "test.source", "contribution_id": "default", "version": "1"}, "parameters": {}}]}
     descriptor = SignalInfo("fixture", 500, (
         ChannelDescriptor(0, "CH1", signal_type=signal_type, unit="uV"),
         ChannelDescriptor(1, "CH1", unit="uV"),

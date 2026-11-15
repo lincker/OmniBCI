@@ -11,8 +11,8 @@ from enum import IntEnum
 import numpy as np
 
 from omnibci.domain.ports.acquisition import SignalSource, TriggerEmitter
-from omnibci.domain.acquisition_descriptor import AcquisitionDescriptor
-from omnibci.infrastructure.acquisition.metadata import acquisition_descriptor
+from omnibci.domain.signal_info import SignalInfo
+from omnibci.infrastructure.acquisition.metadata import signal_info
 from omnibci.sdk import PluginContext, PluginParameters
 
 
@@ -176,9 +176,9 @@ class Scan45DataReader(SignalSource):
         """Report unsupported querying without presenting settings as device data."""
         return "Device metadata retrieval is not implemented for Scan45."
 
-    def describe_output(self, *, source_id: str, connection_id: str) -> AcquisitionDescriptor:
+    def describe_output(self, *, source_id: str, connection_id: str) -> SignalInfo:
         """Describe the configured stream until device querying is implemented."""
-        return acquisition_descriptor(
+        return signal_info(
             source_id=source_id, connection_id=connection_id,
             signal_channel_count=self.channel_count - 1,
             sample_rate=self._sample_rate,

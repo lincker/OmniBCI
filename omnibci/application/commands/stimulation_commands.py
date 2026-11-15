@@ -8,7 +8,6 @@ from typing import Optional, Sequence, Any
 @dataclass(frozen=True)
 class StartStimulationCommand:
     """Launch the stimulation paradigm."""
-    paradigm: Optional[str] = None  # override config default if provided
 
 
 @dataclass(frozen=True)

@@ -31,19 +31,22 @@ class PackagingTests(unittest.TestCase):
     def test_clean_source_excludes_stale_build_and_private_configuration(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "checkout"
-            (root / "omnibci/conf/profiles").mkdir(parents=True)
+            (root / "omnibci/application/configuration").mkdir(parents=True)
             (root / "omnibci/__pycache__").mkdir()
-            (root / "build/lib/omnibci/conf/profiles").mkdir(parents=True)
+            (root / "build/lib/omnibci/application/configuration").mkdir(parents=True)
+            (root / "user-config/plugin-profiles").mkdir(parents=True)
             (root / "tests/fixture").mkdir(parents=True)
-            for name in ("pyproject.toml", "omnibci/conf/settings.toml", "omnibci/runtime.py",
-                         "omnibci/conf/profiles/private.toml", "omnibci/conf/.secrets.toml",
-                         "omnibci/__pycache__/runtime.pyc", "build/lib/omnibci/conf/profiles/removed.toml",
+            for name in ("pyproject.toml", "omnibci/application/configuration/definitions.py", "omnibci/runtime.py",
+                         "user-config/settings.toml", "user-config/plugin-profiles/private.toml",
+                         "omnibci/.secrets.toml", "omnibci/__pycache__/runtime.pyc",
+                         "build/lib/omnibci/application/configuration/removed.py",
                          "tests/fixture/train.cnt"):
                 (root / name).write_text("fixture")
             destination = Path(temporary) / "source"
             runtime.copy_source(root, destination)
             copied = {path.relative_to(destination).as_posix() for path in destination.rglob("*") if path.is_file()}
-            self.assertEqual(copied, {"pyproject.toml", "omnibci/conf/settings.toml", "omnibci/runtime.py"})
+            self.assertEqual(copied, {"pyproject.toml", "omnibci/application/configuration/definitions.py",
+                                     "omnibci/runtime.py"})
 
     def test_supported_targets_have_separate_hashes_and_interpreters(self):
         versions = json.loads((DESKTOP / "runtime/versions.json").read_text())

@@ -13,7 +13,6 @@ class EventType(IntEnum):
     DisconnectDataProvider = 102
     GetSourceCheckpoint = 105
     RestoreSourceCheckpoint = 106
-    UpdateAcquisitionRevision = 107
     GetSourceMetadata = 108
     StartStream = 111
     StopStream = 112
@@ -21,22 +20,23 @@ class EventType(IntEnum):
     StartAcquisitionPreview = 114
     StopAcquisitionPreview = 115
     GetAcquisitionPreview = 116
+    AttachProcessingInput = 117
+    DetachProcessingInput = 118
     StageProcessingConfiguration = 211  # stage a pipeline until the next epoch boundary
     CancelProcessingConfiguration = 212  # reconcile or cancel a staged pipeline
-    UpdateProcessingContext = 213  # acknowledge output metadata after an ordered drain
     PrepareSignalProcessing = 214
+    ResetProcessingInput = 215
+    ProcessingInputFault = 216  # acquisition delivery failed; source reading continues
     AcquisitionState = 121  # worker -> API: authoritative device-state snapshot
                             # payload: application.events.AcquisitionSnapshot
     CommandResult = 601      # command consumer -> API: application.events.CommandResult
+    PeerDeliveryFault = 602  # local channel -> owner: delivery stopped, not an execution receipt
     PeerHello = 701          # external peer -> engine: pinned runtime identity
     PeerAccepted = 702       # engine -> external peer: matching identity accepted
-    # Legacy numeric values are part of the versioned IPC wire contract.
-    CloseAllNeuroEngineProcessSystem = 33
     # stimulation
     StartStimTrial = 311
     StimulationAck = 312   # stim → engine: ack/result of a stimulation command
     MessageFromStimulation = 9
-    StartStimulation = 301
     StopStimulation = 302
     PauseStimulation = 303  # correlated renderer stop and trigger clear
     # actuation (external-device control; the actuation subsystem loads
@@ -46,6 +46,7 @@ class EventType(IntEnum):
     ActuationState = 403    # actuation → engine: device state / sensor feedback
     ActuationFault = 404    # actuation → engine: device fault (triggers safety)
     SettleActuation = 405   # correlated mailbox cancellation and device quiescence
+    ResumeActuation = 406   # enable new commands after a confirmed stop
     TrialCompleted = 501   # payload: TrialOutcome (generation + trial_number + Classification)
     EpochProcessed = 502   # local inspection only; never forwarded to output peers
 
@@ -57,7 +58,6 @@ class Event:
 
       TrialCompleted   application.events.TrialOutcome
       EpochProcessed   application.events.EpochProcessed
-      StartStimulation str|None (paradigm)
       StartStimTrial   dict {"n_trials": int, "trial_params": list|None}
       AcquisitionState application.events.AcquisitionSnapshot
       CommandResult    application.events.CommandResult

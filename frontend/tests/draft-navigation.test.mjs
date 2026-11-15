@@ -1,5 +1,6 @@
-/** Unsaved editors survive navigation attempts until the user explicitly discards them. */
+/** Current plugin values survive navigation; transient settings retain discard protection. */
 import assert from "node:assert/strict";
+import { moduleConfiguration, revisionMap } from "./module-fixtures.mjs";
 import { after, test } from "node:test";
 import React from "react";
 import { createServer } from "vite";
@@ -46,6 +47,7 @@ function harness(Component, props = {}, attachRefs = () => {}) {
   };
   return {
     get tree() { return tree; },
+    updateProps(next) { Object.assign(props, next); pending = true; },
     async settle() {
       for (let round = 0; round < 40; round += 1) {
         if (pending) {
@@ -71,14 +73,17 @@ function elements(tree) {
 const component = (h, name) => elements(h.tree).find((item) => item.type.name === name);
 const navigation = (h, label) => elements(h.tree).find((item) => item.type === "button" && item.props["aria-label"] === label);
 
-async function withApp(action, { desktopMode = false, applying = false } = {}) {
+async function withApp(action, { desktopMode = false, applying = false, connected = true } = {}) {
   const original = Object.fromEntries(["window", "document", "location", "localStorage", "WebSocket", "fetch"].map((key) => [key, globalThis[key]]));
   const originalStatus = runtimeConfigApi.status;
-  const listeners = new Map(), editorStates = [];
+  const originalActivation = pluginConfigApi.modules, originalModule = pluginConfigApi.module;
+  pluginConfigApi.modules = async () => moduleConfiguration();
+  pluginConfigApi.module = async (module) => (await pluginConfigApi.modules()).modules[module];
+  const listeners = new Map(), editorStates = [], resultSubscriptions = [];
   const location = { hash: "#acquisition", protocol: "http:", host: "localhost" };
   const localStorage = { getItem: () => null, setItem: () => {} };
-  const state = { running: false, accepted_revision: null, applied_revision: null, generation: null, recovery_required: false,
-    operation: applying ? { operation_id: "operation-1", status: "applying", stage: "rebuilding" } : null };
+  const state = { running: false, accepted: revisionMap(null), applied: null, generation: null, recovery: {},
+    operations: applying ? { acquisition: { module: "acquisition", affected_modules: ["acquisition"], operation_id: "operation-1", status: "applying", stage: "rebuilding" } } : {} };
   globalThis.window = { location, localStorage, history: { replaceState: (_state, _title, hash) => { location.hash = hash; } },
     addEventListener: (event, listener) => listeners.set(event, listener),
     removeEventListener: (event, listener) => { if (listeners.get(event) === listener) listeners.delete(event); } };
@@ -86,51 +91,62 @@ async function withApp(action, { desktopMode = false, applying = false } = {}) {
   globalThis.document = { hidden: true, documentElement: { style: {} } };
   globalThis.WebSocket = class { close() {} };
   globalThis.fetch = () => new Promise(() => {});
-  runtimeConfigApi.status = async () => state;
+  runtimeConfigApi.status = async () => structuredClone(state);
   if (desktopMode) {
-    desktop.setDesktopConnection({ id: "backend", kind: "local", status: "ready" });
-    window.omnibciDesktop = { subscribeResults: () => () => {}, setEditorState: (value) => editorStates.push(value) };
+    desktop.setDesktopConnection({ id: "server", kind: "owned", status: "ready" });
+    window.omnibciDesktop = { subscribeResults: (id) => { resultSubscriptions.push(id); return () => {}; }, setEditorState: (value) => editorStates.push(value) };
   }
   const focusEvents = [];
   const heading = { setAttribute: (name, value) => { heading[name] = value; }, focus: () => focusEvents.push(location.hash) };
   const content = { querySelector: () => heading, focus: () => focusEvents.push("main") };
-  const h = harness(App, {}, (tree) => { elements(tree).find((item) => item.type === "main").ref.current = content; });
-  try { await h.settle(); await action({ h, listeners, editorStates, state, focusEvents, heading }); }
-  finally { h.dispose(); runtimeConfigApi.status = originalStatus; Object.assign(globalThis, original); }
+  const h = harness(App, { connected }, (tree) => { elements(tree).find((item) => item.type === "main").ref.current = content; });
+  try { await h.settle(); await action({ h, listeners, editorStates, state, focusEvents, heading, resultSubscriptions }); }
+  finally { h.dispose(); runtimeConfigApi.status = originalStatus; pluginConfigApi.modules = originalActivation; pluginConfigApi.module = originalModule; Object.assign(globalThis, original); }
 }
 
+const currentSource = {
+  profile: null, selection: { package_id: "example.source", contribution_id: "main", version: "1.0.0" },
+  plugin: '["example.source","main","1.0.0"]', name: "", parameters: { address: "new-device" }, processingInput: null,
+};
+
 for (const trigger of ["workspace", "hash", "shortcut"]) {
-  test(`${trigger} navigation preserves the editor until an explicit discard`, async () => {
+  test(`${trigger} navigation preserves current values without requiring a profile save`, async () => {
     await withApp(async ({ h, listeners }) => {
-      component(h, "PluginProfiles").props.onDirtyChange(true); await h.settle();
-      const navigate = () => {
-        if (trigger === "workspace") navigation(h, "Run").props.onClick();
-        else if (trigger === "hash") { window.location.hash = "#run"; listeners.get("hashchange")(); }
-        else h.tree.props.onKeyDown({ ctrlKey: true, key: ",", target: {}, preventDefault() {} });
-      };
-      navigate(); await h.settle();
-      assert.equal(component(h, "PluginProfiles").props.module, "acquisition");
-      assert.equal(window.location.hash, "#acquisition");
-      assert.equal(component(h, "ConfigDialog").props.cancelLabel, "Keep editing");
-      component(h, "ConfigDialog").props.onCancel(); await h.settle();
+      component(h, "PluginProfiles").props.current.set("acquisition.source", currentSource);
+      await h.settle();
+      if (trigger === "workspace") navigation(h, "Run").props.onClick();
+      else if (trigger === "hash") { window.location.hash = "#run"; listeners.get("hashchange")(); }
+      else h.tree.props.onKeyDown({ ctrlKey: true, key: ",", target: {}, preventDefault() {} });
+      await h.settle();
       assert.equal(component(h, "ConfigDialog"), undefined);
-      assert.ok(listeners.has("beforeunload"));
-      navigate(); await h.settle();
-      component(h, "ConfigDialog").props.onConfirm(); await h.settle();
-      assert.equal(component(h, "PluginProfiles"), undefined);
       assert.equal(window.location.hash, trigger === "shortcut" ? "#general" : "#run");
-      assert.equal(listeners.has("beforeunload"), false);
+      assert.ok(listeners.has("beforeunload"), "Leaving the app still protects unapplied values");
+      window.location.hash = "#acquisition"; listeners.get("hashchange")(); await h.settle();
+      assert.deepEqual(component(h, "PluginProfiles").props.current.entries["acquisition.source"], currentSource);
     });
   });
 }
 
-test("a busy editor rejects hash navigation without discarding or opening another dialog", async () => {
+test("host settings still require an explicit discard before navigation", async () => {
+  await withApp(async ({ h }) => {
+    h.tree.props.onKeyDown({ ctrlKey: true, key: ",", target: {}, preventDefault() {} }); await h.settle();
+    component(h, "ConfigCard").props.onDirtyChange(true); await h.settle();
+    navigation(h, "Run").props.onClick(); await h.settle();
+    assert.equal(window.location.hash, "#general");
+    component(h, "ConfigDialog").props.onCancel(); await h.settle();
+    assert.ok(component(h, "ConfigCard"));
+    navigation(h, "Run").props.onClick(); await h.settle();
+    component(h, "ConfigDialog").props.onConfirm(); await h.settle();
+    assert.equal(window.location.hash, "#run");
+  });
+});
+
+test("module activity permits hash navigation without discarding current values", async () => {
   await withApp(async ({ h, listeners }) => {
-    component(h, "PluginProfiles").props.onDirtyChange(true);
     component(h, "PluginProfiles").props.onBusyChange(true); await h.settle();
     window.location.hash = "#run"; listeners.get("hashchange")(); await h.settle();
-    assert.equal(window.location.hash, "#acquisition");
-    assert.equal(component(h, "PluginProfiles").props.module, "acquisition");
+    assert.equal(window.location.hash, "#run");
+    assert.ok(component(h, "RunConsole"));
     assert.equal(component(h, "ConfigDialog"), undefined);
   });
 });
@@ -138,7 +154,7 @@ test("a busy editor rejects hash navigation without discarding or opening anothe
 test("Skip to editor focuses the page heading without changing the hash route or draft", async () => {
   await withApp(async ({ h, focusEvents, heading }) => {
     assert.deepEqual(focusEvents, [], "Initial loading does not steal focus");
-    component(h, "PluginProfiles").props.onDirtyChange(true); await h.settle();
+    component(h, "PluginProfiles").props.current.set("acquisition.source", currentSource); await h.settle();
     const skip = elements(h.tree).find((item) => item.type === "a" && item.props.className === "skip-link");
     let prevented = false;
     skip.props.onClick({ preventDefault() { prevented = true; } });
@@ -150,15 +166,13 @@ test("Skip to editor focuses the page heading without changing the hash route or
   });
 });
 
-test("navigation moves focus to new content only after a discard is confirmed", async () => {
+test("navigation focuses the new page while preserving current configuration", async () => {
   await withApp(async ({ h, focusEvents }) => {
-    component(h, "PluginProfiles").props.onDirtyChange(true); await h.settle();
+    component(h, "PluginProfiles").props.current.set("acquisition.source", currentSource);
+    await h.settle();
     navigation(h, "Run").props.onClick(); await h.settle();
-    component(h, "ConfigDialog").props.onCancel(); await h.settle();
-    assert.deepEqual(focusEvents, []);
-    navigation(h, "Run").props.onClick(); await h.settle();
-    component(h, "ConfigDialog").props.onConfirm(); await h.settle();
     assert.deepEqual(focusEvents, ["#run"]);
+    assert.deepEqual(component(h, "RunConsole").props.current.entries["acquisition.source"], currentSource);
     await component(h, "RuntimeConfigurationReview").props.runtime.refresh(); await h.settle();
     assert.deepEqual(focusEvents, ["#run"], "Background status polling does not move focus");
   });
@@ -175,31 +189,28 @@ test("settings shortcuts ignore handled events and keys inside dialogs", async (
   });
 });
 
-test("Open Run preserves draft protection and Change setup returns to Acquisition", async () => {
+test("Open Run retains current values and Change setup returns to Acquisition", async () => {
   await withApp(async ({ h, listeners }) => {
-    component(h, "PluginProfiles").props.onDirtyChange(true); await h.settle();
+    component(h, "PluginProfiles").props.current.set("acquisition.source", currentSource);
+    await h.settle();
     component(h, "PluginProfiles").props.onRun(); await h.settle();
-    assert.equal(window.location.hash, "#acquisition");
-    component(h, "ConfigDialog").props.onCancel(); await h.settle();
-    component(h, "PluginProfiles").props.onDirtyChange(false); await h.settle();
+    assert.equal(window.location.hash, "#run");
+    assert.deepEqual(component(h, "RunConsole").props.current.entries["acquisition.source"], currentSource);
     window.location.hash = "#processing"; listeners.get("hashchange")(); await h.settle();
     navigation(h, "Run").props.onClick(); await h.settle();
     component(h, "RunConsole").props.onEditSetup(); await h.settle();
     assert.equal(window.location.hash, "#acquisition", "Source setup must not depend on the last visited setup tab");
+    assert.deepEqual(component(h, "PluginProfiles").props.current.entries["acquisition.source"], currentSource);
   });
 });
 
-test("Run processing shortcut opens the relevant editor and respects busy navigation", async () => {
+test("Run processing shortcut opens the relevant editor during module activity", async () => {
   await withApp(async ({ h }) => {
     navigation(h, "Run").props.onClick(); await h.settle();
     component(h, "RunConsole").props.onEditProcessing(); await h.settle();
     assert.equal(window.location.hash, "#processing");
     assert.equal(component(h, "PluginProfiles").props.module, "processing");
     navigation(h, "Run").props.onClick(); await h.settle();
-    component(h, "RunConsole").props.onBusyChange(true); await h.settle();
-    component(h, "RunConsole").props.onEditProcessing(); await h.settle();
-    assert.equal(window.location.hash, "#run", "A running operation keeps navigation blocked");
-    component(h, "RunConsole").props.onBusyChange(false); await h.settle();
     component(h, "RunConsole").props.onEditProcessing(); await h.settle();
     assert.equal(window.location.hash, "#processing");
     assert.equal(component(h, "PluginProfiles").props.module, "processing");
@@ -212,7 +223,7 @@ test("browser refresh stays protected until an in-flight runtime application set
     assert.ok(listeners.has("beforeunload"));
     listeners.get("beforeunload")(event);
     assert.equal(event.prevented, true); assert.equal(event.returnValue, "");
-    state.operation = { operation_id: "operation-1", status: "succeeded", stage: "complete" };
+    state.operations.acquisition = { module: "acquisition", affected_modules: ["acquisition"], operation_id: "operation-1", status: "succeeded", stage: "complete" };
     await component(h, "RuntimeConfigurationReview").props.runtime.refresh(); await h.settle();
     assert.equal(listeners.has("beforeunload"), false);
   }, { applying: true });
@@ -220,7 +231,7 @@ test("browser refresh stays protected until an in-flight runtime application set
 
 test("desktop delegates dirty and in-flight protection to its existing native connection and close guard", async () => {
   await withApp(async ({ h, listeners, editorStates }) => {
-    component(h, "PluginProfiles").props.onDirtyChange(true); await h.settle();
+    component(h, "PluginProfiles").props.current.set("acquisition.source", currentSource); await h.settle();
     assert.deepEqual(editorStates.at(-1), { dirty: true, busy: true });
     assert.equal(listeners.has("beforeunload"), false);
   }, { desktopMode: true, applying: true });
@@ -242,29 +253,6 @@ test("discard dialogs describe the consequence and focus Keep editing; Escape pr
   h.dispose();
 });
 
-test("save-required dialogs show one focused Continue editing action and retain their details", async () => {
-  let continued = 0, cancelled = 0;
-  const details = React.createElement("p", null, "Gain: 2 → 3");
-  const h = harness(ConfigDialog, { title: "Unsaved changes", message: "Save this profile before applying it.",
-    details, confirmLabel: "Continue editing", cancelLabel: null,
-    onConfirm: () => { continued += 1; }, onCancel: () => { cancelled += 1; } });
-  try {
-    await h.settle();
-    const buttons = elements(h.tree).filter((item) => item.type === "button");
-    assert.equal(buttons.length, 1);
-    assert.equal(buttons[0].props.children, "Continue editing");
-    assert.equal(buttons[0].props.autoFocus, true);
-    assert.ok(elements(h.tree).includes(details));
-    assert.ok(elements(h.tree).some((item) => item.type === "p" && item.props.children === "Save this profile before applying it."));
-    elements(h.tree).find((item) => item.type === "form").props.onSubmit({ preventDefault() {} });
-    assert.equal(continued, 1);
-    assert.equal(cancelled, 0);
-    h.tree.props.onCancel({ preventDefault() {} });
-    assert.equal(cancelled, 1);
-    assert.equal(continued, 1);
-  } finally { h.dispose(); }
-});
-
 test("closing a dialog restores focus only while the original control still exists", async () => {
   const originalDocument = globalThis.document;
   try {
@@ -283,39 +271,54 @@ test("closing a dialog restores focus only while the original control still exis
   } finally { globalThis.document = originalDocument; }
 });
 
+const currentRequest = () => ({ settings: {}, expected_revision: "rev-1", bindings: [{
+  slot: "acquisition.source", selection: currentSource.selection, parameters: {},
+}] });
+
 async function withSharedAcquisition(action) {
-  const original = { ...api }, originalActivation = pluginConfigApi.activation;
+  const original = { ...api }, originalActivation = pluginConfigApi.modules, originalRuntime = { ...runtimeConfigApi };
   const source = { connected: false, streaming: false, connection_id: null }, calls = [];
-  const backend = { status: async () => ({ ...source }) };
+  const server = { status: async () => ({ ...source }) };
   let engineState;
   api.engineStatus = async () => ({ running: engineState?.running ?? false });
-  api.acquisitionStatus = () => backend.status();
+  api.acquisitionStatus = () => server.status();
   try {
     await withApp(async ({ h, state }) => {
       engineState = state;
-      Object.assign(state, { running: true, generation: "engine-1", accepted_revision: "rev-1", applied_revision: "rev-1" });
-      pluginConfigApi.activation = async () => ({ revision: "rev-1", bindings: [{ slot: "acquisition.source" }] });
-      api.acqConnect = async () => { calls.push("connect"); Object.assign(source, { connected: true, connection_id: "source-1" }); };
+      Object.assign(state, { running: true, generation: "engine-1", accepted: revisionMap("rev-1"), applied: revisionMap("rev-1") });
+      pluginConfigApi.modules = async () => moduleConfiguration({ revision: "rev-1", bindings: [{ slot: "acquisition.source",
+        kind: "acquisition", selection: currentSource.selection, parameters: {} }] });
+      pluginConfigApi.module = async (module) => (await pluginConfigApi.modules()).modules[module];
+      runtimeConfigApi.operation = async () => {
+        if (!state.operations.acquisition) throw new Error("Operation is not yet visible");
+        return state.operations.acquisition;
+      };
+      api.acqConnect = async ({ operation_id }) => {
+        calls.push("connect"); Object.assign(source, { connected: true, connection_id: "source-1" });
+        state.operations.acquisition = { operation_id, module: "acquisition", affected_modules: ["acquisition"],
+          status: "succeeded", target_revisions: { acquisition: "rev-1" }, result: { configuration_applied: true, action: "connected" } };
+        return state.operations.acquisition;
+      };
       api.acqDisconnect = async () => { calls.push("disconnect"); Object.assign(source, { connected: false, connection_id: null }); };
       api.acqMetadata = async () => assert.fail("Connect must not inspect metadata");
       api.acqStreamStart = async () => { calls.push("read"); source.streaming = true; };
       api.acqStreamStop = async () => { calls.push("stop"); source.streaming = false; };
       const controller = () => (component(h, "PluginProfiles") ?? component(h, "RunConsole")).props.acquisition;
       await controller().refresh(); await h.settle();
-      await action({ h, source, calls, controller, backend });
+      await action({ h, source, calls, controller, server, state });
     });
-  } finally { Object.assign(api, original); pluginConfigApi.activation = originalActivation; }
+  } finally { Object.assign(api, original); pluginConfigApi.modules = originalActivation; Object.assign(runtimeConfigApi, originalRuntime); }
 }
 
 test("Setup and Run share connection state through connect, reading, stop and disconnect", async () => {
   await withSharedAcquisition(async ({ h, calls, controller }) => {
-    await controller().connect.run("rev-1"); await h.settle();
+    await controller().connect.run(currentRequest()); await h.settle();
     assert.equal(controller().data.connected, true);
     assert.deepEqual(calls, ["connect"]);
     component(h, "PluginProfiles").props.onRun(); await h.settle();
     assert.ok(component(h, "RunConsole"));
     assert.equal(controller().data.connected, true);
-    await controller().read.run("rev-1"); await h.settle();
+    await controller().read.run({ expected_revision: "rev-1", generation: "engine-1", connection_id: "source-1" }); await h.settle();
     assert.equal(controller().data.streaming, true);
     await controller().stopRead.run(); await h.settle();
     assert.equal(controller().data.connected, true);
@@ -328,17 +331,17 @@ test("Setup and Run share connection state through connect, reading, stop and di
   });
 });
 
-test("a pending shared connection blocks navigation and duplicate commands", async () => {
+test("a pending shared connection survives navigation and blocks duplicate commands", async () => {
   await withSharedAcquisition(async ({ h, calls, controller }) => {
     let finish;
     const connect = api.acqConnect;
-    api.acqConnect = async () => { await new Promise((resolve) => { finish = resolve; }); await connect(); };
-    const connecting = controller().connect.run("rev-1");
+    api.acqConnect = async (body) => { await new Promise((resolve) => { finish = resolve; }); return connect(body); };
+    const connecting = controller().connect.run(currentRequest());
     await h.settle();
     assert.equal(controller().pending, true);
     component(h, "PluginProfiles").props.onRun(); await h.settle();
-    assert.ok(component(h, "PluginProfiles"));
-    await controller().connect.run("rev-1");
+    assert.ok(component(h, "RunConsole"));
+    await controller().connect.run(currentRequest());
     finish(); await connecting; await h.settle();
     assert.equal(controller().pending, false);
     assert.deepEqual(calls, ["connect"]);
@@ -346,15 +349,15 @@ test("a pending shared connection blocks navigation and duplicate commands", asy
 });
 
 test("a failed connection refreshes actual status and keeps its error when switching pages", async () => {
-  await withSharedAcquisition(async ({ h, source, controller, backend }) => {
+  await withSharedAcquisition(async ({ h, source, controller, server }) => {
     api.acqConnect = async () => { Object.assign(source, { connected: true, connection_id: "source-1" }); throw new Error("Reply timed out"); };
-    await controller().connect.run("rev-1"); await h.settle();
+    await controller().connect.run(currentRequest()); await h.settle();
     assert.equal(controller().data.connected, true);
     assert.match(controller().connect.error, /Reply timed out/);
     component(h, "PluginProfiles").props.onRun(); await h.settle();
     assert.equal(controller().data.connected, true);
     assert.match(controller().connect.error, /Reply timed out/);
-    backend.status = async () => { throw new Error("Status unavailable"); };
+    server.status = async () => { throw new Error("Status unavailable"); };
     await controller().refresh(); await h.settle();
     assert.match(controller().error.message, /Status unavailable/);
     component(h, "RunConsole").props.onEditSetup(); await h.settle();
@@ -363,11 +366,11 @@ test("a failed connection refreshes actual status and keeps its error when switc
 });
 
 for (const staleFailure of [false, true]) test(`older acquisition status cannot overwrite a newer refresh (failure=${staleFailure})`, async () => {
-  await withSharedAcquisition(async ({ h, controller, backend }) => {
+  await withSharedAcquisition(async ({ h, controller, server }) => {
     let resolveOld, rejectOld;
-    backend.status = () => new Promise((resolve, reject) => { resolveOld = resolve; rejectOld = reject; });
+    server.status = () => new Promise((resolve, reject) => { resolveOld = resolve; rejectOld = reject; });
     const older = controller().refresh();
-    backend.status = async () => ({ connected: true, streaming: false, connection_id: "current" });
+    server.status = async () => ({ connected: true, streaming: false, connection_id: "current" });
     await controller().refresh(); await h.settle();
     if (staleFailure) rejectOld(new Error("Old status failure"));
     else resolveOld({ connected: false, streaming: false, connection_id: null });
@@ -378,12 +381,93 @@ for (const staleFailure of [false, true]) test(`older acquisition status cannot 
 });
 
 for (const unavailable of [false, true]) test(`Disconnect rejects a changed or unavailable source (unavailable=${unavailable})`, async () => {
-  await withSharedAcquisition(async ({ h, source, calls, controller, backend }) => {
-    await controller().connect.run("rev-1"); await h.settle();
-    if (unavailable) backend.status = async () => null;
+  await withSharedAcquisition(async ({ h, source, calls, controller, server }) => {
+    await controller().connect.run(currentRequest()); await h.settle();
+    if (unavailable) server.status = async () => null;
     else source.connection_id = "replacement";
     await controller().disconnect.run(); await h.settle();
     assert.deepEqual(calls, ["connect"]);
     assert.match(controller().disconnect.error, unavailable ? /status is unavailable/ : /connection changed/);
   });
+});
+
+test("module stop ownership survives navigation and rejects duplicate Stop", async () => {
+  const { signalConfigApi } = await server.ssrLoadModule("/src/api/signal-config.ts");
+  const originalSignal = signalConfigApi.get;
+  try {
+    signalConfigApi.get = async () => null;
+    await withSharedAcquisition(async ({ h }) => {
+      api.stimulationStatus = async () => ({ active: false, process_alive: false, engine_connected: false, paradigm: null });
+      let finish, stops = 0;
+      api.moduleStop = async () => { stops++; await new Promise((resolve) => { finish = resolve; }); };
+      navigation(h, "Run").props.onClick(); await h.settle();
+      const first = component(h, "RunConsole").props.runtimeControls.stopProcessing.run();
+      await h.settle();
+      component(h, "RunConsole").props.onEditProcessing(); await h.settle();
+      assert.ok(component(h, "PluginProfiles"));
+      navigation(h, "Run").props.onClick(); await h.settle();
+      const controls = component(h, "RunConsole").props.runtimeControls;
+      assert.equal(controls.stopProcessing.pending, true);
+      await controls.stopProcessing.run();
+      assert.equal(stops, 1);
+      finish(); await first; await h.settle();
+      assert.equal(component(h, "RunConsole").props.runtimeControls.stopProcessing.pending, false);
+    });
+  } finally { signalConfigApi.get = originalSignal; }
+});
+
+test("Engine Stop and its pending state survive navigation during a connection request", async () => {
+  const { signalConfigApi } = await server.ssrLoadModule("/src/api/signal-config.ts");
+  const originalSignal = signalConfigApi.get;
+  signalConfigApi.get = async () => null;
+  try { await withSharedAcquisition(async ({ h, controller, calls }) => {
+    api.stimulationStatus = async () => null;
+    let finishConnect, finishStop;
+    const connect = api.acqConnect;
+    api.acqConnect = async (body) => { await new Promise((resolve) => { finishConnect = resolve; }); return connect(body); };
+    api.engineStop = async () => { calls.push("engineStop"); await new Promise((resolve) => { finishStop = resolve; }); };
+    const connecting = controller().connect.run(currentRequest()); await h.settle();
+    navigation(h, "Run").props.onClick(); await h.settle();
+    const controls = () => component(h, "RunConsole").props.runtimeControls;
+    const stopping = controls().stop.run(); await h.settle();
+    component(h, "RunConsole").props.onEditSetup(); await h.settle();
+    navigation(h, "Run").props.onClick(); await h.settle();
+    assert.equal(controls().stop.pending, true);
+    await controls().stop.run();
+    assert.deepEqual(calls, ["engineStop"]);
+    finishConnect(); await connecting; finishStop(); await stopping; await h.settle();
+    assert.deepEqual(calls, ["engineStop", "connect"]);
+    assert.equal(controller().pending, false);
+    assert.equal(controls().stop.pending, false);
+  }); } finally { signalConfigApi.get = originalSignal; }
+});
+
+
+test("offline desktop controls retain the result subscription used to reconnect", async () => {
+  await withApp(async ({ h, resultSubscriptions }) => {
+    assert.deepEqual(resultSubscriptions, ["server"]);
+    assert.equal(elements(h.tree).find((node) => node.type === "fieldset").props.disabled, true);
+  }, { desktopMode: true, connected: false });
+});
+
+
+test("reconnect retries failed module reads without replacing edited current values", async () => {
+  await withApp(async ({ h }) => {
+    const current = () => component(h, "PluginProfiles").props.current;
+    current().set("acquisition.source", currentSource);
+    await h.settle();
+    const load = pluginConfigApi.module;
+    pluginConfigApi.module = async () => { throw new Error("Authentication required"); };
+    await current().reload("acquisition"); await h.settle();
+    assert.equal(current().modules.acquisition.ready, false);
+    h.updateProps({ connected: false }); await h.settle();
+    pluginConfigApi.module = load;
+    const engineStatus = api.engineStatus;
+    api.engineStatus = async () => ({ running: false });
+    try {
+      h.updateProps({ connected: true }); await h.settle();
+      assert.equal(current().modules.acquisition.ready, true);
+      assert.deepEqual(current().entries["acquisition.source"], currentSource);
+    } finally { api.engineStatus = engineStatus; }
+  }, { desktopMode: true });
 });

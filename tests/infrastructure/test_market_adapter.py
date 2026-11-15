@@ -6,21 +6,21 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from types import SimpleNamespace
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from omnibci.application.plugin_market import PluginMarketError
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.services.plugin_market_service import PluginMarketService
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.services.engine_service import NeuroEngineService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.market_adapter import MarketRepositoryAdapter, configured_market_service
 from omnibci.infrastructure.plugins.market_repository import StaticMarketRepository
 from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from tests.infrastructure.test_market_repository import _NOW, _URL, _DOWNLOAD, _Opener, _index, _signed
 from tests.infrastructure.test_package_store import package_archive
 
@@ -40,6 +40,7 @@ def configured(tmp_path, monkeypatch):
     repo.clock = lambda: _NOW
     archive = package_archive(tmp_path).read_bytes()
     index = _index(archive)
+    index["packages"][0]["domain"] = "actuation"
     index["packages"][0]["contributions"] = [{"id": "output", "kind": "effector"}]
     repo._opener = _Opener({_URL: _signed(index, key), _DOWNLOAD: archive})
     return svc, store, environment, key, index
@@ -141,6 +142,7 @@ def test_real_signed_http_to_disabled_install_enable_profile_and_runtime_plan(tm
     key = Ed25519PrivateKey.generate()
     archive = package_archive(tmp_path).read_bytes()
     index = _index(archive)
+    index["packages"][0]["domain"] = "actuation"
     index["packages"][0]["contributions"] = [{"id": "output", "kind": "effector"}]
     signed = _signed(index, key)
     class Handler(BaseHTTPRequestHandler):
@@ -167,29 +169,21 @@ def test_real_signed_http_to_disabled_install_enable_profile_and_runtime_plan(tm
         assert len(market.list()) == 1
         installed = market.install("acme.device", "1.0.0").package
         assert not installed.enabled
-        profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
-                                        CatalogConfigurationAdapter(), settings_source=lambda: {"ACTUATION.enabled": True})
+        profiles = ConfigurationService(TomlConfigurationRepository(tmp_path / "config"),
+                                        CatalogConfigurationAdapter())
         assert all(item.selection.package_id != "acme.device" for item in profiles.catalog.list("effector"))
         store.set_enabled("acme.device", "1.0.0", True)
         selection = installed.contributions[0].selection
         output = profiles.create("effector", selection, "Downloaded output", {"gain": 2.0})
         bindings = [{"slot": "actuation.effector", "profile_id": output.profile_id}]
-        for slot, kind, alias in (
-            ("acquisition.source", "acquisition", "file_reader"),
-            ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA"),
-            ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR"),
-            ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40"),
-        ):
-            definition = profiles.catalog.legacy(kind, alias)
-            profile = profiles.create(kind, definition.selection, alias, {})
-            bindings.append({"slot": slot, "profile_id": profile.profile_id})
-        runtime = RuntimeConfigurationService(profiles, SimpleNamespace(is_engine_ready=False))
-        plan = runtime.plan(bindings, expected_revision=None)
+        runtime = RuntimeConfigurationService(profiles, NeuroEngineService(
+            lambda _: pytest.fail("Planning a downloaded module must not start an engine")))
+        plan = runtime.plan("actuation", bindings, settings={}, expected_revision=None)
         assert not plan.errors and plan.strategy == "select_on_start"
-        pinned = runtime.resolve_plan(plan.plan_id).snapshot
+        pinned = runtime.resolve_plan(plan.plan_id).candidates["actuation"]
         assert pinned.bindings[0].selection == selection
         assert pinned.bindings[0].parameters == {"gain": 2.0}
-        assert profiles.repository.get_activation() is None
+        assert profiles.repository.get_module("actuation") is None
         assert not list(store.packages_dir.rglob("__pycache__"))
     finally:
         server.shutdown()

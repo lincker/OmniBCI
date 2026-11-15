@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Protocol
 
 from omnibci.application.plugin_packages import PackageInstallation, PluginPackageError
-from omnibci.application.plugin_profiles import PluginSelection
+from omnibci.application.configuration.models import PluginSelection
 
 
 class PluginMarketError(PluginPackageError):
@@ -28,6 +28,7 @@ class MarketPackage:
     sha256: str
     size: int
     contributions: tuple[MarketContribution, ...]
+    domain: str
     api_version: str | None = None
     platforms: tuple[str, ...] = ()
     host_version: str | None = None

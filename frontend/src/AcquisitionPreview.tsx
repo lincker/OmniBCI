@@ -112,7 +112,7 @@ export function PreviewChunkTable({ chunk, snapshot, onSelectChunk }: {
           const value = result.status === "fulfilled" ? result.value : null;
           if (!value || value.generation !== chunk.generation || value.capture_id !== chunk.capture_id
             || value.sequence_id !== batch[index].sequence_id || value.connection_id !== chunk.connection_id
-            || value.source_id !== chunk.source_id || value.config_revision !== chunk.config_revision) {
+            || value.source_id !== chunk.source_id || value.acquisition_revision !== chunk.acquisition_revision || value.engine_revision !== chunk.engine_revision) {
             unavailable.push(batch[index].sequence_id);
           } else inspect(value);
         });
@@ -213,7 +213,8 @@ export function PreviewChunkTable({ chunk, snapshot, onSelectChunk }: {
         <div><dt>Host capture time (ns)</dt><dd>{chunk.timestamp_ns}</dd></div>
         <div><dt>Source / connection</dt><dd>{chunk.source_id} / {chunk.connection_id}</dd></div>
         <div><dt>Generation</dt><dd>{chunk.generation}</dd></div>
-        <div><dt>Configuration revision</dt><dd>{chunk.config_revision ?? "Unknown"}</dd></div>
+        <div><dt>Acquisition revision</dt><dd>{chunk.acquisition_revision ?? "Unknown"}</dd></div>
+        <div><dt>Engine revision</dt><dd>{chunk.engine_revision ?? "Unknown"}</dd></div>
         <div><dt>Metadata provenance</dt><dd>{descriptor?.provenance ?? "Unavailable"}</dd></div>
         <div><dt>Sample rate</dt><dd>{descriptor ? `${descriptor.sample_rate} Hz` : "Unknown"}</dd></div>
       </dl>

@@ -56,7 +56,7 @@ class TestNextChunkEventDriven:
 
 def test_stop_command_does_not_depend_on_queue_empty_probe():
     command_queue = queue.Queue()
-    command_queue.put_nowait(SignalProcessorCommand.should_stop)
+    command_queue.put_nowait((SignalProcessorCommand.should_stop, None))
     command_queue.empty = MagicMock(return_value=True)
     processor = make_processor(
         detector=MagicMock(), decoder=MagicMock(), command_queue=command_queue,

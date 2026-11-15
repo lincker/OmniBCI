@@ -1,4 +1,5 @@
 """Prepared channel mapping reaches every processing consumer before buffering."""
+from tests.plugin_configuration_helpers import builtin_selection
 from copy import deepcopy
 from dataclasses import replace
 from unittest.mock import MagicMock
@@ -7,8 +8,8 @@ import numpy as np
 import pytest
 
 from tests.processing_helpers import make_processor
-from omnibci.application.events import CommandRequest, StreamBarrier
-from omnibci.application.plugin_profiles import ProfileBinding
+from omnibci.application.events import CommandRequest, ProcessingInputStart, StreamBarrier
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.channel_mapping import (
     ChannelBinding, ProcessingInput, compile_processing_plan,
 )
@@ -18,9 +19,7 @@ from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.signal_processing import pipeline_configuration, signal_configuration
 from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
 from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
-from omnibci.infrastructure.plugins.loader import PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
 
 
 
@@ -33,13 +32,13 @@ def _plan():
         for i, name in enumerate(("O1", "O2", "M1"))), 3, connection_id="connection-one")
     return compile_processing_plan(source, ProcessingInput(outputs=(
         ChannelBinding("O2", "channel-1"), ChannelBinding("O1", "channel-0"))),
-        config_revision="revision-one")
+        acquisition_revision="revision-one")
 
 
 def _snapshot(plan):
-    from omnibci.application.plugin_profiles import PluginSelection
+    from omnibci.application.configuration.models import PluginSelection
     return {
-        "CONFIG.revision": plan.config_revision, "CONFIG.generation": "generation-one",
+        "CONFIG.module_revisions": {"acquisition": plan.acquisition_revision, "processing": plan.acquisition_revision, "stimulation": plan.acquisition_revision, "actuation": plan.acquisition_revision}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "generation-one",
         "ACQUISITION.sample_rate": plan.source.sample_rate,
         "ACQUISITION.signal_source": plan.source.source_id,
         "ALGORITHM.baseline_duration": 0.008,
@@ -51,9 +50,9 @@ def _snapshot(plan):
 
 def _receipt(plan):
     return {
-        "generation": "generation-one", "config_revision": plan.config_revision,
+        "generation": "generation-one", "acquisition_revision": plan.acquisition_revision, "processing_revision": "revision-one", "engine_revision": "engine",
         "connection_id": plan.source.connection_id,
-        "source_fingerprint": plan.source.fingerprint, "plan_fingerprint": plan.fingerprint,
+        "source_fingerprint": plan.source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
     }
 
 
@@ -96,7 +95,7 @@ def _processor(plan):
         detector=None, decoder=None, command_queue=MagicMock(),
         data_manager=MagicMock(), event_bus=MagicMock(),
         sample_rate=1000, baseline_duration=0.008,
-        generation="generation-one", config_revision=plan.config_revision,
+        generation="generation-one", processing_revision=plan.acquisition_revision, acquisition_revision=plan.acquisition_revision, engine_revision="engine",
         settings_snapshot=_snapshot(plan),
     )
 
@@ -107,12 +106,11 @@ def _prepare(monkeypatch, processor, plan):
     monkeypatch.setattr(signal_configuration, "load_signal_pipeline", load)
     processor._execute((SignalProcessorCommand.prepare_signal, _request(plan)))
     assert processor.event_bus.put_event.call_args.args[0].data.ok
+    processor._on_input_start(ProcessingInputStart("attach", _receipt(plan), -1))
     return decoder, detector, signal_filter, load
 
 
 def test_worker_with_explicit_setup_starts_control_loop_before_plugin_construction(monkeypatch):
-    from omnibci.conf import settings
-    monkeypatch.setattr(settings, "use_snapshot", lambda _: None)
     plan = _plan()
     worker = SignalProcessingWorker(command_queue=MagicMock(), settings_snapshot=_snapshot(plan))
     load = MagicMock(side_effect=AssertionError("premature plugin construction"))
@@ -122,24 +120,6 @@ def test_worker_with_explicit_setup_starts_control_loop_before_plugin_constructi
     load.assert_not_called()
     worker._run_processor.assert_called_once_with()
 
-
-def test_historical_decoder_projection_waits_for_observed_input_before_loading(monkeypatch):
-    from omnibci.application.plugin_profiles import PluginSelection
-    from omnibci.application.processing_source import materialize_processing_binding
-    from omnibci.conf import settings
-    monkeypatch.setattr(settings, "use_snapshot", lambda _: None)
-    historical = ProfileBinding("processing.decoder", "decoder", None,
-                                PluginSelection("test.decoder", "default", "1"), {})
-    snapshot = {"PLUGINS.bindings": [materialize_processing_binding(
-        historical)]}
-    worker = SignalProcessingWorker(command_queue=MagicMock(), settings_snapshot=snapshot)
-    load = MagicMock(side_effect=AssertionError("premature plugin construction"))
-    monkeypatch.setattr(signal_configuration, "load_signal_pipeline", load)
-    worker._run_processor = MagicMock()
-    worker.run()
-    load.assert_not_called()
-    worker._run_processor.assert_called_once_with()
-    assert historical.processing_input is None
 
 
 def test_prepare_binds_observed_rate_and_is_idempotent(monkeypatch):
@@ -159,7 +139,8 @@ def test_prepare_binds_observed_rate_and_is_idempotent(monkeypatch):
 
 
 @pytest.mark.parametrize("field,value", [
-    ("generation", "stale-generation"), ("config_revision", "stale-revision"),
+    ("generation", "stale-generation"), ("acquisition_revision", "stale-revision"),
+    ("processing_revision", "stale-processing"), ("engine_revision", "stale-engine"),
     ("connection_id", "stale-connection"), ("plan_fingerprint", "wrong-plan"),
 ])
 def test_stale_preparation_does_not_construct_or_replace_plugins(monkeypatch, field, value):
@@ -182,7 +163,7 @@ def test_preparation_cannot_substitute_an_unaccepted_setup(monkeypatch):
     plan = _plan()
     processor = _processor(plan)
     changed = compile_processing_plan(plan.source, ProcessingInput(outputs=(
-        ChannelBinding("O1", "channel-0"),)), config_revision=plan.config_revision)
+        ChannelBinding("O1", "channel-0"),)), acquisition_revision=plan.acquisition_revision)
     load = MagicMock()
     monkeypatch.setattr(signal_configuration, "load_signal_pipeline", load)
     processor._prepare_signal(_request(changed))
@@ -200,9 +181,9 @@ def test_native_preparation_rejects_a_different_source_input_or_observation(monk
     processor = _processor(plan)
     if mismatch == "source":
         plan = compile_processing_plan(replace(plan.source, source_id="different-source"),
-                                       plan.processing_input, plan.config_revision)
+                                       plan.processing_input, plan.acquisition_revision)
     elif mismatch == "input":
-        plan = compile_processing_plan(plan.source, ProcessingInput(outputs=(ChannelBinding("M1", "channel-2"),)), plan.config_revision)
+        plan = compile_processing_plan(plan.source, ProcessingInput(outputs=(ChannelBinding("M1", "channel-2"),)), plan.acquisition_revision)
     receipt = _receipt(plan)
     if mismatch == "source-fingerprint":
         receipt["source_fingerprint"] = "f" * 64
@@ -243,7 +224,7 @@ async def test_source_only_standby_drains_raw_data_and_can_prepare_later(monkeyp
     raw = SignalChunk(10, 3, np.array([[10, 11], [30, 31], [2, 2], [0, 1]]))
     later = SignalChunk(20, 4, np.array([[12, 13], [32, 33], [2, 2], [0, 0]]))
     processor.data_manager.get_data.side_effect = [
-        raw, StreamBarrier("drain", "generation-one", "revision-one", 3), later,
+        raw, StreamBarrier("drain", "generation-one", "revision-one", 3, engine_revision="engine"), later,
     ]
 
     await processor._current_state.run()
@@ -389,6 +370,7 @@ async def test_bound_channels_enter_epoch_before_ordered_filters_and_decoder(mon
         return_value=(decoder, detector, [BaselineFilter(), ScaleFilter()])))
     processor._execute((SignalProcessorCommand.prepare_signal, _request(plan)))
     assert processor.event_bus.put_event.call_args.args[0].data.ok
+    processor._on_input_start(ProcessingInputStart("attach", _receipt(plan), -1))
     chunks = [
         SignalChunk(10, 0, np.array([[10, 11], [30, 31], [2, 2], [0, 0]])),
         SignalChunk(20, 1, np.array([[12, 13], [32, 33], [2, 2], [0, 1]])),
@@ -419,7 +401,7 @@ async def test_stream_barrier_bypasses_signal_transform(monkeypatch):
     processor._signal_plan = MagicMock()
     processor.data_manager.get_data.return_value = StreamBarrier(
         "drain", "generation-one", "revision-one", -1,
-    )
+        engine_revision="engine")
     assert await processor.next_chunk() is None
     processor._signal_plan.apply.assert_not_called()
     assert processor.event_bus.put_event.call_args.args[0].data.ok
@@ -435,7 +417,7 @@ def test_input_context_preserves_live_channels_and_describes_ordered_aliases(dup
             for channel in source.channels))
     plan = compile_processing_plan(source, ProcessingInput(outputs=(
         ChannelBinding("posterior-right", "channel-1"), ChannelBinding("posterior-left", "channel-0"))),
-        config_revision=plan.config_revision)
+        acquisition_revision=plan.acquisition_revision)
     snapshot = {**_snapshot(plan), "ACQUISITION.channel_labels": ["stale-1", "stale-2", "stale-3", "Trigger"],
                 "ACQUISITION.channel_names": ["legacy-1", "legacy-2", "legacy-3"]}
     context = signal_configuration.signal_context(snapshot, plan)
@@ -451,7 +433,6 @@ def test_input_context_preserves_live_channels_and_describes_ordered_aliases(dup
     assert context.acquired_signal.signal_channel_count == 3
     assert context.acquired_signal.trigger_row_index == 3
     assert context.acquired_signal is source
-    assert context.channel_names == tuple(c.name for c in source.channels)
     assert context.sample_rate == 250
 
 
@@ -459,7 +440,7 @@ def test_input_context_preserves_live_channels_and_describes_ordered_aliases(dup
 
 def _bindings():
     catalog = PluginCatalog()
-    return [ProfileBinding(slot, kind, None, catalog.resolve_legacy(kind, alias).selection, parameters,
+    return [ProfileBinding(slot, kind, None, builtin_selection(kind, alias), parameters,
                           processing_input=_plan().processing_input if kind == "decoder" else None).to_dict()
             for slot, kind, alias, parameters in (
                 ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA", {"window_duration": 1.0, "offset_time": 0.0}),
@@ -467,40 +448,22 @@ def _bindings():
             )]
 
 
-def test_legacy_plugin_requires_signal_contract_only_for_transformed_input():
-    plan = _plan()
-    snapshot = {**_snapshot(plan), "PLUGINS.bindings": _bindings()}
-    descriptor = replace(PluginCatalog().resolve_legacy("decoder", "THUBCI_SSVEP_classic40CCA"), signal_input_contract=None)
-    catalog = MagicMock()
-    catalog.resolve_selection.return_value = descriptor
-    loader = MagicMock()
-    with pytest.raises(PluginLoadError, match="signal_input_contract"):
-        load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
-                               context=signal_configuration.signal_context(snapshot, plan), catalog=catalog, loader=loader)
-    loader.instantiate.assert_not_called()
-    identity = compile_processing_plan(plan.source, ProcessingInput())
-    load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
-                           context=signal_configuration.signal_context(snapshot, identity), catalog=catalog, loader=loader)
-    loader.instantiate.assert_called_once()
-
-
 def test_trial_pipeline_replacement_receives_current_transformed_context(monkeypatch):
     plan = _plan()
     before = {**_snapshot(plan), "PLUGINS.bindings": _bindings()}
     after = deepcopy(before)
-    after["CONFIG.revision"] = "revision-two"
+    after["CONFIG.module_revisions"]["processing"] = "revision-two"
     after["PLUGINS.bindings"][0]["parameters"]["window_duration"] = 1.5
     load = MagicMock(return_value=_Decoder())
     monkeypatch.setattr(pipeline_configuration, "load_configured_plugin", load)
     pipeline_configuration.build_pipeline_update(before, after, sample_rate=250, baseline_duration=0.008, signal_plan=plan)
     context = load.call_args.kwargs["context"]
-    assert context.config_revision == "revision-two"
+    assert context.module_revision == "revision-two"
     assert context.acquired_signal == plan.source
     assert context.input_signal.channels == plan.output_channels
 
 
-@pytest.mark.parametrize("update", ["output_context", "trial_pipeline"])
-def test_narrow_apply_updates_plan_revision_and_reprepare_preserves_active_buffers(monkeypatch, update):
+def test_processing_update_preserves_source_identity_and_reprepare_buffers(monkeypatch):
     plan = _plan()
     processor = _processor(plan)
     processor._settings_snapshot["PLUGINS.bindings"] = _bindings()
@@ -508,21 +471,20 @@ def test_narrow_apply_updates_plan_revision_and_reprepare_preserves_active_buffe
     processor.pretrigger.push(np.array([[9.0], [7.0]]))
     buffer = processor.pretrigger
     after = deepcopy(processor._settings_snapshot)
-    after["CONFIG.revision"] = "revision-two"
-    request = {"settings_snapshot": after, "expected_revision": plan.config_revision,
-               "generation": "generation-one"}
-    if update == "trial_pipeline":
-        after["PLUGINS.bindings"][0]["parameters"]["window_duration"] = 1.5
-        monkeypatch.setattr(pipeline_configuration, "load_configured_plugin", MagicMock(return_value=_Decoder()))
-        processor._stage_configuration(CommandRequest("trial-update", request))
-    else:
-        processor._update_output_context(CommandRequest("output-update", request))
+    after["CONFIG.module_revisions"]["processing"] = "revision-two"
+    after["PLUGINS.bindings"][0]["parameters"]["window_duration"] = 1.5
+    monkeypatch.setattr(pipeline_configuration, "load_configured_plugin", MagicMock(return_value=_Decoder()))
+    processor._stage_configuration(CommandRequest("trial-update", {
+        "settings_snapshot": after, "expected_revision": "revision-one",
+        "generation": "generation-one", "engine_revision": "engine", "boundary": "trial",
+    }))
     assert processor.event_bus.put_event.call_args.args[0].data.ok
-    assert processor._signal_plan.config_revision == "revision-two"
+    assert processor._signal_plan.acquisition_revision == "revision-one"
     assert processor._signal_plan.fingerprint == plan.fingerprint
     active_decoder = processor._decoder
     processor.current_epoch = MagicMock()
-    processor._prepare_signal(_request(replace(plan, config_revision="revision-two")))
+    receipt = {**_receipt(plan), "processing_revision": "revision-two"}
+    processor._prepare_signal(_request(plan, receipt))
     assert processor.event_bus.put_event.call_args.args[0].data.ok
     assert processor._decoder is active_decoder
     assert processor.detector is detector

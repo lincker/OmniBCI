@@ -7,7 +7,7 @@ import asyncio
 from copy import deepcopy
 from pathlib import Path
 
-from omnibci.conf.paths import resolve_config_path
+from omnibci.infrastructure.config_paths import resolve_config_path
 from omnibci.domain.signal_info import SignalInfo
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.sdk import PluginContext, PluginParameters

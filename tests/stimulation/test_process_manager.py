@@ -19,10 +19,13 @@ from omnibci.infrastructure.stimulation.process_manager import (
     StimulationProcessManager,
     _run_stimulation,
 )
+from omnibci.application.commands.stimulation_commands import StartStimulationCommand
 
 
 def _paradigm_snapshot():
-    return {"PLUGINS.bindings": [{
+    return {"CONFIG.module_revisions": {"stimulation": "revision"},
+            "CONFIG.engine_revision": "engine", "CONFIG.generation": "run",
+            "PLUGINS.bindings": [{
         "slot": "stimulation.paradigm", "kind": "paradigm", "profile_id": None,
         "selection": {"package_id": "OmniBCI.classic40SSVEP",
                       "contribution_id": "default", "version": "0.1.0"},
@@ -50,7 +53,8 @@ def _mock_process(*, exits_after_join=None, alive=True, pid=4321):
 def startup_pipe(monkeypatch):
     receiver = MagicMock()
     receiver.poll.return_value = True
-    receiver.recv.return_value = StartupReport.ready("Stimulation")
+    receiver.recv.return_value = StartupReport.ready(
+        "Stimulation", module_revisions={"stimulation": "revision"}, engine_revision="engine", generation="run")
     sender = MagicMock()
     pipe = MagicMock(return_value=(receiver, sender))
     monkeypatch.setattr(process_manager_module.mp, "Pipe", pipe)
@@ -58,8 +62,8 @@ def startup_pipe(monkeypatch):
 
 
 def test_no_spawn_mode_is_a_noop() -> None:
-    manager = StimulationProcessManager(auto_spawn=False)
-    manager.start("demo")
+    manager = StimulationProcessManager()
+    manager.start(settings_snapshot={**_paradigm_snapshot(), "STIMULATION.auto_spawn": False})
     manager.stop()
     assert manager.is_alive is False
     assert manager.state is ChildProcessState.STOPPED
@@ -82,10 +86,9 @@ def test_start_passes_cooperative_stop_event(
     mock_event_cls.return_value = stop_event
     manager = StimulationProcessManager()
 
-    manager.start("classic")
+    manager.start(settings_snapshot=_paradigm_snapshot())
 
     assert mock_process_cls.call_args.kwargs["args"] == (
-        "classic",
         stop_event,
         startup_pipe.sender,
     )
@@ -103,8 +106,8 @@ def test_same_paradigm_start_is_idempotent(
     mock_process_cls.return_value = process
     manager = StimulationProcessManager()
 
-    manager.start("classic")
-    manager.start("classic")
+    manager.start(settings_snapshot=_paradigm_snapshot())
+    manager.start(settings_snapshot=_paradigm_snapshot())
 
     assert mock_process_cls.call_count == 1
     assert mock_event_cls.call_count == 1
@@ -115,24 +118,28 @@ def test_same_paradigm_start_is_idempotent(
 @patch("omnibci.infrastructure.stimulation.process_manager.mp.Event")
 @patch("omnibci.infrastructure.stimulation.process_manager.mp.Process")
 def test_ready_status_reports_paradigm_from_pinned_binding(
-    mock_process_cls, mock_event_cls, legacy_alias, api_client, stimulation_service,
+    mock_process_cls, mock_event_cls, legacy_alias, api_client, stimulation_service, engine_service, startup_pipe,
 ):
     process, _ = _mock_process(exits_after_join=1)
     mock_process_cls.return_value = process
     manager = StimulationProcessManager()
     snapshot = _paradigm_snapshot()
+    snapshot.update({"CONFIG.module_revisions": {"stimulation": "revision"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "run"})
+    startup_pipe.receiver.recv.return_value = StartupReport.ready("Stimulation", module_revisions={"stimulation": "revision"}, engine_revision="engine", generation="run")
     if legacy_alias is not None:
         snapshot["STIMULATION.paradigm"] = legacy_alias
     # A dormant processing profile must not participate in stimulation startup.
     snapshot["PLUGINS.bindings"].append({"slot": "processing.decoder", "processing_input": "invalid"})
     stimulation_service._process_manager = manager
-    stimulation_service._active = True
-
-    manager.start(settings_snapshot=snapshot)
+    engine_service._running = engine_service._accepting_commands = True
+    engine_service._engine_thread = MagicMock()
+    engine_service._engine_thread.is_alive.return_value = True
+    engine_service._applied_snapshot = snapshot
+    stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=snapshot)
 
     paradigm = "STIMULATION_THUBCI_SSVEP_classic40"
     assert manager.current_paradigm == paradigm
-    assert mock_process_cls.call_args.kwargs["args"][0] == paradigm
+    assert mock_process_cls.call_args.kwargs["kwargs"]["settings_snapshot"] == snapshot
     status = api_client.get("/api/v1/stimulation/status").json()["data"]
     assert status["active"] is True and status["process_alive"] is True
     assert status["paradigm"] == paradigm
@@ -164,7 +171,7 @@ def test_concurrent_start_creates_one_renderer(mock_process_cls, mock_event_cls)
     mock_process_cls.return_value = process
     manager = StimulationProcessManager()
     threads = [
-        threading.Thread(target=manager.start, args=("classic",))
+        threading.Thread(target=manager.start, kwargs={"settings_snapshot": _paradigm_snapshot()})
         for _ in range(2)
     ]
 
@@ -185,7 +192,7 @@ def test_stop_prefers_cooperative_exit(mock_process_cls, mock_event_cls):
     mock_process_cls.return_value = process
     mock_event_cls.return_value = stop_event
     manager = StimulationProcessManager()
-    manager.start("classic")
+    manager.start(settings_snapshot=_paradigm_snapshot())
 
     manager.stop()
 
@@ -204,7 +211,7 @@ def test_stop_escalates_through_kill(mock_process_cls, mock_event_cls):
     mock_process_cls.return_value = process
     mock_event_cls.return_value = MagicMock()
     manager = StimulationProcessManager()
-    manager.start()
+    manager.start(settings_snapshot=_paradigm_snapshot())
 
     manager.stop()
 
@@ -227,7 +234,7 @@ def test_unstoppable_process_is_retained_and_blocks_restart(
     mock_process_cls.return_value = process
     mock_event_cls.return_value = stop_event
     manager = StimulationProcessManager()
-    manager.start("classic")
+    manager.start(settings_snapshot=_paradigm_snapshot())
 
     with pytest.raises(RuntimeError, match="still alive"):
         manager.stop()
@@ -236,7 +243,7 @@ def test_unstoppable_process_is_retained_and_blocks_restart(
     assert manager._stop_event is stop_event
     assert manager.state is ChildProcessState.FAILED
     with pytest.raises(RuntimeError, match="still alive"):
-        manager.start("other")
+        manager.start(settings_snapshot=_paradigm_snapshot())
     assert mock_process_cls.call_count == 1
 
 
@@ -254,6 +261,7 @@ def test_failed_startup_report_is_raised_and_child_is_reaped(
         "Stimulation",
         stage="initialization",
         error=RuntimeError("renderer unavailable"),
+        module_revisions={"stimulation": "revision"}, engine_revision="engine", generation="run",
     )
     manager = StimulationProcessManager()
 
@@ -261,7 +269,7 @@ def test_failed_startup_report_is_raised_and_child_is_reaped(
         ChildProcessStartupError,
         match="renderer unavailable",
     ):
-        manager.start("classic")
+        manager.start(settings_snapshot=_paradigm_snapshot())
 
     assert manager.state is ChildProcessState.FAILED
     assert manager.is_alive is False
@@ -282,7 +290,7 @@ def test_startup_timeout_stops_child_and_remains_failed(
     manager = StimulationProcessManager(startup_timeout_s=0.001)
 
     with pytest.raises(ChildProcessStartupTimeout):
-        manager.start("classic")
+        manager.start(settings_snapshot=_paradigm_snapshot())
 
     assert manager.state is ChildProcessState.FAILED
     assert manager._process is None
@@ -298,7 +306,7 @@ def test_ready_state_detects_child_that_dies_later(
     mock_process_cls.return_value = process
     mock_event_cls.return_value = MagicMock()
     manager = StimulationProcessManager()
-    manager.start("classic")
+    manager.start(settings_snapshot=_paradigm_snapshot())
 
     state["alive"] = False
 
@@ -308,12 +316,10 @@ def test_ready_state_detects_child_that_dies_later(
 
 @patch("omnibci.infrastructure.stimulation.application.Stimulation")
 def test_child_entrypoint_forwards_stop_event(mock_stimulation_cls, monkeypatch):
-    monkeypatch.setattr("omnibci.conf.settings.use_snapshot", lambda _: None)
     stop_event = object()
     snapshot = _paradigm_snapshot()
 
-    _run_stimulation(paradigm="STIMULATION_THUBCI_SSVEP_classic40", stop_event=stop_event,
-                     settings_snapshot=snapshot)
+    _run_stimulation(stop_event=stop_event, settings_snapshot=snapshot)
 
     mock_stimulation_cls.assert_called_once_with(stop_event=stop_event, settings_snapshot=snapshot)
     mock_stimulation_cls.return_value.run.assert_called_once_with()

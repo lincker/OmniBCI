@@ -1,108 +1,139 @@
-# Plugin profiles and accepted activation
+# Current configuration, saved profiles, and history
 
-`PluginProfileService` separates saved profiles from an accepted startup snapshot.
-Profiles use format version 2 and identify an exact package, contribution, and
-version. Each saved edit increments the profile revision. A stale revision is a
-conflict and cannot overwrite a newer edit.
+Each plugin has editable **Current parameters**. A saved Profile is a
+named reusable copy for one exact package, contribution, and version. Applying
+current values never requires saving a Profile first.
 
-## Web console
+## Using the console
 
-In Setup, choose the module role, then **Plugin and version**, then **Profile**.
-The profile selector and sidebar show only profiles for that exact contribution
-and version. Installed managed packages must be enabled in Extensions before
-they appear; bundled plugins are available directly.
+- Edit current parameters in Setup. Decoder, Epoch Detector, each ordered Filter,
+  Paradigm, Trigger, and Effector retain separate saved Profiles.
+- Edit output mode and connection settings in the owning Stimulation or Actuation
+  page. Stimulation also owns its renderer; Actuation owns watchdog and command
+  age limits. Saving or loading a plugin Profile leaves these module settings intact.
+- Save current values as a new Profile when they should be reusable. Load a
+  Profile to copy its values into the editor. Neither action applies a module.
+- Each Setup page has the same module status and actions as Run. Its current
+  parameter editor remains separate from the running instance. Loading a Profile
+  is labeled **Loaded**; editing it changes the feedback to **Modified**. Neither
+  label means the module is using those values. Saving remains optional.
+- **Connect** applies the current Acquisition values, starts the engine when
+  needed, and connects. Metadata inspection is a separate action.
+- **Start reading** requires a source connection and starts Acquisition data flow.
+  It prepares Processing only if that module is already running. It does not
+  apply Processing or Actuation edits. Stop reading keeps the source connected.
+- **Start processing** applies current Processing values and starts its worker,
+  starting the engine when needed. It can wait for Acquisition data. Stop
+  processing detaches its input while Acquisition continues reading and previewing.
+- Launching Stimulation and starting Actuation apply only their respective current
+  values. Each has its own stop action. Stop/disconnect commands use the running
+  configuration without submitting edits.
+- **Start engine** starts shared infrastructure without selecting plugins,
+  applying module edits, or starting any module. **Stop engine** stops all modules.
+- An external node checks its own module revision and the Engine configuration revision.
+  With the engine running, the module button prepares its current configuration
+  while disconnected. Start/connect the external node, then enable Stimulation
+  or start Actuation. No Acquisition selection or A/P worker is required.
+  Changing a connected external node's configuration requires disconnecting it.
+  An Engine rebuild also requires disconnecting external nodes.
 
-All four modules expose **Profile name**, **New profile**, and **Save profile**.
-New profile starts from plugin defaults and prefills **Profile name** with
-`new profile 1`, incrementing to the first unused number among saved names for
-the same plugin contribution and version. The name remains editable; saving
-creates a named profile. Editing and saving an existing profile updates its
-revision. **Duplicate profile** saves a
-separate copy. Ctrl/Cmd+S saves the current profile without applying it. Profiles
-can be configured and saved independently of the engine and device connection.
+There is no global **Apply current configuration** or **Update saved profile**
+button. Engine settings retain explicit review; module settings, including
+Processing's pre-trigger duration, travel with that module's current values.
+Editing, loading and saving remain independent of runtime application. Browsing a different plugin
+or Profile does not silently change running parameters.
 
-**Review and apply profile** requires a saved profile. If the profile is new or
-has unsaved edits, a dialog lists the old and new names, parameters, and decoder
-channel mappings and asks the user to save first. Secret values are masked.
-Its only button, **Continue editing**, returns to the profile name field.
-This check also covers filter-chain review and adding filter instances. Saving
-does not apply the profile; review and confirm application separately after saving.
+The status area reports actual module activity separately from parameter changes.
+A retained applied revision does not mean the module is running. Stopped modules
+show **Not running**; connected or running modules report whether they use the
+current parameters. A configuration mismatch or unavailable runtime status is
+shown as unconfirmed. Run's configuration summary shows the current parameters
+that its actions will submit, rather than the previously accepted Profile.
+New filters must be added to the ordered chain before **Start processing** uses
+them; editing the new-filter form alone does not change that chain.
 
-Application uses the saved profile reference and retains the existing runtime
-impact review. Before showing confirmation, the console checks that profiles
-being applied still have the revisions shown in the editor; concurrent changes
-require a reload. An Apply failure leaves the saved profile available for retry
-without saving again. Neither saving nor applying verifies a device connection
-or starts data acquisition.
+Current edits survive page navigation. Refresh initializes current values from
+the server's accepted modules; unapplied browser edits are not stored on disk.
+Connect and Start use one server request. A failed request preserves current
+edits; confirmed application advances only that request's editor baseline.
+Concurrent edits from another client produce a revision conflict instead of
+being overwritten by an automatic refresh and retry.
+When a conflict exists, **Load accepted configuration** explicitly replaces that
+module's edits with the server values and resets its editor baseline.
+Decoder current values and Profiles include a
+[ProcessingInput channel mapping](../omnibci/domain/channel_mapping.py). An empty output list explicitly selects
+all source signal channels; live source metadata remains authoritative.
 
-**Connect** uses the applied configuration and starts the engine if needed. It does
-not read metadata, start reading, or apply editor changes. **Get Metadata** is separate;
-a metadata error does not mark a connected source as disconnected. **Disconnect**
-releases the source after reading stops. Current parameters and the profile binding
-are restored after refresh. Existing inline source activations remain readable;
-save one as a named profile before reviewing and applying it.
+## History and restore
 
-Curry8 and File Reader can be applied and connected without expected sample rate
-or output rows. **Use observed values** copies metadata into the draft; save the
-profile before reviewing and applying it. For Curry8 it also adopts optional `channel_labels`
-in complete native row order, including the final `Trigger` row, blank labels and
-duplicates. Invalid or unavailable labels remove stale draft labels. This snapshot
-does not change channel mapping; live `SignalInfo` remains authoritative for Signal
-Processing and contains only signal channels.
+Each successful module change records a full immutable snapshot with the apply
+operation UUID, time, semantic content hash, and optional restored-from entry ID.
+A → B → A produces three entries even though the first and last hashes match.
+No-change requests, editor changes, failed applies, and internal rollbacks do not
+create entries. Retrying an operation does not duplicate its history.
 
-Browsing a plugin or Profile does not select it for execution. The module summary
-distinguishes the next-start configuration from a running configuration whose
-revision has been acknowledged.
+Module **History** offers inspection and restore through the normal plan review.
+Restoring validates the historical exact package pins, applies through the normal
+runtime boundary, and creates a new history entry. On success, only that module's
+current editor values are refreshed; other module edits remain intact. Missing or
+disabled packages must be made available before restoring.
 
-For repeated use, **Run → Connect** uses the persisted startup snapshot and starts
-the engine if needed. **Start reading** starts reading from an already connected source;
-it never starts the engine or connects implicitly. **Stop reading** keeps the source
-connected, so reading can be started again without reconnecting. Run also exposes
-**Disconnect**, which requires stopped reading. A selected Decoder requires an Epoch
-Detector before reading can start; Run points to Signal Processing when that
-selection is missing. Saving a newer Profile does not update the startup snapshot
-until an explicit review and application. Stimulation and trial commands remain
-separate; configured managed Actuation follows the existing stream preparation
-policy. Source expectations and channel mapping are validated when processing is
-configured; source-only acquisition does not run that processing validation.
-Run displays **Start engine** and **Stop engine** above the startup configuration.
-These manual engine controls remain visible alongside engine and worker status.
+Saved Profile history uses integer revisions. Restoring a Profile creates a new
+revision containing the older values. It does not load the editor or apply a
+module. Console module actions submit current values without binding their
+runtime state to a saved Profile identity.
 
-Run distinguishes managed stimulation from external stimulation using the accepted
-`STIMULATION.auto_spawn` setting. In external mode, start the external process first,
-then use **Enable stimulation**; this action does not open a local stimulation
-window. Changing the mode is a backend host configuration change followed by explicit
-review and application. Startup failures are shown beside the corresponding controls.
+## Storage and ownership
 
-Acquisition setup and Run share one frontend acquisition controller, including
-backend-reported connection and reading status, pending commands, and command
-errors. Switching pages does not create another connection state. The controller
-refreshes acquisition, engine, and configuration status after both successful and
-failed commands; failures do not automatically undo a completed engine startup or
-connection. Connection and reading checks use configuration, generation, and
-connection identity between requests. This frontend sequence is not an atomic
-transaction across independently operating clients.
+The root is `OMNIBCI_CONFIG_DIR` when set, otherwise
+`platformdirs.user_config_path("OmniBCI", appauthor=False)` on the server machine.
 
-Signal Processing separates Decoder, Epoch boundary detector, and the ordered Filter chain. Each
-filter instance selects its own plugin and profile. Browsing or saving another
-profile preserves pending filter order; applying the chain is a separate action.
+```text
+plugin-profiles/<uuid>/current.toml
+plugin-profiles/<uuid>/history/<integer-revision>.toml
+activation/<module>.toml
+activation/history/<module>/<operation-uuid>.toml
+settings.toml
+locks/settings.lock
+locks/profiles.lock
+locks/<module>.lock
+```
 
-Each Decoder Profile can save its own **Manual mapping** offline. Generate
-signal channels, edit their source row numbers, names and types, and add, remove,
-or reorder them before saving. Source row numbers start at 1 and exclude the
-final event row. The mapping remains **Not verified** until previewed against
-current Metadata; saving never substitutes manual rows for observed source
-information. See [channel mapping](channel-mapping.md) for validation and storage.
+Four modules have independent files, locks, and compare-and-swap revisions:
+`acquisition`, `processing`, `stimulation`, and `actuation`. Shared Engine settings
+live in the user `settings.toml` under `[engine]`, with an independent content
+revision and no history or restore. An absent table has a null accepted revision;
+an empty table is an accepted empty configuration. The first module application
+includes declared initial Engine defaults in its plan if they have not yet been
+accepted. Starting an empty engine can also accept these defaults without selecting plugins.
 
-In **Stimulation → Trigger**, choose **None (no trigger output)** and review/apply
-to run stimulation without hardware event output. This removes the trigger binding
-without deleting its saved Profile; no new Profile is needed. Selecting None alone
-does not change the active configuration. Stimulation still presents trials, but
-does not send markers to an acquisition device or insert events into recorded data.
-Selecting a hardware trigger again retains its platform and device checks.
+Server startup settings share this file but retain separate revision checks.
+Both writers use `locks/settings.lock` and atomic replacement, changing only
+their own fields. A failed Engine application restores only `[engine]`, preserving
+Server saves. Engine review submits current values directly; only Server
+startup settings use the settings Save action. Engine settings have no separate
+activation file or lock.
+
+Atomic replacement preserves the prior file on write failure. Profiles are
+format version 2 with exact package pins. Legacy flat profile files and the old
+`activation.toml` are not read or migrated. Keep backups before changing storage
+formats. A Profile cannot be deleted while a current module references it;
+deleting an unreferenced Profile also removes its history.
+
+Bindings contain complete parameters, selected versions and schema versions.
+Editing a saved Profile cannot change an accepted binding. Module content hashes
+include owned module settings, slot identities, mapping, parameters and filter
+order; profile IDs and profile revision metadata are excluded. The combined
+runtime settings view is derived and has no global revision.
+
+Profiles remain portable data. Platform checks apply when a contribution executes;
+a Windows-only trigger can be configured on another host for an external node.
+No account, cloud synchronization, or secret export service is introduced.
+
+## Device-specific parameters
 
 For CURRY 8 with parallel TTL, select **Neuroscan CURRY 8 Parallel Trigger**,
-create/save a Profile, then **Review and apply profile**. Set
+edit the current parameters, then launch stimulation. Saving a Profile is optional. Set
 `parallel_port_address` to the hexadecimal I/O base address reported by Windows
 Device Manager; `0x3100` is a default, not automatic device detection. The
 stimulation host needs a physical parallel port, a compatible Neuroscan trigger
@@ -139,56 +170,3 @@ sample, including the final event channel. The default is 10 (9 EEG + 1 event),
 and any integer of at least 2 is accepted. For 32 EEG channels and one event
 channel, enter 33. This value must match the device's stream; the driver does not
 automatically discover its channel layout.
-
-Acquisition now uses `channel_count` in place of `channel_number`; it still
-includes the final trigger/event row. Schema versions are unchanged. Existing
-profiles and accepted activation bindings are not migrated automatically, and
-the old parameter name is not supported. Rename the saved parameter and remove
-the old key, then save and reapply the profile to replace its accepted binding.
-If the old key remains in the UI, recreate and apply the profile. Update inline
-acquisition bindings to use `channel_count` before applying them.
-
-## Local storage
-
-Storage shares the existing configuration root: `OMNIBCI_CONFIG_DIR` when set,
-otherwise `platformdirs.user_config_path("OmniBCI", appauthor=False)`.
-
-- `plugin-profiles/<uuid>.toml`: editable, named plugin parameters.
-- `activation.toml`: accepted host settings and an ordered list of pinned slots.
-- `.plugin-config.lock`: operating-system file lock for compare-and-swap writes.
-
-Files are replaced atomically after flushing a same-directory temporary file.
-The operating-system lock is released if a writer process exits. Legacy
-`profiles/` and `active.toml` are not modified by this repository.
-
-## Selection semantics
-
-Bindings copy the selected profile's version, parameters, and schema version.
-Editing a selected profile does not mutate the accepted copy. A new selection
-must be explicitly accepted, with the previous activation revision. While the
-engine runs, the runtime application coordinator commits acceptance after workers
-acknowledge the change.
-
-The runtime planning API also accepts an inline acquisition binding with
-`slot: "acquisition.source"`, `selection`, and `parameters`. The Acquisition editor
-uses it for the initial Review so the plan describes the exact displayed draft.
-After final confirmation, it saves or reuses a Profile and replans with `profile_id`
-before applying. Legacy inline bindings remain supported and persist in the startup
-activation; the UI omits their synthetic Profile revision. Other module updates
-preserve them. No backend contract or storage schema changes are required.
-
-Fixed slots are `acquisition.source`, `processing.decoder`,
-`processing.epoch_detector`, `stimulation.paradigm`, `stimulation.trigger`, and
-`actuation.effector`. Filters use ordered `processing.filter.<uuid>` slots; the
-same plugin or profile can appear in several independently identified slots.
-
-The activation revision hashes its semantic content. Renaming/editing a profile
-does not change an already accepted revision. Snapshot getters return copies,
-so callers and plugins cannot mutate the stored snapshot through shared objects.
-Profile metadata is excluded from the semantic hash; parameter values, selected
-versions, host settings, slot identities, and filter order are included.
-
-Profiles remain portable data. Platform compatibility is checked at execution;
-a Windows-only capability may still be saved on another platform. Schema
-`x-scope` metadata records the future portable/machine/secret boundary. No cloud,
-account, synchronization, or secret export service is introduced.

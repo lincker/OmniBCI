@@ -33,6 +33,20 @@ from omnibci.shared.events import Event, EventType
 logger = logging.getLogger(__name__)
 
 
+def command_scopes(event_type):
+    """Protect the affected module, independently of the command's transport."""
+    if event_type in {EventType.GetSourceMetadata, EventType.GetAcquisitionPreview}:
+        return ()
+    if event_type in {EventType.AttachProcessingInput, EventType.DetachProcessingInput}:
+        return ("processing",)
+    if event_type is not None:
+        for lower, module in ((100, "acquisition"), (200, "processing"),
+                              (300, "stimulation"), (400, "actuation")):
+            if lower <= int(event_type) < lower + 100:
+                return (module,)
+    return ("engine",)
+
+
 class CommandExecutor(Protocol):
     """Application port for commands that require a terminal worker result."""
 
@@ -76,11 +90,25 @@ class CommandTimeoutError(TimeoutError):
         )
 
 
+class CommandDeliveryError(RuntimeError):
+    """Local delivery failed; no terminal execution result was received."""
+
+    def __init__(self, command_id: str, command: str, reason: str, *, execution_unknown: bool):
+        self.command_id = command_id
+        self.command = command
+        self.reason = reason
+        self.execution_unknown = execution_unknown
+        outcome = "execution outcome is unknown" if execution_unknown else "command was not sent"
+        super().__init__(f"{reason}; {command}: {outcome}")
+
+
 @dataclass
 class _PendingCommand:
     done: threading.Event
     command: str
+    peer: str | None = None
     result: CommandResult | None = None
+    delivery_error: CommandDeliveryError | None = None
 
 
 class CommandResultBroker:
@@ -95,7 +123,7 @@ class CommandResultBroker:
         self._pending: dict[str, _PendingCommand] = {}
         self._lock = threading.Lock()
 
-    @admitted
+    @admitted(scopes=lambda self, event_type, *args, **kwargs: command_scopes(event_type))
     def request(
         self,
         event_type: EventType,
@@ -114,7 +142,9 @@ class CommandResultBroker:
 
         command_id = str(uuid.uuid4())
         command_name = event_type.name
-        pending = _PendingCommand(done=threading.Event(), command=command_name)
+        scopes = command_scopes(event_type)
+        peer = next((scope for scope in scopes if scope in {"stimulation", "actuation"}), None)
+        pending = _PendingCommand(done=threading.Event(), command=command_name, peer=peer)
         with self._lock:
             self._pending[command_id] = pending
 
@@ -130,23 +160,36 @@ class CommandResultBroker:
 
         deadline = time.monotonic() + wait_s
         engine_stopped = False
+        module_stopped = False
         while not pending.done.wait(min(max(deadline - time.monotonic(), 0), 0.1)):
             if not self._engine.is_engine_ready:
                 engine_stopped = True
+                break
+            if not self._engine.is_command_ready(event_type):
+                module_stopped = True
                 break
             if time.monotonic() >= deadline:
                 break
         with self._lock:
             self._pending.pop(command_id, None)
             result = pending.result
+            delivery_error = pending.delivery_error
 
         # A result may race the timeout boundary: prefer an already-stored
         # terminal result even when a deadline or worker exit was just observed.
+        if result is None and delivery_error is not None:
+            raise delivery_error
         if result is None and engine_stopped:
             raise CommandExecutionError(CommandResult(
                 command_id=command_id, command=command_name, ok=False,
                 message="Engine stopped before confirming command execution",
                 error_code="ENGINE_STOPPED", failure_kind=CommandFailureKind.EXECUTION_FAILED,
+            ))
+        if result is None and module_stopped:
+            raise CommandExecutionError(CommandResult(
+                command_id=command_id, command=command_name, ok=False,
+                message="Module stopped before confirming command execution",
+                error_code="MODULE_STOPPED", failure_kind=CommandFailureKind.EXECUTION_FAILED,
             ))
         if result is None:
             raise CommandTimeoutError(command_id, command_name, wait_s)
@@ -155,6 +198,22 @@ class CommandResultBroker:
                 raise CommandExecutionError(result)
             raise CommandRejectedError(result)
         return result
+
+    def on_peer_delivery_fault(self, event: Event) -> None:
+        """Release this peer's waiters without fabricating execution receipts."""
+        fault = event.data
+        if not isinstance(fault, dict) or fault.get("peer") not in {"stimulation", "actuation"}:
+            return
+        unsent = fault.get("unsent_command_ids", ())
+        with self._lock:
+            for command_id, pending in self._pending.items():
+                if pending.peer != fault["peer"] or pending.result is not None or pending.delivery_error is not None:
+                    continue
+                pending.delivery_error = CommandDeliveryError(
+                    command_id, pending.command, fault["reason"],
+                    execution_unknown=command_id not in unsent,
+                )
+                pending.done.set()
 
     def on_result(self, event: Event) -> None:
         """EventBus callback; safe to invoke from the engine thread."""

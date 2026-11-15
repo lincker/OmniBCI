@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from queue import Empty, Queue
 from typing import Any
 
+from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
@@ -39,23 +40,22 @@ class Stimulation:
         stop_event=None,
         startup_reporter: StartupReporter | None = None,
         *,
-        settings_snapshot: dict | None = None,
+        settings_snapshot: dict,
     ):
         self._event_queue = mp.Queue()
         self._event_queue_closed = False
         self.event_bus = EventBus(self._event_queue)
 
-        from omnibci.conf import settings
-        self._runtime_snapshot = (deepcopy(settings_snapshot) if settings_snapshot is not None
-                                  else settings.snapshot())
-        source = self._runtime_snapshot
-        host = source.get("NEUROENGINE.message_server_ip", "127.0.0.1")
-        port = int(source.get("NEUROENGINE.message_server_port", 8765))
+        self._runtime_snapshot = deepcopy(settings_snapshot)
+        source = MODULE_SETTING_DEFAULTS["stimulation"] | self._runtime_snapshot
+        host = source["STIMULATION.server_ip"]
+        port = int(source["STIMULATION.server_port"])
         self._external_node = source.get("CONFIG.node_role") == "stimulation"
         self._reconnect_requested = False
         identity = None
         if self._external_node:
-            identity = PeerIdentity("stimulation", source["CONFIG.revision"], source["CONFIG.generation"])
+            identity = PeerIdentity("stimulation", source["CONFIG.module_revisions"]["stimulation"],
+                                    source["CONFIG.engine_revision"], source["CONFIG.generation"])
         self.peer_channel = PeerChannel(engine_peer_config(
             host, port, identity=identity, reconnect=not self._external_node,
             on_disconnect=self._connection_lost if self._external_node else None,
@@ -79,6 +79,12 @@ class Stimulation:
         self._reconnect_requested = True
         self._paused = True
         self.should_stop = True
+
+    def _on_delivery_fault(self, event: Event) -> None:
+        fault = event.data
+        if (isinstance(fault, dict) and fault.get("peer") == "engine"
+                and fault.get("channel_id") == self.peer_channel.channel_id):
+            self._connection_lost()
 
     async def serve(self):
         startup_complete = False
@@ -318,7 +324,7 @@ class Stimulation:
             sys_command = self.result_command_queue.get()
             if sys_command.type == EventType.TrialCompleted:
                 # The TrialCompleted payload arrives over the engine→stimulation
-                # socket as a plain dict (body_to_event does not rebuild domain
+                # socket as a plain dict (decode_event_body does not rebuild domain
                 # VOs), so extract target_id from the dict shape.  Wrapped in
                 # try/except: a malformed/out-of-range result must NOT crash the
                 # render process and close the stimulation window.
@@ -336,6 +342,7 @@ class Stimulation:
                     logging.warning("present_result skipped (bad result %r): %s", data, exc)
 
     def _register_event_listener(self):
+        self.event_bus.register_event_listener(event_type=EventType.PeerDeliveryFault, handler=self._on_delivery_fault)
         self.event_bus.register_event_listener(event_type=EventType.StartStimTrial, handler=self._put_stim_command_queue)
         self.event_bus.register_event_listener(event_type=EventType.TrialCompleted, handler=self._put_sys_command_queue)
         self.event_bus.register_event_listener(event_type=EventType.StopStimulation, handler=self._stop_stimulation_system)
@@ -439,7 +446,8 @@ class Stimulation:
                     "paused": True, "renderer_stopped": True,
                     "cancelled_trials": cancelled,
                     "generation": snapshot.get("CONFIG.generation"),
-                    "config_revision": snapshot.get("CONFIG.revision"),
+                    "module_revision": snapshot.get("CONFIG.module_revisions", {}).get("stimulation"),
+                    "engine_revision": snapshot.get("CONFIG.engine_revision"),
                 },
             )
         except Exception as exc:

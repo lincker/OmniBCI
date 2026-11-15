@@ -8,10 +8,10 @@ Why this exists:
   samples from the continuous stream, including active epochs, so that a
   trigger always receives the same reference data regardless of chunk boundaries.
 
-  ``capacity`` is derived from the pre-trigger capture duration (legacy key
-  ``baseline_duration``) and the current signal sample rate:
+  ``capacity`` is derived from the pre-trigger capture duration
+  ``baseline_duration`` and the current signal sample rate:
   ``pre_trigger_samples = round(baseline_duration * sample_rate)``. A capacity
-  of 0 disables pre-trigger capture entirely (the legacy behaviour).
+  of 0 disables pre-trigger capture entirely.
 """
 
 from typing import Optional

@@ -9,7 +9,7 @@ machine in a multi-machine deployment, with ACTUATION.auto_spawn = false):
     python scripts/run_actuation.py
 
 The process:
-  1. Fetches its configuration from --backend (or OMNIBCI_BACKEND_URL)
+  1. Fetches its configuration from --server (or OMNIBCI_SERVER_URL)
   2. Loads its pinned Effector and verifies the matching engine revision and
      generation before executing commands
   3. Executes ActuationCommand events via Effector.play(command),
@@ -29,7 +29,7 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 from omnibci.infrastructure.actuation.application import Actuation
-from omnibci.infrastructure.plugins.node_client import node_backend_argument, run_configured_node
+from omnibci.infrastructure.plugins.node_client import node_server_argument, run_configured_node
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,10 +39,10 @@ logger = logging.getLogger("run_actuation")
 
 
 def main(argv=None) -> None:
-    backend = node_backend_argument("actuation", argv)
+    server = node_server_argument("actuation", argv)
     logger.info("Starting Actuation process...")
     try:
-        run_configured_node("actuation", Actuation, backend_url=backend)
+        run_configured_node("actuation", Actuation, server_url=server)
     except KeyboardInterrupt:
         logger.info("Actuation process interrupted — exiting")
 

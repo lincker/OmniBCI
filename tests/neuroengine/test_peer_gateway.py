@@ -6,7 +6,7 @@ Covers:
   - PeerChannel inbound: white-list — allowed types reach the bus, others dropped.
   - start/stop: registers and unregisters the outbound listeners; sets inbound hook.
   - PeerGateway: duplicate peer rejected; start/stop fan out to channels.
-  - stimulation_peer_config: preserves the legacy push set + allows StimulationAck.
+  - stimulation_peer_config: routes stimulation commands/results and accepts StimulationAck.
 """
 from __future__ import annotations
 
@@ -37,6 +37,7 @@ class FakeTransport:
         self.started = False
         self.stopped = False
         self._connected = True
+        self.connection_token = object()
         self.lifecycle = lifecycle if lifecycle is not None else []
         self.fail_start = fail_start
         self.fail_stop = fail_stop
@@ -75,7 +76,7 @@ class FakeTransport:
             raise RuntimeError(f"stop failed: {self.name}")
         self.stopped = True
 
-    async def send(self, event) -> bool:
+    async def send(self, event, *, connection_token=None) -> bool:
         self.sent.append(event)
         return True
 
@@ -121,7 +122,7 @@ class TestOutbound:
 
         async def _run():
             await ch.start()
-            sent = await ch._forward(Event(EventType.TrialCompleted, data=1))
+            sent = await ch.send(Event(EventType.TrialCompleted, data=1))
             await ch.stop()
             return sent
 
@@ -594,7 +595,7 @@ class TestPeerGateway:
 # ---------------------------------------------------------------------------
 
 class TestStimulationConfig:
-    def test_preserves_legacy_outbound_and_allows_ack(self):
+    def test_routes_stimulation_commands_results_and_ack(self):
         cfg = stimulation_peer_config(host="127.0.0.1", port=8000)
         assert cfg.name == STIMULATION
         assert cfg.routes.outbound == frozenset({

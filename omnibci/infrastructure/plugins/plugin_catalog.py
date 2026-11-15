@@ -2,8 +2,8 @@
 
 This is the single read-only entry point for plugin metadata.  It resolves
 trusted user/builtin roots, parses manifest.toml without importing plugin
-Python code, applies precedence and identity rules, and exposes a path-free
-application DTO adapter for HTTP/config queries.
+Python code, applies precedence and identity rules, and exposes exact package
+contributions for configuration and runtime resolution.
 
 Executable loading remains isolated in :mod:`plugins.loader`.
 """
@@ -14,11 +14,10 @@ import logging
 import json
 import os
 import re
-from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Iterable, Literal, Optional
+from typing import Callable, Iterable, Literal, Optional
 
 import omnibci
 import tomlkit
@@ -26,6 +25,7 @@ import tomlkit
 from omnibci.application.plugin_schema import validate_schema
 from omnibci.domain.decoder_input import DecoderChannelRequirements
 from omnibci.infrastructure.plugins.installed_registry import enabled_package_directories
+from omnibci.infrastructure.plugins.package_requirements import check_host_compatibility, installed_host_version
 
 from omnibci.infrastructure.plugins.descriptors import (
     PluginDescriptor,
@@ -33,9 +33,6 @@ from omnibci.infrastructure.plugins.descriptors import (
     PluginPackageDescriptor,
     PluginSelection,
 )
-
-if TYPE_CHECKING:
-    from omnibci.application.queries.plugin_queries import PluginInfo
 
 log = logging.getLogger(__name__)
 
@@ -69,7 +66,7 @@ def user_plugins_dir(*, host_settings: dict | None = None) -> Optional[Path]:
     Resolution order
     ----------------
     1. ``OMNIBCI_PLUGIN_DIR`` environment variable (useful for CI / dev).
-    2. ``PLUGINS.user_dir`` setting from settings.toml.
+    2. ``PLUGINS.user_dir`` from explicitly supplied server startup settings.
     3. The platform-specific default from *platformdirs*:
          macOS   ~/Library/Application Support/OmniBCI/plugins
          Linux   ~/.local/share/OmniBCI/plugins          (XDG_DATA_HOME honoured)
@@ -83,15 +80,10 @@ def user_plugins_dir(*, host_settings: dict | None = None) -> Optional[Path]:
     if env:
         return Path(env)
 
-    # 2. settings.toml override (lazy import to avoid circular dependency)
-    try:
-        from omnibci.conf import settings  # noqa: PLC0415
-        raw = (settings.host_get("PLUGINS.user_dir") if host_settings is None
-               else host_settings.get("PLUGINS.user_dir"))
-        if raw:
-            return Path(raw)
-    except Exception:
-        pass
+    # The composition root publishes this directory to child processes via env.
+    raw = (host_settings or {}).get("PLUGINS.user_dir")
+    if raw:
+        return Path(raw)
 
     # 3. platformdirs (optional dependency — graceful degradation)
     try:
@@ -152,7 +144,13 @@ MANIFEST_NAME = "manifest.toml"
 VALID_CATEGORIES = frozenset({
     "paradigm", "decoder", "acquisition", "effector", "trigger", "filter", "epoch_detector",
 })
-SUPPORTED_API_VERSIONS = frozenset({"1", "2"})
+SUPPORTED_API_VERSIONS = frozenset({"2"})
+DOMAIN_KINDS = {
+    "acquisition": frozenset({"acquisition", "trigger"}),
+    "processing": frozenset({"decoder", "epoch_detector", "filter"}),
+    "stimulation": frozenset({"paradigm", "trigger"}),
+    "actuation": frozenset({"effector"}),
+}
 
 RootProvider = Callable[[], list[PluginRoot]]
 
@@ -190,12 +188,8 @@ class AmbiguousPluginError(PluginResolutionError):
     """More than one plugin has the same key at the winning precedence."""
 
 
-class PluginIdentityError(PluginResolutionError):
-    """One publisher-qualified identity declares incompatible plugin types."""
-
-
 class MissingEntrypointError(PluginResolutionError):
-    """The selected legacy manifest does not declare executable code."""
+    """The selected contribution does not declare executable code."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,162 +286,6 @@ def _read_manifest(
     return document.unwrap()
 
 
-def _parse_descriptor(
-    category: str,
-    root: PluginRoot,
-    package_dir: Path,
-    document: Mapping,
-) -> PluginDescriptor:
-    """Normalize the legacy single-entry manifest without changing its rules."""
-    resolved_location = package_dir.resolve()
-    manifest_path = resolved_location / MANIFEST_NAME
-
-    package = _table(document, "package", manifest_path, required=True)
-    plugin_type_hint = _optional_string(package, "plugin_type", manifest_path)
-    plugin_id_hint = _optional_string(
-        package,
-        "id",
-        manifest_path,
-        plugin_type=plugin_type_hint,
-    )
-    effective_hint = plugin_type_hint or plugin_id_hint
-
-    plugin_id = _required_string(
-        package,
-        "id",
-        manifest_path,
-        plugin_type=effective_hint,
-    )
-    declared_kind = _required_string(
-        package,
-        "kind",
-        manifest_path,
-        plugin_type=effective_hint,
-    )
-    if declared_kind != category:
-        raise PluginManifestError(
-            f"{manifest_path}: kind {declared_kind!r} does not match "
-            f"search category {category!r}",
-            plugin_type=effective_hint,
-        )
-
-    api_version = _optional_string(
-        package,
-        "api_version",
-        manifest_path,
-        plugin_type=effective_hint,
-    ) or "1"
-    if api_version not in SUPPORTED_API_VERSIONS:
-        raise PluginManifestError(
-            f"{manifest_path}: unsupported api_version {api_version!r}; "
-            f"supported: {sorted(SUPPORTED_API_VERSIONS)}",
-            plugin_type=effective_hint,
-        )
-
-    plugin_type = plugin_type_hint
-    if plugin_type is None:
-        plugin_type = plugin_id
-        log.warning(
-            "%s: missing [package].plugin_type; using id=%r for v1 compatibility",
-            manifest_path,
-            plugin_id,
-        )
-
-    publisher = (
-        _optional_string(
-            package,
-            "publisher",
-            manifest_path,
-            plugin_type=plugin_type,
-        )
-        or _optional_string(
-            package,
-            "author",
-            manifest_path,
-            plugin_type=plugin_type,
-        )  # v1 compatibility alias
-        or ("omnibci" if root.source == "builtin" else "local")
-    )
-    if "publisher" not in package:
-        log.warning(
-            "%s: missing [package].publisher; using %r",
-            manifest_path,
-            publisher,
-        )
-
-    raw_entrypoint = package.get("entrypoint")
-    if raw_entrypoint is None:
-        # Also accept the more structured spelling for third-party packages.
-        raw_entrypoint = _table(
-            document,
-            "runtime",
-            manifest_path,
-            plugin_type=plugin_type,
-        ).get("entrypoint")
-    entrypoint: PluginEntrypoint | None = None
-    if raw_entrypoint is not None:
-        try:
-            entrypoint = PluginEntrypoint.parse(raw_entrypoint)
-        except ValueError as exc:
-            raise PluginManifestError(
-                f"{manifest_path}: invalid entrypoint {raw_entrypoint!r}: {exc}",
-                plugin_type=plugin_type,
-            ) from exc
-
-    params = _table(
-        document,
-        "params",
-        manifest_path,
-        plugin_type=plugin_type,
-    )
-    raw_controls = _table(
-        document,
-        "controls",
-        manifest_path,
-        plugin_type=plugin_type,
-    )
-    controls: dict[str, dict] = {}
-    for key, value in raw_controls.items():
-        if not isinstance(value, Mapping):
-            raise PluginManifestError(
-                f"{manifest_path}: [controls.{key}] must be a TOML table",
-                plugin_type=plugin_type,
-            )
-        controls[str(key)] = dict(value)
-
-    return PluginDescriptor(
-        package=PluginPackageDescriptor(
-            name=plugin_id,
-            publisher=publisher,
-            source=root.source,
-            location=resolved_location,
-            api_version=api_version,
-            version=_optional_string(
-                package, "version", manifest_path, plugin_type=plugin_type,
-            ),
-            precedence=root.precedence,
-        ),
-        contribution_id="default",
-        category=category,
-        plugin_type=plugin_type,
-        entrypoint=entrypoint,
-        display_name=_optional_string(
-            package,
-            "display_name",
-            manifest_path,
-            plugin_type=plugin_type,
-        ) or plugin_id,
-        description=_optional_string(
-            package,
-            "description",
-            manifest_path,
-            plugin_type=plugin_type,
-        ),
-        params=params,
-        controls=controls,
-    )
-
-
 def _v2_identifier(
     table: Mapping, field: str, manifest_path: Path, *, section: str = "package",
 ) -> str:
@@ -460,7 +298,7 @@ def _v2_identifier(
 
 
 def _parse_contributions(
-    root: PluginRoot, package_dir: Path, document: Mapping,
+    root: PluginRoot, package_dir: Path, document: Mapping, host_version: str | None,
 ) -> tuple[PluginDescriptor, ...]:
     """Validate a v2 package completely before exposing any contribution."""
     manifest_path = package_dir / MANIFEST_NAME
@@ -476,13 +314,29 @@ def _parse_contributions(
         raise PluginManifestError(
             f"{manifest_path}: unsupported api_version {api_version!r}"
         )
+    domain = _required_string(package, "domain", manifest_path)
+    if domain not in DOMAIN_KINDS:
+        raise PluginManifestError(f"{manifest_path}: unsupported package domain {domain!r}")
+    try:
+        check_host_compatibility(package, host_version)
+    except ValueError as exc:
+        raise PluginManifestError(f"{manifest_path}: {exc}") from exc
+    version = _required_string(package, "version", manifest_path)
+    if not re.fullmatch(r"[0-9][A-Za-z0-9._+-]{0,127}", version) or version.endswith("."):
+        raise PluginManifestError(f"{manifest_path}: package version must be an exact portable version")
+    requirements = package.get("requires", {})
+    if not isinstance(requirements, dict) or any(not isinstance(name, str) or not name
+            or not isinstance(version, str) or not version for name, version in requirements.items()):
+        raise PluginManifestError(f"{manifest_path}: invalid host library requirements")
     metadata = PluginPackageDescriptor(
         name=_v2_identifier(package, "id", manifest_path),
         publisher=_v2_identifier(package, "publisher", manifest_path),
         source=root.source,
         location=package_dir.resolve(),
         api_version=api_version,
-        version=_required_string(package, "version", manifest_path),
+        version=version,
+        domain=domain, engines=dict(package.get("engines", {})),
+        host_version=package.get("host_version"), requires=tuple(sorted(requirements.items())),
         manifest_version=2,
         platforms=_platforms(package, manifest_path),
         precedence=root.precedence,
@@ -498,6 +352,8 @@ def _parse_contributions(
         if not isinstance(contribution, Mapping):
             raise PluginManifestError(f"{manifest_path}: contribution must be a TOML table")
         identifier = _v2_identifier(contribution, "id", manifest_path, section="contributions")
+        if contribution.get("kind") not in DOMAIN_KINDS[domain]:
+            raise PluginManifestError(f"{manifest_path}: contribution kind {contribution.get('kind')!r} is not allowed in {domain!r} domain")
         if identifier in identifiers:
             raise PluginManifestError(
                 f"{manifest_path}: duplicate contribution id {identifier!r}"
@@ -520,10 +376,11 @@ def _parse_contributions(
             raise PluginManifestError(f"{manifest_path}: contribution controls must be TOML tables")
         configuration_schema, configuration_version = _configuration(contribution, package_dir)
         signal_contract = contribution.get("signal_input_contract")
-        if signal_contract is not None and (
-            type(signal_contract) is not int or signal_contract not in (1, 2)
-            or category not in {"decoder", "epoch_detector", "filter"}
-            or (signal_contract == 2 and category != "decoder")
+        processing_kind = category in {"decoder", "epoch_detector", "filter"}
+        if (
+            processing_kind and (type(signal_contract) is not int or signal_contract not in (1, 2))
+            or not processing_kind and signal_contract is not None
+            or signal_contract == 2 and category != "decoder"
         ):
             raise PluginManifestError(f"{manifest_path}: invalid signal_input_contract")
         requirements = None
@@ -612,45 +469,26 @@ def _platforms(table: Mapping, manifest_path: Path) -> tuple[str, ...]:
 
 
 def _parse_package(
-    category: str, root: PluginRoot, package_dir: Path, legacy_categories: set[str],
+    category: str, root: PluginRoot, package_dir: Path, host_version: str | None,
 ) -> tuple[PluginDescriptor, ...]:
     document = _read_manifest(root, package_dir)
     manifest_path = package_dir / MANIFEST_NAME
     package = _table(document, "package", manifest_path, required=True)
-    manifest_version = document.get("manifest_version", 1)
+    manifest_version = document.get("manifest_version")
     try:
-        if type(manifest_version) is not int or manifest_version not in (1, 2):
-            raise PluginManifestError(
-                f"{manifest_path}: unsupported manifest_version {manifest_version!r}"
-            )
-        if manifest_version == 2:
-            return _parse_contributions(root, package_dir, document)
-        if "contributions" in document:
-            raise PluginManifestError(f"{manifest_path}: contributions require manifest_version = 2")
-        declared_kind = package.get("kind")
-        legacy_category = (
-            declared_kind if isinstance(declared_kind, str) and declared_kind in legacy_categories
-            else sorted(legacy_categories)[0]
-        )
-        return (_parse_descriptor(legacy_category, root, package_dir, document),)
+        if type(manifest_version) is not int or manifest_version != 2:
+            raise PluginManifestError(f"{manifest_path}: manifest_version must be 2")
+        return _parse_contributions(root, package_dir, document, host_version)
     except PluginManifestError as exc:
         # Preserve identity hints even when a sibling contribution is invalid.
         # They prevent a broken package from exposing another copy as a fallback.
         publisher = package.get("publisher")
-        if manifest_version == 1:
-            publisher = publisher or package.get("author") or (
-                "omnibci" if root.source == "builtin" else "local"
-            )
         name, version = package.get("id"), package.get("version")
         if isinstance(publisher, str) and publisher.strip() and isinstance(name, str) and name.strip():
             exc.package_id = f"{publisher.strip()}.{name.strip()}"
         if isinstance(version, str) and version.strip():
             exc.version = version.strip()
         aliases: set[str] = set()
-        if manifest_version == 1 and category in legacy_categories:
-            alias = exc.plugin_type or package.get("plugin_type") or name
-            if isinstance(alias, str):
-                aliases.add(alias.strip())
         contributions = document.get("contributions", [])
         if isinstance(contributions, list):
             for contribution in contributions:
@@ -692,16 +530,18 @@ def _iter_plugin_dirs(directory: Path) -> Iterable[Path]:
 
 
 class PluginCatalog:
-    """Discover plugins and resolve a configured ``plugin_type``.
+    """Discover plugins and resolve exact package contributions.
 
     Discovery reads manifests only.  Python code is imported later by
-    :class:`PluginLoader`, and only for the descriptor returned by ``resolve``.
+    :class:`PluginLoader`, and only for the descriptor returned by ``resolve_selection``.
     """
 
     def __init__(
         self,
         root_providers: dict[str, RootProvider] | None = None,
+        *, host_version: str | None = None,
     ) -> None:
+        self.host_version = host_version if host_version is not None else installed_host_version()
         self._root_providers = (
             root_providers if root_providers is not None else _ROOT_PROVIDERS
         )
@@ -724,28 +564,27 @@ class PluginCatalog:
         # A package can contribute to any category. Scan all configured roots,
         # deduplicating physical packages even when roots overlap. Retain the
         # trusted builtin classification when a user root covers the same path.
-        packages: dict[Path, tuple[PluginRoot, set[str]]] = {}
-        for legacy_category, provider in self._root_providers.items():
+        packages: dict[Path, PluginRoot] = {}
+        for provider in self._root_providers.values():
             for candidate in provider():
                 root = PluginRoot(candidate.path.resolve(), candidate.source, candidate.precedence)
                 for package_dir in _iter_plugin_dirs(root.path):
                     location = package_dir.resolve()
                     existing = packages.get(location)
                     if existing is None:
-                        packages[location] = (root, {legacy_category})
+                        packages[location] = root
                         continue
-                    previous, categories = existing
-                    categories.add(legacy_category)
+                    previous = existing
                     if (root.source == "builtin" and previous.source != "builtin") or (
                         root.source == previous.source and root.precedence < previous.precedence
                     ):
-                        packages[location] = (root, categories)
+                        packages[location] = root
 
-        for package_dir, (root, legacy_categories) in sorted(
-            packages.items(), key=lambda item: (item[1][0].precedence, str(item[0])),
+        for package_dir, root in sorted(
+            packages.items(), key=lambda item: (item[1].precedence, str(item[0])),
         ):
             try:
-                contributions = _parse_package(category, root, package_dir, legacy_categories)
+                contributions = _parse_package(category, root, package_dir, self.host_version)
                 descriptors.extend(
                     item for item in contributions if all_categories or item.category == category
                 )
@@ -782,6 +621,9 @@ class PluginCatalog:
                     f"version {selection.version!r}; refusing fallback: {failure.error}"
                 ) from failure.error
 
+        domains = {item.package.domain for item in descriptors if item.identifier == selection.package_id}
+        if len(domains) > 1:
+            raise PluginManifestError(f"Package {selection.package_id!r} changes domain across versions")
         package = [
             item for item in descriptors
             if item.identifier == selection.package_id and item.version == selection.version
@@ -811,7 +653,7 @@ class PluginCatalog:
 
         Distinct installations of the same package version are ambiguous even
         across root priorities. Installation/activation policy must resolve
-        that conflict explicitly; directory precedence is only a legacy rule.
+        that conflict explicitly; no root priority may override the requested identity.
         """
         descriptors, failures = self._scan(category, all_categories=True)
         return self._resolve_selection(category, selection, descriptors, failures)
@@ -829,225 +671,3 @@ class PluginCatalog:
             except PluginResolutionError as exc:
                 log.error("Omitting unavailable contribution: %s", exc)
         return tuple(resolved)
-
-    @staticmethod
-    def _blocking_failure(
-        plugin_type: str,
-        failures: tuple[_ScanFailure, ...],
-        winning_precedence: int,
-    ) -> _ScanFailure | None:
-        matches = [
-            failure
-            for failure in failures
-            if plugin_type in failure.error.plugin_types
-            and failure.precedence <= winning_precedence
-        ]
-        return min(matches, key=lambda failure: failure.precedence) if matches else None
-
-    @staticmethod
-    def _identity_conflicts(
-        descriptors: tuple[PluginDescriptor, ...],
-    ) -> dict[tuple[str, str], list[PluginDescriptor]]:
-        by_identifier: dict[tuple[str, str], list[PluginDescriptor]] = defaultdict(list)
-        for descriptor in descriptors:
-            if descriptor.package.manifest_version == 1:
-                by_identifier[(descriptor.publisher, descriptor.name)].append(descriptor)
-        return {
-            identity: candidates
-            for identity, candidates in by_identifier.items()
-            if len({candidate.plugin_type for candidate in candidates}) > 1
-        }
-
-    @staticmethod
-    def _pick(
-        category: str,
-        plugin_type: str,
-        candidates: list[PluginDescriptor],
-    ) -> PluginDescriptor:
-        winning_precedence = min(candidate.precedence for candidate in candidates)
-        winners = [
-            candidate
-            for candidate in candidates
-            if candidate.precedence == winning_precedence
-        ]
-        if len(winners) != 1:
-            locations = ", ".join(str(candidate.location) for candidate in winners)
-            raise AmbiguousPluginError(
-                f"Ambiguous {category} plugin_type {plugin_type!r} at precedence "
-                f"{winning_precedence}: {locations}"
-            )
-
-        winner = winners[0]
-        for shadowed in candidates:
-            if shadowed is not winner:
-                log.info(
-                    "Plugin %s (%s) shadows %s",
-                    winner.identifier,
-                    winner.location,
-                    shadowed.location,
-                )
-        return winner
-
-    def list(self, category: str) -> tuple[PluginDescriptor, ...]:
-        """Return runnable, precedence-resolved descriptors for UI/config use."""
-        descriptors, failures = self._scan(category)
-        conflicts = self._identity_conflicts(descriptors)
-        for (publisher, plugin_id), candidates in conflicts.items():
-            declarations = ", ".join(
-                f"{candidate.plugin_type}@{candidate.location}"
-                for candidate in candidates
-            )
-            log.error(
-                "Omitting conflicting plugin identity %s: %s",
-                f"{publisher}.{plugin_id}",
-                declarations,
-            )
-        descriptors = tuple(
-            descriptor
-            for descriptor in descriptors
-            if (descriptor.publisher, descriptor.name) not in conflicts
-        )
-        grouped: dict[str, list[PluginDescriptor]] = defaultdict(list)
-        order: list[str] = []
-        for descriptor in descriptors:
-            if descriptor.plugin_type not in grouped:
-                order.append(descriptor.plugin_type)
-            grouped[descriptor.plugin_type].append(descriptor)
-
-        resolved: list[PluginDescriptor] = []
-        for plugin_type in order:
-            winning_precedence = min(
-                descriptor.precedence for descriptor in grouped[plugin_type]
-            )
-            failure = self._blocking_failure(
-                plugin_type,
-                failures,
-                winning_precedence,
-            )
-            if failure is not None:
-                log.error(
-                    "Omitting plugin_type %r because a winning-precedence "
-                    "candidate is invalid: %s",
-                    plugin_type,
-                    failure.error,
-                )
-                continue
-            try:
-                descriptor = self._pick(category, plugin_type, grouped[plugin_type])
-            except AmbiguousPluginError as exc:
-                log.error("Omitting ambiguous plugin from catalog: %s", exc)
-                continue
-            # Actuation is the first subsystem migrated to selected-entrypoint
-            # loading. Other categories remain catalog-compatible with v1
-            # manifests until their runtimes migrate in later batches.
-            if category == "effector" and descriptor.entrypoint is None:
-                log.error(
-                    "Omitting non-runnable plugin %s: %s has no entrypoint",
-                    descriptor.identifier,
-                    descriptor.manifest_path,
-                )
-                continue
-            resolved.append(descriptor)
-        return tuple(resolved)
-
-    def resolve(self, category: str, plugin_type: str) -> PluginDescriptor:
-        """Compatibility entry point for callers using a runtime registry key."""
-        return self.resolve_legacy(category, plugin_type)
-
-    def resolve_legacy(self, category: str, plugin_type: str) -> PluginDescriptor:
-        """Resolve a registry alias using the existing root precedence rules."""
-        if not isinstance(plugin_type, str) or not plugin_type:
-            raise PluginNotFoundError(
-                f"No {category} plugin_type configured"
-            )
-
-        descriptors, failures = self._scan(category)
-        conflicts = self._identity_conflicts(descriptors)
-        eligible_descriptors = tuple(
-            descriptor
-            for descriptor in descriptors
-            if (descriptor.publisher, descriptor.name) not in conflicts
-        )
-        matches = [
-            descriptor
-            for descriptor in eligible_descriptors
-            if descriptor.plugin_type == plugin_type
-        ]
-        if not matches:
-            for (publisher, plugin_id), candidates in conflicts.items():
-                if any(
-                    candidate.plugin_type == plugin_type
-                    for candidate in candidates
-                ):
-                    declarations = ", ".join(
-                        f"{candidate.plugin_type}@{candidate.location}"
-                        for candidate in candidates
-                    )
-                    identifier = f"{publisher}.{plugin_id}"
-                    raise PluginIdentityError(
-                        f"Plugin identity {identifier!r} declares conflicting "
-                        f"plugin types: {declarations}"
-                    )
-            invalid_matches = [
-                failure
-                for failure in failures
-                if plugin_type in failure.error.plugin_types
-            ]
-            if invalid_matches:
-                failure = min(
-                    invalid_matches,
-                    key=lambda candidate: candidate.precedence,
-                )
-                raise PluginManifestError(
-                    f"Invalid {category} plugin_type {plugin_type!r} at "
-                    f"{failure.location}: {failure.error}",
-                    plugin_type=plugin_type,
-                ) from failure.error
-            raise PluginNotFoundError(
-                f"Unknown {category} plugin_type {plugin_type!r}"
-            )
-
-        winning_precedence = min(descriptor.precedence for descriptor in matches)
-        failure = self._blocking_failure(
-            plugin_type,
-            failures,
-            winning_precedence,
-        )
-        if failure is not None:
-            raise PluginManifestError(
-                f"Invalid winning-precedence {category} plugin_type "
-                f"{plugin_type!r} at {failure.location}; refusing fallback: "
-                f"{failure.error}",
-                plugin_type=plugin_type,
-            ) from failure.error
-
-        descriptor = self._pick(category, plugin_type, matches)
-        if descriptor.entrypoint is None:
-            raise MissingEntrypointError(
-                f"{descriptor.manifest_path}: selected {category} plugin_type "
-                f"{plugin_type!r} has no entrypoint"
-            )
-        return descriptor
-
-
-def list_plugins(category: str) -> list["PluginInfo"]:
-    """Return path-free, precedence-resolved plugins for UI/config queries."""
-    # Keep the application DTO out of the runtime catalog's import path.
-    from omnibci.application.queries.plugin_queries import PluginInfo
-
-    return [
-        PluginInfo(
-            id=descriptor.name,
-            plugin_type=descriptor.plugin_type,
-            display_name=descriptor.display_name,
-            description=descriptor.description,
-            version=descriptor.version,
-            source=descriptor.source,
-            params=dict(descriptor.params),
-            controls={
-                key: dict(value)
-                for key, value in descriptor.controls.items()
-            },
-        )
-        for descriptor in PluginCatalog().list(category)
-    ]

@@ -6,7 +6,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from omnibci.application.plugin_profiles import PluginProfileStorageError, PluginProfileValidationError, ProfileRevisionConflict
+from omnibci.application.configuration.errors import PluginProfileStorageError, PluginProfileValidationError, ProfileRevisionConflict
 from omnibci.application.services.plugin_installation_service import PluginInstallationService
 from omnibci.infrastructure.plugins.package_store import DirectoryPluginPackageStore
 from omnibci.presentation.errors import register_exception_handlers

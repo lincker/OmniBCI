@@ -4,10 +4,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from omnibci.application.config_errors import ConfigProfileValidationError
-from omnibci.conf import paths as conf_paths
+from omnibci.application.configuration.errors import ConfigProfileValidationError
 from omnibci.infrastructure import config_paths
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
 
 @pytest.mark.parametrize("override", [None, ""])
@@ -18,7 +17,7 @@ def test_platform_default_is_used_without_nonempty_override(tmp_path, monkeypatc
         monkeypatch.setenv("OMNIBCI_CONFIG_DIR", override)
     platform_path = tmp_path / "platform-config" / "OmniBCI"
     platform_default = Mock(return_value=platform_path)
-    monkeypatch.setattr(conf_paths, "user_config_path", platform_default)
+    monkeypatch.setattr(config_paths, "user_config_path", platform_default)
 
     assert config_paths.config_root() == platform_path
     platform_default.assert_called_once_with("OmniBCI", appauthor=False, roaming=False)
@@ -50,7 +49,7 @@ def test_repository_uses_override_and_explicit_root_precedence(tmp_path, monkeyp
     explicit = tmp_path / "explicit"
     monkeypatch.setenv("OMNIBCI_CONFIG_DIR", str(override))
 
-    assert TomlPluginProfileRepository().root == override
+    assert TomlConfigurationRepository().root == override
     monkeypatch.setenv("OMNIBCI_CONFIG_DIR", "invalid-relative-override")
-    assert TomlPluginProfileRepository(explicit).root == explicit
+    assert TomlConfigurationRepository(explicit).root == explicit
     assert list(tmp_path.iterdir()) == []

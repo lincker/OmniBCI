@@ -8,9 +8,9 @@ from omnibci.shared.events import EventType
 from .pipeline_configuration import ConfiguredPipeline, build_pipeline_update
 
 
-def configuration_receipt(command_id, status, *, generation, revision):
+def configuration_receipt(command_id, status, *, generation, revision, engine_revision):
     return {"status": status, "command_id": command_id,
-            "applied_revision": revision, "generation": generation}
+            "applied_revision": revision, "generation": generation, "engine_revision": engine_revision}
 
 
 class ConfigurationTransactions:
@@ -27,7 +27,7 @@ class ConfigurationTransactions:
     def pending(self) -> tuple[str, ConfiguredPipeline] | None:
         return self._pending
 
-    def stage(self, request: CommandRequest, *, generation, revision,
+    def stage(self, request: CommandRequest, *, generation, revision, engine_revision, drained,
               current_snapshot, sample_rate, baseline_duration,
               signal_plan=None) -> tuple[bool, CommandResult | None]:
         """Return whether a new candidate was staged, and any immediate receipt."""
@@ -56,7 +56,7 @@ class ConfigurationTransactions:
                     return False, None
                 raise ValueError("Another processing configuration is waiting for a trial boundary")
             payload = request.payload
-            if not isinstance(payload, dict) or set(payload) != {"settings_snapshot", "expected_revision", "generation"}:
+            if not isinstance(payload, dict) or set(payload) != {"settings_snapshot", "expected_revision", "engine_revision", "generation", "boundary"}:
                 raise ValueError("Invalid processing configuration request")
             if (not isinstance(payload["generation"], str) or not payload["generation"]
                     or payload["generation"] != generation):
@@ -64,10 +64,16 @@ class ConfigurationTransactions:
             if (not isinstance(payload["expected_revision"], str)
                     or payload["expected_revision"] != revision):
                 raise ValueError("Signal Processing configuration revision mismatch")
+            if payload["engine_revision"] != engine_revision:
+                raise ValueError("Signal Processing Engine revision mismatch")
+            if payload["boundary"] not in {"trial", "module"}:
+                raise ValueError("Unknown processing update boundary")
+            if payload["boundary"] == "module" and not drained:
+                raise ValueError("Drain processing before replacing its configuration")
             candidate = build_pipeline_update(
                 current_snapshot, payload["settings_snapshot"],
                 sample_rate=sample_rate, baseline_duration=baseline_duration,
-                signal_plan=signal_plan,
+                signal_plan=signal_plan, boundary=payload["boundary"],
             )
         except Exception as exc:
             # Invalid JSON cannot reserve an id without a payload fingerprint.
@@ -85,30 +91,31 @@ class ConfigurationTransactions:
         self._pending = (request.command_id, candidate)
         return True, None
 
-    def complete_applied(self, *, generation, revision) -> CommandResult | None:
+    def complete_applied(self, *, generation, revision, engine_revision) -> CommandResult | None:
         """Record success only after the owner has installed the pending candidate."""
         if self._pending is None:
             return None
         command_id, _ = self._pending
         self._pending = None
-        return self._finish(command_id, ok=True, generation=generation, revision=revision)
+        return self._finish(command_id, ok=True, generation=generation, revision=revision, engine_revision=engine_revision)
 
-    def cancel_pending(self, message, *, generation, revision) -> CommandResult | None:
+    def cancel_pending(self, message, *, generation, revision, engine_revision) -> CommandResult | None:
         if self._pending is None:
             return None
         command_id, _ = self._pending
         self._pending = None
         return self._finish(command_id, ok=False, message=message,
                             error_code="PROCESSING_CONFIGURATION_CANCELLED",
-                            generation=generation, revision=revision)
+                            generation=generation, revision=revision, engine_revision=engine_revision)
 
-    def cancel(self, request: CommandRequest, *, generation, revision) -> list[CommandResult]:
+    def cancel(self, request: CommandRequest, *, generation, revision, engine_revision) -> list[CommandResult]:
         """Return a target's terminal receipt before acknowledging cancellation."""
         payload = request.payload
-        if (not isinstance(payload, dict) or set(payload) != {"command_id", "generation"}
+        if (not isinstance(payload, dict) or set(payload) != {"command_id", "generation", "engine_revision"}
                 or not isinstance(payload.get("command_id"), str) or not payload["command_id"]
                 or not isinstance(payload.get("generation"), str) or not payload["generation"]
-                or payload.get("generation") != generation):
+                or payload.get("generation") != generation
+                or payload.get("engine_revision") != engine_revision):
             return [CommandResult(
                 request.command_id, EventType.CancelProcessingConfiguration.name, False,
                 "Invalid processing configuration cancellation", "INVALID_CONFIGURATION_CANCELLATION",
@@ -118,28 +125,28 @@ class ConfigurationTransactions:
         target = payload["command_id"]
         if self._pending is not None and self._pending[0] == target:
             results.append(self.cancel_pending("Cancelled before the trial boundary",
-                                               generation=generation, revision=revision))
+                                               generation=generation, revision=revision, engine_revision=engine_revision))
         result = self._results.get(target)
         if result is None:
             # A cancellation received before a delayed stage command is a
             # tombstone: that command must never install later in this run.
             result = self._finish(target, ok=False, message="Cancelled before staging",
                                   error_code="PROCESSING_CONFIGURATION_CANCELLED",
-                                  generation=generation, revision=revision)
+                                  generation=generation, revision=revision, engine_revision=engine_revision)
             results.append(result)
-        receipt = result.data or configuration_receipt(target, "cancelled", generation=generation, revision=revision)
+        receipt = result.data or configuration_receipt(target, "cancelled", generation=generation, revision=revision, engine_revision=engine_revision)
         results.append(CommandResult(
             request.command_id, EventType.CancelProcessingConfiguration.name, True, data=receipt,
         ))
         return results
 
-    def _finish(self, command_id, *, ok, generation, revision, message=None, error_code=None):
+    def _finish(self, command_id, *, ok, generation, revision, engine_revision, message=None, error_code=None):
         result = CommandResult(
             command_id=command_id, command=EventType.StageProcessingConfiguration.name,
             ok=ok, message=message, error_code=error_code,
             failure_kind=None if ok else CommandFailureKind.REJECTED,
             data=configuration_receipt(command_id, "applied" if ok else "cancelled",
-                                       generation=generation, revision=revision),
+                                       generation=generation, revision=revision, engine_revision=engine_revision),
         )
         self._results[command_id] = result
         return result

@@ -5,10 +5,12 @@ import sys
 from unittest.mock import Mock, call
 
 import numpy as np
+from tests.plugin_configuration_helpers import builtin_selection
+
 import pytest
 
 from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8 import trigger
-from omnibci.application.plugin_profiles import ProfileBinding
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.infrastructure.stimulation.stimulator import Stimulator
 
@@ -136,8 +138,8 @@ def test_port_write_errors_are_propagated(driver, operation):
 @pytest.mark.parametrize("address", ["0x378", "0xFFF8"])
 def test_stimulator_loads_exact_curry_trigger_and_free_run_keeps_zero(driver, address):
     catalog = PluginCatalog()
-    selected_trigger = catalog.resolve("trigger", "neuroscan_curry8_trigger")
-    selected_paradigm = catalog.resolve("paradigm", "STIMULATION_THUBCI_SSVEP_classic40")
+    selected_trigger = catalog.resolve_selection("trigger", builtin_selection("trigger", "neuroscan_curry8_trigger"))
+    selected_paradigm = catalog.resolve_selection("paradigm", builtin_selection("paradigm", "STIMULATION_THUBCI_SSVEP_classic40"))
     stimulator = Stimulator(settings_snapshot={"PLUGINS.bindings": [
         ProfileBinding("stimulation.trigger", "trigger", None, selected_trigger.selection,
                        {"parallel_port_address": address}).to_dict(),

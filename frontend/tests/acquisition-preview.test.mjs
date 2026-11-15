@@ -17,7 +17,7 @@ const limits = { max_chunks: 32, max_rows: 16, max_samples: 512, max_values: 819
 const form = (changes = {}) => ({ rows: "0", sampleStart: "0", sampleCount: "128", chunkCount: "32", includeTrigger: true, ...changes });
 const chunk = (changes = {}) => ({
   capture_id: "capture-original", generation: "generation-original", connection_id: "connection-original",
-  config_revision: "a".repeat(64), source_id: "source-original", sequence_id: 41,
+  acquisition_revision: "a".repeat(64), source_id: "source-original", sequence_id: 41,
   timestamp_ns: "1780000000000000001", original_shape: [5, 12], dtype: "float64",
   row_indices: [2, 4], sample_start: 5, sample_count: 3, trigger_row_index: 4,
   values: [[1.25, "NaN", "Infinity"], ["9007199254740993", "-Infinity", true]],
@@ -35,7 +35,7 @@ const summary = (sequenceId, sampleCount = 3) => ({
 });
 const snapshot = (chunks, changes = {}) => ({
   generation: "generation-original", capture_id: "capture-original", chunks,
-  config_revision: "a".repeat(64), source_id: "source-original", connection_id: "connection-original",
+  acquisition_revision: "a".repeat(64), source_id: "source-original", connection_id: "connection-original",
   status: "capturing", reason: null, continuous: true, available: true, cache_errors: 0,
   dropped: 0, oversized: 0, stream_chunk_count: chunks.length, stream_sample_count: chunks.length * 3,
   last_sequence: chunks.at(-1)?.sequence_id ?? -1, limits,
@@ -891,7 +891,8 @@ test("all-chunk search reports partial coverage and rejects every mismatched ide
     [55, null],
     [56, chunk({ sequence_id: 56, connection_id: "connection-obsolete" })],
     [57, chunk({ sequence_id: 57, source_id: "source-obsolete" })],
-    [58, chunk({ sequence_id: 58, config_revision: "b".repeat(64) })],
+    [58, chunk({ sequence_id: 58, acquisition_revision: "b".repeat(64) })],
+    [59, chunk({ sequence_id: 59, engine_revision: "c".repeat(64) })],
   ]);
   api.acqPreviewChunk = async (_generation, _capture, sequence) => {
     const value = values.get(sequence);
@@ -906,7 +907,7 @@ test("all-chunk search reports partial coverage and rejects every mismatched ide
     await h.settle(); await setSearchScope(h); await searchTable(h, "2");
     await h.settle();
     assert.match(text(h.tree), /1 match\b/);
-    assert.match(text(h.tree), /Searched 1 of 9 chunks/i);
+    assert.match(text(h.tree), /Searched 1 of 10 chunks/i);
     assert.match(text(h.tree), /Unavailable chunks/i);
     for (const sequence of [51, 52, 53, 54, 55, 56, 57, 58]) assert.match(text(h.tree), new RegExp(`\\b${sequence}\\b`));
     assert.match(text(h.tree), /Chunk #50/);

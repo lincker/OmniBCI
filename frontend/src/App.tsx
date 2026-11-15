@@ -4,23 +4,24 @@ import { usePoll } from "./hooks/usePoll";
 import { useAcquisition } from "./hooks/useAcquisition";
 import { useResultsFeed } from "./hooks/useResultsFeed";
 import { useRuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
+import { useRuntimeControls } from "./hooks/useRuntimeControls";
+import { useCurrentConfiguration } from "./hooks/useCurrentConfiguration";
 import { RuntimeConfigurationStatus, RuntimeConfigurationReview } from "./RuntimeConfiguration";
 import { ConfigCard } from "./ConfigCard";
-import { BackendLogs } from "./BackendLogs";
+import { ServerLogs } from "./ServerLogs";
 import { PluginProfiles } from "./PluginProfiles";
 import { PluginMarket } from "./PluginMarket";
 import { ConfigDialog } from "./ConfigDialog";
 import { RunConsole } from "./RunConsole";
 import { TrialResults } from "./TrialResults";
 import { desktopBridge } from "./desktop";
-import type { ConnectionInfo } from "../../desktop/src/contracts";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
 import { useI18n } from "./i18n";
 import "./styles.css";
 
 const setupPages = [
   ["acquisition", "app.acquisition", "signal"], ["processing", "app.processing", "workflow"],
-  ["stimulation", "app.stimulation", "system"], ["actuation", "app.actuation", "plug"],
+  ["stimulation", "app.stimulation", "monitor"], ["actuation", "app.actuation", "plug"],
 ] as const;
 const settingsPages = [["general", "app.general", "settings"], ["logs", "app.logs", "profile"]] as const;
 type SetupPage = typeof setupPages[number][0];
@@ -37,7 +38,10 @@ function initialView(): View {
   return "acquisition";
 }
 
-export default function App({ desktopConnection }: { desktopConnection?: ConnectionInfo } = {}) {
+export default function App({ connected = true, onEditorStateChange }: {
+  connected?: boolean;
+  onEditorStateChange?: (state: { dirty: boolean; busy: boolean }) => void;
+} = {}) {
   const { language, setLanguage, t } = useI18n();
   const [view, setView] = useState<View>(initialView);
   const [lastSetup, setLastSetup] = useState<SetupPage>("acquisition");
@@ -50,15 +54,26 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
   });
   const main = useRef<HTMLElement>(null);
   const previousView = useRef(view);
+  const wasConnected = useRef(connected);
   const focusEditor = () => {
     const heading = main.current?.querySelector<HTMLElement>(".settings-editor h1, .runtime-content h1");
     if (heading) { heading.setAttribute("tabindex", "-1"); heading.focus(); }
     else main.current?.focus();
   };
-  const feed = useResultsFeed();
+  const feed = useResultsFeed(connected || !!desktopBridge());
   const engine = usePoll(api.engineStatus);
   const runtime = useRuntimeConfiguration();
-  const acquisition = useAcquisition(runtime, engine.refresh);
+  const current = useCurrentConfiguration(runtime.status?.accepted, runtime.completedRestorations);
+  const acquisition = useAcquisition(runtime, engine.refresh, current);
+  const runtimeControls = useRuntimeControls(runtime, current, acquisition, engine);
+  useEffect(() => {
+    if (connected && !wasConnected.current) {
+      void engine.refresh();
+      void runtime.refresh();
+      for (const [module] of setupPages) void current.reload(module);
+    }
+    wasConnected.current = connected;
+  }, [connected, engine.refresh, runtime.refresh, current.reload]);
   const engineRunning = engine.data?.running ?? false;
   const isSetup = setupPages.some(([page]) => page === view);
   const isSettings = settingsPages.some(([page]) => page === view);
@@ -74,21 +89,23 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
     if (previousView.current !== view) { previousView.current = view; focusEditor(); }
   }, [view]);
   useEffect(() => {
-    if (desktopBridge() || (!dirty && !busy && !runtime.inProgress)) return;
+    if (desktopBridge() || (!dirty && !current.dirty && !busy && !runtimeControls.busy && !runtime.inProgress)) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty, busy, runtime.inProgress]);
+  }, [dirty, current.dirty, busy, runtimeControls.busy, runtime.inProgress]);
 
   useEffect(() => {
-    desktopBridge()?.setEditorState({ dirty, busy: busy || runtime.inProgress });
-  }, [dirty, busy, runtime.inProgress]);
+    const state = { dirty: dirty || current.dirty, busy: busy || runtimeControls.busy || runtime.inProgress };
+    desktopBridge()?.setEditorState(state);
+    onEditorStateChange?.(state);
+  }, [dirty, current.dirty, busy, runtimeControls.busy, runtime.inProgress, onEditorStateChange]);
 
   const navigate = useCallback((next: View) => {
-    if (next === view || busy || acquisition.pending) return;
+    if (next === view) return;
     if (dirty) { setPendingView(next); return; }
     setDirty(false); setView(next);
-  }, [view, busy, dirty, acquisition.pending]);
+  }, [view, dirty]);
   useEffect(() => {
     const onHashChange = () => {
       const next = initialView();
@@ -103,7 +120,7 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
     <nav className="workspace-navigation" aria-label={isSetup ? t("app.setupModules") : t("app.settingsPages")}>
       {(isSetup ? setupPages : settingsPages).map(([page, label, icon]) => <button key={page}
         className={`explorer-item ${view === page ? "selected" : ""}`} aria-current={view === page ? "page" : undefined}
-        disabled={busy} onClick={() => navigate(page)}><Icon name={icon} /><span>{t(label)}</span></button>)}
+        onClick={() => navigate(page)}><Icon name={icon} /><span>{t(label)}</span></button>)}
     </nav>
   </>;
   const preferences = <div className="setting-group"><h2>{t("app.interface")}</h2>
@@ -133,22 +150,22 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
       <nav className="activity-bar" aria-label={t("app.workspaces")}>
         {([[lastSetup, "app.setup", "settings"], ["run", "app.run", "play"], ["results", "app.results", "results"], ["extensions", "app.extensions", "plug"]] as const).map(([page, label, icon]) =>
           <button key={page} className={`activity-item ${space === label ? "selected" : ""}`} aria-label={t(label)} title={t(label)}
-            aria-current={space === label ? "page" : undefined} disabled={busy} onClick={() => navigate(page)}><Icon name={icon} /></button>)}
+            aria-current={space === label ? "page" : undefined} onClick={() => navigate(page)}><Icon name={icon} /></button>)}
         <div className="activity-bottom"><button className={`activity-item ${isSettings ? "selected" : ""}`}
-          aria-label={t("app.settings")} title={t("app.settings")} aria-current={isSettings ? "page" : undefined} disabled={busy}
+          aria-label={t("app.settings")} title={t("app.settings")} aria-current={isSettings ? "page" : undefined}
           onClick={() => navigate("general")}><Icon name="gear" /></button></div>
       </nav>
       <main className="editor-workspace" ref={main} id="editor-content" tabIndex={-1}>
         <RuntimeConfigurationStatus runtime={runtime} />
-        <fieldset className="desktop-control-guard" disabled={!!desktopConnection && desktopConnection.status !== "ready"}>
+        <fieldset className="desktop-control-guard" disabled={!connected}>
         <div className="editor-viewport">
-          {isSetup ? <PluginProfiles key={view} module={view as SetupPage} engineRunning={engineRunning} engineAvailable={engine.data !== null && engine.error === null} navigation={navigation}
-            runtime={runtime} acquisition={acquisition}
-            onDirtyChange={setDirty} onBusyChange={setBusy} onRun={() => navigate("run")} />
+          {isSetup ? <PluginProfiles key={view} module={view as SetupPage} engineAvailable={engine.data !== null && engine.error === null} navigation={navigation}
+            runtime={runtime} acquisition={acquisition} current={current} runtimeControls={runtimeControls}
+            onBusyChange={setBusy} onRun={() => navigate("run")} />
             : view === "extensions" ? <PluginMarket runtimeBusy={runtime.blocked}
               onBusyChange={setBusy} onDirtyChange={setDirty} onOpenSetup={() => navigate(lastSetup)} />
             : view === "run" ? <RunConsole engine={engine} acquisition={acquisition} feed={feed}
-              runtime={runtime} onBusyChange={setBusy} onEditSetup={() => navigate("acquisition")}
+              runtime={runtime} current={current} runtimeControls={runtimeControls} onEditSetup={() => navigate("acquisition")}
               onEditProcessing={() => navigate("processing")}
               onResults={() => navigate("results")} />
             : view === "results" ? <div className="runtime-content">
@@ -160,7 +177,7 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
               <section className="card"><h2>{t("app.results")} <span className="count">{feed.trials.length}</span></h2>
                 <TrialResults trials={feed.trials} generation={feed.generation} stale={!!feed.error} /></section>
             </div>
-            : view === "logs" ? <BackendLogs navigation={navigation} />
+            : view === "logs" ? <ServerLogs navigation={navigation} />
             : <ConfigCard navigation={navigation}
               preferences={preferences} onDirtyChange={setDirty} onBusyChange={setBusy}
               runtime={runtime} />}

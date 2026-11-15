@@ -51,6 +51,9 @@ class FakeEngine(EnginePort):
     def subscribe(self, event_type, handler) -> None:
         self.subscriptions.append((event_type, handler))
 
+    def on_peer_delivery_fault(self, event):
+        pass
+
     def read_acquisition_preview(self, capture_id, sequence_id=None) -> dict:
         raise NotImplementedError("Preview reads are not exercised by this wiring fake")
 
@@ -64,7 +67,7 @@ def _container(engine) -> AppContainer:
             command_results,
         ),
         stimulation_service=StimulationAppService(engine),
-        stimulation_process_manager=StimulationProcessManager(auto_spawn=False),
+        stimulation_process_manager=StimulationProcessManager(),
         results_service=ResultsService(engine),
         command_results=command_results,
     )
@@ -97,6 +100,15 @@ class TestAssemble:
 # ---------------------------------------------------------------------------
 
 class TestRegisterListeners:
+    def test_processing_input_fault_updates_its_read_model(self):
+        from unittest.mock import Mock
+
+        engine = FakeEngine(initialized=True)
+        container = _container(engine)
+        container.signal_setup_service = Mock()
+        register_engine_listeners(container)
+        assert (EventType.ProcessingInputFault, container.signal_setup_service.on_input_fault) in engine.subscriptions
+
     def test_registers_readmodel_then_extra_in_order(self):
         # Listener wiring is valid after graph construction and deliberately
         # does not require the runtime-ready state.
@@ -109,24 +121,26 @@ class TestRegisterListeners:
         extra = [(EventType.TrialCompleted, broadcaster_handler)]
         count = register_engine_listeners(container, extra)
 
-        assert count == 5
+        assert count == 6
         registered_types = [t for t, _ in engine.subscriptions]
         assert registered_types == [
             EventType.CommandResult,
             EventType.TrialCompleted,
             EventType.EpochProcessed,
             EventType.AcquisitionState,
+            EventType.PeerDeliveryFault,
             EventType.TrialCompleted,
         ]
         assert engine.subscriptions[1][1] == container.results_service.on_trial_completed
         assert engine.subscriptions[2][1] == container.results_service.on_epoch_processed
         assert engine.subscriptions[3][1] == container.acquisition_service.on_acquisition_state
-        assert engine.subscriptions[4][1] is broadcaster_handler
+        assert engine.subscriptions[4][1] == engine.on_peer_delivery_fault
+        assert engine.subscriptions[5][1] is broadcaster_handler
 
     def test_default_subscriptions_without_extra(self):
         engine = FakeEngine(initialized=True, ready=False)
         count = register_engine_listeners(_container(engine))
-        assert count == 4
+        assert count == 5
 
     def test_noop_when_engine_not_initialized(self):
         engine = FakeEngine(initialized=False)

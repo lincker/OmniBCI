@@ -18,7 +18,7 @@ from omnibci.infrastructure.acquisition.preview_capture import PreviewCapture
 from omnibci.infrastructure.ipc.data_manager import DataManager
 
 
-IDENTITY = {"generation": "run", "config_revision": "revision", "connection_id": "connection",
+IDENTITY = {"generation": "run", "acquisition_revision": "revision", "engine_revision": "engine", "connection_id": "connection",
             "source_id": "source"}
 
 
@@ -92,7 +92,7 @@ def test_a_second_start_is_rejected_and_stale_stop_cannot_end_current_capture():
     assert producer.snapshot()["observed"] == 0
 
 
-@pytest.mark.parametrize("field", ["generation", "config_revision", "connection_id", "source_id"])
+@pytest.mark.parametrize("field", ["generation", "acquisition_revision", "engine_revision", "connection_id", "source_id"])
 def test_frames_from_a_read_started_in_another_context_are_ignored(field):
     producer, frames = capture()
     producer.offer(chunk(), {**IDENTITY, field: "old"})
@@ -162,7 +162,7 @@ def runtime(source=None, frames=None):
     events, main = [], Queue()
     acquisition = AcquisitionRuntime(
         source or Source(), Queue(), DataManager(main), SimpleNamespace(put_event=events.append),
-        source_id="source", preparation_required=False, generation="run", config_revision="revision",
+        source_id="source", generation="run", acquisition_revision="revision", engine_revision="engine",
         preview_queue=Queue() if frames is None else frames,
     )
     acquisition.connection_id = "connection"
@@ -255,7 +255,7 @@ async def test_main_loop_expires_capture_when_source_does_not_produce_data():
     acquisition.preview = PreviewCapture(Queue(), clock=lambda: now[0])
     await start(acquisition)
     now[0] = 12.0
-    acquisition.command_queue.put(AcquisitionCommand.stop_acquisition)
+    acquisition.command_queue.put((AcquisitionCommand.stop_acquisition, None))
     await acquisition.main_loop()
     assert acquisition.preview.snapshot()["reason"] == "timeout"
 
@@ -283,7 +283,7 @@ async def test_chunk_whose_read_precedes_arm_is_captured_if_context_is_unchanged
 
 
 @pytest.mark.asyncio
-async def test_revision_change_ends_capture_before_pending_read_can_be_mislabeled():
+async def test_connection_change_discards_pending_preview_before_end_of_stream():
     entered, release = asyncio.Event(), asyncio.Event()
     source = Source(reads=1)
     async def read():
@@ -299,13 +299,11 @@ async def test_revision_change_ends_capture_before_pending_read_can_be_mislabele
     await start(acquisition)
     task = asyncio.create_task(acquisition.fetch())
     await entered.wait()
-    await acquisition.execute((AcquisitionCommand.update_revision, CommandRequest("revision", {
-        "generation": "run", "expected_revision": "revision", "target_revision": "a" * 64,
-    })))
+    acquisition.connection_id = "replacement-connection"
     release.set()
     await task
     assert main.qsize() == 1 and frames.empty()
-    assert acquisition.preview.snapshot()["reason"] == "context_changed"
+    assert acquisition.preview.snapshot()["reason"] == "source_eof"
 
 
 def test_continuous_capture_survives_chunk_time_and_cumulative_byte_limits():

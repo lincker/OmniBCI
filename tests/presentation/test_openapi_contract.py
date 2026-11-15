@@ -26,12 +26,17 @@ def spec():
 
 EXPECTED_OPERATIONS = {
     ("/healthz", "get"),
-    ("/api/v1/system/info", "get"),
-    ("/api/v1/system/logs", "get"),
+    ("/api/v1/server/info", "get"),
+    ("/api/v1/server/session", "post"),
+    ("/api/v1/server/session", "delete"),
+    ("/api/v1/server/logs", "get"),
     # engine
     ("/api/v1/engine/start", "post"),
     ("/api/v1/engine/stop", "post"),
     ("/api/v1/engine/status", "get"),
+    ("/api/v1/engine/modules/{module}/start", "post"),
+    ("/api/v1/engine/modules/{module}/prepare", "post"),
+    ("/api/v1/engine/modules/{module}/stop", "post"),
     # acquisition
     ("/api/v1/acquisition/connect", "post"),
     ("/api/v1/acquisition/disconnect", "post"),
@@ -46,9 +51,6 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/acquisition/preview/chunks/{sequence_id}", "get"),
     # stimulation
     ("/api/v1/stimulation/status", "get"),
-    # plugins
-    ("/api/v1/plugins/{category}", "get"),
-    ("/api/v1/stimulation/paradigms", "get"),
     ("/api/v1/stimulation/start", "post"),
     ("/api/v1/stimulation/stop", "post"),
     ("/api/v1/stimulation/trial/start", "post"),
@@ -67,8 +69,14 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/config/plugin-profiles/{profile_id}", "get"),
     ("/api/v1/config/plugin-profiles/{profile_id}", "put"),
     ("/api/v1/config/plugin-profiles/{profile_id}", "delete"),
-    ("/api/v1/config/activation", "get"),
-    ("/api/v1/config/activation", "put"),
+    ("/api/v1/config/modules", "get"),
+    ("/api/v1/config/modules/{module}", "get"),
+    ("/api/v1/config/modules/{module}/history", "get"),
+    ("/api/v1/config/modules/{module}/history/{entry_id}", "get"),
+    ("/api/v1/config/modules/{module}/revert-plan", "post"),
+    ("/api/v1/config/engine", "get"),
+    ("/api/v1/config/plugin-profiles/{profile_id}/history", "get"),
+    ("/api/v1/config/plugin-profiles/{profile_id}/revert", "post"),
     ("/api/v1/config/runtime", "get"),
     ("/api/v1/config/nodes/{role}", "get"),
     ("/api/v1/config/apply-plan", "post"),
@@ -133,24 +141,36 @@ def _schema(spec, name):
 
 
 class TestResponseDtos:
-    def test_backend_logs_contract(self, spec):
-        schema = _schema(spec, "BackendLogsResponse")
+    def test_server_logs_contract(self, spec):
+        schema = _schema(spec, "ServerLogsResponse")
         assert set(schema["properties"]) == {"filename", "lines", "truncated"}
         assert set(schema["required"]) == {"filename", "lines", "truncated"}
-        operation = spec["paths"]["/api/v1/system/logs"]["get"]
+        operation = spec["paths"]["/api/v1/server/logs"]["get"]
         assert not operation.get("parameters")
         assert "503" in operation["responses"]
 
     def test_desktop_handshake_contract(self, spec):
-        assert set(_schema(spec, "SystemInfoResponse")["properties"]) == {
+        props = _schema(spec, "ServerInfoResponse")["properties"]
+        assert set(props) == {
             "app_version", "desktop_api_version", "instance_id", "auth_enabled",
         }
+        assert props["desktop_api_version"]["const"] == 1
+
+    def test_engine_configuration_and_node_identity_contract(self, spec):
+        assert set(_schema(spec, "ModulesResponse")["properties"]) == {"modules", "engine", "errors"}
+        assert set(_schema(spec, "EngineSettingsResponse")["properties"]) == {"revision", "settings"}
+        scopes = _schema(spec, "RuntimePlanRequest")["properties"]["module"]["enum"]
+        assert set(scopes) == {"acquisition", "processing", "stimulation", "actuation", "engine"}
+        node = _schema(spec, "NodeConfigurationResponse")["properties"]
+        assert set(node) == {"format_version", "role", "module_revisions", "engine_revision",
+                             "generation", "settings", "bindings"}
+        assert node["format_version"]["const"] == 1
 
     def test_host_configuration_has_no_application_profile_contract(self, spec):
         assert not any(path.startswith("/api/v1/config/profiles") for path in spec["paths"])
         assert set(_schema(spec, "ConfigResponse")["properties"]) == {"entries", "revision"}
         assert set(_schema(spec, "ConfigEntry")["properties"]) == {
-            "key", "value", "type", "requires", "description",
+            "key", "value", "type", "requires", "description", "active_value", "restart_required",
         }
         request = _schema(spec, "PatchConfigRequest")
         assert set(request["properties"]) == {"updates", "expected_revision"}
@@ -158,7 +178,7 @@ class TestResponseDtos:
         assert request["properties"]["expected_revision"]["pattern"] == "^[0-9a-f]{64}$"
         assert request["additionalProperties"] is False
         assert set(_schema(spec, "PatchConfigResponse")["properties"]) == {
-            "saved", "engine_restart_required", "revision",
+            "saved", "server_restart_required", "revision",
         }
 
 
@@ -168,12 +188,25 @@ class TestResponseDtos:
         props = _schema(spec, "TrialResponse")["properties"]
         assert set(props) == {
             "generation", "trial_number", "target_id", "event_id", "confidence", "forced", "produced_at",
-            "config_revision",
+            "processing_revision", "acquisition_revision",
         }
+
+    def test_runtime_configuration_uses_scoped_operations_and_recovery(self, spec):
+        schema = _schema(spec, "RuntimeConfigurationResponse")
+        assert set(schema["properties"]) == {
+            "running", "recovery", "accepted", "applied", "generation", "operations", "errors",
+        }
+        assert {"operations", "recovery"} <= set(schema["required"])
+        operation = _schema(spec, "RuntimeOperationResponse")
+        assert {"module", "affected_modules", "operation_id"} <= set(operation["required"])
+        prepare = spec["paths"]["/api/v1/engine/modules/{module}/prepare"]["post"]
+        module = next(parameter for parameter in prepare["parameters"] if parameter["name"] == "module")
+        assert set(module["schema"]["enum"]) == {"stimulation", "actuation"}
 
     def test_engine_status_fields(self, spec):
         props = _schema(spec, "EngineStatusResponse")["properties"]
-        assert set(props) == {"running", "acquisition_alive", "processor_alive", "stimulation_connected"}
+        assert set(props) == {"running", "acquisition_alive", "processor_alive", "stimulation_connected",
+                              "actuation_alive", "actuation_connected"}
 
     def test_acquisition_status_fields(self, spec):
         props = _schema(spec, "AcquisitionStatusResponse")["properties"]
@@ -226,6 +259,7 @@ class TestErrorContract:
             # domain-specific
             "ENGINE_NOT_READY",
             "COMMAND_REJECTED", "COMMAND_EXECUTION_FAILED", "COMMAND_TIMEOUT",
+            "PEER_DELIVERY_FAILED",
             # Host configuration and Plugin Profiles.
             "CONFIG_KEY_NOT_ALLOWED", "CONFIG_PROFILE_NOT_FOUND",
         }

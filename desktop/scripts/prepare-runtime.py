@@ -51,8 +51,6 @@ def copy_source(root, destination):
     shutil.copyfile(root / "pyproject.toml", destination / "pyproject.toml")
     def ignore(directory, names):
         excluded = {name for name in names if name.startswith(".") or name == "__pycache__" or name.endswith((".pyc", ".pyo"))}
-        if Path(directory) == root / "omnibci" / "conf":
-            excluded.add("profiles")
         return excluded
     shutil.copytree(root / "omnibci", destination / "omnibci", ignore=ignore)
 
@@ -137,7 +135,7 @@ def main():
         package = json.loads((DESKTOP / "package.json").read_text())
         project = tomllib.loads((ROOT / "pyproject.toml").read_text())
         if package["version"] != project["project"]["version"]:
-            raise RuntimeError("Desktop and backend application versions must match")
+            raise RuntimeError("Desktop and server application versions must match")
         manifest = {
             "schemaVersion": 1,
             "applicationVersion": package["version"],

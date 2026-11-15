@@ -16,9 +16,10 @@ def main():
         not path.is_relative_to(checkout / "omnibci") for path in installed_paths
     ), ("Wheel smoke test can import the source checkout instead of the installed package", installed_paths)
     vendor = vendor_plugins_dir()
-    catalog = PluginCatalog({"effector": lambda: [PluginRoot(vendor, "builtin", 100)]})
+    kinds = ("acquisition", "decoder", "epoch_detector", "filter", "paradigm", "trigger", "effector")
+    catalog = PluginCatalog({kind: lambda: [PluginRoot(vendor, "builtin", 100)] for kind in kinds})
     contributions = []
-    for kind in ("acquisition", "decoder", "epoch_detector", "filter", "paradigm", "trigger", "effector"):
+    for kind in kinds:
         selected = catalog.list_contributions(kind)
         assert selected, f"Installed wheel contains no {kind} contributions"
         for contribution in selected:
@@ -27,8 +28,12 @@ def main():
             assert contribution.configuration_schema is not None
             validate_parameters(contribution.configuration_schema, {})
         contributions.extend(selected)
-    assert len(contributions) == 10
-    assert resources.files("omnibci.conf").joinpath("settings.toml").is_file()
+    assert len(contributions) == 11, len(contributions)
+    from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS, MODULE_SETTING_DEFAULTS
+    from omnibci.application.configuration.models import EngineSettings, ModuleActivation
+    EngineSettings(ENGINE_SETTING_DEFAULTS)
+    for module, settings in MODULE_SETTING_DEFAULTS.items():
+        ModuleActivation(module, settings, ())
     resource = resources.files("omnibci.infrastructure.plugins.paradigms.classic40SSVEP").joinpath(
         "resource", "classic40_ssvep.ofp",
     )

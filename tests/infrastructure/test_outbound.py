@@ -50,9 +50,9 @@ class TestEventToWire:
         assert event_to_wire(Event(EventType.TrialCompleted, _clf())) is None
 
     def test_trial_completed_retains_the_epoch_configuration_revision(self):
-        outcome = TrialOutcome("run-1", 1, _clf(), config_revision="epoch-revision")
+        outcome = TrialOutcome("run-1", 1, _clf(), processing_revision="epoch-revision")
         wire = event_to_wire(Event(EventType.TrialCompleted, outcome))
-        assert wire["config_revision"] == "epoch-revision"
+        assert wire["processing_revision"] == "epoch-revision"
         assert payload_to_jsonable(outcome) == {key: value for key, value in wire.items() if key != "event"}
 
     def test_stimulation_ack_from_dict(self):

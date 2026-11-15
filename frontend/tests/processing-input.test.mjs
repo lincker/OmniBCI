@@ -109,7 +109,7 @@ async function withInput(action, { value = mapping("C3", "C4"), descriptor = sou
     return { plan: { source: clone(descriptor), source_indices: indices,
       output_channels: outputs.map((row, index) => ({ ...descriptor.channels[indices[index]], name: row.name,
         signal_type: row.signal_type ?? descriptor.channels[indices[index]]?.signal_type })),
-      processing_input: clone(processing_input), config_revision: "accepted-1", fingerprint: "plan" },
+      processing_input: clone(processing_input), acquisition_revision: "accepted-1", fingerprint: "plan" },
       source_revision: expected_source_revision, warnings: [] };
   };
   const props = { value: clone(value), busy: false, configurationRevision: "accepted-1", decoderSelection: selection,
@@ -418,11 +418,9 @@ test("profile and preview APIs serialize only channel mappings and type declarat
   const processing_input = { schema_version: 2, outputs: [{ ...output("C4"), signal_type: "eeg" }] };
   try {
     await pluginConfigApi.create("decoder", decoderSelection, "Motor", {}, processing_input);
-    await pluginConfigApi.update({ profile_id: "motor", revision: 3 }, "Motor", {}, processing_input);
     await api.preview(processing_input, "source-1", decoderSelection);
     assert.deepEqual(requests[0].body.processing_input, processing_input);
-    assert.deepEqual(requests[1].body, { name: "Motor", parameters: {}, expected_revision: 3, processing_input });
-    assert.deepEqual(requests[2].body, { processing_input, expected_source_revision: "source-1", decoder_selection: decoderSelection });
+    assert.deepEqual(requests[1].body, { processing_input, expected_source_revision: "source-1", decoder_selection: decoderSelection });
     assert.equal(api.save, undefined);
   } finally { globalThis.fetch = originalFetch; }
 });

@@ -22,6 +22,13 @@ class EngineHandle(Protocol):
 
     def run(self) -> None: ...
     def wait_until_started(self, timeout: float | None = None) -> None: ...
+    async def reconfigure_output_modules(self, snapshot: dict, modules: tuple[str, ...]) -> None: ...
+    async def ensure_output_ready(self, module: str, snapshot: dict) -> None: ...
+    def ensure_output_ready_sync(self, module: str, snapshot: dict) -> None: ...
+    async def start_module(self, module: str, snapshot: dict) -> None: ...
+    async def stop_module(self, module: str) -> None: ...
+    def is_module_running(self, module: str) -> bool: ...
+    async def set_actuation_active(self, active: bool) -> None: ...
 
 
 # Each call returns a fresh graph because multiprocessing workers are single-use.
@@ -32,9 +39,9 @@ class EnginePort(ABC):
     """
     Contract for dispatching events into the running engine.
 
-    ``is_initialized`` means that an engine graph exists and can accept
-    composition-time listener registration.  ``is_engine_ready`` is the
-    stronger runtime state: commands may be dispatched only while it is true.
+    ``is_initialized`` means that the service can accept composition-time
+    listener registration. ``is_engine_ready`` means the runtime infrastructure
+    is available; business modules have independent running states.
     Implementations must raise ``RuntimeError`` outside that running-ready
     state so callers fail loudly instead of writing into an idle or closed bus.
     """
@@ -42,7 +49,7 @@ class EnginePort(ABC):
     @property
     @abstractmethod
     def is_initialized(self) -> bool:
-        """Whether the engine graph has been constructed."""
+        """Whether the service is ready for application wiring."""
 
     @property
     @abstractmethod
@@ -61,7 +68,23 @@ class EnginePort(ABC):
         """
         return False
 
+    def is_command_ready(self, event_type) -> bool:
+        """Whether a command's owning module can still answer it."""
+        return self.is_engine_ready
+
+    def is_module_running(self, module: str) -> bool:
+        """Whether the requested business module is running on the engine."""
+        return False
+
+    async def stop_module(self, module: str) -> None:
+        """Stop one module while keeping the engine available."""
+        raise NotImplementedError
+
+    def ensure_output_ready_sync(self, module: str, snapshot: dict) -> None:
+        """Ensure the output transport before its local process is spawned."""
+        raise NotImplementedError
+
     @property
     def applied_snapshot(self) -> dict | None:
-        """A copy of the last successfully started graph's pinned configuration."""
+        """A copy of the acknowledged foundation and module configuration."""
         return None

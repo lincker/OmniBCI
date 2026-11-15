@@ -27,33 +27,33 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
-# Credentials are only sent to the configured backend, never a redirect target.
+# Credentials are only sent to the configured server, never a redirect target.
 urlopen = build_opener(_NoRedirect()).open
 
 
 class NodeConfigurationUnavailable(RuntimeError):
-    """The backend cannot currently supply a running configuration."""
+    """The server cannot currently supply a running configuration."""
 
 
-def node_backend_argument(role: str, argv=None) -> str:
+def node_server_argument(role: str, argv=None) -> str:
     parser = argparse.ArgumentParser(description=f"Run an OmniBCI {role} node")
     parser.add_argument(
-        "--backend",
-        default=os.environ.get("OMNIBCI_BACKEND_URL", "http://127.0.0.1:8000"),
-        help="Backend URL (default: OMNIBCI_BACKEND_URL or http://127.0.0.1:8000)",
+        "--server",
+        default=os.environ.get("OMNIBCI_SERVER_URL", "http://127.0.0.1:8000"),
+        help="Server URL (default: OMNIBCI_SERVER_URL or http://127.0.0.1:8000)",
     )
-    return parser.parse_args(argv).backend
+    return parser.parse_args(argv).server
 
 
-def fetch_node_configuration(backend_url: str, role: str, api_token: str | None = None) -> NodeConfiguration:
+def fetch_node_configuration(server_url: str, role: str, api_token: str | None = None) -> NodeConfiguration:
     """Bound each HTTP request; never fall back to a local activation file."""
     if role not in {"stimulation", "actuation"}:
         raise ValueError("Unknown node role")
-    parsed = urlsplit(backend_url)
+    parsed = urlsplit(server_url)
     if (parsed.scheme not in {"http", "https"} or not parsed.hostname
             or parsed.username is not None or parsed.password is not None
             or parsed.query or parsed.fragment):
-        raise ValueError("Backend URL must be an HTTP(S) URL without credentials, query, or fragment")
+        raise ValueError("Server URL must be an HTTP(S) URL without credentials, query, or fragment")
     # Validate malformed/out-of-range ports before starting a retry loop.
     parsed.port
     headers = {"Accept": "application/json"}
@@ -62,7 +62,7 @@ def fetch_node_configuration(backend_url: str, role: str, api_token: str | None 
             raise ValueError("API token must not contain line breaks")
         headers["Authorization"] = f"Bearer {api_token}"
     request = Request(
-        backend_url.rstrip("/") + f"/api/v1/config/nodes/{role}",
+        server_url.rstrip("/") + f"/api/v1/config/nodes/{role}",
         headers=headers,
     )
     try:
@@ -83,26 +83,26 @@ def fetch_node_configuration(backend_url: str, role: str, api_token: str | None 
         exc.close()
         if exc.code in {409, 502, 503, 504}:
             raise NodeConfigurationUnavailable(
-                f"Waiting for the backend to provide a running {role} configuration"
+                f"Waiting for the server to provide a running {role} configuration"
             ) from exc
-        raise RuntimeError(f"Backend rejected {role} configuration request (HTTP {exc.code})") from exc
+        raise RuntimeError(f"Server rejected {role} configuration request (HTTP {exc.code})") from exc
     except (URLError, OSError) as exc:
-        raise NodeConfigurationUnavailable("Waiting for the backend connection") from exc
+        raise NodeConfigurationUnavailable("Waiting for the server connection") from exc
     if len(content) > _MAX_RESPONSE_BYTES:
         raise ValueError("Node configuration response is too large")
     try:
         envelope = json.loads(content)
     except (ValueError, UnicodeError) as exc:
-        raise ValueError("Backend returned invalid node configuration JSON") from exc
+        raise ValueError("Server returned invalid node configuration JSON") from exc
     if not isinstance(envelope, dict) or envelope.get("success") is not True:
-        raise ValueError("Backend returned an invalid node configuration response")
+        raise ValueError("Server returned an invalid node configuration response")
     data = envelope.get("data")
     if (not isinstance(data, dict) or not isinstance(data.get("state"), str)
             or data["state"] not in {"selected", "running"}):
-        raise ValueError("Backend returned an invalid node configuration state")
+        raise ValueError("Server returned an invalid node configuration state")
     configuration = NodeConfiguration.from_dict(data.get("configuration"))
     if configuration.role != role:
-        raise ValueError("Backend returned configuration for a different node role")
+        raise ValueError("Server returned configuration for a different node role")
     if data["state"] == "selected":
         raise NodeConfigurationUnavailable("Waiting for the engine to start")
     if not configuration.generation:
@@ -110,7 +110,7 @@ def fetch_node_configuration(backend_url: str, role: str, api_token: str | None 
     return configuration
 
 
-def run_configured_node(role: str, application_factory, *, backend_url: str) -> None:
+def run_configured_node(role: str, application_factory, *, server_url: str) -> None:
     """Retry only unavailable configuration or an explicitly clean link exit.
 
     HTTP polling runs between application lifetimes, outside all real-time
@@ -120,7 +120,7 @@ def run_configured_node(role: str, application_factory, *, backend_url: str) -> 
     api_token = os.environ.get("OMNIBCI_API_TOKEN")
     while True:
         try:
-            configuration = fetch_node_configuration(backend_url, role, api_token)
+            configuration = fetch_node_configuration(server_url, role, api_token)
         except NodeConfigurationUnavailable as exc:
             message = str(exc)
             if message != waiting_message:
@@ -130,11 +130,9 @@ def run_configured_node(role: str, application_factory, *, backend_url: str) -> 
             continue
 
         snapshot = materialize_node_configuration(configuration, CatalogConfigurationAdapter())
-        from omnibci.conf import settings
-        settings.use_snapshot(snapshot)
         logger.info(
-            "Starting %s for revision %s, generation %s",
-            role, configuration.revision, configuration.generation,
+            "Starting %s for modules %s, Engine %s, generation %s",
+            role, configuration.module_revisions, configuration.engine_revision, configuration.generation,
         )
         application = application_factory(settings_snapshot=snapshot)
         if application.run() is not True:

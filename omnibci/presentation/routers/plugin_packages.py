@@ -10,7 +10,7 @@ from starlette.concurrency import run_in_threadpool
 from omnibci.application.plugin_packages import (
     PluginPackageConflictError, PluginPackageError, PluginPackageNotFoundError, PluginPackageStorageError,
 )
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.services.plugin_installation_service import PluginInstallationService
 from omnibci.presentation.errors import ApiError
 from omnibci.presentation.routers.plugin_config import _configuration_errors

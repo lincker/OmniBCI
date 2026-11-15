@@ -30,6 +30,8 @@ class PeerGateway:
         self._dirty = False
         self._configuration_frozen = False
         self._lifecycle_lock = asyncio.Lock()
+        self._peer_locks: dict[str, asyncio.Lock] = {}
+        self._stopping = False
 
     def add_peer(self, config: PeerConfig) -> None:
         if self._configuration_frozen:
@@ -41,8 +43,45 @@ class PeerGateway:
     def peer(self, name: str) -> PeerChannel:
         return self._channels[name]
 
+    def is_peer_ready(self, name: str) -> bool:
+        channel = self._channels.get(name)
+        return channel is not None and channel.is_ready
+
+    async def replace_peer(self, name: str, config: PeerConfig | None) -> None:
+        """Replace one settled output channel without restarting unrelated peers."""
+        if config is not None and config.name != name:
+            raise ValueError("Replacement peer name does not match")
+        async with self._peer_locks.setdefault(name, asyncio.Lock()):
+            if not self._started or self._stopping:
+                raise RuntimeError("Peer gateway must be running and settled before replacement")
+            previous = self._channels.get(name)
+            if previous is not None:
+                await previous.stop()
+                if previous.has_lifecycle_resources:
+                    raise RuntimeError("Previous peer still owns lifecycle resources")
+            if config is None:
+                self._channels.pop(name, None)
+                return
+            candidate = PeerChannel(config, self._bus)
+            self._channels[name] = candidate
+            try:
+                await candidate.start()
+            except BaseException:
+                # Keep an uncertain candidate owned by the gateway. A later
+                # rollback may replace it only after its cleanup succeeds.
+                try:
+                    await candidate.stop()
+                except BaseException:
+                    raise
+                if not candidate.has_lifecycle_resources and previous is not None:
+                    self._channels[name] = previous
+                elif not candidate.has_lifecycle_resources:
+                    self._channels.pop(name, None)
+                raise
+
     async def start(self) -> None:
         async with self._lifecycle_lock:
+            self._stopping = False
             self._configuration_frozen = True
             if self._started and not self._dirty:
                 return
@@ -106,6 +145,7 @@ class PeerGateway:
 
     async def stop(self) -> None:
         async with self._lifecycle_lock:
+            self._stopping = True
             await self._stop_all_locked()
 
     async def _stop_all_locked(self) -> None:
@@ -119,7 +159,11 @@ class PeerGateway:
         # idempotent, so calling gateway.stop repeatedly remains safe.
         for channel in reversed(list(self._channels.values())):
             try:
-                await channel.stop()
+                async with self._peer_locks.setdefault(channel.name, asyncio.Lock()):
+                    # A replacement may have finished while shutdown waited.
+                    current = self._channels.get(channel.name)
+                    if current is not None:
+                        await current.stop()
             except asyncio.CancelledError as exc:
                 # Preserve caller cancellation, but first give every remaining
                 # channel its cleanup opportunity.

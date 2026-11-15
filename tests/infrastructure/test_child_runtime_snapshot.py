@@ -12,7 +12,6 @@ from unittest.mock import Mock
 
 import pytest
 
-import omnibci.conf
 from omnibci.infrastructure.actuation import process_manager as actuation
 from omnibci.infrastructure.stimulation import process_manager as stimulation
 from omnibci.infrastructure.process_lifecycle import StartupReport, StartupReporter
@@ -27,10 +26,9 @@ MANAGERS = (
 def _snapshot(key, revision="revision-1"):
     snapshot = {
         key: "selected-plugin",
-        "CONFIG.revision": revision,
+        "CONFIG.module_revisions": {"acquisition": revision, "processing": revision, "stimulation": revision, "actuation": revision}, "CONFIG.engine_revision": "engine",
         "CONFIG.generation": "graph-1",
         "STIMULATION.auto_spawn": True,
-        "ACTUATION.enabled": True,
         "ACTUATION.auto_spawn": True,
         "PLUGINS.bindings": [{"parameters": {"level": 1}}],
     }
@@ -55,7 +53,8 @@ def _mock_spawning(monkeypatch, module, component):
     def process(**kwargs):
         snapshot = kwargs.get("kwargs", {}).get("settings_snapshot", {})
         receiver.recv.return_value = StartupReport.ready(
-            component, config_revision=snapshot.get("CONFIG.revision"),
+            component, module_revisions={component.lower(): snapshot["CONFIG.module_revisions"][component.lower()]},
+            engine_revision=snapshot["CONFIG.engine_revision"],
             generation=snapshot.get("CONFIG.generation"),
         )
         child = Mock(pid=123, exitcode=0)
@@ -68,52 +67,93 @@ def _mock_spawning(monkeypatch, module, component):
     return factory
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("module", "manager_class", "component", "key"), MANAGERS)
+async def test_host_mode_does_not_override_current_snapshot_default(monkeypatch, module, manager_class, component, key):
+    from omnibci.bootstrap import build_container
+
+    factory = _mock_spawning(monkeypatch, module, component)
+    container = await build_container(host_settings={"STIMULATION.auto_spawn": False, "ACTUATION.auto_spawn": False})
+    manager = getattr(container, f"{component.lower()}_process_manager")
+    snapshot = _snapshot(key)
+    snapshot.pop(f"{component.upper()}.auto_spawn")
+    try:
+        manager.start(settings_snapshot=snapshot)
+        factory.assert_called_once()
+        assert manager.auto_spawn
+        assert manager.is_ready
+    finally:
+        manager.stop()
+
+
 @pytest.mark.parametrize(("module", "manager_class", "component", "key"), MANAGERS)
 def test_snapshot_transport_and_revision_restart(monkeypatch, module, manager_class, component, key):
     factory = _mock_spawning(monkeypatch, module, component)
-    manager = manager_class(auto_spawn=False)
+    manager = manager_class()
     saved = _snapshot(key)
     original = deepcopy(saved)
     manager.start(settings_snapshot=saved)
     manager.start(settings_snapshot=deepcopy(saved))
     assert factory.call_count == 1
     spawned = factory.call_args.kwargs
-    expected = "STIMULATION_THUBCI_SSVEP_classic40" if component == "Stimulation" else "selected-plugin"
-    assert spawned["args"][0] == expected
+    if component == "Stimulation":
+        assert manager.current_paradigm == "STIMULATION_THUBCI_SSVEP_classic40"
+    else:
+        assert manager.current_effector == "selected-plugin"
     assert pickle.loads(pickle.dumps(spawned["kwargs"])) == {"settings_snapshot": original}
 
-    saved["CONFIG.revision"] = "revision-2"
+    saved["CONFIG.module_revisions"][component.lower()] = "revision-2"
     saved["PLUGINS.bindings"][0]["parameters"]["level"] = 2
     assert spawned["kwargs"]["settings_snapshot"] == original
     manager.start(settings_snapshot=saved)
 
     assert factory.call_count == 2
     assert manager.is_ready
-    assert factory.call_args.kwargs["kwargs"]["settings_snapshot"]["CONFIG.revision"] == "revision-2"
+    assert factory.call_args.kwargs["kwargs"]["settings_snapshot"]["CONFIG.module_revisions"][component.lower()] == "revision-2"
 
 
 @pytest.mark.parametrize(("module", "manager_class", "component", "key"), MANAGERS)
-def test_snapshot_rejects_conflicting_legacy_override_before_spawn(
-    monkeypatch, module, manager_class, component, key,
-):
+def test_processing_update_does_not_restart_or_relabel_output_child(monkeypatch, module, manager_class, component, key):
     factory = _mock_spawning(monkeypatch, module, component)
     manager = manager_class()
+    original = _snapshot(key)
+    manager.start(settings_snapshot=original)
+    changed = deepcopy(original)
+    changed["CONFIG.module_revisions"]["processing"] = "new-processing"
+    changed["ALGORITHM.decoder"] = "new-decoder"
+    manager.start(settings_snapshot=changed)
+    assert factory.call_count == 1
+    assert manager._settings_snapshot == original
+    assert factory.call_args.kwargs["kwargs"]["settings_snapshot"] == original
+    manager.stop()
 
-    with pytest.raises(RuntimeError, match="Apply the .* configuration"):
-        manager.start("other-plugin", settings_snapshot=_snapshot(key))
 
-    factory.assert_not_called()
+@pytest.mark.parametrize(("module", "manager_class", "component", "key"), MANAGERS)
+@pytest.mark.parametrize("field", ["own", "CONFIG.engine_revision", "CONFIG.generation"])
+def test_output_child_restarts_for_own_identity_changes(monkeypatch, module, manager_class, component, key, field):
+    factory = _mock_spawning(monkeypatch, module, component)
+    manager = manager_class()
+    snapshot = _snapshot(key)
+    manager.start(settings_snapshot=snapshot)
+    changed = deepcopy(snapshot)
+    if field == "own":
+        changed["CONFIG.module_revisions"][component.lower()] = "replacement"
+    else:
+        changed[field] = "replacement"
+    manager.start(settings_snapshot=changed)
+    assert factory.call_count == 2
+    assert manager._settings_snapshot == changed
+    manager.stop()
 
 
-@pytest.mark.parametrize("disabled_key", ["ACTUATION.enabled", "ACTUATION.auto_spawn"])
-def test_actuation_snapshot_can_disable_and_reenable_owned_child(monkeypatch, disabled_key):
+def test_actuation_snapshot_can_switch_between_managed_and_external_child(monkeypatch):
     factory = _mock_spawning(monkeypatch, actuation, "Actuation")
-    manager = actuation.ActuationProcessManager(auto_spawn=False)
+    manager = actuation.ActuationProcessManager()
     snapshot = _snapshot("ACTUATION.effector")
     manager.start(settings_snapshot=snapshot)
     child = manager._process
 
-    snapshot[disabled_key] = False
+    snapshot["ACTUATION.auto_spawn"] = False
     manager.start(settings_snapshot=snapshot)
 
     child.join.assert_called_once()
@@ -121,7 +161,7 @@ def test_actuation_snapshot_can_disable_and_reenable_owned_child(monkeypatch, di
     assert not manager.auto_spawn
     assert factory.call_count == 1
 
-    snapshot[disabled_key] = True
+    snapshot["ACTUATION.auto_spawn"] = True
     manager.start(settings_snapshot=snapshot)
     assert manager.auto_spawn
     assert factory.call_count == 2
@@ -142,29 +182,29 @@ def test_stimulation_snapshot_can_disable_owned_child(monkeypatch):
 
 
 @pytest.mark.parametrize(("module", "manager_class", "component", "key"), MANAGERS)
-def test_child_installs_snapshot_before_importing_application(
+def test_child_passes_snapshot_without_loading_configuration_storage(
     monkeypatch, module, manager_class, component, key,
 ):
-    settings = Mock()
-    monkeypatch.setattr(omnibci.conf, "settings", settings)
     application = Mock()
     original_import = builtins.__import__
     snapshot = _snapshot(key)
     app_module = module.__name__.removesuffix("process_manager") + "application"
 
-    def import_after_snapshot(name, *args, **kwargs):
+    def import_runtime(name, *args, **kwargs):
+        if name == "omnibci.conf" or name.startswith("omnibci.conf.") or name == (
+            "omnibci.infrastructure.repositories.configuration_repository"
+        ):
+            raise AssertionError("Runtime child must not load configuration storage")
         if name == app_module:
-            settings.use_snapshot.assert_called_once_with(snapshot)
             return SimpleNamespace(**{component: application})
         return original_import(name, *args, **kwargs)
 
-    monkeypatch.setattr(builtins, "__import__", import_after_snapshot)
+    monkeypatch.setattr(builtins, "__import__", import_runtime)
     entrypoint = getattr(module, f"_run_{component.lower()}")
     entrypoint(settings_snapshot=snapshot)
 
     application.assert_called_once_with(stop_event=None, settings_snapshot=snapshot)
     application.return_value.run.assert_called_once_with()
-    settings.set.assert_not_called()
 
 
 def _report_plugin_directory(connection):
@@ -172,10 +212,12 @@ def _report_plugin_directory(connection):
         connection.send(os.environ.get("OMNIBCI_PLUGIN_DIR"))
 
 
-def _ready_with_current_plugin_directory(selected, stop_event, connection, *, settings_snapshot):
+def _ready_with_current_plugin_directory(*args, settings_snapshot):
+    stop_event, connection = args[-2:]
     reporter = StartupReporter(
         connection, component=settings_snapshot["TEST.component"],
-        config_revision=settings_snapshot["CONFIG.revision"],
+        module_revisions={settings_snapshot["TEST.component"].lower(): settings_snapshot["CONFIG.module_revisions"][settings_snapshot["TEST.component"].lower()]},
+        engine_revision=settings_snapshot["CONFIG.engine_revision"],
         generation=settings_snapshot["CONFIG.generation"],
     )
     if os.environ.get("OMNIBCI_PLUGIN_DIR") != settings_snapshot["TEST.plugin_dir"]:

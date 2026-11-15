@@ -12,13 +12,17 @@ const requests = new Set<AbortController>();
 
 export function currentConnection() { return connection; }
 
-/** Invalidate old requests before React mounts the next backend's workspace. */
+/** Invalidate old requests before React mounts the next server's workspace. */
 export function setDesktopConnection(next: ConnectionInfo) {
   if (connection?.id !== next.id || (connection?.status === "ready" && next.status !== "ready")) {
-    requests.forEach((request) => request.abort());
-    requests.clear();
+    abortPendingRequests();
   }
   connection = next;
+}
+
+export function abortPendingRequests() {
+  requests.forEach((request) => request.abort());
+  requests.clear();
 }
 
 export function trackRequest(controller: AbortController) {

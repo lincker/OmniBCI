@@ -46,6 +46,9 @@ class _RecordingEngine(EnginePort):
     def subscribe(self, event_type, handler) -> None:
         self.subscriptions.append((event_type, handler))
 
+    def on_peer_delivery_fault(self, event):
+        pass
+
     async def shutdown(self) -> None:  # called by lifespan on teardown
         pass
 
@@ -59,7 +62,7 @@ def _make_container() -> tuple[AppContainer, _RecordingEngine]:
             command_results,
         ),
         stimulation_service=StimulationAppService(engine),
-        stimulation_process_manager=StimulationProcessManager(auto_spawn=False),
+        stimulation_process_manager=StimulationProcessManager(),
         results_service=ResultsService(engine),
         command_results=command_results,
     )
@@ -82,8 +85,9 @@ def test_lifespan_registers_engine_listeners(monkeypatch):
 
     registered_types = [t for t, _ in engine.subscriptions]
 
-    assert len(engine.subscriptions) == 6
+    assert len(engine.subscriptions) == 7
     assert EventType.CommandResult in registered_types
+    assert EventType.PeerDeliveryFault in registered_types
     assert EventType.AcquisitionState in registered_types
     assert registered_types.count(EventType.TrialCompleted) == 2
     assert registered_types.count(EventType.EpochProcessed) == 1
@@ -92,3 +96,4 @@ def test_lifespan_registers_engine_listeners(monkeypatch):
     assert container.results_service.on_trial_completed in handlers
     assert container.results_service.on_epoch_processed in handlers
     assert container.acquisition_service.on_acquisition_state in handlers
+    assert engine.on_peer_delivery_fault in handlers

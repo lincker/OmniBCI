@@ -133,14 +133,15 @@ class TestActuationPeerConfig:
         assert cfg.name == ACTUATION
         assert isinstance(cfg.transport, ListenTransport)
         assert cfg.transport._server.max_clients == 1
-        assert cfg.routes.outbound == frozenset({EventType.ActuationCommand, EventType.SettleActuation})
+        assert cfg.routes.outbound == frozenset({EventType.ActuationCommand, EventType.SettleActuation,
+                                                EventType.ResumeActuation})
         assert cfg.routes.inbound == frozenset({
             EventType.ActuationAck, EventType.ActuationState, EventType.ActuationFault,
             EventType.CommandResult,
         })
 
 
-class TestBuilderActuationOptIn:
+class TestBuilderActuationFoundation:
     def _build(self, **cfg_kwargs):
         from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder, NeuroEngineConfig
         with (
@@ -149,16 +150,14 @@ class TestBuilderActuationOptIn:
         ):
             return NeuroEngineBuilder(NeuroEngineConfig(**cfg_kwargs), settings_snapshot={}).build()
 
-    def test_disabled_by_default(self):
-        eng = self._build(actuation_enabled=False)
-        assert eng.actuation_translator is None
-        assert eng.actuation_feedback is None
-        # only the stimulation peer is registered
-        assert ACTUATION not in eng.peer_gateway._channels
-
-    def test_enabled_wires_channel_and_components(self):
-        eng = self._build(actuation_enabled=True, actuation_server_port=8042)
+    def test_transport_is_deferred_and_commands_disabled_by_default(self):
+        eng = self._build()
         assert isinstance(eng.actuation_translator, ActuationCommandTranslator)
         assert isinstance(eng.actuation_feedback, ActuationFeedbackHandler)
-        ch = eng.peer_gateway.peer(ACTUATION)
-        assert ch._config.transport._server.port == 8042
+        assert ACTUATION not in eng.peer_gateway._channels
+        assert not eng._actuation_active
+
+    def test_output_parameters_do_not_configure_foundation_listeners(self):
+        from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
+        eng = NeuroEngineBuilder(settings_snapshot={"ACTUATION.server_port": "invalid-until-prepared"}).build()
+        assert not eng.peer_gateway._channels

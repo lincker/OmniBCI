@@ -5,8 +5,8 @@ The engine uses a ListenTransport (it binds ACTUATION.server_ip:server_port
 and waits). The actuation process uses ConnectTransport (it dials out to the
 engine). Routes are the mirror image of the engine's actuation_peer_config in
 neuroengine/gateway/peers.py:
-  outbound (actuation → engine): ActuationAck, ActuationState, ActuationFault
-  inbound  (engine → actuation): ActuationCommand
+  outbound (actuation → engine): ActuationAck, ActuationState, ActuationFault, CommandResult
+  inbound  (engine → actuation): ActuationCommand, SettleActuation, ResumeActuation
 """
 
 from omnibci.shared.events import EventType
@@ -34,6 +34,7 @@ def engine_peer_config(host: str, port: int, *, identity: PeerIdentity | None = 
             inbound=frozenset({
                 EventType.ActuationCommand,
                 EventType.SettleActuation,
+                EventType.ResumeActuation,
             }),
         ),
     )

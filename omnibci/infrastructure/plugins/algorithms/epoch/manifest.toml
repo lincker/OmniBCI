@@ -3,6 +3,7 @@
 manifest_version = 2
 
 [package]
+domain = "processing"
 id = "default_epoch_detector"
 publisher = "omnibci"
 version = "0.1.0"

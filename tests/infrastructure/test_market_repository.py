@@ -34,7 +34,7 @@ _NOW = datetime(2026, 9, 23, 12, tzinfo=UTC)
 def _package_bytes(*, publisher="acme", version="1.0.0"):
     manifest = {
         "manifest_version": 2,
-        "package": {"id": "device", "publisher": publisher, "version": version, "api_version": "2"},
+        "package": {"id": "device", "publisher": publisher, "version": version, "api_version": "2", "domain": "acquisition"},
         "contributions": [{"id": "reader", "kind": "acquisition", "entrypoint": "driver:Reader"}],
     }
     buffer = io.BytesIO()
@@ -55,7 +55,7 @@ def _index(archive):
             "description": "Controlled test package.", "download": "packages/device-1.0.0.zip",
             "sha256": hashlib.sha256(archive).hexdigest(), "size": len(archive),
             "contributions": [{"id": "reader", "kind": "acquisition"}],
-            "api_version": "2", "platforms": ["linux", "darwin", "win32"],
+            "api_version": "2", "domain": "acquisition", "platforms": ["linux", "darwin", "win32"],
             "host_version": "1.0.0", "requires": {},
         }],
     }
@@ -309,6 +309,7 @@ def test_signed_catalog_archive_identity_mismatch_is_rejected_before_publication
     elif mismatch == "version":
         index["packages"][0]["version"] = "2.0.0"
     else:
+        index["packages"][0]["domain"] = "processing"
         index["packages"][0]["contributions"] = [{"id": "reader", "kind": "filter"}]
     opener.routes[_URL] = _signed(index, key)
     package = index["packages"][0]

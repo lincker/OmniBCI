@@ -56,7 +56,6 @@ include = ["omnibci*"]
 
 [tool.setuptools.package-data]
 # Include non-Python runtime assets in source and wheel distributions.
-omnibci = ["conf/*.toml", "conf/profiles/*.toml"]
 "omnibci.infrastructure.plugins" = ["**/manifest.toml", "**/*.schema.json", "**/resource/**/*.png", "**/resource/*.ofp"]
 
 # ============================================================================
@@ -124,7 +123,6 @@ name = "shared 保持零内部依赖（纯共享内核）"
 type = "forbidden"
 source_modules = ["omnibci.shared"]
 forbidden_modules = [
-    "omnibci.conf",
     "omnibci.domain",
     "omnibci.application",
     "omnibci.infrastructure",
@@ -143,3 +141,9 @@ forbidden_modules = [
     "omnibci.infrastructure.plugins.effectors",
     "omnibci.infrastructure.plugins.paradigms",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Configuration management must not depend on runtime services"
+type = "forbidden"
+source_modules = ["omnibci.application.configuration"]
+forbidden_modules = ["omnibci.application.services", "omnibci.application.runtime_admission"]

@@ -3,9 +3,12 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+from tests.plugin_configuration_helpers import builtin_selection
+
 import pytest
 import tomlkit
 
+from omnibci.application.configuration.models import PluginSelection
 from omnibci.domain.ports.acquisition import SignalSource, TriggerEmitter
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter
 from omnibci.domain.ports.effector import Effector
@@ -40,7 +43,7 @@ def catalog():
 
 @pytest.mark.parametrize("kind,alias,port", CAPABILITIES)
 def test_builtin_exact_selection_loads_its_domain_port(catalog, monkeypatch, kind, alias, port):
-    descriptor = catalog.resolve_legacy(kind, alias)
+    descriptor = catalog.resolve_selection(kind, builtin_selection(kind, alias))
     assert descriptor.package.manifest_version == 2
     assert descriptor in catalog.list_contributions(kind)
     assert catalog.resolve_selection(kind, descriptor.selection) == descriptor
@@ -52,8 +55,8 @@ def test_builtin_exact_selection_loads_its_domain_port(catalog, monkeypatch, kin
 
 @pytest.mark.parametrize("device", ["scan45", "curry8"])
 def test_trigger_platform_is_independent_from_acquisition(catalog, monkeypatch, device):
-    trigger = catalog.resolve_legacy("trigger", f"neuroscan_{device}_trigger")
-    reader = catalog.resolve_legacy("acquisition", f"neuroscan_{device}_reader")
+    trigger = catalog.resolve_selection("trigger", builtin_selection("trigger", f"neuroscan_{device}_trigger"))
+    reader = catalog.resolve_selection("acquisition", builtin_selection("acquisition", f"neuroscan_{device}_reader"))
     assert trigger.package == reader.package
     assert trigger.supports_platform("win32")
     for host in ("darwin", "linux"):
@@ -66,7 +69,7 @@ def test_trigger_platform_is_independent_from_acquisition(catalog, monkeypatch, 
 
 
 def test_package_and_contribution_platforms_both_apply(catalog):
-    trigger = catalog.resolve_legacy("trigger", "neuroscan_scan45_trigger")
+    trigger = catalog.resolve_selection("trigger", builtin_selection("trigger", "neuroscan_scan45_trigger"))
     restricted = replace(trigger, package=replace(trigger.package, platforms=("linux",)))
     assert not any(restricted.supports_platform(host) for host in ("darwin", "linux", "win32"))
 
@@ -74,7 +77,7 @@ def test_package_and_contribution_platforms_both_apply(catalog):
 @pytest.mark.parametrize("platforms", [[], "win32", ["windows"], ["linux", "linux"], [1]])
 @pytest.mark.parametrize("section", ["package", "contribution"])
 def test_malformed_platforms_reject_package(tmp_path, platforms, section):
-    package = {"id": "example", "publisher": "test", "version": "1", "api_version": "1"}
+    package = {"id": "example", "publisher": "test", "version": "1", "domain": "acquisition", "api_version": "2"}
     contribution = {"id": "reader", "kind": "acquisition", "entrypoint": "reader:Reader"}
     (package if section == "package" else contribution)["platforms"] = platforms
     (tmp_path / "manifest.toml").write_text(tomlkit.dumps({
@@ -82,11 +85,11 @@ def test_malformed_platforms_reject_package(tmp_path, platforms, section):
     }), encoding="utf-8")
     catalog = PluginCatalog({"acquisition": lambda: [PluginRoot(tmp_path, "user", 0)]})
     with pytest.raises(PluginManifestError, match="platforms"):
-        catalog.resolve_legacy("acquisition", "reader")
+        catalog.resolve_selection("acquisition", PluginSelection("test.example", "reader", "1"))
 
 
 def test_selected_paradigm_can_read_its_pack_without_executing_package_initializers(catalog):
-    descriptor = catalog.resolve_legacy("paradigm", "STIMULATION_THUBCI_SSVEP_classic40")
+    descriptor = catalog.resolve_selection("paradigm", builtin_selection("paradigm", "STIMULATION_THUBCI_SSVEP_classic40"))
     implementation = PluginLoader.load_entrypoint(descriptor, Paradigm)
     with sys.modules[implementation.__module__]._frame_pack_path() as path:
         assert Path(path) == descriptor.location / "resource" / "classic40_ssvep.ofp"

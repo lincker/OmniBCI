@@ -18,7 +18,7 @@ my-decoder/
 
 Only `manifest.toml` has a prescribed filename. The Python module and schema may
 have other names if `entrypoint` and `configuration.schema` reference them.
-Discovery permits a missing schema for legacy plugins, but a configurable
+Discovery can list contributions without a configuration schema, but a configurable
 Decoder needs a schema to participate in the UI Profile workflow. A decoder
 with no editable parameters can provide an empty object schema with
 `"properties": {}` and `"additionalProperties": false`.
@@ -32,13 +32,13 @@ selects the constructor API. They are separate from the package release version,
 configuration schema version, and `signal_input_contract` capability version.
 Package identity is the case-sensitive `publisher.id`; each contribution has an
 id unique within that package. Declare `kind = "decoder"` and an entrypoint in
-package-relative `module:Class` form. No registry decorator is needed with API 2.
+package-relative `module:Class` form. The host loads that declared entrypoint.
 
 A Decoder that declares `[contributions.channel_requirements]` must also declare
-`signal_input_contract = 2` on that contribution. Older hosts reject this
-capability instead of silently ignoring its constraints. Contract `1` describes
-prepared input metadata without the declarative requirements. Plugins without a
-requirements section retain their existing behavior.
+`signal_input_contract = 2` on that contribution. Contract `1` describes prepared
+input metadata without declarative channel requirements. Processing contributions
+without a requirements section must declare contract `1`; an absent declaration
+is rejected during manifest discovery.
 
 | Field | Meaning |
 | --- | --- |
@@ -105,7 +105,7 @@ The entrypoint subclasses `Decoder` and accepts exactly the API 2 keyword inputs
 `parameters` and `context` in `__init__`. The host validates parameters against
 the JSON Schema, fills declared defaults, and passes an independent copy.
 Read packaged resources relative to `context.resource_root`; do not rely on
-the process working directory or import backend settings and service objects.
+the process working directory or import server settings and service objects.
 
 | Method | Required behavior |
 | --- | --- |
@@ -118,9 +118,7 @@ the process working directory or import backend settings and service objects.
 mapped input, including channel IDs, names, types, and units. Use its channels to
 resolve names to matrix row indices. `context.acquired_signal.channels` describes
 the original Acquisition channels, before mapping; never use its indices for
-mapped input. `context.channel_names` remains compatible but is deprecated. New
-plugins should use `context.acquired_signal.channels` for original channels and
-`context.input_signal.channels` for their actual input.
+mapped input. These two descriptors provide the channel records directly.
 
 Decoder arrays have shape **signal channels × samples**, without a trigger row
 or pre-trigger data. `window` contains the post-trigger data accumulated up to
@@ -162,9 +160,9 @@ and arrays are rejected before conversion. `Classification` enforces nonnegative
 target ids and confidence in `[0, 1]` when supplied. Invalid outputs fail with the
 decoder class, event id, and configuration revision in the error context.
 
-Target ids must agree with the chosen paradigm and effector. A Decoder package
-does not supply an epoch boundary detector, filter or paradigm unless it declares those
-as additional contributions. Keep decoding independent of device connections,
+Target ids must agree with the chosen paradigm and effector. A Processing package
+can declare additional Decoder, Epoch Detector or Filter contributions.
+Keep decoding independent of device connections,
 GUI components and filesystem writes. Load model weights during construction
 rather than on every window, and test new-epoch isolation for stateful models.
 
@@ -178,8 +176,8 @@ to explain parameter semantics. `x-scope` describes portability and `x-apply`
 suggests a reconfiguration boundary; the host decides when a change can apply.
 
 Do not use `$schema`, `$ref` or arbitrary JSON Schema features: unsupported
-keywords are rejected. See the repository document
-`docs/plugin-configuration-schema.md` for the full supported subset.
+keywords are rejected. The supported subset is defined by
+[the schema validator](../omnibci/application/plugin_schema.py).
 
 ## Compatibility and packaging
 
@@ -209,13 +207,14 @@ an installed package/version is immutable. Schema version is separate.
 1. Open **Extensions → Install ZIP…**, select the archive, then enable that exact
    package version. Installation checks metadata and schemas without importing
    Python; successful installation alone does not prove the algorithm executes.
-2. In **Setup → Signal Processing → Decoder**, create a Profile for the contribution.
-   Review algorithm parameters and the initialized input selection.
-3. Select the Acquisition Profile, refresh source information and preview input.
+2. In **Setup → Signal Processing → Decoder**, select the contribution and edit its
+   current parameters and input selection. Saving a Profile is optional.
+3. Connect Acquisition using its current values, get source metadata and preview input.
    Check channel IDs, output names, order, units and types. Missing required channels,
    too few channels or the wrong signal type must prevent runtime preparation.
-4. Select and apply the Decoder Profile. Start with a known replay file and a
-   suitable epoch boundary detector; verify expected targets before using live data.
+4. Start Processing to apply its current values, then start reading from a known
+   replay file with a suitable epoch boundary detector. Verify expected targets
+   before using live data.
 5. Test reordered source/input channels, a missing required channel, short and
    non-finite windows, repeated epochs and supported OSes. Compare against known
    offline outputs from your real model.
@@ -231,6 +230,5 @@ python -m pytest tests/infrastructure/test_decoder_plugin_example.py
 The tutorial deliberately uses a mean-sign rule, not a validated classifier.
 Its files are a starting point for implementing and validating your own model.
 
-Related repository documents: `docs/plugin-manifest.md`,
-`docs/plugin-configuration-schema.md`, `docs/plugin-installation.md`, and
-`docs/plugin-profiles.md`.
+Related repository documents: `docs/plugin-manifest.md`, `docs/module-config.md`,
+and `docs/plugin-profiles.md`.

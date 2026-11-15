@@ -34,7 +34,7 @@ class _FakeServer:
         if self.stop_error is not None:
             raise self.stop_error
 
-    async def send_event(self, event):
+    async def send_event(self, event, *, connection_token=None):
         self.send_calls.append(event)
         return self.is_connected
 
@@ -69,7 +69,7 @@ class _FakeClient:
         self.writer = None
         self._closing_writers.clear()
 
-    async def send_event(self, event):
+    async def send_event(self, event, *, connection_token=None):
         self.send_calls.append(event)
         return self.is_connected
 
@@ -154,7 +154,6 @@ class TestListenTransport:
             write_timeout=0.25,
         )
         assert transport._server.kwargs == {
-            "event_bus": None,
             "host": "127.0.0.1",
             "port": 8001,
             "max_clients": 1,
@@ -283,7 +282,6 @@ class TestConnectTransport:
             write_timeout=0.25,
         )
         assert transport._client.kwargs == {
-            "event_bus": None,
             "server_ip": "10.0.0.2",
             "server_port": 9001,
             "connect_timeout": 0.8,

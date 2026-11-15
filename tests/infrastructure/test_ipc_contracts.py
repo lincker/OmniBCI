@@ -5,8 +5,7 @@ Pins the wire shape and the protocol-version policy that both NetworkServer and
 NetworkClient now share:
   - event ⇄ body round-trips as {"type": <int>, "data": ...};
   - encode_event stamps PROTOCOL_VERSION into the frame header;
-  - body_to_event validates the version and drops unsupported / malformed /
-    unknown-type frames instead of mis-parsing them.
+  - decoding rejects unsupported versions and malformed or unknown-type frames.
 """
 from __future__ import annotations
 
@@ -23,7 +22,6 @@ from omnibci.infrastructure.ipc.contracts import (
     UnsupportedProtocolVersion,
     event_to_body,
     encode_event,
-    body_to_event,
     decode_event_body,
     require_supported_version,
 )
@@ -43,33 +41,33 @@ class TestWireShape:
         assert int(EventType.StopStream) == 112
         for name in ("StartStream", "StopStream"):
             original = Event(EventType[name])
-            restored = body_to_event(event_to_body(original).encode(), PROTOCOL_VERSION)
+            restored = decode_event_body(event_to_body(original).encode(), PROTOCOL_VERSION)
             assert restored.type.name == name
 
     def test_trial_outcome_roundtrip_retains_runtime_identity_and_prediction(self):
         outcome = TrialOutcome("run-1", 7, Classification(target_id=3, event_id=9), "revision")
         original = Event(EventType.TrialCompleted, outcome)
-        restored = body_to_event(event_to_body(original).encode(), PROTOCOL_VERSION)
+        restored = decode_event_body(event_to_body(original).encode(), PROTOCOL_VERSION)
         assert restored.type is EventType.TrialCompleted
         assert restored.data["generation"] == "run-1"
         assert restored.data["trial_number"] == 7
         assert restored.data["target_id"] == 3
         assert restored.data["event_id"] == 9
-        assert restored.data["config_revision"] == "revision"
+        assert restored.data["processing_revision"] == "revision"
 
     def test_event_to_body_shape(self):
         body = event_to_body(Event(EventType.TrialCompleted, data={"x": 1}))
         payload = json.loads(body)
         assert payload == {"type": int(EventType.TrialCompleted), "data": {"x": 1}}
 
-    def test_roundtrip_event_to_body_to_event(self):
+    def test_roundtrip_event_to_decode_event_body(self):
         original = Event(EventType.StartStimTrial, data=5)
-        event = body_to_event(event_to_body(original).encode(), PROTOCOL_VERSION)
+        event = decode_event_body(event_to_body(original).encode(), PROTOCOL_VERSION)
         assert event.type == EventType.StartStimTrial
         assert event.data == 5
 
     def test_decoded_type_is_eventtype_not_int(self):
-        event = body_to_event(event_to_body(Event(EventType.TrialCompleted, 3)).encode(), PROTOCOL_VERSION)
+        event = decode_event_body(event_to_body(Event(EventType.TrialCompleted, 3)).encode(), PROTOCOL_VERSION)
         assert isinstance(event.type, EventType)
 
 
@@ -88,7 +86,7 @@ class TestFraming:
         header = Frame.Header.from_bytes(frame[: Frame.Header.HEADER_SIZE])
         body = frame[Frame.Header.HEADER_SIZE:]
         assert header.body_size == len(body)
-        event = body_to_event(body, header.version)
+        event = decode_event_body(body, header.version)
         assert event.type == EventType.TrialCompleted and event.data == 1
 
     @pytest.mark.parametrize("raw", [b"", b"\x00" * 7, b"\x00" * 9, "not-bytes"])
@@ -124,13 +122,25 @@ class TestFraming:
 
 
 class TestVersionPolicy:
+    def test_engine_identity_requires_only_current_protocol(self):
+        assert PROTOCOL_VERSION == 1
+        assert SUPPORTED_VERSIONS == {1}
+        with pytest.raises(UnsupportedProtocolVersion):
+            require_supported_version(2)
+
     def test_supported_versions_contains_protocol_version(self):
         assert PROTOCOL_VERSION in SUPPORTED_VERSIONS
 
-    def test_unsupported_version_is_dropped(self):
+    @pytest.mark.parametrize("version", [True, 1.0, "1", None])
+    def test_protocol_version_requires_an_integer(self, version):
+        with pytest.raises(UnsupportedProtocolVersion):
+            require_supported_version(version)
+
+    def test_unsupported_version_is_rejected(self):
         body = event_to_body(Event(EventType.TrialCompleted, 1)).encode()
         unsupported = max(SUPPORTED_VERSIONS) + 99
-        assert body_to_event(body, unsupported) is None
+        with pytest.raises(UnsupportedProtocolVersion):
+            decode_event_body(body, unsupported)
 
     def test_strict_version_check_is_available_at_header_boundary(self):
         unsupported = max(SUPPORTED_VERSIONS) + 99
@@ -139,17 +149,6 @@ class TestVersionPolicy:
 
 
 class TestRobustness:
-    def test_malformed_json_dropped(self):
-        assert body_to_event(b"not json", PROTOCOL_VERSION) is None
-
-    def test_unknown_event_type_dropped(self):
-        body = json.dumps({"type": 999999, "data": 1}).encode()
-        assert body_to_event(body, PROTOCOL_VERSION) is None
-
-    def test_missing_type_dropped(self):
-        body = json.dumps({"data": 1}).encode()
-        assert body_to_event(body, PROTOCOL_VERSION) is None
-
     @pytest.mark.parametrize(
         "body",
         [

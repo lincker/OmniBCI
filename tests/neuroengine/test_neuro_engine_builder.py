@@ -57,14 +57,18 @@ class TestNeuroEngineBuilder:
     def test_acquisition_logs_use_a_separate_bounded_owned_channel(self):
         engine = NeuroEngineBuilder(settings_snapshot={}).build()
         try:
-            channel = engine.acquisition_worker.log_queue
+            worker_channel = engine._worker_factory("acquisition", {})
+            worker = worker_channel.process
+            worker_channel.receiver.close()
+            worker_channel.reporter.close()
+            channel = worker.log_queue
             assert channel is engine.acquisition_logs.queue
             assert channel._maxsize == 256
             assert channel in engine._owned_ipc_queues
             assert all(channel is not other for other in (
                 engine.data_manager.buffer, engine.event_bus._event_queue,
                 engine.acquisition_command_queue, engine.processor_command_queue,
-                engine.acquisition_worker.preview_queue,
+                worker.preview_queue,
             ))
         finally:
             asyncio.run(engine._shutdown_resources())
@@ -93,13 +97,13 @@ class TestNeuroEngineBuilder:
         assert isinstance(eng.data_manager, DataManager)
         assert eng.data_manager.buffer in eng._owned_ipc_queues
 
-    def test_engine_has_acquisition_worker(self, patched_builder):
+    def test_engine_defers_acquisition_worker_construction(self, patched_builder):
         eng = patched_builder.build()
-        assert eng.acquisition_worker is not None
+        assert eng.acquisition_worker is None
 
-    def test_engine_has_signal_processing_worker(self, patched_builder):
+    def test_engine_defers_processing_worker_construction(self, patched_builder):
         eng = patched_builder.build()
-        assert eng.signal_processing_worker is not None
+        assert eng.signal_processing_worker is None
 
     def test_engine_should_stop_false(self, patched_builder):
         eng = patched_builder.build()
@@ -139,7 +143,11 @@ class TestNeuroEngineBuilder:
             ),
             patch("omnibci.infrastructure.neuroengine.builder.PeerGateway", return_value=MagicMock()),
         ):
-            NeuroEngineBuilder(settings_snapshot={}).build()
+            engine = NeuroEngineBuilder(settings_snapshot={}).build()
+            for module in ("acquisition", "processing"):
+                channel = engine._worker_factory(module, {})
+                channel.receiver.close()
+                channel.reporter.close()
 
         assert captured["acq_dm"] is captured["sp_dm"]
 
@@ -157,5 +165,8 @@ class TestNeuroEngineBuilder:
             patch("omnibci.infrastructure.neuroengine.builder.PeerGateway", return_value=MagicMock()),
         ):
             eng = NeuroEngineBuilder(settings_snapshot={}).build()
+            channel = eng._worker_factory("processing", {})
+            channel.receiver.close()
+            channel.reporter.close()
 
         assert captured["sp_eb"] is eng.event_bus

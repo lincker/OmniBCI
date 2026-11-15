@@ -12,7 +12,7 @@ stimulation process manually on the display machine:
 
 Single-machine deployment
 --------------------------
-Leave ``STIMULATION.auto_spawn = true`` (the default).  The backend will
+Leave ``STIMULATION.auto_spawn = true`` (the default).  The server will
 spawn the Stimulation subprocess automatically when
 ``handle_start_stimulation`` is called from the Web UI.  No extra terminal
 required.
@@ -28,9 +28,11 @@ from copy import deepcopy
 from threading import RLock
 from typing import Any
 
+from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessState,
     StartupReporter,
+    module_runtime_identity,
     wait_for_startup_report,
 )
 
@@ -52,33 +54,26 @@ def _configured_paradigm(snapshot: dict) -> str:
 
 
 def _run_stimulation(
-    paradigm: str | None = None,
     stop_event: Any = None,
     startup_connection: Any = None,
     *,
-    settings_snapshot: dict | None = None,
+    settings_snapshot: dict,
 ) -> None:
     """Stimulation subprocess entry point.  Runs in the spawned child process.
 
-    A pinned snapshot is required and installed before runtime imports.
+    The application receives the pinned snapshot directly.
     """
     reporter = (
         StartupReporter(
             startup_connection, component="Stimulation",
-            config_revision=(settings_snapshot or {}).get("CONFIG.revision"),
-            generation=(settings_snapshot or {}).get("CONFIG.generation"),
+            module_revisions={"stimulation": settings_snapshot.get("CONFIG.module_revisions", {}).get("stimulation")},
+            engine_revision=settings_snapshot.get("CONFIG.engine_revision"),
+            generation=settings_snapshot.get("CONFIG.generation"),
         )
         if startup_connection is not None
         else None
     )
     try:
-        if settings_snapshot is None:
-            raise RuntimeError("Stimulation requires a pinned settings snapshot")
-        from omnibci.conf import settings
-        settings.use_snapshot(settings_snapshot)
-        selected = _configured_paradigm(settings_snapshot)
-        if paradigm is not None and paradigm != selected:
-            raise RuntimeError("Apply the paradigm configuration before starting Stimulation")
         from omnibci.infrastructure.stimulation.application import Stimulation
         kwargs = {"stop_event": stop_event, "settings_snapshot": settings_snapshot}
         if reporter is not None:
@@ -96,8 +91,7 @@ def _run_stimulation(
 class StimulationProcessManager:
     """Manages the Stimulation OS process.
 
-    When *auto_spawn* is False all public methods are no-ops, so the same
-    ``StimulationAppService`` code path works for both deployment modes.
+    Each start uses the pinned snapshot's managed or external mode.
     Desktop hosts disable process termination and retain unresponsive children.
     """
 
@@ -108,15 +102,13 @@ class StimulationProcessManager:
 
     def __init__(
         self,
-        auto_spawn: bool = True,
         *,
         startup_timeout_s: float = _STARTUP_TIMEOUT_S,
         allow_process_termination: bool = True,
     ) -> None:
         if startup_timeout_s <= 0:
             raise ValueError("startup_timeout_s must be greater than zero")
-        self._default_auto_spawn = auto_spawn
-        self._auto_spawn = auto_spawn
+        self._auto_spawn = True
         self._settings_snapshot: dict | None = None
         self._startup_timeout_s = float(startup_timeout_s)
         self._allow_process_termination = allow_process_termination
@@ -133,20 +125,16 @@ class StimulationProcessManager:
 
     # ── Public API ─────────────────────────────────────────────────────────
 
-    def start(
-        self, paradigm: str | None = None, *, settings_snapshot: dict | None = None,
-    ) -> None:
-        """Spawn the Stimulation subprocess (no-op if auto_spawn=False or already running).
+    def start(self, *, settings_snapshot: dict) -> None:
+        """Start a managed child or release it when external mode is selected.
 
-        A snapshot pins every setting and determines the selected paradigm and
-        managed mode. A differing legacy override requires a configuration apply.
+        The snapshot determines the selected paradigm and managed mode.
         """
         with self._lifecycle_lock:
             snapshot = deepcopy(settings_snapshot)
-            if snapshot is not None:
-                auto_spawn = bool(snapshot.get("STIMULATION.auto_spawn", self._default_auto_spawn))
-            else:
-                auto_spawn = self._default_auto_spawn
+            auto_spawn = snapshot.get(
+                "STIMULATION.auto_spawn", MODULE_SETTING_DEFAULTS["stimulation"]["STIMULATION.auto_spawn"],
+            )
             if not auto_spawn:
                 self._stop_locked()
                 self._auto_spawn = False
@@ -154,11 +142,7 @@ class StimulationProcessManager:
                     "auto_spawn=False — Stimulation process must be started manually"
                 )
                 return
-            if snapshot is not None:
-                selected = _configured_paradigm(snapshot)
-                if paradigm is not None and paradigm != selected:
-                    raise RuntimeError("Apply the paradigm configuration before starting Stimulation")
-                paradigm = selected
+            paradigm = _configured_paradigm(snapshot)
             self._auto_spawn = True
             self._refresh_state_locked()
             if self._process is not None:
@@ -167,7 +151,8 @@ class StimulationProcessManager:
                     process_alive
                     and self._state is ChildProcessState.READY
                     and paradigm == self._paradigm
-                    and snapshot == self._settings_snapshot
+                    and module_runtime_identity(snapshot, "stimulation")
+                    == module_runtime_identity(self._settings_snapshot, "stimulation")
                 ):
                     logger.debug(
                         "Stimulation process already running requested paradigm "
@@ -193,16 +178,12 @@ class StimulationProcessManager:
 
             stop_event = mp.Event()
             startup_receiver, startup_sender = mp.Pipe(duplex=False)
-            process_kwargs = (
-                {"kwargs": {"settings_snapshot": deepcopy(snapshot)}}
-                if snapshot is not None else {}
-            )
             process = mp.Process(
                 target=_run_stimulation,
-                args=(paradigm, stop_event, startup_sender),
+                args=(stop_event, startup_sender),
+                kwargs={"settings_snapshot": deepcopy(snapshot)},
                 name="StimulationProcess",
                 daemon=self._allow_process_termination,
-                **process_kwargs,
             )
             self._state = ChildProcessState.STARTING
             try:
@@ -241,16 +222,14 @@ class StimulationProcessManager:
                 paradigm or "<config>",
             )
             try:
-                expected_identity = ({
-                    "expected_revision": snapshot.get("CONFIG.revision"),
-                    "expected_generation": snapshot.get("CONFIG.generation"),
-                } if snapshot is not None else {})
                 wait_for_startup_report(
                     startup_receiver,
                     process,
                     component="Stimulation",
                     timeout_s=self._startup_timeout_s,
-                    **expected_identity,
+                    expected_module_revisions={"stimulation": snapshot.get("CONFIG.module_revisions", {}).get("stimulation")},
+                    expected_engine_revision=snapshot.get("CONFIG.engine_revision"),
+                    expected_generation=snapshot.get("CONFIG.generation"),
                 )
             except BaseException as startup_exc:
                 self._state = ChildProcessState.FAILED

@@ -1,12 +1,10 @@
 """Pinned runtime resolution rejects stale or incomplete selections."""
+from tests.plugin_configuration_helpers import builtin_selection
 from dataclasses import replace
-import subprocess
-import sys
-from textwrap import dedent
 
 import pytest
 
-from omnibci.application.plugin_profiles import ProfileBinding
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.infrastructure.plugins.loader import PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginNotFoundError
 from omnibci.infrastructure.plugins.runtime_configuration import (
@@ -15,8 +13,17 @@ from omnibci.infrastructure.plugins.runtime_configuration import (
 from omnibci.sdk import SignalSource
 
 
+@pytest.mark.parametrize("module", ["stimulation", "actuation"])
+@pytest.mark.parametrize("sample_rate", [0, "invalid", None])
+def test_output_context_does_not_depend_on_acquisition(module, sample_rate):
+    context = plugin_context({"ACQUISITION.sample_rate": sample_rate,
+                              "CONFIG.module_revisions": {module: "output-revision"}}, module)
+    assert context.sample_rate is None
+    assert context.module_revision == "output-revision"
+
+
 def source_binding():
-    descriptor = PluginCatalog().resolve("acquisition", "file_reader")
+    descriptor = PluginCatalog().resolve_selection("acquisition", builtin_selection("acquisition", "file_reader"))
     return ProfileBinding("acquisition.source", "acquisition", None, descriptor.selection, {})
 
 
@@ -26,19 +33,18 @@ def test_runtime_context_ignores_retired_flat_channel_names(names):
         "ACQUISITION.sample_rate": 500,
         "ACQUISITION.channel_names": names,
         "ACQUISITION.channel_labels": ["C3", "Trigger"],
-        "CONFIG.revision": "current-revision",
-    })
+        "CONFIG.module_revisions": {"acquisition": "current-revision"},
+    }, "acquisition")
 
     assert context.sample_rate == 500
-    assert context.config_revision == "current-revision"
-    assert context.channel_names == ()
+    assert context.module_revision == "current-revision"
     assert context.acquired_signal is None
     assert context.input_signal is None
 
 
 def test_missing_selected_version_never_falls_back_to_alias():
     binding = source_binding()
-    binding = replace(binding, selection=replace(binding.selection, version="unavailable"))
+    binding = replace(binding, selection=replace(binding.selection, version="999.0.0"))
     with pytest.raises(PluginNotFoundError):
         load_configured_plugin({"PLUGINS.bindings": [binding.to_dict()],
                                 "ACQUISITION.signal_source": "file_reader"},
@@ -94,31 +100,3 @@ def test_schema_version_requires_migration_before_loading():
     with pytest.raises(PluginLoadError, match="migration required"):
         load_configured_plugin({"PLUGINS.bindings": [binding.to_dict()]},
                                "acquisition.source", "acquisition", SignalSource)
-
-
-def test_pinned_loading_does_not_import_legacy_mapping():
-    result = subprocess.run([sys.executable, "-c", dedent("""
-        import sys
-        from omnibci.application.plugin_profiles import ProfileBinding
-        from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-        from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
-        from omnibci.sdk import Decoder, PluginContext
-        from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
-
-        catalog = PluginCatalog()
-        descriptor = catalog.resolve("decoder", "THUBCI_SSVEP_classic40CCA")
-        binding = ProfileBinding("processing.decoder", "decoder", None, descriptor.selection,
-                                 {"window_duration": 2.5, "offset_time": 0})
-        class CaptureLoader:
-            @staticmethod
-            def instantiate(descriptor, expected_base, **kwargs):
-                return kwargs["parameters"]
-
-        assert load_configured_plugin(
-            {"PLUGINS.bindings": [binding.to_dict()]}, "processing.decoder", "decoder", Decoder,
-            catalog=catalog, loader=CaptureLoader,
-            context=PluginContext(input_signal=SignalInfo("source", 250, (ChannelDescriptor(0, "Oz", signal_type="eeg"),), 1)),
-        ) == {"window_duration": 2.5, "offset_time": 0}
-        assert "omnibci.application.legacy_plugin_config" not in sys.modules
-    """)], capture_output=True, text=True, timeout=30)
-    assert result.returncode == 0, result.stderr

@@ -16,8 +16,9 @@ from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.signal_processing.signal_processor import (
-    SignalProcessor, SignalProcessorCommand,
+    SignalProcessorCommand,
 )
+from tests.processing_helpers import make_processor as SignalProcessor
 from omnibci.shared.events import EventType
 
 
@@ -52,7 +53,7 @@ def processor(decoder=None, *, event_bus=None):
         Markers(), decoder or OptionalResult(), Queue(), DataManager(Queue()),
         event_bus or SimpleNamespace(put_event=events.append),
         sample_rate=10, baseline_duration=0.2,
-        generation="generation", config_revision="revision",
+        generation="generation", processing_revision="revision", acquisition_revision="revision",
     )
     return value, events
 
@@ -145,7 +146,7 @@ async def test_drain_records_epoch_before_receipt_and_does_not_repeat_on_stop(
     await feed(value, [1, 2], [7, 0])
     value.data_manager.put_data(StreamBarrier("drain", "generation", "revision", 0))
     await value._current_state.run()
-    value.command_queue.put(SignalProcessorCommand.should_stop)
+    value.command_queue.put((SignalProcessorCommand.should_stop, None))
     await value.serve()
 
     captured = records(events)
@@ -162,7 +163,7 @@ async def test_direct_state_error_records_failure_and_serve_exit_does_not_duplic
     value, events = processor(OptionalResult(fail=True))
     with pytest.raises(RuntimeError, match="decoder failed"):
         await feed(value, [1, 2], [7, 255])
-    value.command_queue.put(SignalProcessorCommand.should_stop)
+    value.command_queue.put((SignalProcessorCommand.should_stop, None))
     await value.serve()
 
     captured = records(events)
@@ -216,7 +217,7 @@ async def test_drain_error_is_recorded_once_even_if_drain_is_retried():
 async def test_direct_processor_stop_records_interrupted_active_epoch():
     value, events = processor()
     await feed(value, [1, 2], [7, 0])
-    value.command_queue.put(SignalProcessorCommand.should_stop)
+    value.command_queue.put((SignalProcessorCommand.should_stop, None))
     await value.serve()
 
     assert len(records(events)) == 1
@@ -248,12 +249,12 @@ async def test_first_success_remains_when_second_epoch_in_same_chunk_fails():
 async def test_metadata_stays_bound_to_open_epoch():
     value, events = processor()
     await feed(value, [1, 2], [7, 0])
-    value.config_revision = "later-revision"
+    value.processing_revision = "later-revision"
     value._sample_rate = 100
     await feed(value, [3], [255], sequence=1)
 
     captured = records(events)[0]
-    assert captured.config_revision == "revision"
+    assert captured.processing_revision == "revision"
     assert captured.sample_rate == 10
     assert captured.channel_count == 1
 
@@ -273,7 +274,7 @@ async def test_terminal_record_never_builds_or_retains_signal_snapshot(monkeypat
     assert captured.error is None
     build_epoch.assert_not_called()
     assert set(asdict(captured)) == {
-        "generation", "epoch_number", "event_id", "config_revision", "sample_rate",
+        "generation", "epoch_number", "event_id", "processing_revision", "acquisition_revision", "sample_rate",
         "channel_count", "sample_count", "pre_trigger_samples", "started_at", "completed_at",
         "status", "reason", "classification", "trial_number", "error",
     }

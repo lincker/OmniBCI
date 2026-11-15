@@ -37,7 +37,7 @@ class _ExplodingEffector(Effector):
 
 
 def _actuator_with(effector) -> Actuator:
-    a = Actuator()
+    a = Actuator(settings_snapshot={})
     a.effector = effector
     return a
 
@@ -51,7 +51,7 @@ class TestExecute:
 
     def test_execute_before_setup_raises(self):
         with pytest.raises(RuntimeError):
-            Actuator().execute({"target_id": 1})
+            Actuator(settings_snapshot={}).execute({"target_id": 1})
 
     def test_play_exception_propagates(self):
         a = _actuator_with(_ExplodingEffector())
@@ -67,19 +67,27 @@ class TestLifecycle:
         (package_dir / "manifest.toml").write_text(
             dedent(
                 """
+                manifest_version = 2
                 [package]
                 id = "user-device"
                 publisher = "alice"
                 version = "1.0.0"
+                domain = "actuation"
+                api_version = "2"
+                [[contributions]]
+                id = "default"
                 kind = "effector"
-                api_version = "1"
                 plugin_type = "user_device"
                 entrypoint = "driver:UserDevice"
                 display_name = "User Device"
+                [contributions.configuration]
+                schema = "schema.json"
+                schema_version = 1
                 """
             ),
             encoding="utf-8",
         )
+        (package_dir / "schema.json").write_text('{"type":"object","properties":{},"additionalProperties":false}')
         (package_dir / "driver.py").write_text(
             dedent(
                 """
@@ -88,7 +96,7 @@ class TestLifecycle:
                 class UserDevice(Effector):
                     plugin_type = "user_device"
 
-                    def __init__(self):
+                    def __init__(self, *, parameters, context):
                         self.calls = []
 
                     def setup(self):
@@ -104,9 +112,9 @@ class TestLifecycle:
             encoding="utf-8",
         )
         monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(plugin_root))
-        from omnibci.application.plugin_profiles import ProfileBinding
+        from omnibci.application.configuration.models import ProfileBinding
         from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-        descriptor = PluginCatalog().resolve("effector", "user_device")
+        descriptor = next(item for item in PluginCatalog().list_contributions("effector") if item.plugin_type == "user_device")
         binding = ProfileBinding("actuation.effector", "effector", None, descriptor.selection, {})
         actuator = Actuator(settings_snapshot={"PLUGINS.bindings": [binding.to_dict()]})
         actuator.setup()
@@ -119,14 +127,14 @@ class TestLifecycle:
         assert actuator.effector is None
 
     def test_setup_without_configured_effector_raises(self, monkeypatch):
-        a = Actuator()
+        a = Actuator(settings_snapshot={})
         monkeypatch.setattr(a, "_load_effector", lambda: None)
         with pytest.raises(RuntimeError, match="No Effector plugin"):
             a.setup()
 
     def test_setup_calls_effector_setup(self, monkeypatch):
         eff = _FakeEffector()
-        a = Actuator()
+        a = Actuator(settings_snapshot={})
         monkeypatch.setattr(a, "_load_effector", lambda: eff)
         a.setup()
         assert eff.calls == ["setup"]
@@ -140,7 +148,7 @@ class TestLifecycle:
                 raise RuntimeError("device acquisition failed")
 
         eff = _PartiallyInitialisedEffector()
-        a = Actuator()
+        a = Actuator(settings_snapshot={})
         monkeypatch.setattr(a, "_load_effector", lambda: eff)
 
         with pytest.raises(RuntimeError, match="device acquisition failed"):
@@ -161,7 +169,7 @@ class TestLifecycle:
             def teardown(self):
                 raise ValueError("secondary teardown failure")
 
-        a = Actuator()
+        a = Actuator(settings_snapshot={})
         effector = _BrokenRollbackEffector()
         monkeypatch.setattr(a, "_load_effector", lambda: effector)
 

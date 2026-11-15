@@ -57,15 +57,18 @@ def test_sdk_import_does_not_load_host_runtime_or_optional_dependencies():
     assert result.returncode == 0, result.stderr
 
 
-def test_plugin_context_copies_channels_and_round_trips_through_pickle(tmp_path):
-    from omnibci.sdk import PluginContext
+def test_plugin_context_preserves_signal_metadata_through_pickle(tmp_path):
+    from omnibci.domain.signal_info import ChannelDescriptor
+    from omnibci.sdk import PluginContext, SignalInfo
 
-    channels = ["Oz", "O1"]
-    context = PluginContext(sample_rate=250, channel_names=channels,
-                            config_revision="revision-7", resource_root=str(tmp_path))
-    channels.append("O2")
+    channels = [ChannelDescriptor(0, "Oz"), ChannelDescriptor(1, "O1")]
+    signal = SignalInfo("source", 250, channels, trigger_row_index=2)
+    context = PluginContext(sample_rate=250, acquired_signal=signal, input_signal=signal,
+                            module_revision="revision-7", resource_root=str(tmp_path))
+    channels.append(ChannelDescriptor(2, "O2"))
 
-    assert context.channel_names == ("Oz", "O1")
+    assert tuple(channel.name for channel in context.input_signal.channels) == ("Oz", "O1")
+    assert context.acquired_signal is signal
     assert pickle.loads(pickle.dumps(context)) == context
     with pytest.raises(FrozenInstanceError):
         context.sample_rate = 1000
@@ -73,14 +76,21 @@ def test_plugin_context_copies_channels_and_round_trips_through_pickle(tmp_path)
 
 @pytest.mark.parametrize("fields", [
     {"sample_rate": 0}, {"sample_rate": True}, {"sample_rate": float("nan")},
-    {"channel_names": "Oz"}, {"channel_names": [1]},
-    {"config_revision": ""}, {"resource_root": ""},
+    {"acquired_signal": {}}, {"input_signal": "Oz"},
+    {"module_revision": ""}, {"resource_root": ""},
 ])
 def test_plugin_context_rejects_invalid_metadata(fields):
     from omnibci.sdk import PluginContext
 
     with pytest.raises(ValueError):
         PluginContext(**fields)
+
+
+def test_plugin_context_rejects_retired_channel_names():
+    from omnibci.sdk import PluginContext
+
+    with pytest.raises(TypeError, match="channel_names"):
+        PluginContext(channel_names=("Oz", "O1"))
 
 
 def _run_sdk_filter(parameters, context, output):
@@ -104,10 +114,13 @@ def _run_sdk_filter(parameters, context, output):
 
 @pytest.mark.integration
 def test_context_and_configuration_are_usable_in_spawned_plugin(tmp_path):
-    from omnibci.sdk import PluginContext
+    from omnibci.domain.signal_info import ChannelDescriptor
+    from omnibci.sdk import PluginContext, SignalInfo
 
-    context = PluginContext(sample_rate=250, channel_names=("Oz", "O1"),
-                            config_revision="revision-7", resource_root=str(tmp_path))
+    signal = SignalInfo("source", 250, (ChannelDescriptor(0, "Oz"), ChannelDescriptor(1, "O1")),
+                        trigger_row_index=2)
+    context = PluginContext(sample_rate=250, acquired_signal=signal, input_signal=signal,
+                            module_revision="revision-7", resource_root=str(tmp_path))
     spawn = mp.get_context("spawn")
     incoming, outgoing = spawn.Pipe(duplex=False)
     process = spawn.Process(target=_run_sdk_filter, args=({"gain": 2}, context, outgoing))
@@ -130,7 +143,7 @@ def test_context_and_configuration_are_usable_in_spawned_plugin(tmp_path):
         outgoing.close()
 
 
-def test_paradigm_renderer_argument_is_optional_for_existing_plugins():
+def test_paradigm_renderer_argument_is_optional():
     import inspect
 
     from omnibci.sdk import Paradigm

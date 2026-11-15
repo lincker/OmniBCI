@@ -6,11 +6,12 @@ Keeps acquisition routing and result-waiting logic out of the routers.
 """
 
 import logging
+from contextlib import nullcontext
 from threading import RLock
 from copy import deepcopy
 from uuid import uuid4
 from omnibci.application.acquisition_preview import PreviewSelection
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.runtime_admission import admitted
 from omnibci.application.processing_source import acquisition_binding_key
 from omnibci.application.source_expectations import compare_source_expectations
@@ -96,35 +97,51 @@ class AcquisitionAppService:
     # Command handlers
     # ------------------------------------------------------------------
 
-    @admitted
-    def handle_connect(self, cmd: ConnectDataProviderCommand) -> None:
-        with self.lifecycle_lock:
-            self._command_executor.request(EventType.ConnectDataProvider, None)
+    def handle_connect(self, cmd: ConnectDataProviderCommand, *, prepare_processing=True) -> None:
+        with self._admission.command("acquisition") if self._admission is not None else nullcontext():
+            with self.lifecycle_lock:
+                self._command_executor.request(EventType.ConnectDataProvider, None)
+        self._capture_descriptor()
+        if prepare_processing:
+            self.prepare_processing()
         logger.info("ConnectDataProvider event dispatched")
 
-    @admitted(recovery=True)
     def handle_disconnect(self, cmd: DisconnectDataProviderCommand) -> None:
-        with self.lifecycle_lock:
-            self._clear_metadata()
-            self._command_executor.request(EventType.DisconnectDataProvider, None)
+        with self._admission.stop_transition_sync("acquisition") if self._admission is not None else nullcontext():
+            with self.lifecycle_lock:
+                self._clear_metadata()
+                self._command_executor.request(EventType.DisconnectDataProvider, None)
         logger.info("DisconnectDataProvider event dispatched")
 
-    @admitted
-    def handle_start_stream(self, cmd: StartStreamCommand) -> None:
-        with self.lifecycle_lock:
-            if not self._streaming:
-                # EOF and disconnect stop the source before processing finishes.
-                self.handle_stop_and_drain()
-            receipt = self._prepare_signal() if self._prepare_signal is not None else None
-            self._command_executor.request(EventType.StartStream, receipt)
+    def handle_start_stream(self, cmd: StartStreamCommand, *, prepare_processing=True) -> None:
+        self._capture_descriptor()
+        with self._admission.command("acquisition") if self._admission is not None else nullcontext():
+            with self.lifecycle_lock:
+                self._command_executor.request(EventType.StartStream, None)
+        if prepare_processing:
+            self.prepare_processing()
         logger.info("StartStream event dispatched")
 
-    @admitted(recovery=True)
+    def _capture_descriptor(self):
+        if self._descriptor is None:
+            try:
+                self.get_descriptor(refresh=True)
+            except Exception as exc:
+                logger.warning("Source metadata is unavailable: %s", exc)
+
+    def prepare_processing(self):
+        if self._prepare_signal is not None:
+            try:
+                self._prepare_signal()
+            except Exception as exc:
+                logger.warning("Processing input remains unavailable: %s", exc)
+
     def handle_stop_stream(self, cmd: StopStreamCommand) -> None:
-        self.handle_stop_and_drain()
+        with self._admission.stop_transition_sync("acquisition") if self._admission is not None else nullcontext():
+            self.handle_stop_and_drain()
         logger.info("Stream stopped and processing drained")
 
-    @admitted(recovery=True)
+    @admitted(scopes="acquisition", recovery=True)
     def handle_stop_and_drain(
         self, *, timeout_s: float | None = None,
     ) -> StreamDrainReceipt:
@@ -175,14 +192,14 @@ class AcquisitionAppService:
     # Query handlers
     # ------------------------------------------------------------------
 
-    @admitted
+    @admitted(scopes=())
     def get_metadata(self, *, refresh: bool = False) -> dict:
         """Read plugin metadata for the current connection without saving a profile."""
         with self.lifecycle_lock:
             self._read_metadata(refresh=refresh)
             return deepcopy(self._raw_metadata)
 
-    @admitted
+    @admitted(scopes=())
     def get_descriptor(self, *, refresh: bool = False) -> dict:
         """Return the internal signal description required to prepare processing."""
         with self.lifecycle_lock:
@@ -251,7 +268,7 @@ class AcquisitionAppService:
             return source, None, None
         return source, self._descriptor.sample_rate, self._descriptor.signal_channel_count
 
-    @admitted
+    @admitted(scopes="acquisition")
     def start_preview(self, *, generation: str, expected_revision: str,
                       connection_id: str, selection: dict | None = None,
                       continuous: bool = False) -> dict:
@@ -270,7 +287,7 @@ class AcquisitionAppService:
             })
             return {**result, **self._read_preview_cache(generation, result["capture_id"])}
 
-    @admitted(recovery=True)
+    @admitted(scopes="acquisition", recovery=True)
     def stop_preview(self, *, generation: str, capture_id: str) -> dict:
         self._require_capture_id(capture_id)
         with self.lifecycle_lock:
@@ -278,7 +295,6 @@ class AcquisitionAppService:
                                            {"generation": generation, "capture_id": capture_id})
             return {**result, **self._read_preview_cache(generation, capture_id)}
 
-    @admitted(recovery=True)
     def get_preview(self, *, generation: str, capture_id: str | None = None) -> dict:
         if capture_id is not None:
             self._require_capture_id(capture_id)
@@ -290,7 +306,6 @@ class AcquisitionAppService:
             # These channels progress independently; preserve both counters.
             return {**result, **self._read_preview_cache(generation, result["capture_id"])}
 
-    @admitted(recovery=True)
     def get_preview_chunk(self, sequence_id: int, *, generation: str, capture_id: str) -> dict:
         self._require_capture_id(capture_id)
         if type(sequence_id) is not int or sequence_id < 0:
@@ -303,7 +318,7 @@ class AcquisitionAppService:
             if chunk is None:
                 raise LookupError("The preview chunk is not retained")
             if any(chunk.get(key) != result.get(key) for key in (
-                    "capture_id", "generation", "config_revision", "source_id", "connection_id")):
+                    "capture_id", "generation", "acquisition_revision", "engine_revision", "source_id", "connection_id")):
                 raise ProfileRevisionConflict("Preview chunk belongs to a different capture")
             if chunk.get("sequence_id") != sequence_id:
                 raise RuntimeError("Preview cache returned a different sequence")

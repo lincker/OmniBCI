@@ -11,7 +11,7 @@ const { translate } = await server.ssrLoadModule("/src/i18n.tsx");
 const english = { language: "en", t: (key, params) => translate("en", key, params) };
 const trial = (trial_number, changes = {}) => ({ generation: "engine-1", trial_number,
   target_id: 2, event_id: 8, confidence: null, forced: false,
-  produced_at: "2026-01-01T00:00:00Z", config_revision: "revision-1", ...changes });
+  produced_at: "2026-01-01T00:00:00Z", processing_revision: "revision-1", ...changes });
 
 function elements(tree) {
   if (Array.isArray(tree)) return tree.flatMap(elements);
@@ -91,7 +91,7 @@ test("scope explains the retained buffer, generation and newest-first ordering",
 });
 
 test("text and forced filters combine, count only visible rows and clear without changing the buffer", () => {
-  const data = [trial(1), trial(2, { config_revision: "revision-2", forced: true }), trial(3, { target_id: 4, forced: true })];
+  const data = [trial(1), trial(2, { processing_revision: "revision-2", forced: true }), trial(3, { target_id: 4, forced: true })];
   const h = harness({ trials: data });
   h.render();
   assert.equal(rows(h.change("Search retained results", "revision-2")).length, 1);
@@ -111,4 +111,13 @@ test("empty and failed refresh states do not imply historical completeness or fr
   const tree = h.render({ trials: [trial(1)], generation: "engine-1", stale: true });
   assert.match(text(tree), /last successful/);
   assert.equal(rows(tree).length, 1);
+});
+
+
+test("results retain and search both acquisition and processing provenance", () => {
+  const h = harness({ trials: [trial(1, { acquisition_revision: "source-A", processing_revision: "processing-A" }), trial(2, { acquisition_revision: "source-B" })] });
+  const tree = h.render();
+  assert.ok(elements(tree).some((item) => item.props.title === "source-A"));
+  assert.ok(elements(tree).some((item) => item.props.title === "processing-A"));
+  assert.equal(rows(h.change("Search retained results", "source-A")).length, 1);
 });

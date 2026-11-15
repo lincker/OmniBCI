@@ -1,4 +1,4 @@
-/** Runtime configuration contracts are generated from the backend schema. */
+/** Runtime configuration contracts are generated from the server schema. */
 import type { components } from "./rest-types";
 import { configRequest } from "./plugin-config";
 
@@ -7,6 +7,9 @@ export type RuntimeStatus = S["RuntimeConfigurationResponse"];
 export type RuntimePlan = S["RuntimePlanResponse"];
 export type RuntimeOperation = S["RuntimeOperationResponse"];
 export type RuntimePlanRequest = S["RuntimePlanRequest"];
+export type ModuleConfigurationRequest = S["ModuleConfigurationRequest"];
+export type ModuleActionRequest = S["ModuleActionRequest"];
+export type StartReadingRequest = S["StartReadingRequest"];
 
 export const runtimeConfigApi = {
   status: () => configRequest<RuntimeStatus>("/runtime"),

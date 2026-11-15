@@ -1,4 +1,5 @@
 """Exercise trial-boundary replacement through real spawned-worker queues."""
+from tests.plugin_configuration_helpers import builtin_selection
 
 from copy import deepcopy
 import json
@@ -8,8 +9,8 @@ import time
 import numpy as np
 import pytest
 
-from omnibci.application.events import CommandRequest
-from omnibci.application.plugin_profiles import ProfileBinding
+from omnibci.application.events import CommandRequest, ProcessingInputStart
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.signal import SignalChunk
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.channel_mapping import ProcessingInput, compile_processing_plan
@@ -48,10 +49,12 @@ id = "trial_fixture"
 publisher = "Tests"
 version = "1.0.0"
 api_version = "2"
+domain = "processing"
 [[contributions]]
 id = "default"
 kind = "decoder"
 entrypoint = "plugin:ValueDecoder"
+signal_input_contract = 1
 [contributions.configuration]
 schema = "schema.json"
 schema_version = 1
@@ -80,23 +83,23 @@ class ValueDecoder(Decoder):
     catalog = PluginCatalog()
     decoder = next(item for item in catalog.list_contributions("decoder")
                    if item.package.identifier == "Tests.trial_fixture")
-    detector = catalog.resolve_legacy("epoch_detector", "DEFAULT_EPOCH_DETECTOR")
-    snapshot = {"CONFIG.revision": "old", "CONFIG.generation": "run",
+    detector = catalog.resolve_selection("epoch_detector", builtin_selection("epoch_detector", "DEFAULT_EPOCH_DETECTOR"))
+    snapshot = {"CONFIG.module_revisions": {"acquisition": "old", "processing": "old", "stimulation": "old", "actuation": "old"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "run",
                 "ACQUISITION.sample_rate": 250, "ALGORITHM.baseline_duration": 0.0,
                 "ACQUISITION.signal_source": "test-source",
                 "PLUGINS.bindings": [
                     ProfileBinding("processing.decoder", "decoder", None, decoder.selection,
-                                   {"target": 1}).to_dict(),
+                                   {"target": 1}, processing_input=ProcessingInput()).to_dict(),
                     ProfileBinding("processing.epoch_detector", "epoch_detector", None,
                                    detector.selection, {}).to_dict(),
                 ]}
     replacement = deepcopy(snapshot)
-    replacement["CONFIG.revision"] = "new"
+    replacement["CONFIG.module_revisions"]["processing"] = "new"
     replacement["PLUGINS.bindings"][0]["parameters"]["target"] = 2
     context = mp.get_context("spawn")
     commands, data, events = (context.Queue() for _ in range(3))
     receiver, sender = context.Pipe(duplex=False)
-    reporter = StartupReporter(sender, component="Signal Processing", config_revision="old", generation="run")
+    reporter = StartupReporter(sender, component="Signal Processing", module_revisions={"processing": "old"}, engine_revision="engine", generation="run")
     worker = SignalProcessingWorker(commands, DataManager(data), EventBus(events),
                                     settings_snapshot=snapshot, startup_reporter=reporter)
     process = context.Process(target=worker.run)
@@ -104,34 +107,37 @@ class ValueDecoder(Decoder):
         process.start()
         reporter.close()
         wait_for_startup_report(receiver, process, component="Signal Processing", timeout_s=10,
-                                expected_revision="old", expected_generation="run")
+                                expected_module_revisions={"processing": "old"}, expected_engine_revision="engine", expected_generation="run")
         source = SignalInfo("test-source", 250, (ChannelDescriptor(0, "O1"),), 1,
                             connection_id="connection")
-        plan = compile_processing_plan(source, ProcessingInput(), config_revision="old")
-        receipt = {"generation": "run", "config_revision": "old", "connection_id": "connection",
-                   "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint}
+        plan = compile_processing_plan(source, ProcessingInput(), acquisition_revision="old")
+        receipt = {"generation": "run", "acquisition_revision": "old", "processing_revision": "old", "engine_revision": "engine", "connection_id": "connection",
+                   "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input"}
         commands.put((SignalProcessorCommand.prepare_signal, CommandRequest("prepare", {
             "plan": plan.to_dict(), "receipt": receipt,
         })))
         prepared = _event(events, EventType.CommandResult, lambda event: event.data.command_id == "prepare")
         assert prepared.ok, prepared.message
+        data.put(ProcessingInputStart("attach", receipt, 0))
+        attached = _event(events, EventType.CommandResult, lambda event: event.data.command_id == "attach")
+        assert attached.ok, attached.message
         data.put(SignalChunk(1.0, 1, np.array([[1., 1., 1.], [7., 0., 0.]])))
         _wait_file(plugin / "epoch-1")
         commands.put((SignalProcessorCommand.stage_configuration, CommandRequest("update", {
-            "settings_snapshot": replacement, "expected_revision": "old", "generation": "run",
+            "settings_snapshot": replacement, "expected_revision": "old", "generation": "run", "engine_revision": "engine", "boundary": "trial",
         })))
         _wait_file(plugin / "constructed-2")
         data.put(SignalChunk(2.0, 2, np.array([[1., 1., 1.], [0., 9., 0.]])))
         old_trial = _event(events, EventType.TrialCompleted)
-        assert old_trial.config_revision == "old" and old_trial.classification.target_id == 1
+        assert old_trial.processing_revision == "old" and old_trial.classification.target_id == 1
         receipt = _event(events, EventType.CommandResult, lambda event: event.data.command_id == "update")
         assert receipt.ok and receipt.data["applied_revision"] == "new"
         data.put(SignalChunk(3.0, 3, np.array([[1., 1., 1.], [0., 11., 0.]])))
         new_trial = _event(events, EventType.TrialCompleted)
-        assert new_trial.config_revision == "new" and new_trial.classification.target_id == 2
+        assert new_trial.processing_revision == "new" and new_trial.classification.target_id == 2
         assert old_trial.generation == new_trial.generation == "run"
         assert (old_trial.trial_number, new_trial.trial_number) == (1, 2)
-        commands.put(SignalProcessorCommand.should_stop)
+        commands.put((SignalProcessorCommand.should_stop, None))
         process.join(timeout=10)
         assert process.exitcode == 0
     finally:

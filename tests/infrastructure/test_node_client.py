@@ -7,15 +7,14 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from omnibci.application.node_configuration import NodeConfiguration
-from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
+from omnibci.application.configuration.models import PluginSelection, ProfileBinding
 from omnibci.infrastructure.plugins import node_client
 
 
 def configuration(*, generation="run-1"):
     return NodeConfiguration(
-        "actuation", "a" * 64, generation,
-        {"ACQUISITION.sample_rate": 250, "ACQUISITION.channel_count": 2,
-         "ACTUATION.enabled": True},
+        "actuation", {'actuation': "a" * 64}, "c" * 64, generation,
+        {},
         (ProfileBinding("actuation.effector", "effector", None,
                         PluginSelection("test.effector", "logger", "1.0.0"), {}),),
     )
@@ -45,7 +44,7 @@ def test_fetch_running_configuration_is_bounded_and_role_scoped(monkeypatch):
 
 def test_fetch_sends_token_only_in_authorization_header(monkeypatch):
     opener = install_response(monkeypatch, response())
-    node_client.fetch_node_configuration("http://backend", "actuation", "private-token")
+    node_client.fetch_node_configuration("http://server", "actuation", "private-token")
     request = opener.call_args.args[0]
     assert request.get_header("Authorization") == "Bearer private-token"
     assert "private-token" not in request.full_url
@@ -57,7 +56,7 @@ def test_supervisor_captures_token_once_before_retry(monkeypatch):
     monkeypatch.setattr(node_client, "fetch_node_configuration", fetch)
     monkeypatch.setattr(node_client.time, "sleep", lambda _: monkeypatch.setenv("OMNIBCI_API_TOKEN", "changed-token"))
     with pytest.raises(RuntimeError, match="done"):
-        node_client.run_configured_node("actuation", Mock(), backend_url="http://backend")
+        node_client.run_configured_node("actuation", Mock(), server_url="http://server")
     assert [call.args[2] for call in fetch.call_args_list] == ["original-token", "original-token"]
 
 
@@ -97,21 +96,21 @@ def test_selected_configuration_waits_without_hardware(monkeypatch):
 
 
 @pytest.mark.parametrize("status", [409, 502, 503, 504])
-def test_transient_backend_status_waits(monkeypatch, status):
+def test_transient_server_status_waits(monkeypatch, status):
     monkeypatch.setattr(node_client, "urlopen", Mock(side_effect=HTTPError("url", status, "wait", {}, None)))
     with pytest.raises(node_client.NodeConfigurationUnavailable):
         node_client.fetch_node_configuration("http://localhost", "actuation")
 
 
 @pytest.mark.parametrize("error", [URLError("offline"), TimeoutError("timeout")])
-def test_offline_backend_waits(monkeypatch, error):
+def test_offline_server_waits(monkeypatch, error):
     monkeypatch.setattr(node_client, "urlopen", Mock(side_effect=error))
     with pytest.raises(node_client.NodeConfigurationUnavailable):
         node_client.fetch_node_configuration("http://localhost", "actuation")
 
 
 @pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
-def test_invalid_backend_request_is_fatal(monkeypatch, status):
+def test_invalid_server_request_is_fatal(monkeypatch, status):
     monkeypatch.setattr(node_client, "urlopen", Mock(side_effect=HTTPError("url", status, "bad", {}, None)))
     with pytest.raises(RuntimeError, match=f"HTTP {status}") as error:
         node_client.fetch_node_configuration("http://localhost", "actuation")
@@ -134,7 +133,7 @@ def test_wrong_role_cannot_be_used(monkeypatch):
 
 
 @pytest.mark.parametrize("url", ["file:///config", "localhost", "http://u:p@localhost", "http://localhost?query=1"])
-def test_invalid_backend_url_fails_without_request(monkeypatch, url):
+def test_invalid_server_url_fails_without_request(monkeypatch, url):
     opener = Mock()
     monkeypatch.setattr(node_client, "urlopen", opener)
     with pytest.raises(ValueError):
@@ -142,15 +141,21 @@ def test_invalid_backend_url_fails_without_request(monkeypatch, url):
     opener.assert_not_called()
 
 
-def test_backend_cli_flag_overrides_environment(monkeypatch):
-    monkeypatch.setenv("OMNIBCI_BACKEND_URL", "http://env:8000")
-    assert node_client.node_backend_argument("actuation", []) == "http://env:8000"
-    assert node_client.node_backend_argument("actuation", ["--backend", "http://cli:9000"]) == "http://cli:9000"
+def test_server_cli_flag_overrides_environment(monkeypatch):
+    monkeypatch.setenv("OMNIBCI_SERVER_URL", "http://env:8000")
+    assert node_client.node_server_argument("actuation", []) == "http://env:8000"
+    assert node_client.node_server_argument("actuation", ["--server", "http://cli:9000"]) == "http://cli:9000"
+
+
+def test_old_cli_flag_is_rejected():
+    with pytest.raises(SystemExit) as error:
+        node_client.node_server_argument("actuation", ["--backend", "http://old:8000"])
+    assert error.value.code == 2
 
 
 def test_supervisor_retries_before_application_and_refetches_only_after_clean_exit(monkeypatch):
-    import omnibci.conf as conf
     calls = []
+    snapshots = []
     values = iter([node_client.NodeConfigurationUnavailable("offline"), configuration(),
                    configuration(generation="run-2")])
 
@@ -167,6 +172,7 @@ def test_supervisor_retries_before_application_and_refetches_only_after_clean_ex
 
     def application(**kwargs):
         calls.append("construct")
+        snapshots.append(kwargs["settings_snapshot"])
 
         def run():
             calls.append("run-cleanup")
@@ -177,16 +183,14 @@ def test_supervisor_retries_before_application_and_refetches_only_after_clean_ex
     monkeypatch.setattr(node_client, "materialize_node_configuration", materialize)
     monkeypatch.setattr(node_client, "CatalogConfigurationAdapter", Mock())
     monkeypatch.setattr(node_client.time, "sleep", lambda _: calls.append("wait"))
-    monkeypatch.setattr(conf, "settings", Mock())
-    node_client.run_configured_node("actuation", application, backend_url="http://backend")
+    node_client.run_configured_node("actuation", application, server_url="http://server")
     assert calls == ["fetch", "wait", "fetch", "validate", "construct", "run-cleanup", "wait",
                      "fetch", "validate", "construct", "run-cleanup"]
-    assert conf.settings.use_snapshot.call_args.args[0] == {"CONFIG.generation": "run-2"}
+    assert snapshots == [{"CONFIG.generation": "run-1"}, {"CONFIG.generation": "run-2"}]
 
 
 @pytest.mark.parametrize("stage", ["fetch", "validate", "construct", "run"])
 def test_supervisor_never_retries_invalid_configuration_hardware_or_cleanup(monkeypatch, stage):
-    import omnibci.conf as conf
     error = RuntimeError("invalid config or hardware cleanup")
     fetch = Mock(return_value=configuration())
     validate = Mock(return_value={})
@@ -202,8 +206,7 @@ def test_supervisor_never_retries_invalid_configuration_hardware_or_cleanup(monk
     monkeypatch.setattr(node_client, "CatalogConfigurationAdapter", Mock())
     sleeper = Mock()
     monkeypatch.setattr(node_client.time, "sleep", sleeper)
-    monkeypatch.setattr(conf, "settings", Mock())
     with pytest.raises(RuntimeError, match="invalid config or hardware cleanup"):
-        node_client.run_configured_node("actuation", application, backend_url="http://backend")
+        node_client.run_configured_node("actuation", application, server_url="http://server")
     fetch.assert_called_once()
     sleeper.assert_not_called()

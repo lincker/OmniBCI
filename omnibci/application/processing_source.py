@@ -1,17 +1,13 @@
 """Resolve processing input and source ownership from the pinned runtime bindings."""
 from copy import deepcopy
 
-from omnibci.application.plugin_profiles import is_default_legacy_processing_input
 from omnibci.domain.channel_mapping import ProcessingInput
 from omnibci.application.source_expectations import validate_source_expectations
 
 
 def materialize_processing_binding(binding):
     """Carry pinned module inputs without validating or migrating another module."""
-    value = binding.to_dict()
-    value.pop("manual_montage", None)
-    value.pop("acquisition_montage", None)
-    return value
+    return binding.to_dict()
 
 
 def binding_for(snapshot, slot):
@@ -23,8 +19,10 @@ def processing_input(snapshot):
     decoder = binding_for(snapshot, "processing.decoder")
     if decoder is not None and decoder.get("processing_input") is not None:
         value = decoder["processing_input"]
-        return ProcessingInput() if is_default_legacy_processing_input(value) else ProcessingInput.from_dict(value)
-    return ProcessingInput() if decoder is not None else None
+        return ProcessingInput.from_dict(value)
+    if decoder is not None:
+        raise ValueError("Decoder binding requires explicit processing_input")
+    return None
 
 
 def requires_signal_preparation(snapshot):
@@ -32,11 +30,11 @@ def requires_signal_preparation(snapshot):
 
 
 def acquisition_binding_key(binding):
-    """Saved profile revisions do not change ownership of the connected source."""
+    """Source ownership follows plugin values independently of saved profiles."""
     if binding is None:
         return None
     return {key: deepcopy(binding.get(key)) for key in (
-        "profile_id", "selection", "parameters",
+        "selection", "parameters",
     )}
 
 
