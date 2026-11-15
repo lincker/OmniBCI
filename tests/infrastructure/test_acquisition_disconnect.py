@@ -116,7 +116,8 @@ def test_command_transport_failure_publishes_disconnection_before_failure(comman
         acquisition = runtime(source)
         # Force the metadata command to use the source, including without a request.
         acquisition._raw_metadata = None
-        item = (command, CommandRequest("failed-command", {"refresh": True})) if correlated else command
+        payload = CommandRequest("failed-command", {"refresh": True}) if correlated else None
+        item = (command, payload)
         if correlated:
             await acquisition.execute(item)
             state_event, result_event = acquisition.event_bus.events[-2:]
@@ -283,8 +284,8 @@ def test_stop_write_failure_latches_loss_before_cancelling_pending_reader():
         assert acquisition._fetch_failure == "BrokenPipeError: stop write failed"
         assert_disconnected(acquisition)
         assert acquisition.event_bus.events[-1].data.error_code == "BrokenPipeError"
-        await acquisition.execute(AcquisitionCommand.disconnect)
-        await acquisition.execute(AcquisitionCommand.connect)
+        await acquisition.execute((AcquisitionCommand.disconnect, None))
+        await acquisition.execute((AcquisitionCommand.connect, None))
         await acquisition.execute((AcquisitionCommand.stop_and_drain, CommandRequest("drain")))
         result = acquisition.event_bus.events[-1].data
         assert result.error_code == "ACQUISITION_STREAM_CONTINUITY_LOST"

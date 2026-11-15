@@ -85,15 +85,15 @@ def test_settlement_joins_execution_cancels_pending_and_keeps_dispatch_nonblocki
     asyncio.run(scenario())
 
 
-def test_legacy_effector_cannot_claim_physical_completion():
-    class LegacyEffector(Effector):
+def test_effector_without_quiescence_cannot_claim_physical_completion():
+    class UnconfirmedEffector(Effector):
         def setup(self): pass
         def teardown(self): pass
         def play(self, command): pass
 
     async def scenario():
         actuator = Actuator()
-        actuator.effector = LegacyEffector()
+        actuator.effector = UnconfirmedEffector()
         instance = app(actuator)
         await instance._settle_actuation(Event(EventType.SettleActuation, CommandRequest("settle")))
         result = receipts(instance)[0]

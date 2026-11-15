@@ -6,7 +6,7 @@ Covers:
   - PreTriggerBuffer: rolling capacity, take_pre_trigger_data, disabled (capacity 0).
   - EpochProcessor: pre-trigger data kept separate from the decode window;
     build_epoch stitches [pre_trigger_data | window] and sets trigger_offset.
-  - SignalProcessor: pre_trigger_samples derived from legacy baseline_duration.
+  - SignalProcessor: pre_trigger_samples derived from Processing baseline_duration.
 """
 from __future__ import annotations
 

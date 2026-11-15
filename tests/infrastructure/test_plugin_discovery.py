@@ -15,7 +15,6 @@ from omnibci.application.plugin_profiles import PluginSelection
 from omnibci.domain.ports.effector import Effector
 from omnibci.infrastructure.plugins.descriptors import PluginEntrypoint
 from omnibci.infrastructure.plugins.loader import PluginLoadError, PluginLoader
-from omnibci.infrastructure.plugins.registry import register_plugin, registry_for
 from omnibci.infrastructure.plugins.plugin_catalog import (
     AmbiguousPluginError,
     MissingEntrypointError,
@@ -391,14 +390,7 @@ def test_loader_rejects_symlink_anywhere_in_plugin_tree(tmp_path):
         PluginLoader.instantiate(descriptor, Effector, parameters={}, context=PluginContext())
 
 
-def test_decorated_entrypoint_does_not_touch_global_registry(tmp_path):
-    class Existing(Effector):
-        plugin_type = "decorated_override"
-        def setup(self): pass
-        def play(self, command): pass
-        def teardown(self): pass
-
-    register_plugin(Effector)(Existing)
+def test_removed_registration_api_is_rejected(tmp_path):
     root = tmp_path / "effectors"
     package_dir = _write_effector_manifest(
         root,
@@ -427,10 +419,9 @@ def test_decorated_entrypoint_does_not_touch_global_registry(tmp_path):
         "effector", PluginSelection('acme.decorated', "default", '1.0.0')
     )
 
-    instance = PluginLoader.instantiate(descriptor, Effector, parameters={}, context=PluginContext())
-
-    assert type(instance).__name__ == "TestEffector"
-    assert registry_for(Effector)["decorated_override"] is Existing
+    with pytest.raises(PluginLoadError, match="omnibci.infrastructure.plugins.registry") as error:
+        PluginLoader.instantiate(descriptor, Effector, parameters={}, context=PluginContext())
+    assert isinstance(error.value.__cause__, ModuleNotFoundError)
 
 
 def test_system_exit_cleans_synthetic_modules(tmp_path):

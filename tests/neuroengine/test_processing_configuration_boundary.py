@@ -341,7 +341,7 @@ async def test_stop_returns_cancelled_receipt_for_pending_update(configured):
     processor, events, _, _ = configured
     await _feed(processor, [7, 0, 0])
     _stage(processor)
-    processor._execute(module.SignalProcessorCommand.should_stop)
+    processor._execute((module.SignalProcessorCommand.should_stop, None))
     result, = _results(events)
     assert not result.ok
     assert result.data["status"] == "cancelled"

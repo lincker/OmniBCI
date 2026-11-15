@@ -136,7 +136,7 @@ def test_client_requires_matching_ack_and_does_not_reconnect_old_identity():
         async def stale_server(reader, writer):
             connections.append(True)
             hello = await read_event_frame(reader)
-            assert hello.event.type == EventType.PeerHello
+            assert hello.type == EventType.PeerHello
             payload = IDENTITY.to_dict()
             payload["generation"] = "wrong"
             writer.write(encode_event(Event(EventType.PeerAccepted, payload)))
@@ -203,7 +203,7 @@ def test_client_cannot_send_before_ack_and_stop_closes_pending_handshake():
         hello_received, disconnected = asyncio.Event(), asyncio.Event()
         async def no_ack(reader, writer):
             hello = await read_event_frame(reader)
-            assert hello.event.type == EventType.PeerHello
+            assert hello.type == EventType.PeerHello
             hello_received.set()
             assert await reader.read() == b""
             writer.close()

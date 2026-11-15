@@ -55,7 +55,7 @@ def test_run_loads_source_before_running_runtime():
 def test_connect_does_not_require_decoder_configuration(bindings):
     commands = Queue()
     commands.put((AcquisitionCommand.connect, CommandRequest("connect")))
-    commands.put(AcquisitionCommand.stop_acquisition)
+    commands.put((AcquisitionCommand.stop_acquisition, None))
     events = MagicMock()
     source = MagicMock(spec=SignalSource)
     source.is_connected = source.is_streaming = False
@@ -96,7 +96,7 @@ def test_file_source_worker_connects_with_unconfigured_processing(decoder):
     commands = Queue()
     commands.put((AcquisitionCommand.connect, CommandRequest("connect")))
     commands.put((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
-    commands.put(AcquisitionCommand.stop_acquisition)
+    commands.put((AcquisitionCommand.stop_acquisition, None))
     events = MagicMock()
     worker = AcquisitionWorker(commands, MagicMock(), events, settings_snapshot={
         "ACQUISITION.signal_source": "file_reader",

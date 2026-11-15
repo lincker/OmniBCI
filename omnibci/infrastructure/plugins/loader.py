@@ -14,7 +14,6 @@ from typing import Type, TypeVar
 
 from omnibci.application.plugin_schema import validate_parameters
 from omnibci.infrastructure.plugins.descriptors import PluginDescriptor
-from omnibci.infrastructure.plugins.registry import isolated_registry
 from omnibci.sdk import PluginContext
 
 T = TypeVar("T")
@@ -190,23 +189,22 @@ class PluginLoader:
                 entrypoint.module,
                 descriptor.manifest_path,
             )
-            with isolated_registry():
-                module = cls._load_source_module(
-                    module_name,
-                    target,
-                    package_dir,
+            module = cls._load_source_module(
+                module_name,
+                target,
+                package_dir,
+            )
+            plugin_class = getattr(module, entrypoint.attribute)
+            if not isinstance(plugin_class, type):
+                raise TypeError(
+                    f"{entrypoint.attribute!r} is not a class"
                 )
-                plugin_class = getattr(module, entrypoint.attribute)
-                if not isinstance(plugin_class, type):
-                    raise TypeError(
-                        f"{entrypoint.attribute!r} is not a class"
-                    )
-                if not issubclass(plugin_class, expected_base):
-                    raise TypeError(
-                        f"{plugin_class.__name__} is not a subclass of "
-                        f"{expected_base.__name__}"
-                    )
-                return plugin_class
+            if not issubclass(plugin_class, expected_base):
+                raise TypeError(
+                    f"{plugin_class.__name__} is not a subclass of "
+                    f"{expected_base.__name__}"
+                )
+            return plugin_class
         except BaseException as exc:
             cls._cleanup_modules(prefix, modules_before)
             if not isinstance(exc, Exception):
@@ -248,8 +246,7 @@ class PluginLoader:
                 "context": replace(kwargs["context"], resource_root=str(descriptor.location)),
             }
             plugin_class = cls.load_entrypoint(descriptor, expected_base)
-            with isolated_registry():
-                return plugin_class(**kwargs)
+            return plugin_class(**kwargs)
         except BaseException as exc:
             cls._cleanup_modules(prefix, modules_before)
             if not isinstance(exc, Exception):

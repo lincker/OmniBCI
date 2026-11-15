@@ -95,7 +95,6 @@ def test_connect_round_trips_through_event_bus_worker_and_broker() -> None:
             NeuroEngine._make_command_router(
                 command_queue,
                 AcquisitionCommand.connect,
-                carry_data=True,
                 event_bus=bus,
             ),
         )

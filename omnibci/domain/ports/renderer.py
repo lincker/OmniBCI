@@ -2,8 +2,8 @@
 Renderer port — abstract interface for 2D stimulus rendering.
 
 Concrete adapters live in infrastructure/stimulation/adapters/:
-  - PyOpenGLRenderer   (legacy, current implementation)
-  - ModernGLRenderer   (primary target)
+  - PyOpenGLRenderer
+  - ModernGLRenderer
 
 Design constraints:
   - Methods are GPU/windowing primitives only; no paradigm-specific knowledge.

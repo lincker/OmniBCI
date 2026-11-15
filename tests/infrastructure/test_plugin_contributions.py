@@ -20,6 +20,8 @@ from omnibci.infrastructure.plugins.plugin_catalog import (
 
 
 def _contribution(identifier="reader", kind="acquisition", **fields):
+    if kind in {"decoder", "filter", "epoch_detector"}:
+        fields.setdefault("signal_input_contract", 1)
     return {
         "id": identifier, "kind": kind, "entrypoint": "driver:Driver", **fields,
     }
@@ -55,7 +57,7 @@ def _selection(contribution="reader", version="1.0.0", publisher="acme"):
 def test_cross_category_contributions_share_package_and_discovery_is_static(tmp_path):
     location = _write_package(tmp_path, contributions=[
         _contribution(display_name="Reader", params={"channels": 8}),
-        _contribution("trigger", "trigger", plugin_type="legacy_trigger"),
+        _contribution("trigger", "trigger", plugin_type="device_trigger"),
     ], package_fields={"source": "builtin"})
     marker = tmp_path / "executed"
     (location / "driver.py").write_text(
@@ -74,7 +76,7 @@ def test_cross_category_contributions_share_package_and_discovery_is_static(tmp_
     assert reader.plugin_type == "reader"
     assert reader.display_name == "Reader"
     assert reader.params == {"channels": 8}
-    assert trigger.plugin_type == "legacy_trigger"
+    assert trigger.plugin_type == "device_trigger"
     assert trigger.source == "user"
     assert trigger.location == location.resolve()
     assert catalog.scan("trigger") == (trigger,)
@@ -82,7 +84,7 @@ def test_cross_category_contributions_share_package_and_discovery_is_static(tmp_
 
 
 @pytest.mark.parametrize("kind", ["trigger", "filter", "epoch_detector"])
-def test_new_categories_are_discovered_outside_their_legacy_root(tmp_path, kind):
+def test_contributions_are_discovered_across_configured_roots(tmp_path, kind):
     _write_package(tmp_path, contributions=[_contribution("component", kind)])
     catalog = _catalog(PluginRoot(tmp_path, "user", 0))
 

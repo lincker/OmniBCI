@@ -114,7 +114,9 @@ def test_retired_channel_names_are_ignored_without_rewriting_saved_settings(host
     saved, revision = settings.read_saved()
 
     assert all("ACQUISITION.channel_names" not in section_settings(saved, section) for section in SECTIONS)
-    assert plugin_context(saved, "acquisition").channel_names == ()
+    context = plugin_context(saved, "acquisition")
+    assert context.acquired_signal is None
+    assert context.input_signal is None
     with pytest.raises(ConfigProfileValidationError, match="ACQUISITION.channel_names"):
         settings.update({"ACQUISITION.channel_names": ["O1", "O2"]}, expected_revision=revision)
     assert settings.read_saved() == (saved, revision)

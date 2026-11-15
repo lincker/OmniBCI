@@ -52,7 +52,3 @@ def signal_info(
         channels=tuple(channels), trigger_row_index=signal_channel_count,
         native_event=native_event, provenance=provenance,
     )
-
-
-# Keep the unchanged Scan45 plugin compatible with the renamed builder.
-acquisition_descriptor = signal_info

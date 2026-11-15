@@ -325,7 +325,7 @@ class Stimulation:
             sys_command = self.result_command_queue.get()
             if sys_command.type == EventType.TrialCompleted:
                 # The TrialCompleted payload arrives over the engine→stimulation
-                # socket as a plain dict (body_to_event does not rebuild domain
+                # socket as a plain dict (decode_event_body does not rebuild domain
                 # VOs), so extract target_id from the dict shape.  Wrapped in
                 # try/except: a malformed/out-of-range result must NOT crash the
                 # render process and close the stimulation window.

@@ -56,13 +56,16 @@ def test_requirements_are_decoder_only(tmp_path, kind, contract):
 
 
 @pytest.mark.parametrize("kind", ["decoder", "filter", "epoch_detector"])
-def test_prepared_contract_one_remains_compatible(tmp_path, kind):
+def test_prepared_contract_one_exposes_signal_metadata_without_requirements(tmp_path, kind):
     descriptor = package(tmp_path, kind=kind, signal_input_contract=1).resolve_selection(kind, PluginSelection("test.example", "default", "1"))
     assert descriptor.signal_input_contract == 1
     assert descriptor.channel_requirements is None
 
 
-def test_decoder_without_optional_requirements_remains_available(tmp_path):
-    descriptor = package(tmp_path).resolve_selection("decoder", PluginSelection("test.example", "default", "1"))
-    assert descriptor.signal_input_contract is None
-    assert descriptor.channel_requirements is None
+@pytest.mark.parametrize("kind", ["decoder", "filter", "epoch_detector"])
+def test_processing_manifest_without_signal_contract_is_rejected_during_discovery(tmp_path, kind):
+    catalog = package(tmp_path, kind=kind)
+
+    assert catalog.list_contributions(kind) == ()
+    with pytest.raises(PluginManifestError, match="signal_input_contract"):
+        catalog.resolve_selection(kind, PluginSelection("test.example", "default", "1"))

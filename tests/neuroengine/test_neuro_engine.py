@@ -299,15 +299,8 @@ class TestEventRouting:
         handler = _registered_handlers(eng)[event_type]
         handler(Event(event_type, payload))
 
-        carries_payload = payload is not None or event_type in {
-            EventType.ConnectDataProvider,
-            EventType.DisconnectDataProvider,
-            EventType.StartStream,
-            EventType.StopStream,
-        }
-        expected = (command, payload) if carries_payload else command
         target_queue = getattr(eng, queue_name)
-        target_queue.put_nowait.assert_called_once_with(expected)
+        target_queue.put_nowait.assert_called_once_with((command, payload))
 
         other_queue = (
             eng.processor_command_queue
@@ -330,10 +323,10 @@ class TestStop:
         await eng._stop()
 
         eng.acquisition_command_queue.put_nowait.assert_called_once_with(
-            AcquisitionCommand.stop_acquisition
+            (AcquisitionCommand.stop_acquisition, None)
         )
         eng.processor_command_queue.put_nowait.assert_called_once_with(
-            SignalProcessorCommand.should_stop
+            (SignalProcessorCommand.should_stop, None)
         )
         eng.acquisition_worker.join.assert_called_once_with(timeout=3)
         eng.signal_processing_worker.join.assert_called_once_with(timeout=3)

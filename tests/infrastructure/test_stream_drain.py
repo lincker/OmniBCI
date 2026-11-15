@@ -471,7 +471,7 @@ def test_drain_payloads_are_pickle_safe_and_result_mapping_preserves_receipt():
 @pytest.mark.asyncio
 async def test_shutdown_command_does_not_consume_more_data():
     processor = _processor()
-    processor.command_queue.put(SignalProcessorCommand.should_stop)
+    processor.command_queue.put((SignalProcessorCommand.should_stop, None))
     processor.data_manager.put_data(_chunk(0, start=True))
 
     await processor.serve()

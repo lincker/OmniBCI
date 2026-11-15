@@ -132,7 +132,7 @@ class TestAcquisitionCommandDispatch:
 
     def test_connect_connects_source_without_starting_stream(self):
         a = _acq()
-        _run(a.execute(AcquisitionCommand.connect))
+        _run(a.execute((AcquisitionCommand.connect, None)))
         assert a.data_source.calls == ["connect"]
         assert a.data_source.is_connected is True
         assert a.data_source.is_streaming is False
@@ -140,8 +140,8 @@ class TestAcquisitionCommandDispatch:
 
     def test_disconnect_disconnects_source(self):
         a = _acq()
-        _run(a.execute(AcquisitionCommand.connect))
-        _run(a.execute(AcquisitionCommand.disconnect))
+        _run(a.execute((AcquisitionCommand.connect, None)))
+        _run(a.execute((AcquisitionCommand.disconnect, None)))
         assert a.data_source.calls == ["connect", "disconnect"]
         assert a.data_source.is_connected is False
         assert a.data_source.is_streaming is False
@@ -151,11 +151,11 @@ class TestAcquisitionCommandDispatch:
         async def scenario():
             source = _FakeDataSource(fail_after=0)
             a = _acq(data_source=source)
-            await a.execute(AcquisitionCommand.connect)
-            await a.execute(AcquisitionCommand.start_stream)
+            await a.execute((AcquisitionCommand.connect, None))
+            await a.execute((AcquisitionCommand.start_stream, None))
             task = a.fetch_task
 
-            await a.execute(AcquisitionCommand.disconnect)
+            await a.execute((AcquisitionCommand.disconnect, None))
 
             assert source.calls == [
                 "connect",
@@ -173,8 +173,8 @@ class TestAcquisitionCommandDispatch:
     def test_start_stream_when_connected_starts_source_and_creates_fetch_task(self):
         async def scenario():
             a = _acq(data_source=_FakeDataSource(fail_after=0))
-            await a.execute(AcquisitionCommand.connect)
-            await a.execute(AcquisitionCommand.start_stream)
+            await a.execute((AcquisitionCommand.connect, None))
+            await a.execute((AcquisitionCommand.start_stream, None))
             assert "start_stream" in a.data_source.calls
             assert a.data_source.is_streaming is True
             assert a.fetch_task is not None
@@ -183,7 +183,7 @@ class TestAcquisitionCommandDispatch:
 
     def test_start_stream_while_disconnected_is_ignored(self):
         a = _acq()
-        _run(a.execute(AcquisitionCommand.start_stream))
+        _run(a.execute((AcquisitionCommand.start_stream, None)))
         assert a.data_source.calls == []
         assert a.fetch_task is None
         assert a.data_source.is_connected is False
@@ -264,10 +264,10 @@ class TestAcquisitionCommandDispatch:
     def test_stop_stream_stops_source_and_cancels_fetch_task(self):
         async def scenario():
             a = _acq(data_source=_FakeDataSource(fail_after=0))
-            await a.execute(AcquisitionCommand.connect)
-            await a.execute(AcquisitionCommand.start_stream)
+            await a.execute((AcquisitionCommand.connect, None))
+            await a.execute((AcquisitionCommand.start_stream, None))
             task = a.fetch_task
-            await a.execute(AcquisitionCommand.stop_stream)
+            await a.execute((AcquisitionCommand.stop_stream, None))
             await asyncio.sleep(0)  # let the cancellation propagate one loop turn
             assert "stop_stream" in a.data_source.calls
             assert a.data_source.is_connected is True
@@ -282,7 +282,7 @@ class TestAcquisitionCommandDispatch:
             a.fetch_task = asyncio.create_task(asyncio.Event().wait())
             task = a.fetch_task
 
-            await a.execute(AcquisitionCommand.stop_stream)
+            await a.execute((AcquisitionCommand.stop_stream, None))
 
             assert task.done()
             assert a.fetch_task is None
@@ -292,13 +292,13 @@ class TestAcquisitionCommandDispatch:
     def test_stop_acquisition_sets_should_exit(self):
         a = _acq()
         assert a.should_exit is False
-        _run(a.execute(AcquisitionCommand.stop_acquisition))
+        _run(a.execute((AcquisitionCommand.stop_acquisition, None)))
         assert a.should_exit is True
 
     def test_get_metadata_queries_source(self):
         a = _acq()
-        _run(a.execute(AcquisitionCommand.connect))
-        _run(a.execute(AcquisitionCommand.get_metadata))
+        _run(a.execute((AcquisitionCommand.connect, None)))
+        _run(a.execute((AcquisitionCommand.get_metadata, None)))
         assert a.data_source.calls == ["connect", "get_metadata"]
 
 
@@ -334,7 +334,7 @@ class TestAcquisitionFetch:
 class TestAcquisitionShutdown:
     def test_shutdown_disconnects_when_connected(self):
         a = _acq()
-        _run(a.execute(AcquisitionCommand.connect))
+        _run(a.execute((AcquisitionCommand.connect, None)))
         _run(a.shutdown())
         assert a.data_source.calls == ["connect", "disconnect"]
 

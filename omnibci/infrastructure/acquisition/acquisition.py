@@ -160,10 +160,7 @@ class AcquisitionRuntime:
 
     async def execute(self, item) -> None:
         """Execute a command and emit one result for each correlated request."""
-        if isinstance(item, tuple):
-            command, raw_request = item
-        else:
-            command, raw_request = item, None
+        command, raw_request = item
         request = CommandRequest.from_value(raw_request)
         logger.debug('Acquisition command: %s', command)
         if command in (AcquisitionCommand.attach_processing, AcquisitionCommand.detach_processing):

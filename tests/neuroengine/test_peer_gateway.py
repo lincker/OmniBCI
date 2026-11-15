@@ -6,7 +6,7 @@ Covers:
   - PeerChannel inbound: white-list — allowed types reach the bus, others dropped.
   - start/stop: registers and unregisters the outbound listeners; sets inbound hook.
   - PeerGateway: duplicate peer rejected; start/stop fan out to channels.
-  - stimulation_peer_config: preserves the legacy push set + allows StimulationAck.
+  - stimulation_peer_config: routes stimulation commands/results and accepts StimulationAck.
 """
 from __future__ import annotations
 
@@ -595,7 +595,7 @@ class TestPeerGateway:
 # ---------------------------------------------------------------------------
 
 class TestStimulationConfig:
-    def test_preserves_legacy_outbound_and_allows_ack(self):
+    def test_routes_stimulation_commands_results_and_ack(self):
         cfg = stimulation_peer_config(host="127.0.0.1", port=8000)
         assert cfg.name == STIMULATION
         assert cfg.routes.outbound == frozenset({

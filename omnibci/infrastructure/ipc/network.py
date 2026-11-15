@@ -10,14 +10,11 @@ import asyncio
 import logging
 import math
 import time
-from typing import NamedTuple
 
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
-from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.ipc.contracts import (
     InvalidEventBody,
-    PROTOCOL_VERSION,
     UnsupportedProtocolVersion,
     decode_event_body,
     encode_event,
@@ -70,23 +67,12 @@ async def _readexactly(reader, size: int, idle_timeout: float | None) -> bytes:
     return await asyncio.wait_for(operation, timeout=idle_timeout)
 
 
-class ReadEventFrame(NamedTuple):
-    """Result of one complete frame read.
-
-    ``event`` is None for a keep-alive. ``valid`` remains for source compatibility
-    and is always True: a complete non-empty body that cannot be decoded now
-    raises :class:`InvalidEventBody` and requires disconnecting the peer.
-    """
-
-    event: Event | None
-    valid: bool
-
-
-async def read_event_frame(reader, *, idle_timeout: float | None = None) -> ReadEventFrame:
+async def read_event_frame(reader, *, idle_timeout: float | None = None) -> Event | None:
     """Read one bounded, version-checked Event frame from ``reader``.
 
     Header version and body size are validated before reading the body.  The
-    optional timeout applies independently to the header and body reads.  A
+    optional timeout applies independently to the header and body reads.
+    Empty keep-alive frames return None.
     Malformed JSON/event envelopes, unsupported versions, and invalid sizes all
     raise protocol errors.  A peer cannot retain a connection slot by streaming
     complete but unusable Event bodies.
@@ -96,10 +82,9 @@ async def read_event_frame(reader, *, idle_timeout: float | None = None) -> Read
     header = Frame.Header.from_bytes(header_bytes)
     require_supported_version(header.version)
     if header.body_size == 0:
-        return ReadEventFrame(event=None, valid=True)
+        return None
     body = await _readexactly(reader, header.body_size, timeout)
-    event = decode_event_body(body, header.version)
-    return ReadEventFrame(event=event, valid=True)
+    return decode_event_body(body, header.version)
 
 
 async def _close_stream_writer(
@@ -144,7 +129,6 @@ async def _close_stream_writer(
 class NetworkServer:
     def __init__(
         self,
-        event_bus=None,
         host=None,
         port=None,
         max_clients: int | None = None,
@@ -154,7 +138,6 @@ class NetworkServer:
     ):
         if max_clients is not None and max_clients < 1:
             raise ValueError("max_clients must be >= 1 or None")
-        self.event_bus = event_bus
         self.host = host
         self.port = port
         self.max_clients = max_clients
@@ -180,17 +163,9 @@ class NetworkServer:
         self._liveness_handler = handler
 
     def _dispatch_inbound(self, event) -> bool:
-        """Dispatch one Event and report whether the application accepted it.
-
-        PeerChannel handlers return False for events outside their route.  The
-        legacy EventBus injection path has no rejection result, so a successful
-        ``put_event`` is considered accepted.
-        """
+        """Only an explicitly accepted Event proves application liveness."""
         if self._inbound_handler is not None:
             return self._inbound_handler(event) is True
-        if self.event_bus is not None:
-            self.event_bus.put_event(event)
-            return True
         return False
 
     def _notify_liveness(self) -> None:
@@ -270,11 +245,11 @@ class NetworkServer:
 
             self._pending_clients.add(writer)
             if self.identity is not None:
-                frame = await asyncio.wait_for(
+                event = await asyncio.wait_for(
                     read_event_frame(reader), timeout=PEER_HANDSHAKE_TIMEOUT,
                 )
-                if (frame.event is None or frame.event.type != EventType.PeerHello
-                        or not self.identity.matches(frame.event.data)):
+                if (event is None or event.type != EventType.PeerHello
+                        or not self.identity.matches(event.data)):
                     raise InvalidEventBody("Peer identity does not match the current runtime")
                 writer.write(encode_event(Event(EventType.PeerAccepted, self.identity.to_dict())))
                 await asyncio.wait_for(writer.drain(), timeout=self.write_timeout)
@@ -284,16 +259,16 @@ class NetworkServer:
             self._clients.add(writer)
             logger.info("Peer client connected: %s (%d total)", addr, len(self._clients))
             while True:
-                frame = await read_event_frame(
+                event = await read_event_frame(
                     reader,
                     idle_timeout=self.idle_timeout,
                 )
                 # Keep-alives prove transport liveness directly.  Event frames
                 # prove application liveness only after the route owner accepts
                 # them; a valid-but-unauthorised Event cannot feed a watchdog.
-                if frame.event is None:
+                if event is None:
                     self._notify_liveness()
-                elif self._dispatch_inbound(frame.event):
+                elif self._dispatch_inbound(event):
                     self._notify_liveness()
         except asyncio.IncompleteReadError:
             logger.info("Peer client disconnected: %s", addr)
@@ -415,12 +390,6 @@ class NetworkServer:
         """
         return await self._send_frame(encode_event(event), connection_token=connection_token)
 
-    async def send(self, message: str) -> bool:
-        """Legacy write API with the same socket-delivery-only bool contract."""
-        return await self._send_frame(
-            Frame(message, version=PROTOCOL_VERSION).to_bytes()
-        )
-
     async def _send_frame(self, frame: bytes, *, connection_token=None) -> bool:
         """Broadcast one frame concurrently; isolate clients and frame ordering."""
         async with self._send_lock:
@@ -473,7 +442,6 @@ class NetworkClient:
 
     def __init__(
         self,
-        event_bus: EventBus = None,
         server_ip="127.0.0.1",
         server_port=8888,
         connect_timeout: float = 0.5,
@@ -484,7 +452,6 @@ class NetworkClient:
         identity: PeerIdentity | None = None,
         reconnect: bool = True,
     ):
-        self.event_bus = event_bus
         self.server_ip = server_ip
         self.server_port = server_port
         self.reader = None
@@ -516,9 +483,6 @@ class NetworkClient:
         """Dispatch one Event and report whether the application accepted it."""
         if self._inbound_handler is not None:
             return self._inbound_handler(event) is True
-        if self.event_bus is not None:
-            self.event_bus.put_event(event)
-            return True
         return False
 
     def _notify_liveness(self) -> None:
@@ -640,11 +604,11 @@ class NetworkClient:
                 if accepted and self.identity is not None:
                     writer.write(encode_event(Event(EventType.PeerHello, self.identity.to_dict())))
                     await asyncio.wait_for(writer.drain(), timeout=self._write_timeout)
-                    frame = await asyncio.wait_for(
+                    event = await asyncio.wait_for(
                         read_event_frame(reader), timeout=PEER_HANDSHAKE_TIMEOUT,
                     )
-                    if (frame.event is None or frame.event.type != EventType.PeerAccepted
-                            or not self.identity.matches(frame.event.data)):
+                    if (event is None or event.type != EventType.PeerAccepted
+                            or not self.identity.matches(event.data)):
                         raise InvalidEventBody("Peer identity was not accepted by the engine")
                     async with self._connection_lock:
                         accepted = self._should_run and self.writer is writer
@@ -672,12 +636,6 @@ class NetworkClient:
     async def send_event(self, event: Event, *, connection_token=None) -> bool:
         """Write one Event to the active socket, without implying peer handling."""
         return await self._send_frame(encode_event(event), connection_token=connection_token)
-
-    async def send(self, message: str) -> bool:
-        """Legacy write API with the same socket-delivery-only bool contract."""
-        return await self._send_frame(
-            Frame(message, version=PROTOCOL_VERSION).to_bytes()
-        )
 
     async def _send_frame(self, frame: bytes, *, connection_token=None) -> bool:
         """Send one frame, returning False for disconnects instead of raising."""
@@ -717,10 +675,10 @@ class NetworkClient:
         reader = self.reader
         if reader is None:
             raise ConnectionError("NetworkClient.receive called without a connection")
-        frame = await read_event_frame(reader, idle_timeout=self._idle_timeout)
-        if frame.event is None:
+        event = await read_event_frame(reader, idle_timeout=self._idle_timeout)
+        if event is None:
             self._notify_liveness()
-        elif self._dispatch_inbound(frame.event):
+        elif self._dispatch_inbound(event):
             self._notify_liveness()
 
     async def stop(self) -> None:

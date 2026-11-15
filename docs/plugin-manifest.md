@@ -124,21 +124,21 @@ inter-package dependency declaration.
 
 API `2` implementations import their ports from `omnibci.sdk` and accept exactly
 the keyword inputs `parameters` and `context`. The host copies parameters and
-supplies a frozen, pickle-safe `PluginContext` containing sample rate, channel
-names, `module_revision`, and the selected package's resource directory.
+supplies a frozen, pickle-safe `PluginContext` containing sample rate, prepared
+signal descriptors, `module_revision`, and the selected package's resource directory.
 The revision belongs to the consuming module, including a Trigger shipped in
 an acquisition-domain package and loaded by Stimulation.
 Context contains metadata, not global settings or live service objects.
-The class implements its domain port; a registry decorator and `plugin_type`
-attribute are no longer required. The manifest owns its selection identity.
+The class implements its domain port. The manifest owns its selection identity
+and the entrypoint used to load it.
 
-Signal Processing contributions that support prepared channel input declare
+Signal Processing contributions must declare
 `signal_input_contract = 1` beside their contribution `kind`. Decoder
 contributions can declare `signal_input_contract = 2` together with
 `[contributions.channel_requirements]` to add minimum count, signal type and
 required names, plus ordered name suggestions for channel mapping. Contract 2 requires that
-section and is currently Decoder-only; older hosts reject the unsupported
-capability rather than ignoring its requirements. The
+section and is currently Decoder-only. Missing or unsupported declarations are
+rejected during manifest discovery. The
 [Decoder authoring guide](decoder-plugin-development.md#manifest-and-channel-requirements)
 describes every field, with comments in the executable starter manifest.
 
@@ -147,11 +147,8 @@ context, as immutable `SignalInfo` values.
 Use `acquired_signal.channels` for the original Acquisition channels and the
 ordered `input_signal.channels` for the actual decoder/filter/detector input,
 including source channel IDs, signal types and optional units. The final trigger
-row remains separate. `PluginContext.channel_names` remains compatible with its
-original acquired-channel meaning but is deprecated for new plugin code.
-Channel mapping selects and orders rows without changing
-sample values. Undeclared plugins retain the legacy identity path and reject
-changed input before streaming. The bundled CCA
+row remains separate. Channel mapping selects and orders rows without changing
+sample values. The bundled CCA
 and FBCCA declare contract 2 with flexible EEG input and no mandatory electrode
 names. The bundled epoch boundary detector and baseline-correction filter retain contract 1.
 

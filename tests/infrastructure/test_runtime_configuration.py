@@ -38,7 +38,6 @@ def test_runtime_context_ignores_retired_flat_channel_names(names):
 
     assert context.sample_rate == 500
     assert context.module_revision == "current-revision"
-    assert context.channel_names == ()
     assert context.acquired_signal is None
     assert context.input_signal is None
 

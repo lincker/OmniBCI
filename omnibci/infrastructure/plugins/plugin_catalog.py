@@ -381,10 +381,11 @@ def _parse_contributions(
             raise PluginManifestError(f"{manifest_path}: contribution controls must be TOML tables")
         configuration_schema, configuration_version = _configuration(contribution, package_dir)
         signal_contract = contribution.get("signal_input_contract")
-        if signal_contract is not None and (
-            type(signal_contract) is not int or signal_contract not in (1, 2)
-            or category not in {"decoder", "epoch_detector", "filter"}
-            or (signal_contract == 2 and category != "decoder")
+        processing_kind = category in {"decoder", "epoch_detector", "filter"}
+        if (
+            processing_kind and (type(signal_contract) is not int or signal_contract not in (1, 2))
+            or not processing_kind and signal_contract is not None
+            or signal_contract == 2 and category != "decoder"
         ):
             raise PluginManifestError(f"{manifest_path}: invalid signal_input_contract")
         requirements = None

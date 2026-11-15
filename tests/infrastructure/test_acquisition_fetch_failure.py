@@ -90,8 +90,8 @@ def test_terminal_fetch_failure_blocks_drain_checkpoint_and_manual_restart(failu
                 assert "Stop engine" in result.message and "Start engine" in result.message
             assert data.get_data(0) is None
         # Reconnecting the same graph cannot erase evidence of the lost chunk.
-        await acquisition.execute(AcquisitionCommand.disconnect)
-        await acquisition.execute(AcquisitionCommand.connect)
+        await acquisition.execute((AcquisitionCommand.disconnect, None))
+        await acquisition.execute((AcquisitionCommand.connect, None))
         await acquisition.execute((AcquisitionCommand.stop_and_drain, CommandRequest("retry", {})))
         assert not bus.events[-1].data.ok
         assert data.get_data(0) is None

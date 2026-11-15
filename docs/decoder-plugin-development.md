@@ -18,7 +18,7 @@ my-decoder/
 
 Only `manifest.toml` has a prescribed filename. The Python module and schema may
 have other names if `entrypoint` and `configuration.schema` reference them.
-Discovery permits a missing schema for legacy plugins, but a configurable
+Discovery can list contributions without a configuration schema, but a configurable
 Decoder needs a schema to participate in the UI Profile workflow. A decoder
 with no editable parameters can provide an empty object schema with
 `"properties": {}` and `"additionalProperties": false`.
@@ -32,13 +32,13 @@ selects the constructor API. They are separate from the package release version,
 configuration schema version, and `signal_input_contract` capability version.
 Package identity is the case-sensitive `publisher.id`; each contribution has an
 id unique within that package. Declare `kind = "decoder"` and an entrypoint in
-package-relative `module:Class` form. No registry decorator is needed with API 2.
+package-relative `module:Class` form. The host loads that declared entrypoint.
 
 A Decoder that declares `[contributions.channel_requirements]` must also declare
-`signal_input_contract = 2` on that contribution. Older hosts reject this
-capability instead of silently ignoring its constraints. Contract `1` describes
-prepared input metadata without the declarative requirements. Plugins without a
-requirements section retain their existing behavior.
+`signal_input_contract = 2` on that contribution. Contract `1` describes prepared
+input metadata without declarative channel requirements. Processing contributions
+without a requirements section must declare contract `1`; an absent declaration
+is rejected during manifest discovery.
 
 | Field | Meaning |
 | --- | --- |
@@ -118,9 +118,7 @@ the process working directory or import server settings and service objects.
 mapped input, including channel IDs, names, types, and units. Use its channels to
 resolve names to matrix row indices. `context.acquired_signal.channels` describes
 the original Acquisition channels, before mapping; never use its indices for
-mapped input. `context.channel_names` remains compatible but is deprecated. New
-plugins should use `context.acquired_signal.channels` for original channels and
-`context.input_signal.channels` for their actual input.
+mapped input. These two descriptors provide the channel records directly.
 
 Decoder arrays have shape **signal channels × samples**, without a trigger row
 or pre-trigger data. `window` contains the post-trigger data accumulated up to

@@ -154,7 +154,6 @@ class TestListenTransport:
             write_timeout=0.25,
         )
         assert transport._server.kwargs == {
-            "event_bus": None,
             "host": "127.0.0.1",
             "port": 8001,
             "max_clients": 1,
@@ -283,7 +282,6 @@ class TestConnectTransport:
             write_timeout=0.25,
         )
         assert transport._client.kwargs == {
-            "event_bus": None,
             "server_ip": "10.0.0.2",
             "server_port": 9001,
             "connect_timeout": 0.8,

@@ -212,7 +212,7 @@ async def test_module_must_still_be_alive_when_its_readiness_completes():
 
 
 @pytest.fixture
-def legacy_decoder(tmp_path, monkeypatch):
+def prepared_input_decoder(tmp_path, monkeypatch):
     """A real decoder whose constructor requires prepared source information."""
     plugin_dir = tmp_path / "plugins"
     package = plugin_dir / "algorithms" / "decoders" / "readiness"
@@ -288,8 +288,8 @@ def _pinned_worker_snapshot(decoder_alias, broken_kind=None):
 @pytest.mark.integration
 @pytest.mark.parametrize("kind", ["acquisition", "processing"])
 @pytest.mark.parametrize("broken", [False, True])
-def test_spawned_configured_worker_reports_real_plugin_initialization(kind, broken, legacy_decoder):
-    decoder_alias, constructed = legacy_decoder
+def test_spawned_configured_worker_reports_real_plugin_initialization(kind, broken, prepared_input_decoder):
+    decoder_alias, constructed = prepared_input_decoder
     context = mp.get_context("spawn")
     commands, data, events = (context.Queue() for _ in range(3))
     receiver, sender = context.Pipe(duplex=False)
@@ -341,8 +341,8 @@ def test_spawned_configured_worker_reports_real_plugin_initialization(kind, brok
             assert wait([receiver], timeout=1) == [receiver]
             with pytest.raises(EOFError):
                 receiver.recv()
-            commands.put(AcquisitionCommand.stop_acquisition if kind == "acquisition"
-                         else SignalProcessorCommand.should_stop)
+            commands.put((AcquisitionCommand.stop_acquisition if kind == "acquisition"
+                         else SignalProcessorCommand.should_stop, None))
         process.join(timeout=10)
         assert process.exitcode == (1 if broken and kind == "acquisition" else 0)
     finally:
@@ -360,9 +360,9 @@ def test_spawned_configured_worker_reports_real_plugin_initialization(kind, brok
 @pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("broken", [False, True])
-async def test_builder_manages_real_worker_startup_and_cleanup(broken, legacy_decoder):
+async def test_builder_manages_real_worker_startup_and_cleanup(broken, prepared_input_decoder):
     from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
-    decoder_alias, constructed = legacy_decoder
+    decoder_alias, constructed = prepared_input_decoder
     snapshot = _pinned_worker_snapshot(decoder_alias, "decoder" if broken else None)
     engine = NeuroEngineBuilder(settings_snapshot=snapshot).build()
     engine.peer_gateway = MagicMock(start=AsyncMock(), stop=AsyncMock())

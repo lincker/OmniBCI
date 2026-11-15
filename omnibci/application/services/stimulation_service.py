@@ -143,7 +143,7 @@ class StimulationAppService:
         if not self.is_active:
             raise RuntimeError("Start stimulation before starting a trial")
         # JSON-friendly payload: it crosses the engine→stimulation socket, where
-        # body_to_event reconstructs only plain JSON (no dataclass), so the
+        # decode_event_body reconstructs only plain JSON (no dataclass), so the
         # stimulation side reads this dict directly.
         payload = {"n_trials": cmd.n_trials, "trial_params": cmd.trial_params}
         if self._command_results is not None:

@@ -39,11 +39,6 @@ def load_configured_plugin(snapshot: dict, slot: str, kind: str, expected_base,
         raise PluginLoadError(f"No {kind} selected for {slot}")
     catalog = catalog or PluginCatalog()
     descriptor = catalog.resolve_selection(kind, binding.selection)
-    if (context is not None and context.input_signal is not None
-            and context.acquired_signal is not None
-            and context.input_signal != context.acquired_signal
-            and descriptor.signal_input_contract not in {1, 2}):
-        raise PluginLoadError(f"{slot}: plugin must declare signal_input_contract = 1 or 2 for transformed input")
     if descriptor.configuration_version != binding.configuration_version:
         raise PluginLoadError(f"{slot}: configuration schema migration required")
     parameters = deepcopy(binding.parameters)

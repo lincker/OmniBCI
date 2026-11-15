@@ -59,6 +59,8 @@ The current regression suite checks:
   separate from the running Engine and module state.
 - Server routes and version 1 desktop/node protocols, with removed routes,
   obsolete fields and unsupported protocol versions rejected.
+- Strict peer decoding and accepted-message liveness, uniform worker command
+  pairs, current SDK signal descriptors and declared processing input contracts.
 - Engine foundation startup and independent module start/stop, processing input
   attachment, FIFO drain boundaries, and recovery after failures.
 - Bounded signal delivery and output sender queues. A full Processing input queue

@@ -87,7 +87,6 @@ class ListenTransport(PeerTransport):
         if identity is not None:
             timeout_options["identity"] = identity
         self._server = NetworkServer(
-            event_bus=None,
             host=host,
             port=port,
             max_clients=max_clients,
@@ -188,7 +187,6 @@ class ConnectTransport(PeerTransport):
             if value is not None
         })
         self._client = NetworkClient(
-            event_bus=None,
             server_ip=host,
             server_port=port,
             **client_options,

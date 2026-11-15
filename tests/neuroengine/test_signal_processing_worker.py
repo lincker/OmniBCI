@@ -114,7 +114,7 @@ class TestProcessorWiring:
     def test_standby_readiness_does_not_require_decoder_configuration(self, bindings, monkeypatch):
         reporter = MagicMock(spec=StartupReporter)
         commands = Queue()
-        commands.put(SignalProcessorCommand.should_stop)
+        commands.put((SignalProcessorCommand.should_stop, None))
         worker = _worker(command_queue=commands, startup_reporter=reporter,
                          settings_snapshot={"PLUGINS.bindings": bindings})
         monkeypatch.setattr(conf_module.settings, "use_snapshot", lambda snapshot: None)
@@ -176,7 +176,7 @@ class TestProcessorWiring:
         def stop_after_sample(*args, **kwargs):
             item = next_data(*args, **kwargs)
             if isinstance(item, SignalChunk):
-                commands.put(SignalProcessorCommand.should_stop)
+                commands.put((SignalProcessorCommand.should_stop, None))
             return item
         data_manager.get_data = stop_after_sample
         monkeypatch.setattr(conf_module.settings, "use_snapshot", lambda snapshot: None)

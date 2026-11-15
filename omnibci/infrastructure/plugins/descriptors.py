@@ -93,8 +93,8 @@ class PluginPackageDescriptor:
 class PluginDescriptor:
     """One executable contribution, with shared package metadata.
 
-    The legacy package properties remain available to existing loader and DTO
-    callers. New selections use ``selection`` instead of the registry alias.
+    Package properties provide identity and loading metadata. ``selection``
+    identifies the exact package version and contribution to load.
     """
 
     package: PluginPackageDescriptor

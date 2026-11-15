@@ -19,9 +19,7 @@ from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.signal_processing import pipeline_configuration, signal_configuration
 from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
 from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
-from omnibci.infrastructure.plugins.loader import PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
 
 
 
@@ -437,7 +435,6 @@ def test_input_context_preserves_live_channels_and_describes_ordered_aliases(dup
     assert context.acquired_signal.signal_channel_count == 3
     assert context.acquired_signal.trigger_row_index == 3
     assert context.acquired_signal is source
-    assert context.channel_names == tuple(c.name for c in source.channels)
     assert context.sample_rate == 250
 
 
@@ -451,23 +448,6 @@ def _bindings():
                 ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA", {"window_duration": 1.0, "offset_time": 0.0}),
                 ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
             )]
-
-
-def test_legacy_plugin_requires_signal_contract_only_for_transformed_input():
-    plan = _plan()
-    snapshot = {**_snapshot(plan), "PLUGINS.bindings": _bindings()}
-    descriptor = replace(PluginCatalog().resolve_selection("decoder", builtin_selection("decoder", "THUBCI_SSVEP_classic40CCA")), signal_input_contract=None)
-    catalog = MagicMock()
-    catalog.resolve_selection.return_value = descriptor
-    loader = MagicMock()
-    with pytest.raises(PluginLoadError, match="signal_input_contract"):
-        load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
-                               context=signal_configuration.signal_context(snapshot, plan), catalog=catalog, loader=loader)
-    loader.instantiate.assert_not_called()
-    identity = compile_processing_plan(plan.source, ProcessingInput())
-    load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
-                           context=signal_configuration.signal_context(snapshot, identity), catalog=catalog, loader=loader)
-    loader.instantiate.assert_called_once()
 
 
 def test_trial_pipeline_replacement_receives_current_transformed_context(monkeypatch):

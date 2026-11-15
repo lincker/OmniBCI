@@ -90,7 +90,7 @@ class SignalProcessor:
         self._signal_receipt = None
         self._input_attached = False
         self._configuration_transactions = ConfigurationTransactions()
-        # The legacy baseline_duration setting controls pre-trigger capture,
+        # Processing baseline_duration controls pre-trigger capture,
         # independently of whether a baseline-correction filter is configured.
         # Signal preparation supplies the observed sample rate.
         self.pre_trigger_samples = (round(baseline_duration * self._sample_rate)
@@ -331,17 +331,8 @@ class SignalProcessor:
             self._cancel_pending_configuration("Signal Processing stopped before the trial boundary")
 
     def _execute(self, item) -> None:
-        """
-        Execute one queued command.
-
-        Queue protocol: either a bare SignalProcessorCommand (legacy) or a
-        ``(command, payload)`` tuple for commands that carry data — the engine's
-        carry_data routes enqueue the latter (see NeuroEngine._command_routes).
-        """
-        if isinstance(item, tuple):
-            command, raw_payload = item
-        else:
-            command, raw_payload = item, None
+        """Execute a ``(command, payload)`` pair; process stop uses payload None."""
+        command, raw_payload = item
         request = CommandRequest.from_value(raw_payload)
         if command == SignalProcessorCommand.reset_input:
             if request is not None:

@@ -235,11 +235,6 @@ class PeerChannel:
                 )
             await asyncio.sleep(min(_MONITOR_POLL_S, remaining))
 
-    @property
-    def _has_lifecycle_resources(self) -> bool:
-        """Backward-compatible private alias used by older tests/callers."""
-        return self.has_lifecycle_resources
-
     async def _cleanup_shielded(self) -> None:
         """Finish cleanup even if the task awaiting stop() is cancelled."""
         cleanup_task = asyncio.create_task(

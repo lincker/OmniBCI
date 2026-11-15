@@ -260,6 +260,11 @@ accept only the current fields and version 1. Removed routes return 404;
 obsolete or unknown fields are rejected without aliases or fallback parsing.
 Deploy matching Server, desktop and node builds.
 
+Peer sockets use one strict Event decoder and an explicit receive handler.
+Malformed frames disconnect the peer; valid keep-alives and accepted Event
+messages refresh its liveness state. Acquisition and Processing command queues carry
+`(command, payload)` pairs, including process stop with a `None` payload.
+
 Engine configuration hashes use the `engine` namespace independently of module
 revisions and module/Profile history. Engine generation identifies the running
 instance.

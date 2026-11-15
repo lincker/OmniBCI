@@ -146,7 +146,7 @@ async def test_drain_records_epoch_before_receipt_and_does_not_repeat_on_stop(
     await feed(value, [1, 2], [7, 0])
     value.data_manager.put_data(StreamBarrier("drain", "generation", "revision", 0))
     await value._current_state.run()
-    value.command_queue.put(SignalProcessorCommand.should_stop)
+    value.command_queue.put((SignalProcessorCommand.should_stop, None))
     await value.serve()
 
     captured = records(events)
@@ -163,7 +163,7 @@ async def test_direct_state_error_records_failure_and_serve_exit_does_not_duplic
     value, events = processor(OptionalResult(fail=True))
     with pytest.raises(RuntimeError, match="decoder failed"):
         await feed(value, [1, 2], [7, 255])
-    value.command_queue.put(SignalProcessorCommand.should_stop)
+    value.command_queue.put((SignalProcessorCommand.should_stop, None))
     await value.serve()
 
     captured = records(events)
@@ -217,7 +217,7 @@ async def test_drain_error_is_recorded_once_even_if_drain_is_retried():
 async def test_direct_processor_stop_records_interrupted_active_epoch():
     value, events = processor()
     await feed(value, [1, 2], [7, 0])
-    value.command_queue.put(SignalProcessorCommand.should_stop)
+    value.command_queue.put((SignalProcessorCommand.should_stop, None))
     await value.serve()
 
     assert len(records(events)) == 1

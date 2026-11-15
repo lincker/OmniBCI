@@ -42,11 +42,11 @@ class NeuroEngine:
     acquisition_worker:
         Optional pre-built AcquisitionWorker, otherwise supplied by worker_factory.
     acquisition_command_queue:
-        mp.Queue used to send AcquisitionCommand values to the process.
+        mp.Queue used to send (AcquisitionCommand, payload) pairs to the process.
     signal_processing_worker:
         Optional pre-built SignalProcessingWorker, otherwise supplied by worker_factory.
     processor_command_queue:
-        mp.Queue used to send SignalProcessorCommand values to the process.
+        mp.Queue used to send (SignalProcessorCommand, payload) pairs to the process.
     peer_gateway:
         Routes EventBus events to/from external peers (stimulation, actuation).
     owned_ipc_queues:
@@ -355,8 +355,8 @@ class NeuroEngine:
                 channel.reporter.close()
 
     async def _wait_for_workers(self, channels) -> None:
-        # Explicitly injected channels distinguish managed workers from legacy
-        # manual engine graphs. Never infer readiness support from mock attributes.
+        # Explicit startup channels distinguish managed workers from injected test
+        # processes. Never infer readiness support from mock attributes.
         try:
             results = await asyncio.gather(*(
                 asyncio.to_thread(
@@ -416,7 +416,7 @@ class NeuroEngine:
                                 self._processing_active.clear()
                             if self.is_module_running("processing"):
                                 self._make_command_router(
-                                    self.processor_command_queue, SignalProcessorCommand.reset_input, True,
+                                    self.processor_command_queue, SignalProcessorCommand.reset_input,
                                     event_bus=self.event_bus,
                                 )(Event(EventType.ResetProcessingInput, CommandRequest(uuid4().hex, {
                                     "generation": self._generation, "engine_revision": self._engine_revision,
@@ -567,11 +567,7 @@ class NeuroEngine:
     def _put_stop_command(queue: mp.Queue, command, owner: str) -> None:
         """Never block the engine loop on a full bounded command queue."""
         try:
-            put_nowait = getattr(queue, "put_nowait", None)
-            if callable(put_nowait):
-                put_nowait(command)
-            else:  # simple test doubles / compatible queue adapters
-                queue.put(command)
+            queue.put_nowait((command, None))
         except Full:
             logger.warning("%s command queue is full; escalating during join", owner)
         except Exception as exc:
@@ -587,35 +583,29 @@ class NeuroEngine:
     # ------------------------------------------------------------------
 
     def _command_routes(self) -> dict:
-        """
-        EventType → (command queue, command, carry_data).
-
-        carry_data=False: enqueue the bare command (legacy behaviour).
-        carry_data=True: enqueue ``(command, event.data)`` so the request
-        reaches the subprocess.
-        """
+        """Map each event to the worker queue and command receiving its payload."""
         acq = self.acquisition_command_queue
         proc = self.processor_command_queue
         return {
             # Acquisition control requests carry CommandRequest so the worker can
             # return a correlated terminal CommandResult to the REST caller.
-            EventType.ConnectDataProvider:            (acq, AcquisitionCommand.connect, True),
-            EventType.DisconnectDataProvider:         (acq, AcquisitionCommand.disconnect, True),
-            EventType.StartStream:                    (acq, AcquisitionCommand.start_stream, True),
-            EventType.StartAcquisitionPreview:        (acq, AcquisitionCommand.start_preview, True),
-            EventType.StopAcquisitionPreview:         (acq, AcquisitionCommand.stop_preview, True),
-            EventType.GetAcquisitionPreview:          (acq, AcquisitionCommand.get_preview, True),
-            EventType.GetSourceMetadata:              (acq, AcquisitionCommand.get_metadata, True),
-            EventType.StopStream:                     (acq, AcquisitionCommand.stop_stream, True),
-            EventType.StopAndDrain:                   (acq, AcquisitionCommand.stop_and_drain, True),
-            EventType.AttachProcessingInput:          (acq, AcquisitionCommand.attach_processing, True),
-            EventType.DetachProcessingInput:          (acq, AcquisitionCommand.detach_processing, True),
-            EventType.GetSourceCheckpoint:            (acq, AcquisitionCommand.get_checkpoint, True),
-            EventType.RestoreSourceCheckpoint:        (acq, AcquisitionCommand.restore_checkpoint, True),
-            EventType.StageProcessingConfiguration:   (proc, SignalProcessorCommand.stage_configuration, True),
-            EventType.CancelProcessingConfiguration:  (proc, SignalProcessorCommand.cancel_configuration, True),
-            EventType.PrepareSignalProcessing:        (proc, SignalProcessorCommand.prepare_signal, True),
-            EventType.ResetProcessingInput:           (proc, SignalProcessorCommand.reset_input, True),
+            EventType.ConnectDataProvider:            (acq, AcquisitionCommand.connect),
+            EventType.DisconnectDataProvider:         (acq, AcquisitionCommand.disconnect),
+            EventType.StartStream:                    (acq, AcquisitionCommand.start_stream),
+            EventType.StartAcquisitionPreview:        (acq, AcquisitionCommand.start_preview),
+            EventType.StopAcquisitionPreview:         (acq, AcquisitionCommand.stop_preview),
+            EventType.GetAcquisitionPreview:          (acq, AcquisitionCommand.get_preview),
+            EventType.GetSourceMetadata:              (acq, AcquisitionCommand.get_metadata),
+            EventType.StopStream:                     (acq, AcquisitionCommand.stop_stream),
+            EventType.StopAndDrain:                   (acq, AcquisitionCommand.stop_and_drain),
+            EventType.AttachProcessingInput:          (acq, AcquisitionCommand.attach_processing),
+            EventType.DetachProcessingInput:          (acq, AcquisitionCommand.detach_processing),
+            EventType.GetSourceCheckpoint:            (acq, AcquisitionCommand.get_checkpoint),
+            EventType.RestoreSourceCheckpoint:        (acq, AcquisitionCommand.restore_checkpoint),
+            EventType.StageProcessingConfiguration:   (proc, SignalProcessorCommand.stage_configuration),
+            EventType.CancelProcessingConfiguration:  (proc, SignalProcessorCommand.cancel_configuration),
+            EventType.PrepareSignalProcessing:        (proc, SignalProcessorCommand.prepare_signal),
+            EventType.ResetProcessingInput:           (proc, SignalProcessorCommand.reset_input),
         }
 
     def read_acquisition_preview(self, capture_id: str | None, sequence_id: int | None = None) -> dict:
@@ -732,18 +722,18 @@ class NeuroEngine:
                 or not self.is_module_running("processing")):
             return
         self._make_command_router(
-            self.processor_command_queue, SignalProcessorCommand.reset_input, True, event_bus=self.event_bus,
+            self.processor_command_queue, SignalProcessorCommand.reset_input, event_bus=self.event_bus,
         )(Event(EventType.ResetProcessingInput, CommandRequest(uuid4().hex, {
             "generation": self._generation, "engine_revision": self._engine_revision,
             "expected_acquisition_revision": fault["acquisition_revision"], "input_id": fault["input_id"],
         })))
 
     def _register_event_listeners(self) -> None:
-        for event_type, (queue, command, carry_data) in self._command_routes().items():
+        for event_type, (queue, command) in self._command_routes().items():
             module = "acquisition" if queue is self.acquisition_command_queue else "processing"
             self.event_bus.register_event_listener(
                 event_type, self._make_command_router(
-                    queue, command, carry_data, event_bus=self.event_bus,
+                    queue, command, event_bus=self.event_bus,
                     is_running=lambda module=module: self.is_module_running(module),
                 )
             )
@@ -770,17 +760,12 @@ class NeuroEngine:
                 )
 
     @staticmethod
-    def _make_command_router(queue: mp.Queue, command, carry_data: bool = False,
+    def _make_command_router(queue: mp.Queue, command,
                              *, event_bus: EventBus, is_running=None) -> "callable":
-        """
-        Build a listener that enqueues *command* on *queue*.
-
-        With carry_data the event's payload travels along as ``(command, data)``;
-        otherwise the bare command is enqueued and the event is ignored.
-        """
+        """Enqueue ``(command, event.data)`` and report rejected requests."""
         def _route(event) -> None:
             if is_running is not None and not is_running():
-                request = CommandRequest.from_value(event.data) if carry_data else None
+                request = CommandRequest.from_value(event.data)
                 if request is not None:
                     event_bus.put_event(Event(EventType.CommandResult, CommandResult(
                         command_id=request.command_id, command=event.type.name, ok=False,
@@ -789,9 +774,9 @@ class NeuroEngine:
                     )))
                 return
             try:
-                queue.put_nowait((command, event.data) if carry_data else command)
+                queue.put_nowait((command, event.data))
             except Full:
-                request = CommandRequest.from_value(event.data) if carry_data else None
+                request = CommandRequest.from_value(event.data)
                 if request is None:
                     logger.warning("Command queue is full; rejecting %s", event.type.name)
                     return

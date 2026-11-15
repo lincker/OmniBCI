@@ -54,6 +54,7 @@ domain = "processing"
 id = "default"
 kind = "decoder"
 entrypoint = "plugin:ValueDecoder"
+signal_input_contract = 1
 [contributions.configuration]
 schema = "schema.json"
 schema_version = 1
@@ -136,7 +137,7 @@ class ValueDecoder(Decoder):
         assert new_trial.processing_revision == "new" and new_trial.classification.target_id == 2
         assert old_trial.generation == new_trial.generation == "run"
         assert (old_trial.trial_number, new_trial.trial_number) == (1, 2)
-        commands.put(SignalProcessorCommand.should_stop)
+        commands.put((SignalProcessorCommand.should_stop, None))
         process.join(timeout=10)
         assert process.exitcode == 0
     finally:

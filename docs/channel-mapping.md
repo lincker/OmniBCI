@@ -6,10 +6,10 @@ Acquisition adapts external data sources into a common signal stream and a
 editable Plugin Profile parameters.
 
 The domain type is `SignalInfo` in `omnibci.domain.signal_info`, also exported by
-`omnibci.sdk`. The former `AcquisitionDescriptor` import and
-`acquisition_descriptor()` builder remain aliases for existing plugins, including
-the unchanged Scan45 implementation. REST payload keys `descriptor` and
-`acquisition_descriptor` retain their existing names and structure.
+`omnibci.sdk`. Acquisition adapters use the `signal_info()` builder in
+`omnibci.infrastructure.acquisition.metadata`, including Scan45. REST payload
+keys `descriptor` and `acquisition_descriptor` describe the acquisition-role
+signal information; they are not Python type aliases.
 
 ## Architecture overview
 

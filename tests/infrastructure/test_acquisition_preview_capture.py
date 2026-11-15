@@ -255,7 +255,7 @@ async def test_main_loop_expires_capture_when_source_does_not_produce_data():
     acquisition.preview = PreviewCapture(Queue(), clock=lambda: now[0])
     await start(acquisition)
     now[0] = 12.0
-    acquisition.command_queue.put(AcquisitionCommand.stop_acquisition)
+    acquisition.command_queue.put((AcquisitionCommand.stop_acquisition, None))
     await acquisition.main_loop()
     assert acquisition.preview.snapshot()["reason"] == "timeout"
 
