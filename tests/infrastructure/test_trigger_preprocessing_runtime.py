@@ -45,7 +45,7 @@ def runtime(source):
     data, frames = DataManager(Queue()), Queue()
     acquisition = AcquisitionRuntime(
         source, Queue(), data, source_id="source",
-        generation="generation", acquisition_revision="revision", system_revision="system", preview_queue=frames,
+        generation="generation", acquisition_revision="revision", engine_revision="engine", preview_queue=frames,
     )
     return acquisition, data, frames
 

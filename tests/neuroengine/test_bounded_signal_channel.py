@@ -83,7 +83,7 @@ async def test_new_attachment_discards_old_backlog_and_recovers_after_full_bound
     await acquisition.execute((AcquisitionCommand.attach_processing, CommandRequest("old-attach", old_receipt)))
     data.put_data(SignalChunk(0, 0, np.zeros((4, 3))))
     acquisition._last_sequence = acquisition._last_processing_sequence = 0
-    identity = {"generation": acquisition.generation, "system_revision": acquisition.system_revision,
+    identity = {"generation": acquisition.generation, "engine_revision": acquisition.engine_revision,
                 "expected_revision": acquisition.acquisition_revision}
     await acquisition.execute((AcquisitionCommand.detach_processing, CommandRequest("full-detach", identity)))
     assert not events[-1].data.ok
@@ -94,7 +94,7 @@ async def test_new_attachment_discards_old_backlog_and_recovers_after_full_bound
         processor.event_bus = SimpleNamespace(put_event=events.append)
     else:
         processor._reset_input(CommandRequest("reset", {
-            "generation": acquisition.generation, "system_revision": acquisition.system_revision,
+            "generation": acquisition.generation, "engine_revision": acquisition.engine_revision,
             "expected_acquisition_revision": acquisition.acquisition_revision,
             "input_id": old_receipt["input_id"],
         }))
@@ -121,7 +121,7 @@ async def test_new_attachment_discards_old_backlog_and_recovers_after_full_bound
     assert events[-1].data.ok and events[-1].data.command_id == "reattach"
     assert processor._last_sequence == 4
     processor._reset_input(CommandRequest("late-old-fault", {
-        "generation": acquisition.generation, "system_revision": acquisition.system_revision,
+        "generation": acquisition.generation, "engine_revision": acquisition.engine_revision,
         "expected_acquisition_revision": acquisition.acquisition_revision,
         "input_id": old_receipt["input_id"],
     }))
@@ -149,7 +149,7 @@ async def test_full_queue_never_confirms_a_missing_boundary_on_retry(monkeypatch
     for sequence in range(2):
         data.put_data(SignalChunk(0, sequence, np.zeros((4, 3))))
     acquisition._last_sequence = acquisition._last_processing_sequence = 1
-    identity = {"generation": acquisition.generation, "system_revision": acquisition.system_revision,
+    identity = {"generation": acquisition.generation, "engine_revision": acquisition.engine_revision,
                 "expected_revision": acquisition.acquisition_revision}
 
     for command_id in ("full-boundary", "retry-boundary"):

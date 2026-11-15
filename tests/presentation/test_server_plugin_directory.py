@@ -1,4 +1,4 @@
-"""Backend plugin discovery and spawned workers retain the startup directory."""
+"""Server plugin discovery and spawned workers retain the startup directory."""
 
 import multiprocessing as mp
 import os
@@ -31,7 +31,7 @@ def _plugin(directory):
 
 def _worker_directory(connection):
     from omnibci.conf import settings
-    settings.use_snapshot({"CONFIG.system_revision": "accepted-engine"})
+    settings.use_snapshot({"CONFIG.engine_revision": "accepted-engine"})
     connection.send((str(user_plugins_dir()), str(PluginCatalog().resolve_selection("effector", SELECTION).location)))
     connection.close()
 
@@ -84,7 +84,7 @@ def test_api_save_defers_plugin_directory_for_catalog_store_and_spawned_workers(
             "expected_revision": revision, "updates": {"PLUGINS.user_dir": str(new)},
         })
         assert response.status_code == 200, response.text
-        assert response.json()["data"]["backend_restart_required"]
+        assert response.json()["data"]["server_restart_required"]
         assert catalog.resolve_selection("effector", SELECTION).location == old_package
         assert store.plugin_dir == old
         assert _spawned_directory() == (str(old), str(old_package))

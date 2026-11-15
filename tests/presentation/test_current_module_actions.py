@@ -1,4 +1,4 @@
-"""User actions submit complete current values to one owned backend use case."""
+"""User actions submit complete current values to one owned server use case."""
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -20,7 +20,7 @@ def available_runtime(api_client):
     ("/engine/modules/actuation/start", "actuation", "start"),
     ("/stimulation/start", "stimulation", "start"),
 ])
-def test_current_action_uses_single_backend_operation(api_client, path, module, action):
+def test_current_action_uses_single_server_operation(api_client, path, module, action):
     operation_id = "00000000-0000-0000-0000-000000000001"
     configuration = {"expected_revision": "previous", "settings": {}, "bindings": []}
     result = {

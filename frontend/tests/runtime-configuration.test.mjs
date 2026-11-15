@@ -17,9 +17,9 @@ const { readTrialControls } = await server.ssrLoadModule("/src/plugin-controls.t
 globalThis.window = { localStorage: { getItem: () => "en" }, navigator: { language: "en" } };
 const noop = () => {};
 const current = { ready: true, error: null, entries: {}, filterOrder: [], hasChanges: () => false, validationError: () => null };
-const revisions = { acquisition: "a", processing: "selected-previous", stimulation: "s", actuation: "e", system: "sys" };
+const revisions = { acquisition: "a", processing: "selected-previous", stimulation: "s", actuation: "e", engine: "sys" };
 const status = { running: true, accepted: revisions, applied: revisions, generation: "generation-1", operations: {}, recovery: {}, errors: {} };
-const plan = { plan_id: "plan-1", module: "processing", expected_revision: revisions.processing, expected_revisions: { processing: revisions.processing, system: revisions.system }, target_revisions: { processing: "selected-next" }, applied_revisions: status.applied,
+const plan = { plan_id: "plan-1", module: "processing", expected_revision: revisions.processing, expected_revisions: { processing: revisions.processing, engine: revisions.engine }, target_revisions: { processing: "selected-next" }, applied_revisions: status.applied,
   generation: status.generation, running: true, strategy: "trial_boundary", changed_slots: ["processing.decoder"], changed_settings: [], errors: [] };
 const baseRuntime = { status, plan, operation: null, blocked: false, inProgress: false, recoveryRequired: false, submitting: false,
   uncertain: false, error: null, requestError: null, review: noop, apply: noop, dismissPlan: noop, refresh: noop, retryUnconfirmed: noop };
@@ -43,7 +43,7 @@ test("review presents the impact before Apply and blocks invalid plans", () => {
   assert.match(rebuild, /Restart the affected module/);
   assert.match(rebuild, /The selected module will restart/);
   assert.doesNotMatch(rebuild, /The engine will restart/);
-  const engineRebuild = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan, module: "system", strategy: "rebuild" } } });
+  const engineRebuild = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan, module: "engine", strategy: "rebuild" } } });
   assert.match(engineRebuild, /All running modules will be interrupted/);
   const nextStart = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan, strategy: "select_on_start" } } });
   assert.match(nextStart, /It does not start any module/);
@@ -135,13 +135,13 @@ test("Run preserves independent module controls and permits Stop while configura
       acquisition: { ...props.acquisition, data: { ...props.acquisition.data, streaming } } })));
   for (const streaming of [false, true]) {
     const pending = run({ ...baseRuntime, blocked: true, inProgress: true }, streaming);
-    assert.doesNotMatch(pending, /aria-label="System progress"/);
+    assert.doesNotMatch(pending, /aria-label="Engine progress"/);
     assert.match(pending, /Start processing/);
     assert.match(pending, /Start actuation/);
     for (const label of ["Start engine", "Connect", "Disconnect", "Start reading", "Launch stimulation", "Trigger trial"]) {
       assert.equal(buttonDisabled(pending, label), true, label);
     }
-    const recovery = run({ ...baseRuntime, status: { ...status, recovery: { system: "Foundation state unknown" } }, blocked: true, recoveryRequired: true }, streaming);
+    const recovery = run({ ...baseRuntime, status: { ...status, recovery: { engine: "Foundation state unknown" } }, blocked: true, recoveryRequired: true }, streaming);
     assert.equal(buttonDisabled(recovery, "Stop engine"), false);
     assert.equal(buttonDisabled(recovery, "Stop reading"), !streaming);
     assert.equal(buttonDisabled(recovery, "Start reading"), true);
@@ -204,7 +204,7 @@ for (const [name, activeInput, expected] of [
   const seeded = {
     99: { active_input: activeInput, readiness: { ready: true } },
     4: { modules: { processing: { revision: revisions.processing, bindings: [{ slot: "processing.decoder", kind: "decoder",
-      selection: { package_id: "example.decoder", contribution_id: "main", version: "1.0.0" }, parameters: {} }] } }, system: { revision: revisions.system } },
+      selection: { package_id: "example.decoder", contribution_id: "main", version: "1.0.0" }, parameters: {} }] } }, engine: { revision: revisions.engine } },
     31: { status: "ready", revision: JSON.stringify(revisions) },
   };
   dispatcher.current = {
@@ -238,9 +238,9 @@ test("unrelated accepted and applied module changes do not stale a processing re
   assert.doesNotMatch(html, /runtime or selected configuration changed/);
 });
 
-test("shared system changes invalidate a module review", () => {
+test("shared engine changes invalidate a module review", () => {
   const html = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, status: { ...status,
-    accepted: { ...revisions, system: "next-system" },
+    accepted: { ...revisions, engine: "next-engine" },
   } } });
   assert.equal(buttonDisabled(html, "Apply configuration"), true);
 });

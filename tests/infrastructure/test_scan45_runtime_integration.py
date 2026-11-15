@@ -45,7 +45,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
 
     catalog = PluginCatalog()
     snapshot = {
-        "CONFIG.generation": generation, "CONFIG.module_revisions": {"acquisition": revision, "processing": revision, "stimulation": revision, "actuation": revision}, "CONFIG.system_revision": "system",
+        "CONFIG.generation": generation, "CONFIG.module_revisions": {"acquisition": revision, "processing": revision, "stimulation": revision, "actuation": revision}, "CONFIG.engine_revision": "engine",
         "ACQUISITION.signal_source": reader.plugin_type,
         "ACQUISITION.sample_rate": sample_rate, "ACQUISITION.channel_count": 10,
         "PLUGINS.bindings": [
@@ -61,7 +61,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         ],
     }
     receipt = {
-        "generation": generation, "acquisition_revision": revision, "processing_revision": revision, "system_revision": "system",
+        "generation": generation, "acquisition_revision": revision, "processing_revision": revision, "engine_revision": "engine",
         "connection_id": source.connection_id,
         "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
     }
@@ -94,7 +94,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
     bus.register_event_listener(EventType.TrialCompleted, on_trial)
     processor = SignalProcessor(
         None, None, Queue(), data, bus, generation=generation,
-        processing_revision=revision, acquisition_revision=revision, system_revision="system", settings_snapshot=snapshot,
+        processing_revision=revision, acquisition_revision=revision, engine_revision="engine", settings_snapshot=snapshot,
     )
     await bus.start()
     try:
@@ -136,7 +136,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         monkeypatch.setattr(reader, "stop_stream", AsyncMock())
         acquisition = AcquisitionRuntime(
             reader, Queue(), data, bus, source_id=reader.plugin_type,
-            generation=generation, acquisition_revision=revision, system_revision="system",
+            generation=generation, acquisition_revision=revision, engine_revision="engine",
         )
         await acquisition.fetch()
         assert acquisition._fetch_failure is None

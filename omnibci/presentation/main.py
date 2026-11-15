@@ -38,12 +38,12 @@ from omnibci.presentation.routers import engine, acquisition, stimulation, resul
 from omnibci.presentation.routers import plugin_config, runtime_config, plugin_packages
 from omnibci.presentation.routers import plugin_package_lifecycle, plugin_market
 from omnibci.presentation.routers import signal_setup
-from omnibci.presentation.routers import system
+from omnibci.presentation.routers import server
 from omnibci.presentation.security import ApiAccessMiddleware, RequestGate
-from omnibci.application.services.shutdown_service import BackendShutdownService
+from omnibci.application.services.shutdown_service import ServerShutdownService
 from omnibci.presentation.websockets.results import results_broadcaster, results_ws_endpoint
 from omnibci.bootstrap import (
-    backend_plugin_environment, build_container, create_backend_logging, load_host_settings, register_engine_listeners,
+    server_plugin_environment, build_container, create_server_logging, load_host_settings, register_engine_listeners,
 )
 from omnibci.presentation.errors import register_exception_handlers
 from omnibci.presentation.schemas.common import ErrorResponse
@@ -69,8 +69,8 @@ async def lifespan(app: FastAPI):
     """Keep logging available throughout startup and service shutdown."""
     app.state.shutdown_complete = False
     host_settings = load_host_settings()
-    with backend_plugin_environment(host_settings), create_backend_logging(host_settings) as backend_logging:
-        app.state.backend_logging = backend_logging
+    with server_plugin_environment(host_settings), create_server_logging(host_settings) as server_logging:
+        app.state.server_logging = server_logging
         async with _services_lifespan(app, host_settings):
             yield
     # A stopped runtime alone does not confirm successful lifespan/log cleanup.
@@ -103,7 +103,7 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
     app.state.plugin_installation_service = container.plugin_installation_service
     app.state.plugin_package_service = container.plugin_package_service
     app.state.plugin_market_service = container.plugin_market_service
-    app.state.shutdown_service = BackendShutdownService(
+    app.state.shutdown_service = ServerShutdownService(
         engine=container.engine_service,
         configuration=container.runtime_configuration,
     )
@@ -171,7 +171,7 @@ def create_app(*, api_token: str | None = None, desktop: bool = False) -> FastAP
     register_exception_handlers(app)
 
     prefix = "/api/v1"
-    app.include_router(system.router, prefix=prefix, responses=ERROR_RESPONSES)
+    app.include_router(server.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(engine.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(acquisition.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(stimulation.router, prefix=prefix, responses=ERROR_RESPONSES)

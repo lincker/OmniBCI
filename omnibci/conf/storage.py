@@ -10,7 +10,7 @@ from pathlib import Path
 
 @contextmanager
 def file_lock(path: Path, *, timeout_s: float = 5.0):
-    """Serialize cooperating writers across backend processes and platforms."""
+    """Serialize cooperating writers across server processes and platforms."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_symlink():
         raise OSError("Host settings lock must not be a symlink")

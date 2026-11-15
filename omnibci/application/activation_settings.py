@@ -4,10 +4,10 @@ from copy import deepcopy
 
 MODULES = ("acquisition", "processing", "stimulation", "actuation")
 # Shared by nodes that may run on separate machines; any change rebuilds the graph.
-SYSTEM_SECTION = "system"
-SECTIONS = (*MODULES, SYSTEM_SECTION)
+ENGINE_SECTION = "engine"
+SECTIONS = (*MODULES, ENGINE_SECTION)
 
-SYSTEM_SETTING_DEFAULTS = {
+ENGINE_SETTING_DEFAULTS = {
     "NEUROENGINE.queue_size": 100,
     "NEUROENGINE.startup_timeout_s": 5.0,
     "debug": False,
@@ -29,12 +29,12 @@ MODULE_SETTING_DEFAULTS = {
 
 SECTION_SETTING_KEYS = {
     **{module: frozenset(settings) for module, settings in MODULE_SETTING_DEFAULTS.items()},
-    "system": frozenset(SYSTEM_SETTING_DEFAULTS),
+    "engine": frozenset(ENGINE_SETTING_DEFAULTS),
 }
 
 RUNTIME_HOST_SETTING_KEYS = frozenset().union(*SECTION_SETTING_KEYS.values())
 
-BACKEND_STARTUP_DEFAULTS = {
+SERVER_STARTUP_DEFAULTS = {
     "LOGGING.level": "INFO",
     "LOGGING.file_path": "omnibci.log",
     "NEUROENGINE.command_timeout_s": 10.0,
@@ -42,9 +42,9 @@ BACKEND_STARTUP_DEFAULTS = {
 }
 
 
-def backend_startup_settings(settings: dict) -> dict:
-    """Resolve declared backend defaults for comparison with the loaded process."""
-    return {key: deepcopy(settings.get(key, default)) for key, default in BACKEND_STARTUP_DEFAULTS.items()}
+def server_startup_settings(settings: dict) -> dict:
+    """Resolve declared server defaults for comparison with the loaded process."""
+    return {key: deepcopy(settings.get(key, default)) for key, default in SERVER_STARTUP_DEFAULTS.items()}
 
 
 def section_settings(settings: dict, section: str) -> dict:

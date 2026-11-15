@@ -6,11 +6,11 @@ from omnibci.conf import OmniBCISettings
 
 
 def test_bundled_defaults_contain_only_host_configuration():
-    from omnibci.application.activation_settings import BACKEND_STARTUP_DEFAULTS, RUNTIME_HOST_SETTING_KEYS
+    from omnibci.application.activation_settings import SERVER_STARTUP_DEFAULTS, RUNTIME_HOST_SETTING_KEYS
 
     defaults = OmniBCISettings().saved_snapshot()
 
-    assert set(defaults) <= RUNTIME_HOST_SETTING_KEYS | BACKEND_STARTUP_DEFAULTS.keys()
+    assert set(defaults) <= RUNTIME_HOST_SETTING_KEYS | SERVER_STARTUP_DEFAULTS.keys()
     assert defaults["NEUROENGINE.queue_size"] == 100
 
 

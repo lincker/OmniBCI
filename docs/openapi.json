@@ -6,20 +6,20 @@
     "version": "1.0.0"
   },
   "paths": {
-    "/api/v1/system/info": {
+    "/api/v1/server/info": {
       "get": {
         "tags": [
-          "System"
+          "Server"
         ],
-        "summary": "System Info",
-        "operationId": "system_info_api_v1_system_info_get",
+        "summary": "Server Info",
+        "operationId": "server_info_api_v1_server_info_get",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_SystemInfoResponse_"
+                  "$ref": "#/components/schemas/ApiResponse_ServerInfoResponse_"
                 }
               }
             }
@@ -97,20 +97,20 @@
         }
       }
     },
-    "/api/v1/system/logs": {
+    "/api/v1/server/logs": {
       "get": {
         "tags": [
-          "System"
+          "Server"
         ],
-        "summary": "Backend Logs",
-        "operationId": "backend_logs_api_v1_system_logs_get",
+        "summary": "Server Logs",
+        "operationId": "server_logs_api_v1_server_logs_get",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_BackendLogsResponse_"
+                  "$ref": "#/components/schemas/ApiResponse_ServerLogsResponse_"
                 }
               }
             }
@@ -2725,7 +2725,7 @@
         "tags": [
           "Config"
         ],
-        "summary": "Backend startup settings",
+        "summary": "Server startup settings",
         "operationId": "get_config_api_v1_config_get",
         "responses": {
           "200": {
@@ -2814,7 +2814,7 @@
         "tags": [
           "Config"
         ],
-        "summary": "Save settings for the next backend startup",
+        "summary": "Save settings for the next server startup",
         "operationId": "patch_config_api_v1_config_patch",
         "requestBody": {
           "content": {
@@ -4176,20 +4176,20 @@
         }
       }
     },
-    "/api/v1/config/system": {
+    "/api/v1/config/engine": {
       "get": {
         "tags": [
           "Plugin configuration"
         ],
-        "summary": "Get System",
-        "operationId": "get_system_api_v1_config_system_get",
+        "summary": "Get Engine",
+        "operationId": "get_engine_api_v1_config_engine_get",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_SystemSettingsResponse_"
+                  "$ref": "#/components/schemas/ApiResponse_EngineSettingsResponse_"
                 }
               }
             }
@@ -6115,7 +6115,7 @@
             ],
             "title": "Acquisition Revision"
           },
-          "system_revision": {
+          "engine_revision": {
             "anyOf": [
               {
                 "type": "string"
@@ -6124,7 +6124,7 @@
                 "type": "null"
               }
             ],
-            "title": "System Revision"
+            "title": "Engine Revision"
           },
           "source_id": {
             "type": "string",
@@ -6213,7 +6213,7 @@
           "capture_id",
           "generation",
           "acquisition_revision",
-          "system_revision",
+          "engine_revision",
           "source_id",
           "connection_id",
           "sequence_id",
@@ -6366,7 +6366,7 @@
             ],
             "title": "Acquisition Revision"
           },
-          "system_revision": {
+          "engine_revision": {
             "anyOf": [
               {
                 "type": "string"
@@ -6375,7 +6375,7 @@
                 "type": "null"
               }
             ],
-            "title": "System Revision"
+            "title": "Engine Revision"
           },
           "source_id": {
             "anyOf": [
@@ -6498,7 +6498,7 @@
           "capture_id",
           "generation",
           "acquisition_revision",
-          "system_revision",
+          "engine_revision",
           "source_id",
           "connection_id",
           "status",
@@ -6770,32 +6770,6 @@
         "type": "object",
         "title": "ApiResponse[AcquisitionStatusResponse]"
       },
-      "ApiResponse_BackendLogsResponse_": {
-        "properties": {
-          "success": {
-            "type": "boolean",
-            "title": "Success",
-            "default": true
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "ok"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BackendLogsResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[BackendLogsResponse]"
-      },
       "ApiResponse_ConfigResponse_": {
         "properties": {
           "success": {
@@ -6821,6 +6795,32 @@
         },
         "type": "object",
         "title": "ApiResponse[ConfigResponse]"
+      },
+      "ApiResponse_EngineSettingsResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EngineSettingsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[EngineSettingsResponse]"
       },
       "ApiResponse_EngineStatusResponse_": {
         "properties": {
@@ -7212,6 +7212,58 @@
         "type": "object",
         "title": "ApiResponse[RuntimePlanResponse]"
       },
+      "ApiResponse_ServerInfoResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ServerInfoResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ServerInfoResponse]"
+      },
+      "ApiResponse_ServerLogsResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ServerLogsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ServerLogsResponse]"
+      },
       "ApiResponse_SignalPreviewResponse_": {
         "properties": {
           "success": {
@@ -7289,58 +7341,6 @@
         },
         "type": "object",
         "title": "ApiResponse[StimulationStatusResponse]"
-      },
-      "ApiResponse_SystemInfoResponse_": {
-        "properties": {
-          "success": {
-            "type": "boolean",
-            "title": "Success",
-            "default": true
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "ok"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SystemInfoResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[SystemInfoResponse]"
-      },
-      "ApiResponse_SystemSettingsResponse_": {
-        "properties": {
-          "success": {
-            "type": "boolean",
-            "title": "Success",
-            "default": true
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "ok"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SystemSettingsResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "ApiResponse[SystemSettingsResponse]"
       },
       "ApiResponse_list_MarketPackageResponse__": {
         "properties": {
@@ -7522,32 +7522,6 @@
         "type": "object",
         "title": "ApiResponse[list[ProfileHistoryResponse]]"
       },
-      "BackendLogsResponse": {
-        "properties": {
-          "filename": {
-            "type": "string",
-            "title": "Filename"
-          },
-          "lines": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Lines"
-          },
-          "truncated": {
-            "type": "boolean",
-            "title": "Truncated"
-          }
-        },
-        "type": "object",
-        "required": [
-          "filename",
-          "lines",
-          "truncated"
-        ],
-        "title": "BackendLogsResponse"
-      },
       "ChannelBindingModel": {
         "properties": {
           "name": {
@@ -7666,7 +7640,7 @@
           },
           "value": {
             "title": "Value",
-            "description": "Saved value for the next backend startup"
+            "description": "Saved value for the next server startup"
           },
           "type": {
             "type": "string",
@@ -7675,8 +7649,8 @@
           },
           "requires": {
             "type": "string",
-            "title": "Requires",
-            "description": "backend-restart"
+            "const": "server-restart",
+            "title": "Requires"
           },
           "description": {
             "type": "string",
@@ -7684,7 +7658,7 @@
           },
           "active_value": {
             "title": "Active Value",
-            "description": "Value captured when this backend started"
+            "description": "Value captured when this server started"
           },
           "restart_required": {
             "type": "boolean",
@@ -7921,6 +7895,32 @@
           "parameters"
         ],
         "title": "DraftPluginBindingRequest"
+      },
+      "EngineSettingsResponse": {
+        "properties": {
+          "revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Settings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "revision",
+          "settings"
+        ],
+        "title": "EngineSettingsResponse"
       },
       "EngineStatusResponse": {
         "properties": {
@@ -8559,10 +8559,10 @@
             "type": "object",
             "title": "Modules"
           },
-          "system": {
+          "engine": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/SystemSettingsResponse"
+                "$ref": "#/components/schemas/EngineSettingsResponse"
               },
               {
                 "type": "null"
@@ -8580,7 +8580,7 @@
         "type": "object",
         "required": [
           "modules",
-          "system"
+          "engine"
         ],
         "title": "ModulesResponse"
       },
@@ -8627,9 +8627,9 @@
             "type": "object",
             "title": "Module Revisions"
           },
-          "system_revision": {
+          "engine_revision": {
             "type": "string",
-            "title": "System Revision"
+            "title": "Engine Revision"
           },
           "generation": {
             "anyOf": [
@@ -8655,12 +8655,13 @@
             "title": "Bindings"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "format_version",
           "role",
           "module_revisions",
-          "system_revision",
+          "engine_revision",
           "generation",
           "settings",
           "bindings"
@@ -8962,17 +8963,18 @@
             "title": "Revision",
             "description": "Revision after saving the host settings"
           },
-          "backend_restart_required": {
+          "server_restart_required": {
             "type": "boolean",
-            "title": "Backend Restart Required",
-            "description": "Whether any saved backend settings differ from the startup snapshot"
+            "title": "Server Restart Required",
+            "description": "Whether any saved server settings differ from the startup snapshot"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "saved",
           "revision",
-          "backend_restart_required"
+          "server_restart_required"
         ],
         "title": "PatchConfigResponse"
       },
@@ -9686,7 +9688,7 @@
               "processing",
               "stimulation",
               "actuation",
-              "system"
+              "engine"
             ],
             "title": "Module"
           },
@@ -9779,7 +9781,7 @@
               "processing",
               "stimulation",
               "actuation",
-              "system"
+              "engine"
             ],
             "title": "Module"
           },
@@ -9967,7 +9969,7 @@
               "processing",
               "stimulation",
               "actuation",
-              "system"
+              "engine"
             ],
             "title": "Module"
           }
@@ -10007,6 +10009,61 @@
           "profile_id"
         ],
         "title": "SelectProfileBindingRequest"
+      },
+      "ServerInfoResponse": {
+        "properties": {
+          "app_version": {
+            "type": "string",
+            "title": "App Version"
+          },
+          "desktop_api_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Desktop Api Version",
+            "default": 1
+          },
+          "instance_id": {
+            "type": "string",
+            "title": "Instance Id"
+          },
+          "auth_enabled": {
+            "type": "boolean",
+            "title": "Auth Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "app_version",
+          "instance_id",
+          "auth_enabled"
+        ],
+        "title": "ServerInfoResponse"
+      },
+      "ServerLogsResponse": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "lines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Lines"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "lines",
+          "truncated"
+        ],
+        "title": "ServerLogsResponse"
       },
       "SetPackageEnabledRequest": {
         "properties": {
@@ -10459,61 +10516,6 @@
           "capture_id"
         ],
         "title": "StopAcquisitionPreviewRequest"
-      },
-      "SystemInfoResponse": {
-        "properties": {
-          "app_version": {
-            "type": "string",
-            "title": "App Version"
-          },
-          "desktop_api_version": {
-            "type": "integer",
-            "const": 1,
-            "title": "Desktop Api Version",
-            "default": 1
-          },
-          "instance_id": {
-            "type": "string",
-            "title": "Instance Id"
-          },
-          "auth_enabled": {
-            "type": "boolean",
-            "title": "Auth Enabled"
-          }
-        },
-        "type": "object",
-        "required": [
-          "app_version",
-          "instance_id",
-          "auth_enabled"
-        ],
-        "title": "SystemInfoResponse"
-      },
-      "SystemSettingsResponse": {
-        "properties": {
-          "revision": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Revision"
-          },
-          "settings": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Settings"
-          }
-        },
-        "type": "object",
-        "required": [
-          "revision",
-          "settings"
-        ],
-        "title": "SystemSettingsResponse"
       },
       "TrialResponse": {
         "properties": {

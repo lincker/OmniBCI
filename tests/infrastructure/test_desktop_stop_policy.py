@@ -22,7 +22,7 @@ def test_desktop_output_retains_live_child_without_termination(monkeypatch, modu
     receiver.poll.return_value = True
     receiver.recv.return_value = StartupReport.ready(
         component, module_revisions={component.lower(): "revision-1"},
-        system_revision="system", generation="graph-1")
+        engine_revision="engine", generation="graph-1")
     process_factory = MagicMock(return_value=process)
     monkeypatch.setattr(module.mp, "Process", process_factory)
     monkeypatch.setattr(module.mp, "Event", MagicMock())
@@ -31,7 +31,7 @@ def test_desktop_output_retains_live_child_without_termination(monkeypatch, modu
     key = "STIMULATION.paradigm" if component == "Stimulation" else "ACTUATION.effector"
     snapshot = _snapshot(key)
     manager.start(settings_snapshot=snapshot)
-    # Python itself must not terminate this child as a daemon on backend exit.
+    # Python itself must not terminate this child as a daemon on server exit.
     assert process_factory.call_args.kwargs["daemon"] is False
 
     with pytest.raises(RuntimeError, match="did not stop gracefully"):

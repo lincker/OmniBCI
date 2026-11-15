@@ -33,7 +33,7 @@ def test_recovery_flag_reflects_quarantine_even_when_engine_is_not_ready(runtime
     gate.quarantine("Unknown startup outcome")
     status = RuntimeConfigurationResponse.model_validate(service.status())
     assert status.running is False
-    assert status.recovery == {"system": "Unknown startup outcome"}
+    assert status.recovery == {"engine": "Unknown startup outcome"}
     assert status.operations["processing"].model_dump() == failed
     plan = service.plan("processing", [item for item in bindings if item["slot"].startswith("processing.")], expected_revision=snapshot.modules["processing"].revision, settings=section_settings(service.profiles.settings_source(), "processing"))
     with pytest.raises(ProfileRevisionConflict, match="uncertain runtime"):
@@ -47,7 +47,7 @@ async def test_confirmed_stop_clears_current_recovery_and_allows_apply_with_fail
     service.engine = NeuroEngineService(lambda: None, admission=gate)
     failed = failed_history(service, snapshot.modules["processing"].revision)
     gate.quarantine("Unknown startup outcome")
-    assert service.status()["recovery"] == {"system": "Unknown startup outcome"}
+    assert service.status()["recovery"] == {"engine": "Unknown startup outcome"}
     await service.engine.handle_stop_engine(StopEngineCommand())
     status = RuntimeConfigurationResponse.model_validate(service.status())
     assert status.running is False

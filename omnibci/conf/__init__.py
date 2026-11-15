@@ -14,10 +14,10 @@ from threading import RLock
 import tomlkit
 
 from omnibci.application.activation_settings import (
-    BACKEND_STARTUP_DEFAULTS, RUNTIME_HOST_SETTING_KEYS, SECTION_SETTING_KEYS, backend_startup_settings,
+    SERVER_STARTUP_DEFAULTS, RUNTIME_HOST_SETTING_KEYS, SECTION_SETTING_KEYS, server_startup_settings,
 )
 from omnibci.application.config_errors import ConfigProfileConflictError, ConfigProfileValidationError
-from omnibci.application.plugin_profiles import PluginProfileValidationError, ProfileRevisionConflict, SystemSettings
+from omnibci.application.plugin_profiles import PluginProfileValidationError, ProfileRevisionConflict, EngineSettings
 from omnibci.conf.paths import config_root
 from omnibci.conf.storage import atomic_write, file_lock
 
@@ -69,7 +69,7 @@ class OmniBCISettings:
 
     @staticmethod
     def _validate_host_keys(values: dict) -> None:
-        unknown = set(values) - RUNTIME_HOST_SETTING_KEYS - BACKEND_STARTUP_DEFAULTS.keys()
+        unknown = set(values) - RUNTIME_HOST_SETTING_KEYS - SERVER_STARTUP_DEFAULTS.keys()
         if unknown:
             raise ConfigProfileValidationError(
                 "User host settings contain unsupported keys; configure plugins through Profiles: "
@@ -86,18 +86,18 @@ class OmniBCISettings:
         if self._explicit_path is not None:
             return self._hash(defaults, content)
         try:
-            data = json.dumps(backend_startup_settings(values), sort_keys=True, separators=(",", ":"), allow_nan=False)
+            data = json.dumps(server_startup_settings(values), sort_keys=True, separators=(",", ":"), allow_nan=False)
         except (ValueError, TypeError) as exc:
-            raise ConfigProfileValidationError(f"Invalid backend settings: {exc}") from exc
+            raise ConfigProfileValidationError(f"Invalid server settings: {exc}") from exc
         return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _system(document):
+    def _engine(document):
         if "engine" not in document:
             return None
         values = document["engine"]
         try:
-            return SystemSettings(values.unwrap() if hasattr(values, "unwrap") else values)
+            return EngineSettings(values.unwrap() if hasattr(values, "unwrap") else values)
         except PluginProfileValidationError as exc:
             raise ConfigProfileValidationError(f"Invalid Engine settings: {exc}") from exc
 
@@ -123,11 +123,11 @@ class OmniBCISettings:
                                                      "ACQUISITION.manual_montage"}})
             if {"META", "PROFILES"} & document.keys():
                 raise ConfigProfileValidationError("Retired profile metadata is not a host setting")
-            if overrides.keys() & SECTION_SETTING_KEYS["system"]:
+            if overrides.keys() & SECTION_SETTING_KEYS["engine"]:
                 raise ConfigProfileValidationError("Engine settings must be stored in the engine table")
-        system = self._system(document)
-        if system is not None:
-            overrides.update(system.settings)
+        engine_settings = self._engine(document)
+        if engine_settings is not None:
+            overrides.update(engine_settings.settings)
         values = {**base, **overrides}
         return values, self._saved_revision(values, defaults, content), document, defaults
 
@@ -201,7 +201,7 @@ class OmniBCISettings:
         if not isinstance(expected_revision, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_revision):
             raise ConfigProfileValidationError("expected_revision must be a SHA-256 revision")
         if self._explicit_path is None:
-            self._validate_backend_updates(updates)
+            self._validate_server_updates(updates)
         with self._lock:
             path = self._config_path
             with file_lock(path.parent / ".host-settings.lock", timeout_s=self._lock_timeout_s):
@@ -222,42 +222,42 @@ class OmniBCISettings:
         with self._lock:
             self._ensure_loaded()
             if self._explicit_path is None:
-                self._validate_backend_updates({key: value})
+                self._validate_server_updates({key: value})
             self._pending[key] = deepcopy(value)
 
     @staticmethod
-    def _validate_backend_updates(updates):
-        unknown = set(updates) - BACKEND_STARTUP_DEFAULTS.keys()
+    def _validate_server_updates(updates):
+        unknown = set(updates) - SERVER_STARTUP_DEFAULTS.keys()
         if unknown:
             raise ConfigProfileValidationError(
-                "Engine settings require application; only backend startup settings can be saved: "
+                "Engine settings require application; only server startup settings can be saved: "
                 + ", ".join(sorted(unknown)))
 
-    def get_system(self) -> SystemSettings | None:
+    def get_engine(self) -> EngineSettings | None:
         with self._lock:
             path = self._config_path
             if not path.exists() and not path.is_symlink():
                 return None
             with file_lock(path.parent / ".host-settings.lock", timeout_s=self._lock_timeout_s):
-                return self._system(self._read(path)[2])
+                return self._engine(self._read(path)[2])
 
-    def save_system(self, settings: SystemSettings, expected_revision: str | None) -> SystemSettings:
-        settings = SystemSettings.from_dict(settings.to_dict())
-        self._write_system(settings, expected_revision)
+    def save_engine(self, settings: EngineSettings, expected_revision: str | None) -> EngineSettings:
+        settings = EngineSettings.from_dict(settings.to_dict())
+        self._write_engine(settings, expected_revision)
         return settings
 
-    def remove_system(self, expected_revision: str) -> None:
-        self._write_system(None, expected_revision)
+    def remove_engine(self, expected_revision: str) -> None:
+        self._write_engine(None, expected_revision)
 
-    def _write_system(self, settings, expected_revision):
+    def _write_engine(self, settings, expected_revision):
         with self._lock:
             path = self._config_path
             with file_lock(path.parent / ".host-settings.lock", timeout_s=self._lock_timeout_s):
                 _, _, document, _ = self._read(path)
-                previous = self._system(document)
+                previous = self._engine(document)
                 if ((settings is None and previous is None)
                         or (previous.revision if previous is not None else None) != expected_revision):
-                    raise ProfileRevisionConflict("System settings changed; reload before saving")
+                    raise ProfileRevisionConflict("Engine settings changed; reload before saving")
                 if settings is None:
                     del document["engine"]
                 else:

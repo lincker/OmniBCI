@@ -65,8 +65,8 @@ def test_unavailable_shared_settings_returns_service_error(client, monkeypatch):
     def unavailable():
         raise OSError("Settings storage unavailable")
 
-    monkeypatch.setattr(service.repository, "get_system", unavailable)
-    response = http.get(f"{PREFIX}/system")
+    monkeypatch.setattr(service.repository, "get_engine", unavailable)
+    response = http.get(f"{PREFIX}/engine")
     assert response.status_code == 503
     assert response.json()["code"] == "SERVICE_UNAVAILABLE"
 
@@ -405,7 +405,7 @@ def test_reviewed_candidate_is_applied_and_stale_plan_is_rejected(client):
     assert selected["revision"] == candidate.revision == plan["target_revisions"]["acquisition"]
     assert selected["bindings"][0]["parameters"]["sample_rate"] == 500
     assert "NEUROENGINE.queue_size" not in selected["settings"]
-    assert service.repository.get_system().settings["NEUROENGINE.queue_size"] == 100
+    assert service.repository.get_engine().settings["NEUROENGINE.queue_size"] == 100
     assert http.post(f"{PREFIX}/apply-plan", json=body).status_code == 409
 
 
@@ -413,11 +413,11 @@ def test_reviewed_candidate_is_applied_and_stale_plan_is_rejected(client):
     ("NEUROENGINE.command_timeout_s", 20), ("PLUGINS.user_dir", "/different/plugin-directory"),
     ("LOGGING.level", "DEBUG"), ("LOGGING.file_path", "changed.log"),
 ])
-def test_pending_backend_changes_do_not_block_current_engine_review(client, key, value):
+def test_pending_server_changes_do_not_block_current_engine_review(client, key, value):
     http, service, state = client
     stored = {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")}
     state["settings"][key] = value
-    response = http.post(f"{PREFIX}/apply-plan", json={"module": "system", "bindings": [],
+    response = http.post(f"{PREFIX}/apply-plan", json={"module": "engine", "bindings": [],
         "settings": {"NEUROENGINE.queue_size": 42}})
     assert response.status_code == 200, response.text
     assert not response.json()["data"]["errors"]
@@ -474,17 +474,17 @@ def test_openapi_publishes_typed_profile_and_module_contracts(client):
     assert "bindings" in schemas["ModuleActivationResponse"]["required"]
     assert "module" in schemas["RuntimePlanRequest"]["required"]
     assert schemas["RuntimePlanRequest"]["properties"]["module"]["enum"] == [
-        "acquisition", "processing", "stimulation", "actuation", "system"]
+        "acquisition", "processing", "stimulation", "actuation", "engine"]
     assert "include_host_settings" not in schemas["RuntimePlanRequest"]["properties"]
     assert f"{PREFIX}/activation" not in openapi["paths"]
 
 
-def test_unknown_host_fields_do_not_enter_module_or_system_contract(client):
+def test_unknown_host_fields_do_not_enter_module_or_engine_contract(client):
     http, _, state = client
     state["settings"]["CUSTOM.setting"] = "not runtime configuration"
     accept(http, "acquisition", [("acquisition.source", create(client))])
     selected = http.get(f"{PREFIX}/modules").json()["data"]
-    assert "CUSTOM.setting" not in selected["system"]["settings"]
+    assert "CUSTOM.setting" not in selected["engine"]["settings"]
     assert all("CUSTOM.setting" not in module["settings"] for module in selected["modules"].values())
 
 

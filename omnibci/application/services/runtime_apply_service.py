@@ -73,12 +73,12 @@ class RuntimeApplyCoordinator:
     async def execute_current_action(self, stored, action):
         """Finish the user action while its configuration reservation is held."""
         module = stored.plan.module
-        system = self.profiles.repository.get_system()
+        engine_settings = self.profiles.repository.get_engine()
         if not self.engine.is_engine_ready:
-            foundation = self.profiles.materialize(ActivationSet({}, system))
-            async with self.engine.runtime_transition("system"):
+            foundation = self.profiles.materialize(ActivationSet({}, engine_settings))
+            async with self.engine.runtime_transition("engine"):
                 await self.engine.start_for_configuration(foundation)
-        selected = self.profiles.materialize(ActivationSet(stored.candidates, system), self.engine.generation)
+        selected = self.profiles.materialize(ActivationSet(stored.candidates, engine_settings), self.engine.generation)
         snapshot = merge_module_settings(self.engine.applied_snapshot or {}, selected, (module,))
         if module in ("acquisition", "processing"):
             if not self.engine.is_module_running(module):
@@ -123,7 +123,7 @@ class RuntimeApplyCoordinator:
             if (plan.running and plan.module in ("acquisition", "processing") and plan.strategy != "no_change"
                     and self.engine.is_module_running(plan.module) == (plan.strategy == "select_on_start")):
                 raise ProfileRevisionConflict("Module state changed before configuration application")
-            for candidate in (combined.modules if plan.module == "system" else stored.candidates).values():
+            for candidate in (combined.modules if plan.module == "engine" else stored.candidates).values():
                 if candidate is not None:
                     self.profiles.validate_module(candidate, active_kinds=self.active_kinds(combined))
             if plan.strategy not in self.supported_strategies:
@@ -170,9 +170,9 @@ class RuntimeApplyCoordinator:
         repository = self.profiles.repository
         self._check_selected(previous, stored.plan.expected_revisions)
         try:
-            if stored.system is not None:
-                repository.save_system(stored.system, expected_revision=previous.revisions()["system"])
-                written.append("system")
+            if stored.engine is not None:
+                repository.save_engine(stored.engine, expected_revision=previous.revisions()["engine"])
+                written.append("engine")
             for module in ("acquisition", "stimulation", "processing", "actuation"):
                 if module in stored.candidates:
                     repository.save_module(stored.candidates[module], expected_revision=previous.revisions()[module])
@@ -190,11 +190,11 @@ class RuntimeApplyCoordinator:
         repository = self.profiles.repository
         for module in reversed(written):
             target_revision = stored.plan.target_revisions[module]
-            if module == "system":
-                if previous.system is None:
-                    repository.remove_system(expected_revision=target_revision)
+            if module == "engine":
+                if previous.engine is None:
+                    repository.remove_engine(expected_revision=target_revision)
                 else:
-                    repository.save_system(previous.system, expected_revision=target_revision)
+                    repository.save_engine(previous.engine, expected_revision=target_revision)
             elif previous.modules[module] is None:
                 repository.remove_module(module, expected_revision=target_revision)
             else:
@@ -207,12 +207,12 @@ class RuntimeApplyCoordinator:
 
     def _runtime_target(self, stored):
         before = self.engine.applied_snapshot
-        selected = self.profiles.materialize(ActivationSet(stored.candidates, stored.system), self.engine.generation)
+        selected = self.profiles.materialize(ActivationSet(stored.candidates, stored.engine), self.engine.generation)
         return merge_module_settings(before, selected, stored.candidates)
 
     async def _stage_pipeline(self, snapshot, expected_revision, *, boundary="trial"):
         identity = {"generation": snapshot["CONFIG.generation"],
-                    "system_revision": snapshot["CONFIG.system_revision"]}
+                    "engine_revision": snapshot["CONFIG.engine_revision"]}
         try:
             data = await self._request(EventType.StageProcessingConfiguration, {
                 "settings_snapshot": snapshot, "expected_revision": expected_revision,
@@ -237,7 +237,7 @@ class RuntimeApplyCoordinator:
     @staticmethod
     def _pipeline_receipt(data, snapshot):
         if (not isinstance(data, dict) or data.get("generation") != snapshot["CONFIG.generation"]
-                or data.get("system_revision") != snapshot["CONFIG.system_revision"]
+                or data.get("engine_revision") != snapshot["CONFIG.engine_revision"]
                 or data.get("applied_revision") != snapshot["CONFIG.module_revisions"]["processing"]
                 or data.get("status") != "applied"):
             raise RuntimeApplyFailure("Signal Processing revision was not acknowledged", recovery_required=True)
@@ -311,7 +311,7 @@ class RuntimeApplyCoordinator:
             data = await self._request(EventType.DetachProcessingInput, self._identity(snapshot))
             receipt = StreamDrainReceipt.from_value(data)
         if (receipt.generation != snapshot["CONFIG.generation"]
-                or receipt.system_revision != snapshot["CONFIG.system_revision"]
+                or receipt.engine_revision != snapshot["CONFIG.engine_revision"]
                 or receipt.acquisition_revision != snapshot["CONFIG.module_revisions"]["acquisition"]
                 or receipt.processing_revision not in (None, snapshot["CONFIG.module_revisions"]["processing"])):
             raise RuntimeError("Processing detach receipt belongs to a different configuration")
@@ -393,13 +393,13 @@ class RuntimeApplyCoordinator:
     @staticmethod
     def _identity(snapshot):
         return {"generation": snapshot.get("CONFIG.generation"),
-                "system_revision": snapshot.get("CONFIG.system_revision"),
+                "engine_revision": snapshot.get("CONFIG.engine_revision"),
                 "expected_revision": snapshot["CONFIG.module_revisions"]["acquisition"]}
 
     @staticmethod
     def _receipt(data, snapshot, *flags, module=None):
         if (not isinstance(data, dict) or data.get("generation") != snapshot.get("CONFIG.generation")
-                or data.get("system_revision") != snapshot.get("CONFIG.system_revision")
+                or data.get("engine_revision") != snapshot.get("CONFIG.engine_revision")
                 or module is not None and data.get("module_revision") != snapshot["CONFIG.module_revisions"][module]
                 or any(data.get(flag) is not True for flag in flags)):
             raise RuntimeError("Worker did not acknowledge the requested safe boundary")
@@ -415,7 +415,7 @@ class RuntimeApplyCoordinator:
             progress("draining")
             receipt = await asyncio.to_thread(self.acquisition.handle_stop_and_drain)
         if receipt is not None and (receipt.generation != before.get("CONFIG.generation")
-                or receipt.system_revision != before.get("CONFIG.system_revision")
+                or receipt.engine_revision != before.get("CONFIG.engine_revision")
                 or receipt.acquisition_revision != before["CONFIG.module_revisions"]["acquisition"]
                 or self.engine.is_module_running("processing")
                 and receipt.processing_revision != before["CONFIG.module_revisions"]["processing"]):
@@ -428,7 +428,7 @@ class RuntimeApplyCoordinator:
             data = await self._request(EventType.GetSourceCheckpoint, self._identity(before))
             if (not isinstance(data, dict) or data.get("generation") != before.get("CONFIG.generation")
                     or data.get("acquisition_revision") != before["CONFIG.module_revisions"]["acquisition"]
-                    or data.get("system_revision") != before.get("CONFIG.system_revision")):
+                    or data.get("engine_revision") != before.get("CONFIG.engine_revision")):
                 raise RuntimeError("Source checkpoint belongs to a different configuration")
             if type(data.get("supported")) is not bool:
                 raise RuntimeError("Source checkpoint support was not acknowledged")

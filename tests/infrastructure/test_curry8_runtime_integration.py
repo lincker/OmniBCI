@@ -104,7 +104,7 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
         ChannelBinding("Oz", "channel-2", "eeg"),
     ))
     snapshot = {
-        "CONFIG.module_revisions": {"acquisition": "curry-revision", "processing": "curry-revision", "stimulation": "curry-revision", "actuation": "curry-revision"}, "CONFIG.system_revision": "system",
+        "CONFIG.module_revisions": {"acquisition": "curry-revision", "processing": "curry-revision", "stimulation": "curry-revision", "actuation": "curry-revision"}, "CONFIG.engine_revision": "engine",
         "ACQUISITION.signal_source": "neuroscan_curry8_reader",
         "PLUGINS.bindings": [
             ProfileBinding("acquisition.source", "acquisition", None,
@@ -132,11 +132,11 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
     monkeypatch.setattr(data, "put_data", capture)
     acquisition = AcquisitionRuntime(
         source, Queue(), data, bus, source_id=source.plugin_type,
-        generation="curry-generation", acquisition_revision="curry-revision", system_revision="system",
+        generation="curry-generation", acquisition_revision="curry-revision", engine_revision="engine",
     )
     processor = make_processor(
         None, None, Queue(), data, bus,
-        generation="curry-generation", processing_revision="curry-revision", acquisition_revision="curry-revision", system_revision="system", settings_snapshot=snapshot,
+        generation="curry-generation", processing_revision="curry-revision", acquisition_revision="curry-revision", engine_revision="engine", settings_snapshot=snapshot,
     )
 
     def result(command_id):
@@ -165,7 +165,7 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
         assert "channel_types" not in json.loads(metadata["metadata"])
         plan = compile_processing_plan(descriptor, inputs, acquisition_revision="curry-revision")
         receipt = {
-            "generation": "curry-generation", "acquisition_revision": "curry-revision", "processing_revision": "curry-revision", "system_revision": "system",
+            "generation": "curry-generation", "acquisition_revision": "curry-revision", "processing_revision": "curry-revision", "engine_revision": "engine",
             "connection_id": descriptor.connection_id,
             "source_fingerprint": descriptor.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
         }

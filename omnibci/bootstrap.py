@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Callable, Iterable, Tuple
 
 from omnibci.shared.events import EventType
-from omnibci.application.activation_settings import SYSTEM_SETTING_DEFAULTS
+from omnibci.application.activation_settings import ENGINE_SETTING_DEFAULTS
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.acquisition_service import AcquisitionAppService
 from omnibci.application.services.stimulation_service import StimulationAppService
@@ -24,7 +24,7 @@ from omnibci.application.services.plugin_package_service import PluginPackageSer
 from omnibci.application.services.plugin_market_service import PluginMarketService
 from omnibci.application.plugin_packages import package_references_from_settings
 from omnibci.application.plugin_profiles import ActivationSet
-from omnibci.infrastructure.backend_logging import BackendLogging
+from omnibci.infrastructure.server_logging import ServerLogging
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
@@ -42,20 +42,20 @@ Subscription = Tuple[EventType, Callable]
 
 
 def load_host_settings() -> dict:
-    """Capture saved inputs once for all backend startup consumers."""
+    """Capture saved inputs once for all server startup consumers."""
     from omnibci.conf import settings
 
     return settings.saved_snapshot()
 
 
-def create_backend_logging(host_settings: dict) -> BackendLogging:
-    """Configure backend logging from the same snapshot as backend assembly."""
-    return BackendLogging(host_settings)
+def create_server_logging(host_settings: dict) -> ServerLogging:
+    """Configure server logging from the same snapshot as server assembly."""
+    return ServerLogging(host_settings)
 
 
 @contextmanager
-def backend_plugin_environment(host_settings: dict):
-    """Keep catalogues and child processes on the backend's startup directory."""
+def server_plugin_environment(host_settings: dict):
+    """Keep catalogues and child processes on the server's startup directory."""
     previous = os.environ.get("OMNIBCI_PLUGIN_DIR")
     directory = user_plugins_dir(host_settings=host_settings)
     if directory is None:
@@ -166,11 +166,11 @@ async def _build_container_services(host_settings, allow_process_termination):
     # Processes are single-use, so every restart requires a fresh engine graph.
     def startup_snapshot():
         try:
-            system = plugin_profiles.repository.get_system()
+            engine_settings = plugin_profiles.repository.get_engine()
         except (ValueError, KeyError, RuntimeError, OSError) as exc:
             raise RuntimeError(f"Plugin configuration is invalid: {exc}") from exc
-        if system is None:
-            plugin_profiles.repository.save_system(plugin_profiles.propose_system(SYSTEM_SETTING_DEFAULTS), expected_revision=None)
+        if engine_settings is None:
+            plugin_profiles.repository.save_engine(plugin_profiles.propose_engine(ENGINE_SETTING_DEFAULTS), expected_revision=None)
         return accepted_runtime_settings(profiles=plugin_profiles, active_kinds=set())
 
     engine_service = NeuroEngineService(
@@ -259,7 +259,7 @@ class _RuntimeSettings:
         if snapshot is None or not self.engine.is_engine_ready:
             try:
                 accepted = ActivationSet({"acquisition": self.profiles.repository.get_module("acquisition")},
-                                         self.profiles.repository.get_system())
+                                         self.profiles.repository.get_engine())
                 snapshot = self.profiles.materialize(accepted)
             except (ValueError, KeyError, RuntimeError, OSError):
                 # Optional status metadata must not block configuration repair.

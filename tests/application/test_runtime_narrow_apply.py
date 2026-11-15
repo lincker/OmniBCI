@@ -27,12 +27,12 @@ class NarrowCommands(Commands):
         self.context_targets = []
 
     def request(self, event_type, payload=None, **kwargs):
-        identity = {"generation": self.engine.generation, "system_revision": self.engine.applied_revisions["system"]}
+        identity = {"generation": self.engine.generation, "engine_revision": self.engine.applied_revisions["engine"]}
         if event_type is EventType.DetachProcessingInput:
             assert payload["expected_revision"] == self.acquisition_revision
             data = StreamDrainReceipt(self.engine.generation, self.acquisition_revision, 9, 1, True,
                                       processing_revision=self.processing_revision,
-                                      system_revision=self.engine.applied_revisions["system"]).to_dict()
+                                      engine_revision=self.engine.applied_revisions["engine"]).to_dict()
         elif event_type is EventType.StageProcessingConfiguration:
             assert payload["expected_revision"] == self.processing_revision
             target = payload["settings_snapshot"]["CONFIG.module_revisions"]["processing"]
@@ -282,7 +282,7 @@ async def test_processing_can_change_before_any_input_has_been_attached(narrow):
     h = narrow("module")
     h.runtime.executor.signal_detacher = lambda: StreamDrainReceipt(
         h.engine.generation, h.engine.applied_revisions["acquisition"], -1, 0, False,
-        system_revision=h.engine.applied_revisions["system"])
+        engine_revision=h.engine.applied_revisions["engine"])
     operation = await apply(h)
     assert operation["status"] == "succeeded", operation
     assert h.acquisition.streaming
@@ -346,7 +346,7 @@ async def test_streaming_source_without_confirmed_checkpoint_is_not_automaticall
         if event_type is EventType.GetSourceCheckpoint:
             return CommandResult("checkpoint", event_type.name, True, data={
                 "generation": h.engine.generation, "acquisition_revision": h.engine.applied_revisions["acquisition"],
-                "system_revision": h.engine.applied_revisions["system"],
+                "engine_revision": h.engine.applied_revisions["engine"],
                 **checkpoint_data,
             })
         return request(event_type, payload, **kwargs)
@@ -382,7 +382,7 @@ async def test_declared_live_source_resumes_without_replay_checkpoint(narrow, re
         if event_type is EventType.GetSourceCheckpoint:
             return CommandResult("checkpoint", event_type.name, True, data={
                 "generation": h.engine.generation, "acquisition_revision": h.engine.applied_revisions["acquisition"],
-                "system_revision": h.engine.applied_revisions["system"],
+                "engine_revision": h.engine.applied_revisions["engine"],
                 "supported": False, "checkpoint": None, "resume_without_checkpoint_safe": True,
             })
         return request(event_type, payload, **kwargs)
@@ -408,7 +408,7 @@ async def test_declared_live_source_resumes_without_replay_checkpoint(narrow, re
 @pytest.mark.asyncio
 @pytest.mark.parametrize("invalid", [
     {"resume_without_checkpoint_safe": False}, {"resume_without_checkpoint_safe": None},
-    {"generation": "another-generation"}, {"acquisition_revision": "another-revision"}, {"system_revision": "another-system"},
+    {"generation": "another-generation"}, {"acquisition_revision": "another-revision"}, {"engine_revision": "another-engine"},
     {"supported": True, "checkpoint": None},
 ])
 async def test_same_source_replacement_must_reconfirm_live_resume_before_start(rebuild_harness, monkeypatch, invalid):
@@ -420,7 +420,7 @@ async def test_same_source_replacement_must_reconfirm_live_resume_before_start(r
         if event_type is EventType.GetSourceCheckpoint:
             revision = h.engine.applied_revisions[h.module]
             inspected.append(revision)
-            data = {"generation": h.engine.generation, "acquisition_revision": revision, "system_revision": h.engine.applied_revisions["system"],
+            data = {"generation": h.engine.generation, "acquisition_revision": revision, "engine_revision": h.engine.applied_revisions["engine"],
                     "supported": False, "checkpoint": None, "resume_without_checkpoint_safe": True}
             if revision == h.plan.target_revisions[h.module]:
                 data.update(invalid)
@@ -445,7 +445,7 @@ async def test_live_rollback_also_requires_recreated_source_capability(rebuild_h
         if event_type is EventType.GetSourceCheckpoint:
             return CommandResult("checkpoint", event_type.name, True, data={
                 "generation": h.engine.generation, "acquisition_revision": h.engine.applied_revisions["acquisition"],
-                "system_revision": h.engine.applied_revisions["system"],
+                "engine_revision": h.engine.applied_revisions["engine"],
                 "supported": False, "checkpoint": None,
                 "resume_without_checkpoint_safe": not h.engine.starts,
             })
@@ -476,7 +476,7 @@ async def test_explicit_different_source_can_start_fresh_after_live_source(rebui
             inspected.append(h.engine.applied_revisions[h.module])
             return CommandResult("checkpoint", event_type.name, True, data={
                 "generation": h.engine.generation, "acquisition_revision": h.engine.applied_revisions["acquisition"],
-                "system_revision": h.engine.applied_revisions["system"],
+                "engine_revision": h.engine.applied_revisions["engine"],
                 "supported": False, "checkpoint": None,
                 "resume_without_checkpoint_safe": h.engine.applied_revisions[h.module] == h.previous.modules[h.module].revision,
             })
@@ -500,7 +500,7 @@ async def test_nonstreaming_source_without_checkpoint_can_update_outputs_without
         if event_type is EventType.GetSourceCheckpoint:
             return CommandResult("checkpoint", event_type.name, True, data={
                 "generation": h.engine.generation, "acquisition_revision": h.engine.applied_revisions["acquisition"],
-                "system_revision": h.engine.applied_revisions["system"],
+                "engine_revision": h.engine.applied_revisions["engine"],
                 "supported": False, "checkpoint": None,
             })
         return request(event_type, payload, **kwargs)
@@ -768,7 +768,7 @@ async def test_output_address_change_is_local_and_failed_bind_restores_previous_
     bus = FakeBus()
     gateway = PeerGateway(bus)
     foundation = _make_engine(event_bus=bus, peer_gateway=gateway,
-                              generation=h.engine.generation, system_revision=h.previous.system.revision)
+                              generation=h.engine.generation, engine_revision=h.previous.engine.revision)
     foundation._loop = asyncio.get_running_loop()
     foundation._started = True
     h.engine.reconfigure_output_modules = foundation.reconfigure_output_modules
@@ -794,7 +794,7 @@ async def test_output_address_change_is_local_and_failed_bind_restores_previous_
         assert listener.port == expected_port and gateway.peer(module).is_ready
         assert gateway.peer(other) is unrelated and unrelated.is_ready
         assert h.engine.generation == original["CONFIG.generation"]
-        assert h.engine.applied_revisions["system"] == h.previous.system.revision
+        assert h.engine.applied_revisions["engine"] == h.previous.engine.revision
         assert h.engine.is_module_running("acquisition") and h.engine.is_module_running("processing")
         assert h.acquisition.streaming and not h.log and not h.engine.starts
         for role in ("acquisition", "processing", other):

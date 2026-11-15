@@ -165,7 +165,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     && sameParameters(selectedBinding.parameters, normalizedParameters(sourceParameters, definition?.schema));
   const sourceMatches = sourceSelected && runtime.status?.running === true
     && runtime.status.applied?.[module] === activation?.revision
-    && runtime.status.applied?.system === runtime.status.accepted.system;
+    && runtime.status.applied?.engine === runtime.status.accepted.engine;
   const canReadSource = !!sourceStatus?.connected && !sourceStatus.streaming && sourceMatches
     && !runtimeState.blocked;
   const metadataRevision = metadataGeneration.current;

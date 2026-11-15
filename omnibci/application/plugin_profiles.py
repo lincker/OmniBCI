@@ -319,14 +319,14 @@ class ModuleActivation:
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class SystemSettings:
+class EngineSettings:
     _settings_json: str = field(repr=False)
     revision: str
 
     def __init__(self, settings: dict) -> None:
         settings = _object_data(settings, "settings")
-        if settings.keys() - SECTION_SETTING_KEYS["system"]:
-            raise PluginProfileValidationError("Settings must belong to the system section")
+        if settings.keys() - SECTION_SETTING_KEYS["engine"]:
+            raise PluginProfileValidationError("Settings must belong to the engine section")
         for key, value in settings.items():
             if key == "debug":
                 valid = type(value) is bool
@@ -338,9 +338,9 @@ class SystemSettings:
                 except OverflowError:
                     valid = False
             if not valid:
-                raise PluginProfileValidationError(f"Invalid system setting: {key}")
+                raise PluginProfileValidationError(f"Invalid Engine setting: {key}")
         object.__setattr__(self, "_settings_json", _canonical(settings))
-        content = _canonical({"system": settings})
+        content = _canonical({"engine": settings})
         object.__setattr__(self, "revision", hashlib.sha256(content.encode("utf-8")).hexdigest())
 
     @property
@@ -351,18 +351,18 @@ class SystemSettings:
         return {"revision": self.revision, "settings": self.settings}
 
     @classmethod
-    def from_dict(cls, data: dict) -> SystemSettings:
+    def from_dict(cls, data: dict) -> EngineSettings:
         _fields(data, {"revision", "settings"})
         result = cls(data["settings"])
         if data["revision"] != result.revision:
-            raise PluginProfileValidationError("System revision does not match its content")
+            raise PluginProfileValidationError("Engine revision does not match its content")
         return result
 
 
 @dataclass(frozen=True, slots=True)
 class ActivationSet:
     modules: Mapping[str, ModuleActivation | None]
-    system: SystemSettings | None
+    engine: EngineSettings | None
 
     def __post_init__(self):
         if not isinstance(self.modules, Mapping) or self.modules.keys() - set(MODULES):
@@ -371,21 +371,21 @@ class ActivationSet:
         if any(item is not None and (not isinstance(item, ModuleActivation) or item.module != module)
                for module, item in values.items()):
             raise PluginProfileValidationError("Activation module does not match its section")
-        if self.system is not None and not isinstance(self.system, SystemSettings):
-            raise PluginProfileValidationError("system must be SystemSettings or None")
+        if self.engine is not None and not isinstance(self.engine, EngineSettings):
+            raise PluginProfileValidationError("engine must be EngineSettings or None")
         object.__setattr__(self, "modules", MappingProxyType(values))
 
     def revisions(self) -> dict[str, str | None]:
         return {**{module: item.revision if item else None for module, item in self.modules.items()},
-                "system": self.system.revision if self.system else None}
+                "engine": self.engine.revision if self.engine else None}
 
     def bindings(self) -> tuple[ProfileBinding, ...]:
         return tuple(binding for item in self.modules.values() if item for binding in item.bindings)
 
     def settings(self) -> dict:
         values = {key: value for item in self.modules.values() if item for key, value in item.settings.items()}
-        if self.system is not None:
-            values.update(self.system.settings)
+        if self.engine is not None:
+            values.update(self.engine.settings)
         return values
 
 
@@ -477,7 +477,7 @@ class PluginProfileRepository(Protocol):
     def get_module_history_entry(self, module: str, entry_id: str) -> ModuleActivationRevision | None: ...
     def record_module_history(self, activation: ModuleActivation, entry_id: str,
                               restored_from: str | None = None) -> ModuleActivationRevision: ...
-    def get_system(self) -> SystemSettings | None: ...
-    def save_system(self, settings: SystemSettings, expected_revision: str | None) -> SystemSettings: ...
-    def remove_system(self, *, expected_revision: str) -> None: ...
+    def get_engine(self) -> EngineSettings | None: ...
+    def save_engine(self, settings: EngineSettings, expected_revision: str | None) -> EngineSettings: ...
+    def remove_engine(self, *, expected_revision: str) -> None: ...
     def get_activation_set(self) -> ActivationSet: ...

@@ -66,7 +66,7 @@ class AcquisitionLogForwarder(logging.Handler):
 
 
 class AcquisitionLogListener:
-    """Deliver child diagnostics to the backend's existing logging handlers."""
+    """Deliver child diagnostics to the server's existing logging handlers."""
 
     def __init__(self, queue):
         self.queue = queue

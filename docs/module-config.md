@@ -1,13 +1,13 @@
 # Module configuration
 
-The backend keeps four independent accepted configurations: Acquisition,
+The server keeps four independent accepted configurations: Acquisition,
 Signal Processing, Stimulation, and Actuation. Each owns its settings, pinned
 plugin bindings, content revision, file, lock, and application history.
 Named saved Profiles remain independent for each plugin.
 
-## Backend, Engine, and the `system` identifier
+## Server and Engine
 
-**Backend** is the Python service: HTTP/WebSocket APIs, configuration and plugin
+**OmniBCI Server** is the Python service: HTTP/WebSocket APIs, configuration and plugin
 management, logging, and runtime control. It can serve configuration requests
 while the Engine is stopped.
 
@@ -17,16 +17,20 @@ startup, Acquisition, Signal Processing, Stimulation, and Actuation have their
 own start/stop paths. Starting Engine alone starts none of those modules;
 stopping it stops all four.
 
-**`system` in configuration APIs** is the existing identifier for Engine settings,
-not a fifth module or another runtime layer. `/config/system`, plan `module:
-"system"`, and `system_revision` refer to queue capacity, worker startup timeout,
-and debug mode. The user file names this group `[engine]` and the console calls it
-Engine. The separate `/system/info` and `/system/logs` endpoints provide Backend
-diagnostics; they do not define another configuration owner.
+**Engine configuration** uses `EngineSettings`, `/config/engine`, plan
+`module: "engine"`, and `engine_revision` consistently. It contains queue
+capacity, worker startup timeout, and debug mode, stored under `[engine]`.
+Engine is the foundation configuration scope, alongside four module scopes.
+
+**Server diagnostics** use `/server/info` and `/server/logs`. The diagnostic
+router is `presentation/routers/server.py`; logging, shutdown and desktop
+connection code use `ServerLogging`, `ServerShutdownService`, and
+`ServerConnection`. The composition root's `AppContainer` groups services;
+it is not a separate runtime or configuration layer.
 
 ```mermaid
 flowchart TB
-    UI[Web / Desktop console] --> API[Backend APIs and management services]
+    UI[Web / Desktop console] --> API[Server APIs and management services]
     API --> E[NeuroEngine foundation]
     E --> A[Acquisition]
     E --> P[Signal Processing]
@@ -47,15 +51,15 @@ Stimulation and Actuation do not require Acquisition or Processing to run.
 | processing | `ALGORITHM.baseline_duration` | Decoder, Epoch Detector, ordered Filters |
 | stimulation | Address/port, renderer, `auto_spawn` | Paradigm, Trigger |
 | actuation | Address/port, watchdog, command age, `auto_spawn` | Effector |
-| system | Queue capacity, startup timeout, `debug` | None |
+| engine | Queue capacity, startup timeout, `debug` | None |
 
-The `system` revision represents shared infrastructure settings, not an aggregate
+The `engine` revision represents shared infrastructure settings, not an aggregate
 of module revisions. A derived `ActivationSet` combines only the files needed by an operation;
 it does not introduce another saved object or global revision.
 
 The four modules keep separate `activation/<module>.toml` files. Engine settings
-use `[engine]` in the user `settings.toml`, alongside Backend startup settings.
-Engine revisions hash only Engine values; Backend save revisions hash only Backend
+use `[engine]` in the user `settings.toml`, alongside Server startup settings.
+Engine revisions hash only Engine values; Server save revisions hash only Server
 values. Writers share a file lock and preserve the other group's latest values,
 including during Engine rollback. Module storage and history remain independent.
 
@@ -73,7 +77,7 @@ before its settings change.
 
 The user configuration root is `OMNIBCI_CONFIG_DIR` when set, otherwise the
 platform user configuration directory. Its `settings.toml` holds both Engine
-and Backend startup settings:
+and Server startup settings:
 
 ```toml
 [engine]
@@ -99,16 +103,15 @@ configuration. Missing Engine fields use declared runtime defaults. The packaged
 
 Engine Review uses current editor values. Successful application stores
 `[engine]`; when running, it rebuilds Engine and restores the modules that were
-running. Backend Save writes its own fields for the next Backend startup. The
+running. Server Save writes its own fields for the next Server startup. The
 page shows saved values separately from that process's startup values. Restarting
-Engine alone does not apply Backend edits.
+Engine alone does not apply Server edits.
 
 Both writers use `.host-settings.lock`, reread the latest document under the
 lock, check their own content revision, and atomically replace the file. Engine
-rollback restores or removes only `[engine]`, preserving concurrent Backend
-saves. Revisions are derived, not additional stored fields. The legacy
-`activation/system.toml` and `locks/system.lock` are no longer read or written;
-there is no automatic legacy migration layer.
+rollback restores or removes only `[engine]`, preserving concurrent Server
+saves. Revisions are derived, not additional stored fields. Shared settings are
+read only from the user `settings.toml`; there is no legacy migration layer.
 
 ## Apply flow
 
@@ -118,7 +121,7 @@ belongs to the editor's actual baseline, not a newer value fetched just before
 submission. Settings replace the module's submitted settings; they are not a
 patch and are not read implicitly from the host settings file.
 
-The backend owns validation, configuration application, and the requested action
+The server owns validation, configuration application, and the requested action
 until its core transition finishes. It uses the existing application boundaries
 and returns the completed operation. A retry with the same operation UUID and
 content observes that operation; different content with the same UUID conflicts.
@@ -132,24 +135,24 @@ rollback. The browser acknowledges its own accepted baseline while retaining
 edits made during the request. Other clients' updates never silently rebase a
 dirty editor. Successful changes record module history once per operation.
 
-System settings and module-history restoration retain explicit plan review and
-Apply. The backend rechecks their dependency revisions and generation before
+Engine settings and module-history restoration retain explicit plan review and
+Apply. The server rechecks their dependency revisions and generation before
 execution. These review plans are not a prerequisite for ordinary module actions.
-System review takes the editor's current settings directly; no prior Save is
-required. Backend startup edits use a separate Save action and require a backend
-restart. Pending Backend edits do not block Engine review or module actions.
+Engine review takes the editor's current settings directly; no prior Save is
+required. Server startup edits use a separate Save action and require a server
+restart. Pending Server edits do not block Engine review or module actions.
 
 Unrelated module edits do not invalidate a narrow plan. Processing also depends
-on Acquisition; every module depends on system. A system rebuild depends on all
+on Acquisition; every module depends on Engine. An Engine rebuild depends on all
 sections because it replaces the shared runtime. A first module selection also
-initializes system with declared defaults through an explicit plan candidate when
+initializes Engine with declared defaults through an explicit plan candidate when
 the `[engine]` table is absent.
 Starting an empty engine accepts initial shared settings without selecting plugins.
 
 | Change while running | Boundary |
 | --- | --- |
 | No semantic change | No runtime update or history entry |
-| System | Restart the engine and restore the previously running modules |
+| Engine | Restart the engine and restore the previously running modules |
 | Acquisition | Restart only Acquisition; revalidate active Processing against source metadata |
 | Processing input, Epoch Detector or baseline settings | Restart only Processing |
 | Decoder/Filter parameters marked `x-apply: trial` | Trial boundary |
@@ -164,16 +167,16 @@ Unknown worker results require recovery of the affected modules; the coordinator
 or recreate an output driver whose state is unconfirmed.
 Independent modules can apply concurrently. Acknowledgement and rollback merge
 only the changed module, preserving other modules' completed updates. The shared
-system revision is a dependency check, not a global lock on every operation.
+engine revision is a dependency check, not a global lock on every operation.
 History-only write failures report that configuration was applied but history
 was not saved; they do not quarantine a confirmed running module.
 
-Live runtime operations require one backend owner for each configuration root.
+Live runtime operations require one server owner for each configuration root.
 Independent section locks protect file writes; dependency checks do not form an
 atomic transaction against arbitrary other processes editing those files.
 
-External nodes bind their own module and system revisions. Their module cannot
-be changed while they are connected. System rebuilds also require those peers to
+External nodes bind their own module and engine revisions. Their module cannot
+be changed while they are connected. Engine rebuilds also require those peers to
 be disconnected; unrelated narrow module updates remain possible.
 
 ## Independent modules on NeuroEngine
@@ -230,8 +233,8 @@ Stop closes admission for the affected modules, lets existing operations finish
 or reconcile their bounded timeouts, and then confirms shutdown. Other modules
 remain controllable. Module Stop/Disconnect is also available when its process
 has exited but recovery is still required. An HTTP disconnect does not abandon
-an owned Start, Prepare, or Stop. Backend shutdown uses the Engine Stop path.
-Shared infrastructure failures and explicit Engine/System transitions have
+an owned Start, Prepare, or Stop. Server shutdown uses the Engine Stop path.
+Shared infrastructure failures and explicit Engine transitions have
 global scope; ordinary module failures do not.
 If an external output disconnects before confirming Stop, its recovery state
 remains. Once local resources are released, Engine can restart to accept a
@@ -245,10 +248,21 @@ module's availability, not foundation readiness or unrelated module lifetimes.
 
 ## Runtime identity
 
-Runtime settings contain `CONFIG.module_revisions`, `CONFIG.system_revision`,
+Runtime settings contain `CONFIG.module_revisions`, `CONFIG.engine_revision`,
 and `CONFIG.generation`. Node configuration uses a revision map: the engine
 receives Acquisition and Processing, and each external output node receives its
-own module. Handshakes check the relevant module, system, and generation.
+own module. Handshakes check the relevant module, engine, and generation.
+
+Node configuration has `format_version: 1` and an `engine_revision` field.
+External-node IPC uses protocol version 1. The desktop handshake calls
+`/server/info` and requires `desktop_api_version: 1`. These unreleased contracts
+accept only the current fields and version 1. Removed routes return 404;
+obsolete or unknown fields are rejected without aliases or fallback parsing.
+Deploy matching Server, desktop and node builds.
+
+Engine configuration hashes use the `engine` namespace independently of module
+revisions and module/Profile history. Engine generation identifies the running
+instance.
 
 SDK `PluginContext.module_revision` identifies the consuming module. A Trigger
 shipped in an acquisition-domain package therefore uses the Stimulation revision
@@ -269,7 +283,7 @@ All routes use the normal `/api/v1` prefix and response envelope.
 | `POST /acquisition/connect` | Apply current Acquisition, start its worker, and connect in one operation |
 | `POST /acquisition/stream/start` | Validate source revision, engine generation and connection ID, then start reading |
 | `POST /stimulation/start` | Apply current Stimulation and start it, or prepare its external listener |
-| `GET /config/modules` | Accepted modules plus system, with errors reported per section |
+| `GET /config/modules` | Accepted modules plus engine, with errors reported per section |
 | `GET /config/modules/{module}` | One module; revision is null when absent |
 | `POST /config/apply-plan` | Plan current values for the required module |
 | `POST /config/apply` | Execute a reviewed plan |
@@ -277,9 +291,9 @@ All routes use the normal `/api/v1` prefix and response envelope.
 | `GET /config/modules/{module}/history` | Successful application entries, newest first |
 | `GET /config/modules/{module}/history/{entry_id}` | Historical full module snapshot |
 | `POST /config/modules/{module}/revert-plan` | Plan restoration by history entry ID |
-| `GET /config/system` | Accepted shared settings |
-| `GET /config` | Backend saved values, startup values, restart flags, and Backend save revision |
-| `PATCH /config` | Save Backend startup values with `expected_revision`; does not apply Engine settings |
+| `GET /config/engine` | Accepted shared settings |
+| `GET /config` | Server saved values, startup values, restart flags, and Server save revision |
+| `PATCH /config` | Save Server startup values with `expected_revision`; does not apply Engine settings |
 | `GET /config/plugin-profiles/{id}/history` | Saved Profile revisions |
 | `POST /config/plugin-profiles/{id}/revert` | Copy a historical Profile into a new revision |
 

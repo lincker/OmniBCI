@@ -73,7 +73,7 @@ class NeuroEngine:
         startup_channels: tuple[StartupChannel, ...] = (),
         startup_timeout_s: float = 5.0,
         module_revisions: dict[str, str] | None = None,
-        system_revision: str | None = None,
+        engine_revision: str | None = None,
         generation: str | None = None,
         allow_process_termination: bool = True,
         preview_cache: PreviewCache | None = None,
@@ -105,7 +105,7 @@ class NeuroEngine:
         self._startup_channels_closed = not self._startup_channels
         self._startup_timeout_s = startup_timeout_s
         self._module_revisions = dict(module_revisions) if module_revisions is not None else None
-        self._system_revision = system_revision
+        self._engine_revision = engine_revision
         self._generation = generation
         self._allow_process_termination = allow_process_termination
         # Engine-side consumer of stimulation → engine feedback (StimulationAck).
@@ -281,8 +281,8 @@ class NeuroEngine:
         if not self._started:
             raise RuntimeError("Start NeuroEngine before starting a module")
         if (snapshot.get("CONFIG.generation") != self._generation
-                or snapshot.get("CONFIG.system_revision") != self._system_revision):
-            raise ValueError("Module belongs to a different engine or system configuration")
+                or snapshot.get("CONFIG.engine_revision") != self._engine_revision):
+            raise ValueError("Module belongs to a different Engine generation or configuration")
         if self.is_module_running(module):
             return
         flag = "_acquisition_started" if module == "acquisition" else "_processor_started"
@@ -366,7 +366,7 @@ class NeuroEngine:
                         {"Acquisition": "acquisition", "Signal Processing": "processing"}[channel.component]:
                         self._module_revisions[{"Acquisition": "acquisition", "Signal Processing": "processing"}[channel.component]],
                     } if self._module_revisions is not None else None),
-                    expected_system_revision=self._system_revision,
+                    expected_engine_revision=self._engine_revision,
                     expected_generation=self._generation,
                 ) for channel in channels
             ), return_exceptions=True)
@@ -419,7 +419,7 @@ class NeuroEngine:
                                     self.processor_command_queue, SignalProcessorCommand.reset_input, True,
                                     event_bus=self.event_bus,
                                 )(Event(EventType.ResetProcessingInput, CommandRequest(uuid4().hex, {
-                                    "generation": self._generation, "system_revision": self._system_revision,
+                                    "generation": self._generation, "engine_revision": self._engine_revision,
                                     "expected_acquisition_revision": (self._module_revisions or {}).get("acquisition"),
                                 })))
                         try:
@@ -651,8 +651,8 @@ class NeuroEngine:
 
     async def _reconfigure_output_modules(self, snapshot, modules, *, ensure=False):
         if (snapshot.get("CONFIG.generation") != self._generation
-                or snapshot.get("CONFIG.system_revision") != self._system_revision):
-            raise ValueError("Output replacement belongs to a different engine or system configuration")
+                or snapshot.get("CONFIG.engine_revision") != self._engine_revision):
+            raise ValueError("Output replacement belongs to a different Engine generation or configuration")
         if set(modules) - {"stimulation", "actuation"}:
             raise ValueError("Only output modules can replace peer listeners")
         revisions = snapshot.get("CONFIG.module_revisions") or {}
@@ -679,7 +679,7 @@ class NeuroEngine:
 
         identity = None
         if not snapshot.get(f"{module.upper()}.auto_spawn", True):
-            identity = PeerIdentity(module, revisions.get(module), self._system_revision, self._generation)
+            identity = PeerIdentity(module, revisions.get(module), self._engine_revision, self._generation)
         if module == "stimulation":
             config = stimulation_peer_config(
                 host=snapshot.get("STIMULATION.server_ip", "127.0.0.1"),
@@ -725,7 +725,7 @@ class NeuroEngine:
         fault = event.data
         if (not isinstance(fault, dict)
                 or fault.get("generation") != self._generation
-                or fault.get("system_revision") != self._system_revision
+                or fault.get("engine_revision") != self._engine_revision
                 or fault.get("acquisition_revision") != (self._module_revisions or {}).get("acquisition")
                 or not isinstance(fault.get("input_id"), str)
                 or not fault["input_id"]
@@ -734,7 +734,7 @@ class NeuroEngine:
         self._make_command_router(
             self.processor_command_queue, SignalProcessorCommand.reset_input, True, event_bus=self.event_bus,
         )(Event(EventType.ResetProcessingInput, CommandRequest(uuid4().hex, {
-            "generation": self._generation, "system_revision": self._system_revision,
+            "generation": self._generation, "engine_revision": self._engine_revision,
             "expected_acquisition_revision": fault["acquisition_revision"], "input_id": fault["input_id"],
         })))
 
@@ -747,10 +747,6 @@ class NeuroEngine:
                     is_running=lambda module=module: self.is_module_running(module),
                 )
             )
-        # Non-routing event: flips the shutdown flag, no command enqueued.
-        self.event_bus.register_event_listener(
-            EventType.CloseAllNeuroEngineProcessSystem, self._stop_neuro_engine_system
-        )
         self.event_bus.register_event_listener(EventType.ProcessingInputFault, self._on_processing_input_fault)
         # Stimulation → engine inbound feedback (routed in by the stimulation
         # PeerChannel). The engine now consumes acks, not just the UI.
@@ -808,9 +804,6 @@ class NeuroEngine:
                     failure_kind=CommandFailureKind.REJECTED,
                 )))
         return _route
-
-    def _stop_neuro_engine_system(self, *_) -> None:
-        self.should_stop = True
 
     # ------------------------------------------------------------------
     # Helpers

@@ -892,7 +892,7 @@ test("all-chunk search reports partial coverage and rejects every mismatched ide
     [56, chunk({ sequence_id: 56, connection_id: "connection-obsolete" })],
     [57, chunk({ sequence_id: 57, source_id: "source-obsolete" })],
     [58, chunk({ sequence_id: 58, acquisition_revision: "b".repeat(64) })],
-    [59, chunk({ sequence_id: 59, system_revision: "c".repeat(64) })],
+    [59, chunk({ sequence_id: 59, engine_revision: "c".repeat(64) })],
   ]);
   api.acqPreviewChunk = async (_generation, _capture, sequence) => {
     const value = values.get(sequence);

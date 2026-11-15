@@ -1,4 +1,4 @@
-"""Explicit profile selections for tests that exercise configured backends."""
+"""Explicit profile selections for tests that exercise configured servers."""
 from omnibci.application.activation_settings import MODULES, section_settings
 
 
@@ -15,8 +15,8 @@ def accept_profiles(service, selections):
         definition = next(item for item in service.catalog.list(kind) if item.plugin_type == plugin_type)
         profile = service.create(kind, definition.selection, plugin_type, parameters)
         by_module.setdefault(slot.split(".", 1)[0], []).append({"slot": slot, "profile_id": profile.profile_id})
-    if service.repository.get_system() is None:
-        service.repository.save_system(service.propose_system(section_settings(service.settings_source(), "system")), expected_revision=None)
+    if service.repository.get_engine() is None:
+        service.repository.save_engine(service.propose_engine(section_settings(service.settings_source(), "engine")), expected_revision=None)
     for module in MODULES:
         if module in by_module:
             current = service.repository.get_module(module)

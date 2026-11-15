@@ -49,12 +49,14 @@ files as fixtures.
 The current regression suite checks:
 
 - Independent module configuration, plugin Profiles, history and revision conflicts.
-- Engine and Backend fields sharing one user settings file without lost updates,
-  including failed writes and rollback after a concurrent Backend save.
+- Engine and Server fields sharing one user settings file without lost updates,
+  including failed writes and rollback after a concurrent Server save.
 - Direct application of current values, without requiring a saved Profile or a
   separate Engine Save action.
-- Startup snapshots, backend restart requirements, and pending settings remaining
+- Startup snapshots, server restart requirements, and pending settings remaining
   separate from the running Engine and module state.
+- Server routes and version 1 desktop/node protocols, with removed routes,
+  obsolete fields and unsupported protocol versions rejected.
 - Engine foundation startup and independent module start/stop, processing input
   attachment, FIFO drain boundaries, and recovery after failures.
 - Bounded signal delivery and output sender queues. A full Processing input queue

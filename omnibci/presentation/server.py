@@ -89,7 +89,7 @@ async def _desktop_server(token, launch_id, control_input, control_output):
             while not server.started:
                 if serving.done():
                     await serving
-                    raise RuntimeError("Backend failed to start")
+                    raise RuntimeError("Server failed to start")
                 if incoming.done():
                     message = incoming.result()
                     if message is None or "control_error" in message:
@@ -135,14 +135,14 @@ async def _desktop_server(token, launch_id, control_input, control_output):
             if shutdown_id is not None and not parent_gone:
                 errors = list(app.state.shutdown_errors)
                 if not app.state.shutdown_complete and not errors:
-                    errors.append("Backend lifespan did not shut down cleanly; inspect the backend log")
+                    errors.append("Server lifespan did not shut down cleanly; inspect the server log")
                 emit({"event": "result", "id": shutdown_id, "ok": not errors, "errors": errors})
 
 
 def main(argv=None):
     global _WINDOWS_JOB
     multiprocessing.freeze_support()
-    parser = argparse.ArgumentParser(description="Run the OmniBCI API backend")
+    parser = argparse.ArgumentParser(description="Run the OmniBCI API server")
     parser.add_argument("--desktop", action="store_true", help="Use private desktop control over stdin/stdout")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)

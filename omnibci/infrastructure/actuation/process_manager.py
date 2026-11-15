@@ -9,7 +9,7 @@ process manually on the device machine:
 
 Single-machine deployment
 --------------------------
-Leave ``ACTUATION.auto_spawn = true``. The backend spawns the subprocess when
+Leave ``ACTUATION.auto_spawn = true``. The server spawns the subprocess when
 Actuation starts and terminates it when Actuation or the engine stops.
 
 In both modes the IPC socket architecture (Actuation → NeuroEngine) is
@@ -51,7 +51,7 @@ def _run_actuation(
         StartupReporter(
             startup_connection, component="Actuation",
             module_revisions={"actuation": settings_snapshot.get("CONFIG.module_revisions", {}).get("actuation")},
-            system_revision=settings_snapshot.get("CONFIG.system_revision"),
+            engine_revision=settings_snapshot.get("CONFIG.engine_revision"),
             generation=settings_snapshot.get("CONFIG.generation"),
         )
         if startup_connection is not None
@@ -211,7 +211,7 @@ class ActuationProcessManager:
                 component="Actuation",
                 timeout_s=self._startup_timeout_s,
                 expected_module_revisions={"actuation": snapshot.get("CONFIG.module_revisions", {}).get("actuation")},
-                expected_system_revision=snapshot.get("CONFIG.system_revision"),
+                expected_engine_revision=snapshot.get("CONFIG.engine_revision"),
                 expected_generation=snapshot.get("CONFIG.generation"),
             )
         except BaseException as startup_exc:

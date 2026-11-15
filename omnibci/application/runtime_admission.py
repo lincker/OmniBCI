@@ -27,7 +27,7 @@ class RuntimeAdmission:
             owner = self._owners.get(self._owner.get())
             return owner[0] if owner is not None else frozenset(MODULES)
         scopes = {scopes} if isinstance(scopes, str) else set(scopes)
-        if scopes & {"all", "system"}:
+        if scopes & {"all", "engine"}:
             return frozenset(MODULES)
         if scopes - set(MODULES):
             raise ValueError("Unsupported runtime scope")
@@ -204,20 +204,20 @@ class RuntimeAdmission:
     def requires_recovery(self, scopes):
         with self._lock:
             scopes = self._scopes(scopes)
-            return bool(scopes and ("system" in self._quarantine or scopes & self._quarantine.keys()))
+            return bool(scopes and ("engine" in self._quarantine or scopes & self._quarantine.keys()))
 
     def quarantine(self, reason: str, scopes=None):
         with self._lock:
             scopes = self._scopes(scopes)
             if scopes == frozenset(MODULES):
-                self._quarantine["system"] = reason
+                self._quarantine["engine"] = reason
             else:
                 self._quarantine.update({module: reason for module in scopes})
 
     def clear_quarantine(self, scopes=None):
         with self._lock:
-            if scopes == "system":
-                self._quarantine.pop("system", None)
+            if scopes == "engine":
+                self._quarantine.pop("engine", None)
                 return
             if scopes is None or scopes == "all":
                 self._quarantine.clear()

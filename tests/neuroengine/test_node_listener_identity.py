@@ -27,7 +27,7 @@ async def build_graph(monkeypatch):
     async def build(**settings):
         snapshot = {"CONFIG.module_revisions": {role: "a" * 64 for role in (
             "acquisition", "processing", "stimulation", "actuation")},
-            "CONFIG.system_revision": "c" * 64, "CONFIG.generation": "run-1", **settings}
+            "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "run-1", **settings}
         engine = builder.NeuroEngineBuilder(settings_snapshot=snapshot).build()
         assert not engine.peer_gateway._channels
         engine._loop = asyncio.get_running_loop()
@@ -98,7 +98,7 @@ async def test_external_actuation_is_prepared_before_module_activation(build_gra
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", ["stimulation", "actuation"])
-@pytest.mark.parametrize("missing", ["CONFIG.module_revisions", "CONFIG.system_revision", "CONFIG.generation"])
+@pytest.mark.parametrize("missing", ["CONFIG.module_revisions", "CONFIG.engine_revision", "CONFIG.generation"])
 async def test_invalid_external_identity_fails_when_preparing_only_that_role(build_graph, role, missing):
     engine, snapshot = await build_graph(**{f"{role.upper()}.auto_spawn": False, missing: None})
     with pytest.raises(ValueError, match="Peer identity"):

@@ -1,4 +1,4 @@
-"""Backend saves and Engine application share storage without lifecycle coupling."""
+"""Server saves and Engine application share storage without lifecycle coupling."""
 from omnibci.application.activation_settings import section_settings
 import asyncio
 import threading
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from omnibci.application.commands.engine_commands import StartEngineCommand
-from omnibci.application.plugin_profiles import SystemSettings
+from omnibci.application.plugin_profiles import EngineSettings
 from omnibci.application.services.config_service import ConfigService
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.conf import OmniBCISettings
@@ -21,7 +21,7 @@ def application_config(tmp_path):
     return ConfigService(OmniBCISettings(user_file=path))
 
 
-def test_backend_save_does_not_apply_to_running_engine(application_config):
+def test_server_save_does_not_apply_to_running_engine(application_config):
     builder = MagicMock()
     engine = NeuroEngineService(engine_factory=builder)
     engine._running = True
@@ -36,19 +36,19 @@ def test_backend_save_does_not_apply_to_running_engine(application_config):
 
 
 @pytest.mark.asyncio
-async def test_backend_save_does_not_wait_for_engine_transition(application_config, tmp_path):
+async def test_server_save_does_not_wait_for_engine_transition(application_config, tmp_path):
     engine = NeuroEngineService(engine_factory=MagicMock())
     repository = TomlPluginProfileRepository(tmp_path)
-    before = repository.get_system()
+    before = repository.get_engine()
     async with engine.runtime_transition():
         application_config.save({"LOGGING.level": "DEBUG"}, expected_revision=application_config.read()[1])
-    assert repository.get_system() == before
+    assert repository.get_engine() == before
 
 
-def test_backend_save_preserves_engine_change_made_during_request(application_config, monkeypatch, tmp_path):
+def test_server_save_preserves_engine_change_made_during_request(application_config, monkeypatch, tmp_path):
     entered, release = threading.Event(), threading.Event()
     repository = TomlPluginProfileRepository(tmp_path)
-    before = repository.get_system()
+    before = repository.get_engine()
     update = application_config._settings.update
     revision = application_config.read()[1]
     errors = []
@@ -66,12 +66,12 @@ def test_backend_save_preserves_engine_change_made_during_request(application_co
     thread.start()
     try:
         assert entered.wait(3)
-        repository.save_system(SystemSettings({"NEUROENGINE.queue_size": 64}), expected_revision=before.revision)
+        repository.save_engine(EngineSettings({"NEUROENGINE.queue_size": 64}), expected_revision=before.revision)
     finally:
         release.set()
         thread.join(3)
     assert not thread.is_alive() and not errors
-    assert repository.get_system().settings == {"NEUROENGINE.queue_size": 64}
+    assert repository.get_engine().settings == {"NEUROENGINE.queue_size": 64}
     assert OmniBCISettings(user_file=tmp_path / "settings.toml").saved_snapshot()["LOGGING.level"] == "DEBUG"
 
 
@@ -100,7 +100,7 @@ async def test_bootstrap_shares_pinned_plugin_selection_between_status_and_engin
         ):
             selected = profiles.create(kind, builtin_selection(kind, alias), alias, {})
             bindings.append({"slot": slot, "profile_id": selected.profile_id})
-        profiles.repository.save_system(profiles.propose_system({"NEUROENGINE.queue_size": 32}), expected_revision=None)
+        profiles.repository.save_engine(profiles.propose_engine({"NEUROENGINE.queue_size": 32}), expected_revision=None)
         for module in ("acquisition", "processing", "stimulation"):
             profiles.repository.save_module(profiles.propose(module, [
                 binding for binding in bindings if binding["slot"].startswith(f"{module}.")

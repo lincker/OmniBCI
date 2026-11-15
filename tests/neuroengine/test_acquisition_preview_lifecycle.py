@@ -27,7 +27,7 @@ def _frame(sequence=0):
         "dtype": "int64", "row_indices": [0, 1], "sample_start": 0, "sample_count": 2,
         "trigger_row_index": 1, "values": np.array([[11, 12], [0, 7]], dtype=np.int64),
         "descriptor": None, "connection_id": "connection", "source_id": "source",
-        "acquisition_revision": "revision", "system_revision": "system",
+        "acquisition_revision": "revision", "engine_revision": "engine",
     })
 
 

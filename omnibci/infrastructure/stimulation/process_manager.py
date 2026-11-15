@@ -12,7 +12,7 @@ stimulation process manually on the display machine:
 
 Single-machine deployment
 --------------------------
-Leave ``STIMULATION.auto_spawn = true`` (the default).  The backend will
+Leave ``STIMULATION.auto_spawn = true`` (the default).  The server will
 spawn the Stimulation subprocess automatically when
 ``handle_start_stimulation`` is called from the Web UI.  No extra terminal
 required.
@@ -66,7 +66,7 @@ def _run_stimulation(
         StartupReporter(
             startup_connection, component="Stimulation",
             module_revisions={"stimulation": settings_snapshot.get("CONFIG.module_revisions", {}).get("stimulation")},
-            system_revision=settings_snapshot.get("CONFIG.system_revision"),
+            engine_revision=settings_snapshot.get("CONFIG.engine_revision"),
             generation=settings_snapshot.get("CONFIG.generation"),
         )
         if startup_connection is not None
@@ -227,7 +227,7 @@ class StimulationProcessManager:
                     component="Stimulation",
                     timeout_s=self._startup_timeout_s,
                     expected_module_revisions={"stimulation": snapshot.get("CONFIG.module_revisions", {}).get("stimulation")},
-                    expected_system_revision=snapshot.get("CONFIG.system_revision"),
+                    expected_engine_revision=snapshot.get("CONFIG.engine_revision"),
                     expected_generation=snapshot.get("CONFIG.generation"),
                 )
             except BaseException as startup_exc:

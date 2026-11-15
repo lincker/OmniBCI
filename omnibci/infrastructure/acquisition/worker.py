@@ -82,7 +82,7 @@ class AcquisitionWorker(mp.Process):
                 self.data_source, "plugin_type", type(self.data_source).__name__),
             generation=snapshot.get("CONFIG.generation"),
             acquisition_revision=snapshot.get("CONFIG.module_revisions", {}).get("acquisition"),
-            system_revision=snapshot.get("CONFIG.system_revision"),
+            engine_revision=snapshot.get("CONFIG.engine_revision"),
             processing_active=self.processing_active,
             runtime_counters=self.runtime_counters,
             **({"preview_queue": self.preview_queue} if self.preview_queue is not None else {}),

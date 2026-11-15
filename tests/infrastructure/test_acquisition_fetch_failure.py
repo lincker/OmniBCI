@@ -57,7 +57,7 @@ def test_terminal_fetch_failure_blocks_drain_checkpoint_and_manual_restart(failu
         acquisition = AcquisitionRuntime(
             source, queue.Queue(), data, bus,
             source_id="test-source",
-            generation="generation", acquisition_revision="revision", system_revision="system",
+            generation="generation", acquisition_revision="revision", engine_revision="engine",
         )
         if failure == "read":
             async def fail_read():
@@ -72,7 +72,7 @@ def test_terminal_fetch_failure_blocks_drain_checkpoint_and_manual_restart(failu
             pass
         for command, payload in (
             (AcquisitionCommand.stop_and_drain, {}),
-            (AcquisitionCommand.get_checkpoint, {"generation": "generation", "expected_revision": "revision", "system_revision": "system"}),
+            (AcquisitionCommand.get_checkpoint, {"generation": "generation", "expected_revision": "revision", "engine_revision": "engine"}),
             (AcquisitionCommand.start_stream, None),
         ):
             await acquisition.execute((command, CommandRequest(command.name, payload)))

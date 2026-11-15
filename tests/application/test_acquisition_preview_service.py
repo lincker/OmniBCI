@@ -13,7 +13,7 @@ from omnibci.shared.events import EventType
 
 
 def snapshot(**changes):
-    return {"capture_id": "capture", "generation": "generation", "acquisition_revision": "a" * 64, "system_revision": "system",
+    return {"capture_id": "capture", "generation": "generation", "acquisition_revision": "a" * 64, "engine_revision": "engine",
             "source_id": "source", "connection_id": "connection", "status": "finished", "reason": "chunk_limit",
             "selection": PreviewSelection().to_dict(), "observed": 32, "enqueued": 2, "dropped": 30,
             "oversized": 0, "enqueued_bytes": 256, "limits": limits(),
@@ -145,7 +145,7 @@ def test_missing_chunk_is_a_lookup_error(harness):
 
 def test_detail_preserves_selected_values_and_pinned_descriptor(harness):
     service, _, cache, _, state = harness
-    detail = {key: state[key] for key in ("capture_id", "generation", "acquisition_revision", "system_revision", "source_id", "connection_id")}
+    detail = {key: state[key] for key in ("capture_id", "generation", "acquisition_revision", "engine_revision", "source_id", "connection_id")}
     detail.update(sequence_id=5, timestamp_ns="1780000000000000001", original_shape=[3, 4], dtype="float64",
                   row_indices=[1, 2], sample_start=1, sample_count=3, trigger_row_index=2,
                   values=[[1.5, "NaN", "Infinity"], ["9007199254740993", "-Infinity", True]], descriptor=None)

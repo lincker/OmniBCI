@@ -1,4 +1,4 @@
-/** Logs stay within Settings and render backend content as inert text. */
+/** Logs stay within Settings and render server content as inert text. */
 import assert from "node:assert/strict";
 import { after, afterEach, test } from "node:test";
 import React from "react";
@@ -7,7 +7,7 @@ import { createServer } from "vite";
 
 const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
 after(() => server.close());
-const { BackendLogs } = await server.ssrLoadModule("/src/BackendLogs.tsx");
+const { ServerLogs } = await server.ssrLoadModule("/src/ServerLogs.tsx");
 const { default: App } = await server.ssrLoadModule("/src/App.tsx");
 const { I18nProvider, translate } = await server.ssrLoadModule("/src/i18n.tsx");
 const originalWindow = globalThis.window;
@@ -25,7 +25,7 @@ function renderLogs(data, error = null) {
     useEffect: () => {},
   };
   let tree;
-  try { tree = BackendLogs({ navigation: null }); }
+  try { tree = ServerLogs({ navigation: null }); }
   finally { dispatcher.current = previous; }
   return renderToStaticMarkup(tree);
 }
@@ -44,16 +44,16 @@ test("a direct Logs URL selects Settings and exposes navigation back to General"
 });
 
 test("log output escapes markup, preserves multiline text, and identifies truncated output", () => {
-  const html = renderLogs({ filename: "backend.log", lines: ["<script>alert(1)</script>", "ERROR second line"], truncated: true });
+  const html = renderLogs({ filename: "server.log", lines: ["<script>alert(1)</script>", "ERROR second line"], truncated: true });
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;\nERROR second line/);
   assert.match(html, /Earlier content is omitted/);
-  assert.match(html, /backend.log/);
-  assert.match(html, /tabindex="0" role="region" aria-label="Backend log output"/);
+  assert.match(html, /server.log/);
+  assert.match(html, /tabindex="0" role="region" aria-label="Server log output"/);
 });
 
 test("empty logs, loading, and a failed refresh have distinct states", () => {
-  const empty = renderLogs({ filename: "backend.log", lines: [], truncated: false });
+  const empty = renderLogs({ filename: "server.log", lines: [], truncated: false });
   assert.match(empty, /No log entries yet/);
   assert.doesNotMatch(empty, /Earlier content is omitted|Loading logs/);
   assert.match(renderLogs(null), /Loading logs/);

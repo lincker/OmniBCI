@@ -2,7 +2,7 @@
 export const moduleNames = ["acquisition", "processing", "stimulation", "actuation"];
 export const revisionMap = (revision) => ({
   ...Object.fromEntries(moduleNames.map((module) => [module, revision ?? null])),
-  system: revision ? "system-revision" : null,
+  engine: revision ? "engine-revision" : null,
 });
 export function moduleConfiguration({ revision, bindings = [], settings = {}, revisions = revisionMap(revision) } = {}) {
   return {
@@ -12,7 +12,7 @@ export function moduleConfiguration({ revision, bindings = [], settings = {}, re
       settings: Object.fromEntries(Object.entries(settings).filter(([key]) => key.startsWith(`${module.toUpperCase()}.`)
         || module === "processing" && key === "ALGORITHM.baseline_duration")),
     }])),
-    system: { revision: revisions.system, settings: {} },
+    engine: { revision: revisions.engine, settings: {} },
   };
 }
 

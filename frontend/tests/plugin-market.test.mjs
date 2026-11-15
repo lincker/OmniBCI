@@ -77,7 +77,7 @@ test("an unsettled runtime blocks installation while the library remains readabl
   assert.doesNotMatch(installButton[1], /disabled/);
 });
 
-test("package actions send exact identities and local ZIP bytes to the backend", async () => {
+test("package actions send exact identities and local ZIP bytes to the server", async () => {
   const requests = [];
   const previous = globalThis.fetch;
   globalThis.fetch = async (path, options) => {

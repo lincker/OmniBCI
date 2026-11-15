@@ -74,7 +74,7 @@ def test_module_action_targets_only_requested_module(api_client, engine_service,
     operation.assert_awaited_once_with(module)
 
 
-@pytest.mark.parametrize("module", ["unknown", "stimulation", "system"])
+@pytest.mark.parametrize("module", ["unknown", "stimulation", "engine"])
 def test_module_route_rejects_unsupported_modules(api_client, module):
     assert api_client.post(f"/api/v1/engine/modules/{module}/start").status_code == 422
 

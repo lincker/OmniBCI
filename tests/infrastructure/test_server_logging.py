@@ -9,8 +9,8 @@ import weakref
 
 import pytest
 
-from omnibci.infrastructure import backend_logging
-from omnibci.infrastructure.backend_logging import BackendLogging
+from omnibci.infrastructure import server_logging
+from omnibci.infrastructure.server_logging import ServerLogging
 
 
 @pytest.fixture
@@ -21,9 +21,9 @@ def isolated_logging(monkeypatch, tmp_path):
     logger.propagate = False
     logger.disabled = False
     monkeypatch.setattr(logging, "lastResort", None)
-    monkeypatch.setattr(backend_logging, "user_log_path", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(server_logging, "user_log_path", lambda *a, **k: tmp_path)
     yield logger, tmp_path
-    owner = BackendLogging._owner
+    owner = ServerLogging._owner
     if owner is not None:
         owner.stop()
     logger.setLevel(old[0])
@@ -36,8 +36,8 @@ def test_level_traceback_location_and_existing_handlers(isolated_logging):
     logger.addHandler(existing)
     logger.setLevel(logging.DEBUG)
     logger.propagate = True
-    with BackendLogging({"LOGGING.level": "WARNING", "LOGGING.file_path": "nested/app.log"}) as service:
-        assert service.file_path == root / "nested" / f"app-backend-{os.getpid()}.log"
+    with ServerLogging({"LOGGING.level": "WARNING", "LOGGING.file_path": "nested/app.log"}) as service:
+        assert service.file_path == root / "nested" / f"app-server-{os.getpid()}.log"
         assert existing in logger.handlers
         assert logger.propagate is True
         logger.info("filtered information")
@@ -57,11 +57,11 @@ def test_level_traceback_location_and_existing_handlers(isolated_logging):
 
 
 def test_explicit_child_logger_level_cannot_bypass_file_filter(isolated_logging):
-    child = logging.getLogger("omnibci.backend_logging_test_child")
+    child = logging.getLogger("omnibci.server_logging_test_child")
     previous = child.level
     child.setLevel(logging.DEBUG)
     try:
-        with BackendLogging({"LOGGING.level": "WARNING"}) as service:
+        with ServerLogging({"LOGGING.level": "WARNING"}) as service:
             child.debug("filtered child debug")
             child.warning("included child warning")
     finally:
@@ -76,7 +76,7 @@ def test_existing_last_resort_console_is_preserved(isolated_logging, monkeypatch
     fallback = logging.StreamHandler()
     fallback.setLevel(logging.WARNING)
     monkeypatch.setattr(logging, "lastResort", fallback)
-    with BackendLogging({}) as service:
+    with ServerLogging({}) as service:
         logger.warning("console warning")
         logger.info("file information")
     stderr = capsys.readouterr().err
@@ -97,7 +97,7 @@ def test_existing_console_chain_does_not_receive_an_extra_fallback(isolated_logg
     root = logging.getLogger()
     root.addHandler(console)
     try:
-        with BackendLogging({}):
+        with ServerLogging({}):
             assert fallback not in logger.handlers
             logger.warning("single console warning")
     finally:
@@ -109,11 +109,11 @@ def test_child_console_handler_suppresses_original_last_resort(isolated_logging,
     fallback = logging.StreamHandler()
     fallback.setLevel(logging.WARNING)
     monkeypatch.setattr(logging, "lastResort", fallback)
-    child = logging.getLogger("omnibci.backend_logging_child_console")
+    child = logging.getLogger("omnibci.server_logging_child_console")
     console = logging.StreamHandler()
     child.addHandler(console)
     try:
-        with BackendLogging({}) as service:
+        with ServerLogging({}) as service:
             child.warning("single child console warning")
     finally:
         child.removeHandler(console)
@@ -134,7 +134,7 @@ def test_invalid_settings_leave_logger_untouched(isolated_logging, settings):
     logger, root = isolated_logging
     original_level = logger.level
     with pytest.raises(ValueError):
-        BackendLogging(settings).start()
+        ServerLogging(settings).start()
     assert logger.handlers == []
     assert logger.level == original_level
     assert list(root.iterdir()) == []
@@ -142,14 +142,14 @@ def test_invalid_settings_leave_logger_untouched(isolated_logging, settings):
 
 def test_absolute_destination_and_repeated_lifecycle(isolated_logging):
     logger, root = isolated_logging
-    service = BackendLogging({"LOGGING.file_path": str(root / "absolute.log")})
+    service = ServerLogging({"LOGGING.file_path": str(root / "absolute.log")})
     assert service.stop() is True
     for _ in range(2):
         assert service.start() is service
         assert service.start() is service
         assert len(logger.handlers) == 1
         with pytest.raises(RuntimeError, match="already"):
-            BackendLogging({}).start()
+            ServerLogging({}).start()
         logger.warning("one record")
         assert service.stop() is True
         assert service.stop() is True
@@ -164,7 +164,7 @@ def test_absolute_destination_and_repeated_lifecycle(isolated_logging):
 ])
 def test_queue_and_shutdown_bounds_are_required(isolated_logging, options):
     with pytest.raises(ValueError):
-        BackendLogging({}, **options)
+        ServerLogging({}, **options)
 
 
 def test_file_open_failure_leaves_logger_and_ownership_unchanged(isolated_logging):
@@ -172,10 +172,10 @@ def test_file_open_failure_leaves_logger_and_ownership_unchanged(isolated_loggin
     (root / "blocked").write_text("not a directory")
     original_level = logger.level
     with pytest.raises(OSError):
-        BackendLogging({"LOGGING.file_path": "blocked/app.log"}).start()
+        ServerLogging({"LOGGING.file_path": "blocked/app.log"}).start()
     assert logger.handlers == []
     assert logger.level == original_level
-    assert BackendLogging._owner is None
+    assert ServerLogging._owner is None
 
 
 def test_slow_format_queue_saturation_and_bounded_shutdown(isolated_logging, capsys):
@@ -190,7 +190,7 @@ def test_slow_format_queue_saturation_and_bounded_shutdown(isolated_logging, cap
             assert release.wait(5)
             return "slow record"
 
-    service = BackendLogging({}, queue_size=1, shutdown_timeout_s=0.01).start()
+    service = ServerLogging({}, queue_size=1, shutdown_timeout_s=0.01).start()
     producer = Thread(target=lambda: (logger.warning(SlowMessage()), produced.set()))
     try:
         producer.start()
@@ -205,7 +205,7 @@ def test_slow_format_queue_saturation_and_bounded_shutdown(isolated_logging, cap
         assert service.is_running
         assert logger.handlers == []
         with pytest.raises(RuntimeError, match="already"):
-            BackendLogging({}).start()
+            ServerLogging({}).start()
         assert capsys.readouterr().err == ""
     finally:
         release.set()
@@ -221,8 +221,8 @@ def test_slow_format_queue_saturation_and_bounded_shutdown(isolated_logging, cap
 def test_slow_write_does_not_block_producer_or_close_in_use_stream(isolated_logging, monkeypatch):
     logger, _ = isolated_logging
     writing, release, closed = Event(), Event(), Event()
-    original_emit = backend_logging.RotatingFileHandler.emit
-    original_close = backend_logging.RotatingFileHandler.close
+    original_emit = server_logging.RotatingFileHandler.emit
+    original_close = server_logging.RotatingFileHandler.close
 
     def slow_emit(handler, record):
         writing.set()
@@ -233,9 +233,9 @@ def test_slow_write_does_not_block_producer_or_close_in_use_stream(isolated_logg
         closed.set()
         original_close(handler)
 
-    monkeypatch.setattr(backend_logging.RotatingFileHandler, "emit", slow_emit)
-    monkeypatch.setattr(backend_logging.RotatingFileHandler, "close", tracked_close)
-    service = BackendLogging({}, shutdown_timeout_s=0.01).start()
+    monkeypatch.setattr(server_logging.RotatingFileHandler, "emit", slow_emit)
+    monkeypatch.setattr(server_logging.RotatingFileHandler, "close", tracked_close)
+    service = ServerLogging({}, shutdown_timeout_s=0.01).start()
     try:
         logger.warning("slow write")
         assert writing.wait(1)
@@ -253,7 +253,7 @@ def test_global_logging_shutdown_does_not_wait_for_the_writer(isolated_logging, 
     logger, _ = isolated_logging
     writing, release, shutdown_done = Event(), Event(), Event()
     writers = []
-    original_emit = backend_logging.RotatingFileHandler.emit
+    original_emit = server_logging.RotatingFileHandler.emit
 
     def slow_emit(handler, record):
         writers.append(handler)
@@ -261,8 +261,8 @@ def test_global_logging_shutdown_does_not_wait_for_the_writer(isolated_logging, 
         assert release.wait(5)
         original_emit(handler, record)
 
-    monkeypatch.setattr(backend_logging.RotatingFileHandler, "emit", slow_emit)
-    service = BackendLogging({}).start()
+    monkeypatch.setattr(server_logging.RotatingFileHandler, "emit", slow_emit)
+    service = ServerLogging({}).start()
     shutdown_thread = None
     try:
         logger.warning("in progress")
@@ -285,15 +285,15 @@ def test_global_logging_shutdown_does_not_wait_for_the_writer(isolated_logging, 
 
 def test_write_failure_is_counted_without_stderr_or_recursion(isolated_logging, monkeypatch, capsys):
     logger, _ = isolated_logging
-    original_format = backend_logging.RotatingFileHandler.format
+    original_format = server_logging.RotatingFileHandler.format
 
     def fail_format(handler, record):
         if record.msg == "bad record":
             raise OSError("disk failed")
         return original_format(handler, record)
 
-    monkeypatch.setattr(backend_logging.RotatingFileHandler, "format", fail_format)
-    with BackendLogging({}) as service:
+    monkeypatch.setattr(server_logging.RotatingFileHandler, "format", fail_format)
+    with ServerLogging({}) as service:
         logger.warning("bad record")
         logger.warning("next record")
     assert service.write_errors == 1
@@ -303,7 +303,7 @@ def test_write_failure_is_counted_without_stderr_or_recursion(isolated_logging, 
 
 def test_rotation_is_bounded(isolated_logging):
     logger, _ = isolated_logging
-    with BackendLogging({}) as service:
+    with ServerLogging({}) as service:
         for index in range(5):
             logger.warning("%s %s", index, "x" * (5 * 1024 * 1024))
     assert service.write_errors == 0
@@ -316,7 +316,7 @@ def test_thread_start_failure_restores_logger_and_closes_file(isolated_logging, 
     logger, _ = isolated_logging
     original_level = logger.level
     closed = []
-    original_close = backend_logging.RotatingFileHandler.close
+    original_close = server_logging.RotatingFileHandler.close
 
     def fail_start(thread):
         raise RuntimeError("cannot start writer")
@@ -325,14 +325,14 @@ def test_thread_start_failure_restores_logger_and_closes_file(isolated_logging, 
         closed.append(handler)
         original_close(handler)
 
-    monkeypatch.setattr(backend_logging.Thread, "start", fail_start)
-    monkeypatch.setattr(backend_logging.RotatingFileHandler, "close", track_close)
+    monkeypatch.setattr(server_logging.Thread, "start", fail_start)
+    monkeypatch.setattr(server_logging.RotatingFileHandler, "close", track_close)
     with pytest.raises(RuntimeError, match="cannot start writer"):
-        BackendLogging({}).start()
+        ServerLogging({}).start()
     assert closed
     assert logger.handlers == []
     assert logger.level == original_level
-    assert BackendLogging._owner is None
+    assert ServerLogging._owner is None
 
 
 @pytest.mark.parametrize(("content", "expected"), [
@@ -340,21 +340,21 @@ def test_thread_start_failure_restores_logger_and_closes_file(isolated_logging, 
     ("first\r\nlast", ["first", "last"]),
 ])
 def test_log_tail_preserves_empty_and_unterminated_lines(isolated_logging, content, expected):
-    service = BackendLogging({})
+    service = ServerLogging({})
     service.file_path.write_bytes(content.encode("utf-8"))
     assert service.read_tail() == (expected, False)
 
 
 @pytest.mark.parametrize("count", [200, 201])
 def test_log_tail_limits_line_count(isolated_logging, count):
-    service = BackendLogging({})
+    service = ServerLogging({})
     lines = [f"record {index}" for index in range(count)]
     service.file_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     assert service.read_tail() == (lines[-200:], count > 200)
 
 
 def test_log_tail_discards_partial_first_line_and_reads_only_bounded_bytes(isolated_logging, monkeypatch):
-    service = BackendLogging({})
+    service = ServerLogging({})
     service.file_path.write_text("old" * 30000 + "\nlatest\n", encoding="utf-8")
     original_open = Path.open
     read_sizes = []
@@ -382,7 +382,7 @@ def test_log_tail_discards_partial_first_line_and_reads_only_bounded_bytes(isola
 
 
 def test_log_tail_keeps_a_complete_line_at_the_byte_boundary(isolated_logging):
-    service = BackendLogging({})
+    service = ServerLogging({})
     latest = "current" * 9362
     service.file_path.write_text("old\n" + latest + "\n", encoding="utf-8")
     assert len((latest + "\n").encode()) == 64 * 1024 - 1
@@ -391,7 +391,7 @@ def test_log_tail_keeps_a_complete_line_at_the_byte_boundary(isolated_logging):
 
 @pytest.mark.parametrize("ending", ["", "\n"])
 def test_log_tail_preserves_readable_suffix_of_oversized_utf8_line(isolated_logging, ending):
-    service = BackendLogging({})
+    service = ServerLogging({})
     service.file_path.write_text("\u2600" * 22000 + "ok" + ending, encoding="utf-8")
     lines, truncated = service.read_tail()
     assert truncated is True
@@ -402,14 +402,14 @@ def test_log_tail_preserves_readable_suffix_of_oversized_utf8_line(isolated_logg
 
 
 def test_log_tail_exact_byte_limit_is_not_truncated(isolated_logging):
-    service = BackendLogging({})
+    service = ServerLogging({})
     content = "x" * (64 * 1024)
     service.file_path.write_text(content, encoding="utf-8")
     assert service.read_tail() == ([content], False)
 
 
 def test_log_tail_missing_current_file_does_not_read_rotated_files(isolated_logging):
-    service = BackendLogging({})
-    Path(f"{service.file_path}.1").write_text("old backend record", encoding="utf-8")
+    service = ServerLogging({})
+    Path(f"{service.file_path}.1").write_text("old server record", encoding="utf-8")
     with pytest.raises(FileNotFoundError):
         service.read_tail()

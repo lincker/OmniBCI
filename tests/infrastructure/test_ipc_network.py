@@ -48,7 +48,7 @@ class TestFrameCodec:
     def test_frame_body_size_counts_bytes_not_chars(self):
         # Multi-byte body: header body_size must equal UTF-8 byte length.
         body = "结果"  # 2 chars, 6 UTF-8 bytes
-        frame = Frame(body).to_bytes()
+        frame = Frame(body, version=PROTOCOL_VERSION).to_bytes()
         header = Frame.Header.from_bytes(frame[: Frame.Header.HEADER_SIZE])
         assert header.body_size == len(body.encode())
         assert frame[Frame.Header.HEADER_SIZE:].decode() == body
@@ -530,7 +530,7 @@ class TestSafeFrameRead:
             reader = asyncio.StreamReader()
             client = NetworkClient(event_bus=_SpyBus())
             client.reader = reader
-            reader.feed_data(Frame("not json").to_bytes())
+            reader.feed_data(Frame("not json", version=PROTOCOL_VERSION).to_bytes())
 
             with pytest.raises(InvalidEventBody):
                 await client.receive()

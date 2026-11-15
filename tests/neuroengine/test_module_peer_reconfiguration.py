@@ -70,32 +70,32 @@ async def test_failed_candidate_cleanup_stays_owned_until_gateway_stop():
 
 def snapshot(**changes):
     return {"CONFIG.module_revisions": {"stimulation": "a" * 64, "actuation": "b" * 64},
-            "CONFIG.system_revision": "c" * 64, "CONFIG.generation": "run",
+            "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "run",
             "STIMULATION.auto_spawn": False,
             "ACTUATION.auto_spawn": False, **changes}
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("field", ["CONFIG.generation", "CONFIG.system_revision"])
-async def test_stale_engine_or_system_never_replaces_a_peer(field):
-    engine = _make_engine(generation="run", system_revision="c" * 64)
+@pytest.mark.parametrize("field", ["CONFIG.generation", "CONFIG.engine_revision"])
+async def test_stale_engine_generation_or_configuration_never_replaces_a_peer(field):
+    engine = _make_engine(generation="run", engine_revision="c" * 64)
     engine.peer_gateway.replace_peer = AsyncMock()
     engine._loop = asyncio.get_running_loop()
-    with pytest.raises(ValueError, match="different engine or system"):
+    with pytest.raises(ValueError, match="different Engine generation or configuration"):
         await engine.reconfigure_output_modules(snapshot(**{field: "stale"}), ["stimulation"])
     engine.peer_gateway.replace_peer.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_output_replacement_routes_new_identity_and_preserves_processing_workers():
-    engine = _make_engine(generation="run", system_revision="c" * 64)
+    engine = _make_engine(generation="run", engine_revision="c" * 64)
     engine.peer_gateway.replace_peer = AsyncMock()
     engine._loop = asyncio.get_running_loop()
     await engine.reconfigure_output_modules(snapshot(), ["stimulation"])
     role, selected = engine.peer_gateway.replace_peer.call_args.args
     assert role == "stimulation"
     assert selected.transport._server.identity.module_revision == "a" * 64
-    assert selected.transport._server.identity.system_revision == "c" * 64
+    assert selected.transport._server.identity.engine_revision == "c" * 64
     engine.acquisition_command_queue.put.assert_not_called()
     engine.processor_command_queue.put.assert_not_called()
     engine.acquisition_worker.start.assert_not_called()
@@ -104,7 +104,7 @@ async def test_output_replacement_routes_new_identity_and_preserves_processing_w
 
 @pytest.mark.asyncio
 async def test_actuation_configuration_keeps_transport_but_requires_explicit_start():
-    engine = _make_engine(generation="run", system_revision="c" * 64)
+    engine = _make_engine(generation="run", engine_revision="c" * 64)
     engine.peer_gateway.replace_peer = AsyncMock()
     engine._loop = asyncio.get_running_loop()
     await engine.reconfigure_output_modules(snapshot(), ["actuation"])
@@ -124,7 +124,7 @@ async def test_actuation_configuration_keeps_transport_but_requires_explicit_sta
 @pytest.mark.asyncio
 async def test_output_reconfiguration_from_another_loop_executes_on_engine_loop():
     engine_loop = asyncio.get_running_loop()
-    engine = _make_engine(generation="run", system_revision="c" * 64)
+    engine = _make_engine(generation="run", engine_revision="c" * 64)
     engine._loop = engine_loop
     loops = []
     async def replace(role, selected):
@@ -140,7 +140,7 @@ async def test_live_listener_address_change_preserves_other_modules(module, unus
     ports = {role: unused_tcp_port_factory() for role in ("stimulation", "actuation")}
     bus = FakeBus()
     gateway = PeerGateway(bus)
-    engine = _make_engine(event_bus=bus, peer_gateway=gateway, generation="run", system_revision="c" * 64)
+    engine = _make_engine(event_bus=bus, peer_gateway=gateway, generation="run", engine_revision="c" * 64)
     engine._loop = asyncio.get_running_loop()
     engine._started = True
     original = snapshot(**{f"{role.upper()}.server_port": port for role, port in ports.items()})
@@ -160,7 +160,7 @@ async def test_live_listener_address_change_preserves_other_modules(module, unus
         assert replacement is not old and replacement.is_ready
         assert gateway.peer(other) is unchanged and unchanged.is_ready
         assert replacement._transport._server.port == new_port
-        assert engine._generation == "run" and engine._system_revision == "c" * 64
+        assert engine._generation == "run" and engine._engine_revision == "c" * 64
         assert (engine.acquisition_worker, engine.signal_processing_worker) == workers
         reader, writer = await asyncio.open_connection("127.0.0.1", new_port)
         writer.close()

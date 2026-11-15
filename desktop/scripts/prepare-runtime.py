@@ -137,7 +137,7 @@ def main():
         package = json.loads((DESKTOP / "package.json").read_text())
         project = tomllib.loads((ROOT / "pyproject.toml").read_text())
         if package["version"] != project["project"]["version"]:
-            raise RuntimeError("Desktop and backend application versions must match")
+            raise RuntimeError("Desktop and server application versions must match")
         manifest = {
             "schemaVersion": 1,
             "applicationVersion": package["version"],

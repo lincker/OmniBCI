@@ -32,7 +32,7 @@ _CONTEXT_KEYS = frozenset({
     "ACQUISITION.channel_labels",
 })
 _ROLE_SETTING_KEYS = {
-    "engine": (SECTION_SETTING_KEYS["system"] | SECTION_SETTING_KEYS["acquisition"]
+    "engine": (SECTION_SETTING_KEYS["engine"] | SECTION_SETTING_KEYS["acquisition"]
                | SECTION_SETTING_KEYS["processing"] | _CONTEXT_KEYS),
     "stimulation": SECTION_SETTING_KEYS["stimulation"] | {"debug"},
     "actuation": SECTION_SETTING_KEYS["actuation"] | {"debug"},
@@ -91,17 +91,17 @@ def _validate_settings(role: str, settings: dict) -> None:
 
 @dataclass(frozen=True, slots=True, init=False)
 class NodeConfiguration:
-    """Role-owned module revisions, shared system identity and pinned runtime inputs."""
+    """Role-owned module revisions, shared Engine identity and pinned runtime inputs."""
 
     role: str
-    system_revision: str
+    engine_revision: str
     _module_revisions_json: str = field(repr=False)
     generation: str | None
     _settings_json: str = field(repr=False)
     _bindings_json: str = field(repr=False)
     format_version: int = 1
 
-    def __init__(self, role: str, module_revisions: dict[str, str], system_revision: str,
+    def __init__(self, role: str, module_revisions: dict[str, str], engine_revision: str,
                  generation: str | None, settings: dict,
                  bindings: tuple[ProfileBinding, ...], format_version: int = 1):
         _validate_role(role)
@@ -109,9 +109,9 @@ class NodeConfiguration:
             raise PluginSchemaError("Unsupported node configuration format_version")
         if not isinstance(module_revisions, dict) or set(module_revisions) != _ROLE_MODULES[role]:
             raise PluginSchemaError("Node configuration requires exactly its owned module revisions")
-        for revision in (*module_revisions.values(), system_revision):
+        for revision in (*module_revisions.values(), engine_revision):
             if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{64}", revision) is None:
-                raise PluginSchemaError("Node configuration requires valid module and system revisions")
+                raise PluginSchemaError("Node configuration requires valid module and engine revisions")
         if generation is not None and (
             not isinstance(generation, str) or not generation or generation != generation.strip()
         ):
@@ -130,7 +130,7 @@ class NodeConfiguration:
             raise PluginSchemaError("Missing required node selections: " + ", ".join(sorted(missing)))
         object.__setattr__(self, "role", role)
         object.__setattr__(self, "_module_revisions_json", _canonical(module_revisions))
-        object.__setattr__(self, "system_revision", system_revision)
+        object.__setattr__(self, "engine_revision", engine_revision)
         object.__setattr__(self, "generation", generation)
         object.__setattr__(self, "format_version", format_version)
         object.__setattr__(self, "_settings_json", _canonical(settings))
@@ -150,20 +150,20 @@ class NodeConfiguration:
 
     def to_dict(self) -> dict:
         return {"format_version": self.format_version, "role": self.role,
-                "module_revisions": self.module_revisions, "system_revision": self.system_revision,
+                "module_revisions": self.module_revisions, "engine_revision": self.engine_revision,
                 "generation": self.generation, "settings": self.settings,
                 "bindings": json.loads(self._bindings_json)}
 
     @classmethod
     def from_dict(cls, data: dict) -> NodeConfiguration:
-        fields = {"format_version", "role", "module_revisions", "system_revision", "generation", "settings", "bindings"}
+        fields = {"format_version", "role", "module_revisions", "engine_revision", "generation", "settings", "bindings"}
         if not isinstance(data, dict) or set(data) != fields or not isinstance(data["bindings"], list):
             raise PluginSchemaError("Node configuration has missing or unknown fields")
         return cls(**{**data, "bindings": tuple(ProfileBinding.from_dict(item) for item in data["bindings"])})
 
 
 def project_node_configuration(runtime_snapshot: dict, role: str) -> NodeConfiguration:
-    """Project a backend-owned snapshot without looking up any installed packages."""
+    """Project a server-owned snapshot without looking up any installed packages."""
     _validate_role(role)
     if not isinstance(runtime_snapshot, dict) or not isinstance(runtime_snapshot.get("PLUGINS.bindings"), list):
         raise PluginSchemaError("Node projection requires pinned runtime bindings")
@@ -188,7 +188,7 @@ def project_node_configuration(runtime_snapshot: dict, role: str) -> NodeConfigu
     return NodeConfiguration(
         role=role, module_revisions={module: runtime_snapshot.get("CONFIG.module_revisions", {}).get(module)
                                      for module in _ROLE_MODULES[role]},
-        system_revision=runtime_snapshot.get("CONFIG.system_revision"),
+        engine_revision=runtime_snapshot.get("CONFIG.engine_revision"),
         generation=runtime_snapshot.get("CONFIG.generation"), settings=settings,
         bindings=bindings,
     )
@@ -227,7 +227,7 @@ def materialize_node_configuration(configuration: NodeConfiguration,
         result["ALGORITHM.filters"] = filters
     result["PLUGINS.bindings"] = bindings
     result["CONFIG.module_revisions"] = configuration.module_revisions
-    result["CONFIG.system_revision"] = configuration.system_revision
+    result["CONFIG.engine_revision"] = configuration.engine_revision
     if configuration.generation is not None:
         result["CONFIG.generation"] = configuration.generation
     result["CONFIG.node_role"] = configuration.role

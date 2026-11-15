@@ -127,7 +127,6 @@ _EXPECTED_EVENT_TYPES = {
     EventType.DetachProcessingInput,
     EventType.ResetProcessingInput,
     EventType.ProcessingInputFault,
-    EventType.CloseAllNeuroEngineProcessSystem,
     EventType.StimulationAck,
 }
 
@@ -263,15 +262,17 @@ class TestEventRouting:
         eng._ready_modules.add("processing")
         eng._register_event_listeners()
         received = asyncio.get_running_loop().create_future()
+        unrelated = asyncio.get_running_loop().create_future()
         bus.register_event_listener(EventType.CommandResult, received.set_result)
+        bus.register_event_listener(EventType.TrialCompleted, unrelated.set_result)
         await bus.start()
         try:
             bus.put_event(Event(EventType.PrepareSignalProcessing, CommandRequest("prepare", {})))
-            bus.put_event(Event(EventType.CloseAllNeuroEngineProcessSystem))
+            bus.put_event(Event(EventType.TrialCompleted, {"trial_number": 1}))
             result_event = await asyncio.wait_for(received, timeout=1)
             assert result_event.data.command_id == "prepare"
             assert result_event.data.error_code == "COMMAND_QUEUE_FULL"
-            assert eng.should_stop is True
+            assert (await asyncio.wait_for(unrelated, timeout=1)).data == {"trial_number": 1}
         finally:
             await bus.stop()
 
@@ -314,18 +315,6 @@ class TestEventRouting:
             else eng.acquisition_command_queue
         )
         other_queue.put_nowait.assert_not_called()
-
-    def test_registered_close_handler_stops_without_queueing(self):
-        eng = _make_engine()
-        handler = _registered_handlers(eng)[
-            EventType.CloseAllNeuroEngineProcessSystem
-        ]
-        handler(Event(EventType.CloseAllNeuroEngineProcessSystem))
-
-        assert eng.should_stop is True
-        eng.acquisition_command_queue.put_nowait.assert_not_called()
-        eng.processor_command_queue.put_nowait.assert_not_called()
-
 
 # ---------------------------------------------------------------------------
 # _stop: sends commands, joins/terminates processes, closes queues

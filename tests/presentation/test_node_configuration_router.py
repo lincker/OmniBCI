@@ -1,4 +1,4 @@
-"""External nodes obtain one role projection from the settled backend graph."""
+"""External nodes obtain one role projection from the settled server graph."""
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -6,7 +6,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from omnibci.application.plugin_profiles import ModuleActivation, ProfileBinding, PluginSelection, SystemSettings
+from omnibci.application.plugin_profiles import ModuleActivation, ProfileBinding, PluginSelection, EngineSettings
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.node_configuration_service import NodeConfigurationService
 from omnibci.presentation.errors import register_exception_handlers
@@ -22,7 +22,7 @@ def binding(slot, kind, parameters=None):
 @pytest.fixture
 def node_api():
     snapshot = {
-        "CONFIG.module_revisions": {'acquisition': "a" * 64, 'processing': "a" * 64, 'stimulation': "a" * 64, 'actuation': "a" * 64}, "CONFIG.system_revision": "c" * 64,
+        "CONFIG.module_revisions": {'acquisition': "a" * 64, 'processing': "a" * 64, 'stimulation': "a" * 64, 'actuation': "a" * 64}, "CONFIG.engine_revision": "c" * 64,
         "STIMULATION.auto_spawn": False, "ACTUATION.auto_spawn": False, "ACTUATION.enabled": True,
         "STIMULATION.server_ip": "127.0.0.1", "STIMULATION.server_port": 9000,
         "ACTUATION.server_ip": "127.0.0.1", "ACTUATION.server_port": 9001,
@@ -34,7 +34,7 @@ def node_api():
         ],
     }
     engine = NeuroEngineService(engine_factory=Mock())
-    profiles = SimpleNamespace(materialize=lambda _: snapshot, repository=SimpleNamespace(get_module=lambda role: ModuleActivation(role, {}, ()), get_system=lambda: SystemSettings({})))
+    profiles = SimpleNamespace(materialize=lambda _: snapshot, repository=SimpleNamespace(get_module=lambda role: ModuleActivation(role, {}, ()), get_engine=lambda: EngineSettings({})))
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(router, prefix="/api/v1")
@@ -50,6 +50,7 @@ def test_node_api_selected_then_running_uses_applied_inputs(node_api, role, kind
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["state"] == "selected"
+    assert data["configuration"]["format_version"] == 1
     assert data["configuration"]["generation"] is None
     assert {item["kind"] for item in data["configuration"]["bindings"]} == kinds
     assert "private.cnt" not in response.text
@@ -62,7 +63,7 @@ def test_node_api_selected_then_running_uses_applied_inputs(node_api, role, kind
     assert data["state"] == "running"
     assert data["configuration"]["generation"] == "run-1"
     assert data["configuration"]["module_revisions"] == {role: "a" * 64}
-    assert data["configuration"]["system_revision"] == "c" * 64
+    assert data["configuration"]["engine_revision"] == "c" * 64
 
 
 def test_transition_recovery_and_managed_modes_reject_node_publication(node_api):

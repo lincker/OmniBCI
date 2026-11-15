@@ -40,7 +40,7 @@ def _plan():
 def _snapshot(plan):
     from omnibci.application.plugin_profiles import PluginSelection
     return {
-        "CONFIG.module_revisions": {"acquisition": plan.acquisition_revision, "processing": plan.acquisition_revision, "stimulation": plan.acquisition_revision, "actuation": plan.acquisition_revision}, "CONFIG.system_revision": "system", "CONFIG.generation": "generation-one",
+        "CONFIG.module_revisions": {"acquisition": plan.acquisition_revision, "processing": plan.acquisition_revision, "stimulation": plan.acquisition_revision, "actuation": plan.acquisition_revision}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "generation-one",
         "ACQUISITION.sample_rate": plan.source.sample_rate,
         "ACQUISITION.signal_source": plan.source.source_id,
         "ALGORITHM.baseline_duration": 0.008,
@@ -52,7 +52,7 @@ def _snapshot(plan):
 
 def _receipt(plan):
     return {
-        "generation": "generation-one", "acquisition_revision": plan.acquisition_revision, "processing_revision": "revision-one", "system_revision": "system",
+        "generation": "generation-one", "acquisition_revision": plan.acquisition_revision, "processing_revision": "revision-one", "engine_revision": "engine",
         "connection_id": plan.source.connection_id,
         "source_fingerprint": plan.source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
     }
@@ -97,7 +97,7 @@ def _processor(plan):
         detector=None, decoder=None, command_queue=MagicMock(),
         data_manager=MagicMock(), event_bus=MagicMock(),
         sample_rate=1000, baseline_duration=0.008,
-        generation="generation-one", processing_revision=plan.acquisition_revision, acquisition_revision=plan.acquisition_revision, system_revision="system",
+        generation="generation-one", processing_revision=plan.acquisition_revision, acquisition_revision=plan.acquisition_revision, engine_revision="engine",
         settings_snapshot=_snapshot(plan),
     )
 
@@ -144,7 +144,7 @@ def test_prepare_binds_observed_rate_and_is_idempotent(monkeypatch):
 
 @pytest.mark.parametrize("field,value", [
     ("generation", "stale-generation"), ("acquisition_revision", "stale-revision"),
-    ("processing_revision", "stale-processing"), ("system_revision", "stale-system"),
+    ("processing_revision", "stale-processing"), ("engine_revision", "stale-engine"),
     ("connection_id", "stale-connection"), ("plan_fingerprint", "wrong-plan"),
 ])
 def test_stale_preparation_does_not_construct_or_replace_plugins(monkeypatch, field, value):
@@ -228,7 +228,7 @@ async def test_source_only_standby_drains_raw_data_and_can_prepare_later(monkeyp
     raw = SignalChunk(10, 3, np.array([[10, 11], [30, 31], [2, 2], [0, 1]]))
     later = SignalChunk(20, 4, np.array([[12, 13], [32, 33], [2, 2], [0, 0]]))
     processor.data_manager.get_data.side_effect = [
-        raw, StreamBarrier("drain", "generation-one", "revision-one", 3, system_revision="system"), later,
+        raw, StreamBarrier("drain", "generation-one", "revision-one", 3, engine_revision="engine"), later,
     ]
 
     await processor._current_state.run()
@@ -405,7 +405,7 @@ async def test_stream_barrier_bypasses_signal_transform(monkeypatch):
     processor._signal_plan = MagicMock()
     processor.data_manager.get_data.return_value = StreamBarrier(
         "drain", "generation-one", "revision-one", -1,
-        system_revision="system")
+        engine_revision="engine")
     assert await processor.next_chunk() is None
     processor._signal_plan.apply.assert_not_called()
     assert processor.event_bus.put_event.call_args.args[0].data.ok
@@ -498,7 +498,7 @@ def test_processing_update_preserves_source_identity_and_reprepare_buffers(monke
     monkeypatch.setattr(pipeline_configuration, "load_configured_plugin", MagicMock(return_value=_Decoder()))
     processor._stage_configuration(CommandRequest("trial-update", {
         "settings_snapshot": after, "expected_revision": "revision-one",
-        "generation": "generation-one", "system_revision": "system", "boundary": "trial",
+        "generation": "generation-one", "engine_revision": "engine", "boundary": "trial",
     }))
     assert processor.event_bus.put_event.call_args.args[0].data.ok
     assert processor._signal_plan.acquisition_revision == "revision-one"

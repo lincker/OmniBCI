@@ -72,7 +72,7 @@ class NeuroEngineBuilder:
         cfg = self._config
         snapshot = self._settings_snapshot
         revisions = snapshot.get("CONFIG.module_revisions") or {}
-        system_revision = snapshot.get("CONFIG.system_revision")
+        engine_revision = snapshot.get("CONFIG.engine_revision")
         generation = snapshot.get("CONFIG.generation")
         # 1. EventBus — event_queue must be mp.Queue for cross-process delivery
         event_queue = mp.Queue()
@@ -101,7 +101,7 @@ class NeuroEngineBuilder:
             reporter = StartupReporter(
                 sender, component=component,
                 module_revisions={module: runtime_snapshot.get("CONFIG.module_revisions", {}).get(module)},
-                system_revision=runtime_snapshot.get("CONFIG.system_revision"),
+                engine_revision=runtime_snapshot.get("CONFIG.engine_revision"),
                 generation=runtime_snapshot.get("CONFIG.generation"),
             )
             try:
@@ -149,7 +149,7 @@ class NeuroEngineBuilder:
             worker_factory=worker_factory,
             processing_active=processing_active,
             startup_timeout_s=cfg.startup_timeout_s,
-            module_revisions=revisions, system_revision=system_revision,
+            module_revisions=revisions, engine_revision=engine_revision,
             generation=generation,
             allow_process_termination=self._allow_process_termination,
         )

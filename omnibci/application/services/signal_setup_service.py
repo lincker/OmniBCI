@@ -60,7 +60,7 @@ class SignalSetupService:
         fault = event.data
         if (not isinstance(fault, dict) or not any(
                 receipt is not None and all(fault.get(key) == receipt.get(key) for key in (
-                    "generation", "system_revision", "acquisition_revision", "input_id"))
+                    "generation", "engine_revision", "acquisition_revision", "input_id"))
                 for receipt in (self._receipt, self._pending_receipt))):
             return
         self._preparation_error = str(fault.get("reason") or "Processing input is unavailable")
@@ -71,7 +71,7 @@ class SignalSetupService:
         _, revision = self.settings.read_saved()
         accepted = ActivationSet({module: self.profiles.repository.get_module(module)
                                   for module in ("acquisition", "processing")},
-                                 self.profiles.repository.get_system())
+                                 self.profiles.repository.get_engine())
         source_error = self._preparation_error
         try:
             accepted_settings = self.profiles.materialize(accepted) if accepted else {}
@@ -105,7 +105,7 @@ class SignalSetupService:
         # A processing-only update preserves the prepared source contract.
         if (not source_error and active and receipt and self._plan
                 and receipt["generation"] == active.get("CONFIG.generation")
-                and receipt["system_revision"] == active.get("CONFIG.system_revision")
+                and receipt["engine_revision"] == active.get("CONFIG.engine_revision")
                 and receipt["acquisition_revision"] == active.get("CONFIG.module_revisions", {}).get("acquisition")
                 and self._bound_key == processing_binding_key(active)):
             receipt["processing_revision"] = active.get("CONFIG.module_revisions", {}).get("processing")
@@ -116,7 +116,7 @@ class SignalSetupService:
                      and self._bound_key == processing_binding_key(selected)
                      and self._bound_key == processing_binding_key(active)
                      and receipt["generation"] == active.get("CONFIG.generation")
-                     and receipt["system_revision"] == active.get("CONFIG.system_revision")
+                     and receipt["engine_revision"] == active.get("CONFIG.engine_revision")
                      and receipt["acquisition_revision"] == active.get("CONFIG.module_revisions", {}).get("acquisition")
                      and receipt["processing_revision"] == active.get("CONFIG.module_revisions", {}).get("processing")
                      and receipt["source_fingerprint"] == SignalInfo.from_dict(metadata).fingerprint
@@ -212,20 +212,20 @@ class SignalSetupService:
                 snapshot = self.engine.applied_snapshot
                 self.commands.request(EventType.ResetProcessingInput, {
                     "generation": snapshot.get("CONFIG.generation"),
-                    "system_revision": snapshot.get("CONFIG.system_revision"),
+                    "engine_revision": snapshot.get("CONFIG.engine_revision"),
                     "expected_revision": snapshot.get("CONFIG.module_revisions", {}).get("processing"),
                 })
             return None
         snapshot = self.engine.applied_snapshot or {}
         result = self.commands.request(EventType.DetachProcessingInput, {
             "generation": snapshot.get("CONFIG.generation"),
-            "system_revision": snapshot.get("CONFIG.system_revision"),
+            "engine_revision": snapshot.get("CONFIG.engine_revision"),
             "expected_revision": snapshot.get("CONFIG.module_revisions", {}).get("acquisition"),
             "drain": self.engine.is_module_running("processing"),
         })
         receipt = StreamDrainReceipt.from_value(result.data)
         if (receipt.generation != snapshot.get("CONFIG.generation")
-                or receipt.system_revision != snapshot.get("CONFIG.system_revision")
+                or receipt.engine_revision != snapshot.get("CONFIG.engine_revision")
                 or receipt.acquisition_revision != snapshot.get("CONFIG.module_revisions", {}).get("acquisition")):
             raise RuntimeError("Processing input boundary belongs to a different source")
         return receipt
@@ -277,7 +277,7 @@ class SignalSetupService:
                 "Source metadata changed since preparation; inspect and explicitly update the acquisition or decoder input")
         if (self._receipt and self._preparation_error is None and self._bound_key == source_key
                 and self._receipt["generation"] == snapshot.get("CONFIG.generation")
-                and self._receipt["system_revision"] == snapshot.get("CONFIG.system_revision")
+                and self._receipt["engine_revision"] == snapshot.get("CONFIG.engine_revision")
                 and self._receipt["connection_id"] == metadata.connection_id
                 and self._receipt["acquisition_revision"] == snapshot["CONFIG.module_revisions"]["acquisition"]):
             self._receipt["processing_revision"] = snapshot["CONFIG.module_revisions"]["processing"]
@@ -296,7 +296,7 @@ class SignalSetupService:
         receipt = {"generation": snapshot.get("CONFIG.generation"),
                    "acquisition_revision": snapshot["CONFIG.module_revisions"]["acquisition"],
                    "processing_revision": snapshot["CONFIG.module_revisions"]["processing"],
-                   "system_revision": snapshot["CONFIG.system_revision"],
+                   "engine_revision": snapshot["CONFIG.engine_revision"],
                    "connection_id": metadata.connection_id,
                    "source_fingerprint": metadata.fingerprint,
                    "plan_fingerprint": plan.fingerprint,

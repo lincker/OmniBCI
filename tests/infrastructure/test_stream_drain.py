@@ -89,12 +89,12 @@ def _processor(*, decoder=None, bus=None, data=None):
     return make_processor(
         _Detector(), decoder or _Decoder(), queue.Queue(), data or DataManager(queue.Queue()),
         bus or _Bus(), sample_rate=10, baseline_duration=0.2,
-        generation="generation-1", processing_revision="processing-2", acquisition_revision="revision-1", system_revision="system",
+        generation="generation-1", processing_revision="processing-2", acquisition_revision="revision-1", engine_revision="engine",
     )
 
 
 def _barrier(sequence=-1, **overrides):
-    return replace(StreamBarrier("drain-1", "generation-1", "revision-1", sequence, system_revision="system"), **overrides)
+    return replace(StreamBarrier("drain-1", "generation-1", "revision-1", sequence, engine_revision="engine"), **overrides)
 
 
 @pytest.mark.asyncio
@@ -104,7 +104,7 @@ async def test_acquisition_joins_producer_before_in_band_marker_and_defers_succe
     acquisition = AcquisitionRuntime(
         _Source(), queue.Queue(), data, bus,
         source_id="test-source",
-        generation="generation-1", acquisition_revision="revision-1", system_revision="system",
+        generation="generation-1", acquisition_revision="revision-1", engine_revision="engine",
     )
     started = asyncio.Event()
 
@@ -207,7 +207,7 @@ async def test_barrier_finishes_first_chunk_when_ready_without_forcing_partial_d
     receipt = StreamDrainReceipt.from_value(events[-1].data.data)
     assert receipt.acquisition_revision == "revision-1"
     assert receipt.processing_revision == "processing-2"
-    assert receipt.system_revision == "system"
+    assert receipt.engine_revision == "engine"
     assert receipt.completed_trials == 1
     assert receipt.interrupted_epoch is False
     assert receipt.outputs_settled is False
@@ -303,7 +303,7 @@ async def test_barrier_does_not_feed_an_incremental_decoder_the_same_latest_samp
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("overrides", [
-    {"generation": "stale"}, {"system_revision": "stale"},
+    {"generation": "stale"}, {"engine_revision": "stale"},
     {"last_sequence": 9},
 ])
 async def test_stale_or_inconsistent_barriers_fail_without_claiming_drained(overrides):
@@ -410,7 +410,7 @@ async def test_stop_waits_for_slow_backlog_and_publishes_trial_before_receipt():
     acquisition = AcquisitionRuntime(
         _Source(), queue.Queue(), data, event_bus,
         source_id="test-source",
-        generation="generation-1", acquisition_revision="revision-1", system_revision="system",
+        generation="generation-1", acquisition_revision="revision-1", engine_revision="engine",
     )
     acquisition._last_sequence = 1
     acquisition._last_processing_sequence = 1

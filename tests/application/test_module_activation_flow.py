@@ -44,15 +44,15 @@ def source_plan(flow):
 
 
 @pytest.mark.asyncio
-async def test_first_selection_initializes_system_and_never_creates_saved_profile(flow):
+async def test_first_selection_initializes_engine_and_never_creates_saved_profile(flow):
     plan = source_plan(flow)
     assert plan.expected_revision is None
-    assert set(plan.target_revisions) == {"acquisition", "system"}
+    assert set(plan.target_revisions) == {"acquisition", "engine"}
     operation = await execute(flow, plan)
     assert operation["status"] == "succeeded", operation
     status = flow.runtime.status()
     assert status["accepted"]["acquisition"] == plan.target_revisions["acquisition"]
-    assert status["accepted"]["system"] == plan.target_revisions["system"]
+    assert status["accepted"]["engine"] == plan.target_revisions["engine"]
     assert status["accepted"]["processing"] is None
     assert status["applied"] is None
     assert flow.profiles.repository.list_profiles() == []
@@ -99,7 +99,7 @@ async def test_unrelated_module_write_does_not_expire_a_plan(flow):
 
 
 @pytest.mark.asyncio
-async def test_failed_first_selection_restores_missing_system_without_history(flow, monkeypatch):
+async def test_failed_first_selection_restores_missing_engine_without_history(flow, monkeypatch):
     plan = source_plan(flow)
 
     def fail(*args, **kwargs):
@@ -108,7 +108,7 @@ async def test_failed_first_selection_restores_missing_system_without_history(fl
     monkeypatch.setattr(flow.profiles.repository, "save_module", fail)
     result = await execute(flow, plan)
     assert result["status"] == "failed"
-    assert flow.profiles.repository.get_system() is None
+    assert flow.profiles.repository.get_engine() is None
     assert flow.profiles.repository.get_module("acquisition") is None
     assert flow.profiles.repository.list_module_history("acquisition") == []
 
@@ -132,11 +132,11 @@ async def test_history_write_failure_reports_applied_values_without_quarantining
 
 
 @pytest.mark.asyncio
-async def test_changed_system_rejects_pending_module_plan(flow):
+async def test_changed_engine_rejects_pending_module_plan(flow):
     await execute(flow, source_plan(flow))
     plan = source_plan(flow)
-    previous = flow.profiles.repository.get_system()
+    previous = flow.profiles.repository.get_engine()
     flow.host["debug"] = True
-    flow.profiles.repository.save_system(flow.profiles.propose_system(section_settings(flow.profiles.settings_source(), "system")), expected_revision=previous.revision)
+    flow.profiles.repository.save_engine(flow.profiles.propose_engine(section_settings(flow.profiles.settings_source(), "engine")), expected_revision=previous.revision)
     with pytest.raises(ProfileRevisionConflict):
         flow.runtime.resolve_plan(plan.plan_id)

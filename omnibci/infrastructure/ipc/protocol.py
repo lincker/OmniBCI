@@ -4,7 +4,7 @@
 # @Date     : 2024-12-02 09:01
 """Length-prefixed IPC frame primitives.
 
-Wire v1 remains exactly eight header bytes (unsigned big-endian version and
+The wire uses exactly eight header bytes (unsigned big-endian version and
 body length) followed by an UTF-8 body.  This module deliberately validates the
 header before callers allocate/read a body: a peer-controlled length must never
 turn into an unbounded ``readexactly`` request.
@@ -54,7 +54,7 @@ class Frame:
         body and thereby put a different length on the wire.
         """
 
-        version: int = 1
+        version: int
         body_size: int = 0
 
         HEADER_SIZE: ClassVar[int] = 8
@@ -91,7 +91,7 @@ class Frame:
 
     __slots__ = ("_body", "_body_bytes", "_header")
 
-    def __init__(self, body: str, version: int = 1):
+    def __init__(self, body: str, version: int):
         if not isinstance(body, str):
             raise TypeError("frame body must be str")
         body_bytes = body.encode()

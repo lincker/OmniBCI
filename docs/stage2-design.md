@@ -7,7 +7,7 @@ required to produce a decoded result.
 ## Configure modules
 
 1. In Acquisition, select a plugin and edit its current parameters. A file source
-   needs a path on the backend computer. A device source needs its connection
+   needs a path on the server computer. A device source needs its connection
    parameters and any metadata the source cannot discover.
 2. In Signal Processing, select the Decoder and configure its channel mapping,
    epoch detector and ordered filters. Signal channels can be renamed and
@@ -75,11 +75,11 @@ and map only the nine signal rows to the decoder.
 Decoded results are a bounded in-memory view for the current engine generation.
 They are deduplicated by generation and trial number and can be recovered from
 `GET /api/v1/results` after a brief WebSocket disconnect. Restarting the engine or
-backend clears this live view. Historical Session queries, continuation, subject
+server clears this live view. Historical Session queries, continuation, subject
 tracking, raw recording management and result export are outside this MVP.
 
-Closing a local desktop backend stops its owned processes after confirmation.
-Disconnecting a remote console leaves that backend running. Neither action needs
+Closing a local desktop server stops its owned processes after confirmation.
+Disconnecting a remote console leaves that server running. Neither action needs
 a session-export decision.
 
 See [frontend-separation.md](frontend-separation.md) for REST/WebSocket contracts

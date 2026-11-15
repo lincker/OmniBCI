@@ -122,24 +122,24 @@ def test_wait_times_out_boundedly() -> None:
 def test_reporter_preserves_configuration_identity() -> None:
     connection = MagicMock()
     reporter = StartupReporter(connection, component="Acquisition",
-                               module_revisions={"acquisition": "revision"}, system_revision="system", generation="run-2")
+                               module_revisions={"acquisition": "revision"}, engine_revision="engine", generation="run-2")
     reporter.ready()
     report = connection.send.call_args.args[0]
     assert report.module_revisions == {"acquisition": "revision"}
-    assert report.system_revision == "system"
+    assert report.engine_revision == "engine"
     assert report.generation == "run-2"
 
 
-@pytest.mark.parametrize("revision,generation,system", [("old", "run-2", "system"), ("revision", "run-1", "system"), ("revision", "run-2", "old-system"), (None, None, None)])
-def test_wait_rejects_stale_or_unidentified_report(revision, generation, system) -> None:
+@pytest.mark.parametrize("revision,generation,engine_revision", [("old", "run-2", "engine"), ("revision", "run-1", "engine"), ("revision", "run-2", "old-engine"), (None, None, None)])
+def test_wait_rejects_stale_or_unidentified_report(revision, generation, engine_revision) -> None:
     receiver = MagicMock()
     receiver.poll.return_value = True
     receiver.recv.return_value = StartupReport.ready(
-        "Acquisition", module_revisions={"acquisition": revision}, system_revision=system, generation=generation,
+        "Acquisition", module_revisions={"acquisition": revision}, engine_revision=engine_revision, generation=generation,
     )
     with pytest.raises(ChildProcessStartupError, match="mismatch"):
         wait_for_startup_report(receiver, _process(), component="Acquisition",
-                                timeout_s=1, expected_module_revisions={"acquisition": "revision"}, expected_system_revision="system",
+                                timeout_s=1, expected_module_revisions={"acquisition": "revision"}, expected_engine_revision="engine",
                                 expected_generation="run-2")
 
 

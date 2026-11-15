@@ -31,7 +31,7 @@ _SLOTS = {
 class MetadataCatalog:
     """The node catalog has no entries for capabilities owned by another role."""
 
-    def __init__(self, kinds, *, backend=False):
+    def __init__(self, kinds, *, server=False):
         self.definitions = {}
         self.calls = []
         for kind in kinds:
@@ -46,7 +46,7 @@ class MetadataCatalog:
                 plugin_type=f"test_{kind}", label=kind, description=None,
                 configuration_version=1, domain=_SLOTS[kind].split(".")[0],
                 schema={"type": "object", "additionalProperties": False, "properties": properties},
-                available=not backend or kind not in {"paradigm", "trigger", "effector"},
+                available=not server or kind not in {"paradigm", "trigger", "effector"},
             )
 
     def get(self, kind, selection):
@@ -102,7 +102,7 @@ async def wait_for(predicate):
 
 
 def identity(snapshot):
-    return PeerIdentity(snapshot["CONFIG.node_role"], snapshot["CONFIG.module_revisions"][snapshot["CONFIG.node_role"]], snapshot["CONFIG.system_revision"], snapshot["CONFIG.generation"])
+    return PeerIdentity(snapshot["CONFIG.node_role"], snapshot["CONFIG.module_revisions"][snapshot["CONFIG.node_role"]], snapshot["CONFIG.engine_revision"], snapshot["CONFIG.generation"])
 
 
 @pytest.mark.parametrize(("role", "kinds", "editable_kind", "event_type"), [
@@ -112,17 +112,17 @@ def identity(snapshot):
 def test_restarted_engine_rejects_cached_node_configuration_and_accepts_fresh_fetch(
     tmp_path, role, kinds, editable_kind, event_type,
 ):
-    backend_catalog = MetadataCatalog(_SLOTS, backend=True)
+    server_catalog = MetadataCatalog(_SLOTS, server=True)
     profiles = PluginProfileService(
-        TomlPluginProfileRepository(tmp_path / "profiles"), backend_catalog,
+        TomlPluginProfileRepository(tmp_path / "profiles"), server_catalog,
         settings_source=lambda: {
             "STIMULATION.auto_spawn": False, "ACTUATION.auto_spawn": False, "ACTUATION.enabled": True,
         },
     )
     saved = {kind: profiles.create(kind, definition.selection, kind, {},
              **({"processing_input": ProcessingInput()} if kind == "decoder" else {}))
-             for kind, definition in backend_catalog.definitions.items()}
-    profiles.repository.save_system(profiles.propose_system({}), expected_revision=None)
+             for kind, definition in server_catalog.definitions.items()}
+    profiles.repository.save_engine(profiles.propose_engine({}), expected_revision=None)
     for module in ("acquisition", "processing", "stimulation", "actuation"):
         selected = [{"slot": _SLOTS[kind], "profile_id": profile.profile_id}
                     for kind, profile in saved.items() if _SLOTS[kind].startswith(module + ".")]

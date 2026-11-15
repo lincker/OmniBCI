@@ -133,7 +133,7 @@ class NeuroEngineService(EnginePort):
     # ------------------------------------------------------------------
 
     async def handle_start_engine(self, cmd: StartEngineCommand) -> None:
-        await self._owned_lifecycle("start", "system", lambda: self._start_engine_locked(cmd))
+        await self._owned_lifecycle("start", "engine", lambda: self._start_engine_locked(cmd))
 
     async def _start_engine_locked(
         self, cmd: StartEngineCommand, *, settings_snapshot: dict | None = None,
@@ -250,8 +250,8 @@ class NeuroEngineService(EnginePort):
         snapshot = self.applied_snapshot or {}
         if self._module_snapshot_provider is not None:
             selected = self._module_snapshot_provider(module)
-            if selected["CONFIG.system_revision"] != snapshot.get("CONFIG.system_revision"):
-                raise RuntimeError("Apply the current system settings before starting a module")
+            if selected["CONFIG.engine_revision"] != snapshot.get("CONFIG.engine_revision"):
+                raise RuntimeError("Apply the current Engine settings before starting a module")
             snapshot = merge_module_settings(snapshot, selected, (module,))
         return snapshot
 
@@ -278,8 +278,8 @@ class NeuroEngineService(EnginePort):
         key = operation, scope
         task = self._lifecycle_tasks.get(key)
         if task is None or task.done():
-            recovery = operation == "prepare" or operation == "start" and scope == "system"
-            if operation != "stop" and "system" in self._admission.recovery_status:
+            recovery = operation == "prepare" or operation == "start" and scope == "engine"
+            if operation != "stop" and "engine" in self._admission.recovery_status:
                 raise ProfileRevisionConflict("Foundation requires recovery; stop it before restarting")
             reservation = (None if operation == "stop" else
                            self._admission.reserve_transition(scope, recovery=recovery))
@@ -290,10 +290,10 @@ class NeuroEngineService(EnginePort):
                         try:
                             await action()
                         except BaseException as exc:
-                            if scope != "system" or self._running or self._restart_blocked:
+                            if scope != "engine" or self._running or self._restart_blocked:
                                 self._admission.quarantine(str(exc) or "Module stop was interrupted", scope)
                             else:
-                                self._admission.clear_quarantine("system")
+                                self._admission.clear_quarantine("engine")
                             raise
                         self._admission.clear_quarantine(scope)
                         self._recovery_snapshots.pop(scope, None)
@@ -374,7 +374,7 @@ class NeuroEngineService(EnginePort):
             async with self._lifecycle_lock:
                 with self._configuration_transition():
                     await self._stop_engine_locked(cmd)
-        await self._owned_lifecycle("stop", "system", stop)
+        await self._owned_lifecycle("stop", "engine", stop)
 
     @contextmanager
     def _configuration_transition(self):
@@ -549,7 +549,7 @@ class NeuroEngineService(EnginePort):
     @asynccontextmanager
     async def runtime_transition(self, scopes=None, *, reservation=None):
         with self._admission.transition(scopes, reservation=reservation):
-            if self._admission.owns("system"):
+            if self._admission.owns("engine"):
                 async with self._lifecycle_lock:
                     with self._configuration_transition():
                         yield
@@ -557,17 +557,17 @@ class NeuroEngineService(EnginePort):
                 yield
 
     async def stop_for_configuration(self):
-        if not self._admission.is_transition_owner or not self._admission.owns("system"):
+        if not self._admission.is_transition_owner or not self._admission.owns("engine"):
             raise RuntimeError("A runtime configuration transition must own this operation")
         await self._stop_engine_locked(StopEngineCommand())
 
     async def start_for_configuration(self, snapshot: dict):
-        if not self._admission.is_transition_owner or not self._admission.owns("system"):
+        if not self._admission.is_transition_owner or not self._admission.owns("engine"):
             raise RuntimeError("A runtime configuration transition must own this operation")
         await self._start_engine_locked(StartEngineCommand(), settings_snapshot=snapshot)
 
     def acknowledge_configuration(self, snapshot: dict, *, modules=None):
-        scopes = "system" if modules is None else modules
+        scopes = "engine" if modules is None else modules
         if not self._admission.is_transition_owner or not self._admission.owns(scopes) or not self.is_engine_ready:
             raise RuntimeError("A running configuration transition must own this operation")
         with self._configuration_lock:
@@ -593,7 +593,7 @@ class NeuroEngineService(EnginePort):
     def _output_snapshot(self, module):
         if not self._admission.requires_recovery(module):
             return self.selected_module_snapshot(module)
-        if "system" in self._admission.recovery_status:
+        if "engine" in self._admission.recovery_status:
             raise ProfileRevisionConflict("Foundation requires recovery before preparing an output")
         retained = (self._actuation.owned_snapshot if module == "actuation" else None) or self.applied_snapshot or {}
         if not retained.get("CONFIG.module_revisions", {}).get(module):
@@ -681,7 +681,7 @@ class NeuroEngineService(EnginePort):
             if self._applied_snapshot is None:
                 return None
             return {**self._applied_snapshot.get("CONFIG.module_revisions", {}),
-                    "system": self._applied_snapshot.get("CONFIG.system_revision")}
+                    "engine": self._applied_snapshot.get("CONFIG.engine_revision")}
 
     @property
     def generation(self) -> str | None:

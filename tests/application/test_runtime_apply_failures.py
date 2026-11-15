@@ -59,7 +59,7 @@ class Engine:
 
     @property
     def applied_revisions(self):
-        return {**self.applied_snapshot["CONFIG.module_revisions"], "system": self.applied_snapshot["CONFIG.system_revision"]}
+        return {**self.applied_snapshot["CONFIG.module_revisions"], "engine": self.applied_snapshot["CONFIG.engine_revision"]}
 
     def is_peer_connected(self, role):
         return False
@@ -113,7 +113,7 @@ class Acquisition:
         self.streaming = False
         receipt = StreamDrainReceipt(self.engine.generation, self.engine.applied_revisions["acquisition"],
                                      9, 1, True, processing_revision=self.engine.applied_revisions["processing"],
-                                     system_revision=self.engine.applied_revisions["system"])
+                                     engine_revision=self.engine.applied_revisions["engine"])
         return replace(receipt, **self.receipt_override)
 
     def reset(self):
@@ -152,7 +152,7 @@ class Commands:
         revision = self.engine.applied_revisions["acquisition"]
         self.log.append((event_type.name, revision))
         identity = {"generation": self.engine.generation, "acquisition_revision": revision,
-                    "system_revision": self.engine.applied_revisions["system"],
+                    "engine_revision": self.engine.applied_revisions["engine"],
                     "module_revision": self.engine.applied_revisions[
                         "stimulation" if event_type is EventType.PauseStimulation else "actuation"]}
         if event_type is EventType.SettleActuation:
@@ -406,11 +406,11 @@ async def test_acquisition_start_failure_rolls_back_without_recreating_active_ou
 
 
 @pytest.mark.asyncio
-async def test_system_output_settlement_failure_keeps_old_graph_paused(harness):
+async def test_engine_output_settlement_failure_keeps_old_graph_paused(harness):
     h = harness(actuation=True)
     h.commands.settle_failure = h.previous.modules[h.module].revision
     h.profiles.settings_source = lambda: {**h.previous.settings(), "debug": True}
-    h.plan = h.runtime.plan("system", [], expected_revision=h.previous.system.revision, settings=section_settings(h.profiles.settings_source(), "system"))
+    h.plan = h.runtime.plan("engine", [], expected_revision=h.previous.engine.revision, settings=section_settings(h.profiles.settings_source(), "engine"))
     operation = await apply(h)
     assert operation["status"] == "recovery_required"
     assert h.engine.starts == []
@@ -421,7 +421,7 @@ async def test_system_output_settlement_failure_keeps_old_graph_paused(harness):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("invalid", [
-    {"generation": "wrong-generation"}, {"acquisition_revision": "wrong-revision"}, {"processing_revision": "wrong-revision"}, {"system_revision": "wrong-system"},
+    {"generation": "wrong-generation"}, {"acquisition_revision": "wrong-revision"}, {"processing_revision": "wrong-revision"}, {"engine_revision": "wrong-engine"},
 ])
 async def test_unconfirmed_drain_never_rebuilds_the_graph(harness, invalid):
     h = harness()

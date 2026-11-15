@@ -106,7 +106,7 @@ Python implementation and Profile parameter schema.
 
 Configure the user plugin directory with the `OMNIBCI_PLUGIN_DIR` environment
 variable or `PLUGINS.user_dir` in the user configuration directory's
-`settings.toml`. Restart the backend after changing this deployment setting.
+`settings.toml`. Restart the server after changing this deployment setting.
 
 ## Getting Started
 
@@ -116,7 +116,7 @@ variable or `PLUGINS.user_dir` in the user configuration directory's
 - Node.js 18.x or 20 or later, with npm.
 - An OpenGL-capable graphical environment for visual stimulation.
 
-### 1. Install the Backend
+### 1. Install the Server
 
 Run the following commands from the repository root:
 
@@ -158,16 +158,16 @@ cd ..
 
 ### 3. Configure the Data Source
 
-After starting the backend and console below, use **Setup → Acquisition** to
+After starting the server and console below, use **Setup → Acquisition** to
 choose an installed source plugin and edit its current values. Scan45, Curry8,
 and File Reader can each have multiple saved profiles. For File Reader, set
 `data_file_path` to an EEG file available on the acquisition machine. Start the
 Engine, then Connect to apply current values. Saving a reusable Profile is optional.
 
-Shared controls are edited in **Settings → General** and use one backend user
+Shared controls are edited in **Settings → General** and use one server user
 `settings.toml`. Engine current values go directly to Review and Apply; successful
-application stores them in `[engine]`. Backend startup settings are saved separately
-on the page and take effect after restarting the backend. The page distinguishes
+application stores them in `[engine]`. Server startup settings are saved separately
+on the page and take effect after restarting the server. The page distinguishes
 saved and active startup values. The four modules keep independent accepted files
 in `activation/`, alongside separate per-plugin Profiles and module history.
 
@@ -177,7 +177,7 @@ The user directory defaults to `~/Library/Application Support/OmniBCI` on macOS,
 directory. The packaged `omnibci/conf/settings.toml` supplies read-only defaults;
 retired named Application Profile overlays are not loaded.
 
-### 4. Start the Backend
+### 4. Start the Server
 
 Open a terminal, activate the virtual environment, and run this command from the
 repository root:
@@ -223,29 +223,29 @@ Restarting the engine clears this view. There is no experiment Session,
 automatic raw recording, or result history export in this minimal runtime.
 
 Open **Settings → Logs** to view recent application logs from the connected
-backend. The page refreshes every five seconds while visible and also has a
+server. The page refreshes every five seconds while visible and also has a
 manual refresh button. It shows up to 200 lines from the last 64 KiB of the
-current backend process's log file.
+current server process's log file.
 
 Vite proxies `/api` and WebSocket traffic to
-`http://127.0.0.1:8000` by default. To use a backend on another machine:
+`http://127.0.0.1:8000` by default. To use a server on another machine:
 
 ```bash
 cd frontend
-VITE_BACKEND=http://192.168.1.10:8000 npm run dev
+VITE_SERVER=http://192.168.1.10:8000 npm run dev
 ```
 
 ### Distributed Stimulation and Actuation
 
 To run stimulation on another machine, choose external mode in the Stimulation
 current configuration and set `STIMULATION.server_ip` / `STIMULATION.server_port`
-to the backend machine's reachable listener address (default port 8765).
+to the server machine's reachable listener address (default port 8765).
 Install the pinned Paradigm and Trigger packages on the stimulation node.
 Start the engine and use **Prepare external stimulation** in Run, then run
-(replace the example address with your backend):
+(replace the example address with your server):
 
 ```bash
-python scripts/run_stimulation.py --backend http://192.168.1.10:8000
+python scripts/run_stimulation.py --server http://192.168.1.10:8000
 ```
 
 For Actuation, choose external mode and set `ACTUATION.server_ip` /
@@ -255,22 +255,22 @@ start the engine, and use **Prepare external actuation** in Run. Install the pin
 Effector package before running the following command on the device machine:
 
 ```bash
-python scripts/run_actuation.py --backend http://192.168.1.10:8000
+python scripts/run_actuation.py --server http://192.168.1.10:8000
 ```
 
-`OMNIBCI_BACKEND_URL` can supply the backend URL instead; the default is
-`http://127.0.0.1:8000`. Nodes wait for the backend engine to start, fetch their
+`OMNIBCI_SERVER_URL` can supply the server URL instead; the default is
+`http://127.0.0.1:8000`. Nodes wait for the server engine to start, fetch their
 role-specific applied snapshot, and validate only their own plugins. No local
-Activation or Profile files are needed. The backend retains the complete
+Activation or Profile files are needed. The server retains the complete
 configuration catalog for authoring; output platform checks run on their node.
 
 The HTTP address and both configured IPC addresses must be reachable from the
-respective nodes. Use the backend's LAN IP for the IPC settings when running
+respective nodes. Use the server's LAN IP for the IPC settings when running
 across machines: `127.0.0.1` is local-only, and `0.0.0.0` is a listener address,
 not a remote destination. Allow the configured HTTP and TCP ports.
 
 After plugin initialization, a socket handshake verifies the node's role,
-own-module revision, shared system revision, and engine generation before
+own-module revision, Engine configuration revision, and engine generation before
 accepting business events. After the node connects, enable Stimulation or start
 Actuation in Run. No Acquisition source or A/P worker is required.
 On disconnection the node tears down, fetches configuration again, and starts a
@@ -279,7 +279,7 @@ Actuation requires the Effector to confirm that physical outputs have stopped.
 Hardware/setup, output-settlement, or cleanup errors stop the script for inspection.
 Saving a Profile does not change a running node. To change its configuration,
 stop/disconnect that external node, prepare the new current values, then restart
-and reconnect the node. Shared system changes also require disconnecting external
+and reconnect the node. Engine configuration changes also require disconnecting external
 nodes and restarting the engine.
 See [module configuration](docs/module-config.md) for the boundaries and the
-distinction between Backend, Engine, and the configuration identifier `system`.
+distinction between Server services and the Engine runtime foundation.

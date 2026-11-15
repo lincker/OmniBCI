@@ -87,14 +87,14 @@ class ModuleActivationResponse(BaseModel):
     bindings: list[ProfileBindingResponse]
 
 
-class SystemSettingsResponse(BaseModel):
+class EngineSettingsResponse(BaseModel):
     revision: str | None
     settings: dict[str, Any]
 
 
 class ModulesResponse(BaseModel):
     modules: dict[ConfigurationModule, ModuleActivationResponse]
-    system: SystemSettingsResponse | None
+    engine: EngineSettingsResponse | None
     errors: dict[str, str] = Field(default_factory=dict)
 
 

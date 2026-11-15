@@ -11,7 +11,7 @@ import type { ConfigurationSection, RuntimeConfiguration } from "./useRuntimeCon
 type ActionName = "start" | "stop" | "launch" | "stopStim" | "trigger" | "readCurrent" | "stopRead" | "startProcessing" | "stopProcessing" | "startActuation" | "stopActuation";
 type ActionState = { pending: boolean; error: string | null };
 const actionModules: Record<ActionName, ConfigurationSection> = {
-  start: "system", stop: "system", launch: "stimulation", stopStim: "stimulation", trigger: "stimulation",
+  start: "engine", stop: "engine", launch: "stimulation", stopStim: "stimulation", trigger: "stimulation",
   readCurrent: "acquisition", stopRead: "acquisition", startProcessing: "processing", stopProcessing: "processing", startActuation: "actuation", stopActuation: "actuation",
 };
 
@@ -27,8 +27,8 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
     values.current = { ...values.current, [name]: value }; setActions(values.current);
   };
   const pending = (module: ConfigurationSection) => Object.entries(values.current).some(([name, state]) =>
-    state.pending && (module === "system" || actionModules[name as ActionName] === module))
-    || ((module === "system" || module === "acquisition") && acquisition.pending);
+    state.pending && (module === "engine" || actionModules[name as ActionName] === module))
+    || ((module === "engine" || module === "acquisition") && acquisition.pending);
   const run = async (name: ActionName, action: () => Promise<unknown>, stop = false) => {
     const module = actionModules[name];
     if (values.current[name]?.pending || !stop && (pending(module) || values.current.start?.pending || values.current.stop?.pending)) return;
@@ -36,7 +36,7 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
     try { await action(); }
     catch (cause) { update(name, { pending: true, error: cause instanceof ApiError ? `[${cause.code}] ${cause.message}` : String(cause) }); }
     finally {
-      if (module === "system") await Promise.all([acquisition.refresh(), stimulation.refresh(), signal.refresh()]);
+      if (module === "engine") await Promise.all([acquisition.refresh(), stimulation.refresh(), signal.refresh()]);
       else if (module === "acquisition") await acquisition.refresh();
       else if (module === "stimulation") await Promise.all([stimulation.refresh(), runtime.refresh()]);
       else await Promise.all([refreshEngine(), runtime.refresh(), ...(module === "processing" ? [signal.refresh()] : [])]);

@@ -158,7 +158,7 @@ def test_fresh_lifespan_leaves_module_configuration_unselected(startup_environme
     assert environment.settings._config_path.read_bytes() == settings_bytes
 
 
-def test_invalid_initial_settings_can_be_repaired_without_restarting_backend(
+def test_invalid_initial_settings_can_be_repaired_without_restarting_server(
     startup_environment, monkeypatch,
 ):
     environment = startup_environment
@@ -431,33 +431,33 @@ def test_inactive_output_plugins_can_retain_portable_selections(startup_environm
         assert client.post("/api/v1/engine/stop").status_code == 200
 
 
-def test_backend_logging_covers_startup_and_shutdown(startup_environment, tmp_path):
+def test_server_logging_covers_startup_and_shutdown(startup_environment, tmp_path):
     startup_environment.settings.set("LOGGING.level", "INFO")
-    startup_environment.settings.set("LOGGING.file_path", str(tmp_path / "backend.log"))
+    startup_environment.settings.set("LOGGING.file_path", str(tmp_path / "server.log"))
     startup_environment.settings.save()
     app = create_app()
 
     with TestClient(app) as client:
-        runtime = app.state.backend_logging
+        runtime = app.state.server_logging
         assert runtime.is_running
         assert client.get("/healthz").json() == {"status": "ok"}
-        logging.getLogger("omnibci.test_backend").info("Backend logging probe")
+        logging.getLogger("omnibci.test_server").info("Server logging probe")
 
     assert not runtime.is_running
     content = runtime.file_path.read_text(encoding="utf-8")
     assert "OmniBCI API server started" in content
-    assert "Backend logging probe" in content
+    assert "Server logging probe" in content
     assert "OmniBCI API server stopped" in content
 
 
-def test_backend_logging_closes_when_startup_fails(startup_environment, tmp_path, monkeypatch):
+def test_server_logging_closes_when_startup_fails(startup_environment, tmp_path, monkeypatch):
     from omnibci.presentation import main
 
     startup_environment.settings.set("LOGGING.file_path", str(tmp_path / "failed-startup.log"))
     startup_environment.settings.save()
 
     async def failed_container(**kwargs):
-        logging.getLogger("omnibci.test_backend").error("Container startup failed")
+        logging.getLogger("omnibci.test_server").error("Container startup failed")
         raise RuntimeError("Container unavailable")
 
     monkeypatch.setattr(main, "build_container", failed_container)
@@ -465,22 +465,22 @@ def test_backend_logging_closes_when_startup_fails(startup_environment, tmp_path
     with pytest.raises(RuntimeError, match="Container unavailable"), TestClient(app):
         pass
 
-    runtime = app.state.backend_logging
+    runtime = app.state.server_logging
     assert not runtime.is_running
     assert "Container startup failed" in runtime.file_path.read_text(encoding="utf-8")
 
 
-def test_backend_logging_closes_when_shutdown_fails(startup_environment, tmp_path, monkeypatch):
+def test_server_logging_closes_when_shutdown_fails(startup_environment, tmp_path, monkeypatch):
     startup_environment.settings.set("LOGGING.file_path", str(tmp_path / "failed-shutdown.log"))
     startup_environment.settings.save()
 
     async def failed_shutdown():
-        logging.getLogger("omnibci.test_backend").error("Engine shutdown failed")
+        logging.getLogger("omnibci.test_server").error("Engine shutdown failed")
         raise RuntimeError("Shutdown unavailable")
 
     app = create_app()
     with pytest.raises(RuntimeError, match="Shutdown unavailable"), TestClient(app):
-        runtime = app.state.backend_logging
+        runtime = app.state.server_logging
         monkeypatch.setattr(app.state.engine_service, "shutdown", failed_shutdown)
 
     assert not runtime.is_running
@@ -492,7 +492,7 @@ async def test_lifespan_error_stops_services_before_logging(startup_environment,
     app = create_app()
 
     async def shutdown():
-        assert app.state.backend_logging.is_running
+        assert app.state.server_logging.is_running
 
     stop = AsyncMock(side_effect=shutdown)
     with pytest.raises(RuntimeError, match="Lifespan interrupted"):
@@ -501,10 +501,10 @@ async def test_lifespan_error_stops_services_before_logging(startup_environment,
             raise RuntimeError("Lifespan interrupted")
 
     stop.assert_awaited_once()
-    assert not app.state.backend_logging.is_running
+    assert not app.state.server_logging.is_running
 
 
-def test_saved_logging_edit_during_startup_still_requires_backend_restart(
+def test_saved_logging_edit_during_startup_still_requires_server_restart(
     startup_environment, monkeypatch, tmp_path,
 ):
     from omnibci.presentation import main
@@ -513,7 +513,7 @@ def test_saved_logging_edit_during_startup_still_requires_backend_restart(
     changed_log = tmp_path / "changed.log"
     startup_environment.settings.set("LOGGING.file_path", str(initial_log))
     startup_environment.settings.save()
-    create_logging = main.create_backend_logging
+    create_logging = main.create_server_logging
     loaded = {}
 
     def edit_after_logging_is_configured(*args, **kwargs):
@@ -523,12 +523,12 @@ def test_saved_logging_edit_during_startup_still_requires_backend_restart(
         startup_environment.settings.save()
         return service
 
-    monkeypatch.setattr(main, "create_backend_logging", edit_after_logging_is_configured)
+    monkeypatch.setattr(main, "create_server_logging", edit_after_logging_is_configured)
     app = create_app()
     with TestClient(app) as client:
-        assert app.state.backend_logging.file_path == loaded["path"]
+        assert app.state.server_logging.file_path == loaded["path"]
         response = client.post("/api/v1/config/apply-plan", json={
-            "module": "system", "bindings": [], "expected_revision": None,
+            "module": "engine", "bindings": [], "expected_revision": None,
             "settings": {"NEUROENGINE.queue_size": 42},
         })
         assert response.status_code == 200, response.text

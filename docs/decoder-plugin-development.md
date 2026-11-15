@@ -105,7 +105,7 @@ The entrypoint subclasses `Decoder` and accepts exactly the API 2 keyword inputs
 `parameters` and `context` in `__init__`. The host validates parameters against
 the JSON Schema, fills declared defaults, and passes an independent copy.
 Read packaged resources relative to `context.resource_root`; do not rely on
-the process working directory or import backend settings and service objects.
+the process working directory or import server settings and service objects.
 
 | Method | Required behavior |
 | --- | --- |

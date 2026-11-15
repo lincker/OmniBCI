@@ -1,4 +1,4 @@
-"""Bounded, asynchronous file logging for the backend process only."""
+"""Bounded, asynchronous file logging for the server process only."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from platformdirs import user_log_path
 
 
 class _QueuedHandler(logging.Handler):
-    def __init__(self, owner: BackendLogging):
+    def __init__(self, owner: ServerLogging):
         super().__init__(owner._level)
         self.owner = owner
         self.accepting = True
@@ -33,7 +33,7 @@ class _QueuedHandler(logging.Handler):
 
 
 class _ConsoleFallback(logging.Handler):
-    def __init__(self, owner: BackendLogging, target: logging.Handler):
+    def __init__(self, owner: ServerLogging, target: logging.Handler):
         super().__init__()
         self.owner, self.target = owner, target
 
@@ -50,7 +50,7 @@ class _ConsoleFallback(logging.Handler):
 
 
 class _FileHandler(RotatingFileHandler):
-    def __init__(self, owner: BackendLogging):
+    def __init__(self, owner: ServerLogging):
         self.owner = owner
         super().__init__(owner.file_path, maxBytes=5 * 1024 * 1024,
                          backupCount=3, encoding="utf-8")
@@ -84,7 +84,7 @@ class _FileHandler(RotatingFileHandler):
         self.owner.write_errors += 1
 
 
-class BackendLogging:
+class ServerLogging:
     """Own one file sink while preserving existing console handlers/propagation.
 
     A timed-out stop detaches producers immediately; the daemon writer retains
@@ -92,7 +92,7 @@ class BackendLogging:
     """
 
     _ownership_lock = Lock()
-    _owner: BackendLogging | None = None
+    _owner: ServerLogging | None = None
 
     def __init__(self, settings: Mapping[str, object], *, queue_size: int = 1024,
                  shutdown_timeout_s: float = 1.0):
@@ -110,7 +110,7 @@ class BackendLogging:
             path = (root / path).resolve()
             if path == root or not path.is_relative_to(root):
                 raise ValueError("LOGGING.file_path must stay within the user log directory")
-        self.file_path = path.with_name(f"{path.stem}-backend-{os.getpid()}{path.suffix}")
+        self.file_path = path.with_name(f"{path.stem}-server-{os.getpid()}{path.suffix}")
         if isinstance(queue_size, bool) or not isinstance(queue_size, int) or queue_size < 1:
             raise ValueError("queue_size must be a positive integer")
         if (isinstance(shutdown_timeout_s, bool)
@@ -156,12 +156,12 @@ class BackendLogging:
         lines = content.decode("utf-8", errors="replace").splitlines()
         return lines[-200:], truncated or len(lines) > 200
 
-    def start(self) -> BackendLogging:
+    def start(self) -> ServerLogging:
         with self._ownership_lock:
-            if BackendLogging._owner is self and self._handler is not None:
+            if ServerLogging._owner is self and self._handler is not None:
                 return self
-            if BackendLogging._owner is not None:
-                raise RuntimeError("Backend file logging already has an active writer")
+            if ServerLogging._owner is not None:
+                raise RuntimeError("Server file logging already has an active writer")
             self.file_path.parent.mkdir(parents=True, exist_ok=True)
             writer = _FileHandler(self)
             self._queue = Queue(self._queue_size)
@@ -175,14 +175,14 @@ class BackendLogging:
                 self._logger.addHandler(self._fallback)
             self._logger.setLevel(self._level)
             self._logger.addHandler(self._handler)
-            BackendLogging._owner = self
+            ServerLogging._owner = self
             self._thread = Thread(target=self._write_records, args=(writer,),
-                                  name="omnibci-backend-log-writer", daemon=True)
+                                  name="omnibci-server-log-writer", daemon=True)
             try:
                 self._thread.start()
             except Exception:
                 self._detach()
-                BackendLogging._owner = None
+                ServerLogging._owner = None
                 self._thread = None
                 writer.close()
                 raise
@@ -234,9 +234,9 @@ class BackendLogging:
             except Exception:
                 self.write_errors += 1
             with self._ownership_lock:
-                BackendLogging._owner = None
+                ServerLogging._owner = None
 
-    def __enter__(self) -> BackendLogging:
+    def __enter__(self) -> ServerLogging:
         return self.start()
 
     def __exit__(self, *exc_info) -> None:

@@ -122,7 +122,7 @@ def test_run_constructs_runtime_with_explicit_context(processing_input):
     data_source = MagicMock(spec=SignalSource)
     snapshot = {
         "ACQUISITION.signal_source": "selected-source",
-        "CONFIG.generation": "generation", "CONFIG.module_revisions": {"acquisition": "revision", "processing": "revision", "stimulation": "revision", "actuation": "revision"}, "CONFIG.system_revision": "system",
+        "CONFIG.generation": "generation", "CONFIG.module_revisions": {"acquisition": "revision", "processing": "revision", "stimulation": "revision", "actuation": "revision"}, "CONFIG.engine_revision": "engine",
         "PLUGINS.bindings": [{"slot": "processing.decoder", "processing_input": processing_input}],
     }
     worker = AcquisitionWorker(command_queue, data_manager, event_bus, settings_snapshot=snapshot)
@@ -141,7 +141,7 @@ def test_run_constructs_runtime_with_explicit_context(processing_input):
         event_bus=event_bus,
         source_id="selected-source",
         generation="generation",
-        acquisition_revision="revision", system_revision="system",
+        acquisition_revision="revision", engine_revision="engine",
         processing_active=None, runtime_counters=None,
     )
     runtime_class.return_value.run.assert_called_once_with()
@@ -166,7 +166,7 @@ def test_runtime_source_identity_falls_back_to_plugin_type_or_class_name(plugin_
 def test_global_settings_are_pinned_once_for_source_and_runtime():
     snapshot = {
         "ACQUISITION.signal_source": "global-source",
-        "CONFIG.generation": "global-generation", "CONFIG.module_revisions": {"acquisition": "global-revision", "processing": "global-revision", "stimulation": "global-revision", "actuation": "global-revision"}, "CONFIG.system_revision": "system",
+        "CONFIG.generation": "global-generation", "CONFIG.module_revisions": {"acquisition": "global-revision", "processing": "global-revision", "stimulation": "global-revision", "actuation": "global-revision"}, "CONFIG.engine_revision": "engine",
         "PLUGINS.bindings": [{"slot": "processing.decoder", "processing_input": ProcessingInput().to_dict()}],
     }
     worker = AcquisitionWorker(command_queue=MagicMock())
@@ -185,7 +185,7 @@ def test_global_settings_are_pinned_once_for_source_and_runtime():
     runtime_class.assert_called_once_with(
         data_source=load_source.return_value, command_queue=worker.command_queue,
         data_manager=None, event_bus=None, source_id="global-source",
-        generation="global-generation", acquisition_revision="global-revision", system_revision="system",
+        generation="global-generation", acquisition_revision="global-revision", engine_revision="engine",
         processing_active=None, runtime_counters=None,
     )
 

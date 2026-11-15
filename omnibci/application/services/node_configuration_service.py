@@ -1,4 +1,4 @@
-"""Publish role-specific configuration from the backend's settled runtime."""
+"""Publish role-specific configuration from the server's settled runtime."""
 from omnibci.application.config_errors import ConfigProfileConflictError
 from omnibci.application.node_configuration import project_node_configuration
 from omnibci.application.plugin_schema import PluginSchemaError
@@ -15,10 +15,10 @@ class NodeConfigurationService:
             raise PluginSchemaError("Unsupported external node role")
         state, snapshot = self.engine.node_configuration_snapshot(
             lambda: self.profiles.materialize(ActivationSet(
-                {role: self.profiles.repository.get_module(role)}, self.profiles.repository.get_system())),
+                {role: self.profiles.repository.get_module(role)}, self.profiles.repository.get_engine())),
             module=role,
         )
         module = role.upper()
         if snapshot.get(f"{module}.auto_spawn", True):
-            raise ConfigProfileConflictError(f"{module.title()} is managed by the backend")
+            raise ConfigProfileConflictError(f"{module.title()} is managed by the server")
         return {"state": state, "configuration": project_node_configuration(snapshot, role).to_dict()}

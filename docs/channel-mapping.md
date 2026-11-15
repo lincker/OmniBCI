@@ -85,7 +85,7 @@ event row are not inserted into that source text.
 
 `SignalSource.describe_output(...) -> SignalInfo` describes the
 adapter's normalized output from the same observation, without querying again.
-The backend runtime, application and Signal Processing never parse the display
+The server runtime, application and Signal Processing never parse the display
 text. The Acquisition UI reads Curry8's native JSON `channel_labels` to fill an
 optional Profile parameter with every native row label in order, including the
 final `Trigger` row. New drafts receive these labels with Get Metadata; saved
@@ -150,7 +150,7 @@ configured declarations remain editable and are never labeled device-verified.
 
 `AcquisitionWorker` owns configuration and plugin construction. It pins one
 settings snapshot, loads the source, and passes only the required context to
-`AcquisitionRuntime`: `source_id`, `generation`, `acquisition_revision`, `system_revision`, and
+`AcquisitionRuntime`: `source_id`, `generation`, `acquisition_revision`, `engine_revision`, and
 `preparation_required`.
 
 `source_id` identifies the configured source. `generation` identifies the current
@@ -233,9 +233,9 @@ preprocessing is enabled, including discrete File Reader events. Repeated Start
 on an already-running stream does not report another reset.
 
 Managed acquisition forwards these diagnostics over a separate bounded logging
-channel to the backend's existing file sink. They are visible in **Settings →
-Logs** and the current backend log file; no signal, event, or command queue is
-used for logging. The configured backend log level still applies, so `WARNING`
+channel to the server's existing file sink. They are visible in **Settings →
+Logs** and the current server log file; no signal, event, or command queue is
+used for logging. The configured server log level still applies, so `WARNING`
 or higher hides these `INFO` records. Logging is best-effort: saturation can drop
 diagnostics without blocking acquisition or changing trigger processing.
 Worker exit may also discard diagnostics still waiting in its queue feeder.
@@ -336,6 +336,6 @@ source metadata. The former setup/template/reference API fields are removed.
 Old montage domain code, templates and UI are removed. Historical profile and
 activation fields remain opaque storage data solely to preserve existing
 revision hashes. Version 1 processing inputs are exposed as review-required,
-not executed. The backend and profile editor remain available, but old montage
+not executed. The server and profile editor remain available, but old montage
 configuration blocks engine start until the user saves and applies a version 2
 mapping. No existing configuration file is silently rewritten.

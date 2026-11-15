@@ -60,7 +60,7 @@ def _chunk(markers, sequence=1):
 @pytest.fixture
 def configured(monkeypatch):
     events = []
-    current = {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "old"}, "CONFIG.system_revision": "system", "CONFIG.generation": "run"}
+    current = {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "old"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "run"}
     processor = make_processor(
         detector=Markers(), decoder=ValueDecoder(), filters=[Add(1)],
         command_queue=Queue(), data_manager=DataManager(buffer=Queue()),
@@ -68,15 +68,15 @@ def configured(monkeypatch):
         sample_rate=250, generation="run", processing_revision="old", settings_snapshot=current,
     )
     replacement = ConfiguredPipeline(ValueDecoder(), (Add(2), Multiply(3)),
-                                      {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "new"}, "CONFIG.system_revision": "system", "CONFIG.generation": "run"})
+                                      {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "new"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "run"})
     builder = MagicMock(return_value=replacement)
     monkeypatch.setattr(transactions_module, "build_pipeline_update", builder)
     return processor, events, replacement, builder
 
 
 def _stage(processor, command_id="update", **overrides):
-    payload = {"settings_snapshot": {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "new"}, "CONFIG.system_revision": "system", "CONFIG.generation": "run"},
-               "expected_revision": "old", "generation": "run", "system_revision": "system", "boundary": "trial"}
+    payload = {"settings_snapshot": {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "new"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "run"},
+               "expected_revision": "old", "generation": "run", "engine_revision": "engine", "boundary": "trial"}
     payload.update(overrides)
     processor._execute((module.SignalProcessorCommand.stage_configuration,
                         CommandRequest(command_id, payload)))
@@ -84,7 +84,7 @@ def _stage(processor, command_id="update", **overrides):
 
 def _cancel(processor, target="update", generation="run"):
     processor._execute((module.SignalProcessorCommand.cancel_configuration,
-                        CommandRequest("cancel", {"command_id": target, "generation": generation, "system_revision": "system"})))
+                        CommandRequest("cancel", {"command_id": target, "generation": generation, "engine_revision": "engine"})))
 
 
 def _results(events, command=None):
@@ -107,7 +107,7 @@ def test_idle_update_acknowledges_only_after_objects_and_revision_are_installed(
     result, = _results(events)
     assert result.ok
     assert result.data == {"status": "applied", "command_id": "update",
-                           "applied_revision": "new", "generation": "run", "system_revision": "system"}
+                           "applied_revision": "new", "generation": "run", "engine_revision": "engine"}
     builder.assert_called_once()
 
 
@@ -188,7 +188,7 @@ async def test_conflicting_duplicate_preserves_pending_update_until_boundary(con
     processor, events, replacement, builder = configured
     await _feed(processor, [7, 0, 0])
     _stage(processor)
-    _stage(processor, settings_snapshot={"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "different"}, "CONFIG.system_revision": "system"})
+    _stage(processor, settings_snapshot={"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "different"}, "CONFIG.engine_revision": "engine"})
     conflict, = _results(events)
     assert not conflict.ok
     assert conflict.error_code == "PROCESSING_CONFIGURATION_CONFLICT"
@@ -220,7 +220,7 @@ async def test_conflicting_duplicate_preserves_terminal_receipt_and_original_ret
     original, = [result for result in _results(events, EventType.StageProcessingConfiguration.name)
                  if result.command_id == "update"]
     calls = builder.call_count
-    _stage(processor, settings_snapshot={"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "different"}, "CONFIG.system_revision": "system"})
+    _stage(processor, settings_snapshot={"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "different"}, "CONFIG.engine_revision": "engine"})
     conflict = _results(events)[-1]
     assert not conflict.ok
     assert conflict.error_code == "PROCESSING_CONFIGURATION_CONFLICT"
@@ -241,8 +241,8 @@ def test_retry_ignores_dictionary_key_order(configured):
     _stage(processor)
     original, = _results(events)
     processor._execute((module.SignalProcessorCommand.stage_configuration, CommandRequest("update", {
-        "generation": "run", "expected_revision": "old", "system_revision": "system", "boundary": "trial",
-        "settings_snapshot": {"CONFIG.generation": "run", "CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "new"}, "CONFIG.system_revision": "system"},
+        "generation": "run", "expected_revision": "old", "engine_revision": "engine", "boundary": "trial",
+        "settings_snapshot": {"CONFIG.generation": "run", "CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "new"}, "CONFIG.engine_revision": "engine"},
     })))
     assert _results(events) == [original, original]
     builder.assert_called_once()
@@ -303,8 +303,8 @@ def test_timeout_cancel_after_install_reports_applied_and_never_rolls_back(confi
 
 
 @pytest.mark.parametrize("snapshot", [
-    {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "new"}, "CONFIG.system_revision": "system", "CONFIG.generation": "run"},
-    {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "different"}, "CONFIG.system_revision": "system"},
+    {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "new"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "run"},
+    {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "different"}, "CONFIG.engine_revision": "engine"},
     {"invalid": float("nan")},
 ])
 def test_cancel_tombstone_blocks_a_later_stage_with_same_id(configured, snapshot):

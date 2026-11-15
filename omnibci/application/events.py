@@ -55,7 +55,7 @@ class StreamBarrier:
     generation: str | None
     acquisition_revision: str | None
     last_sequence: int
-    system_revision: str | None = None
+    engine_revision: str | None = None
     command: str = "StopAndDrain"
     input_id: str | None = None
 
@@ -80,7 +80,7 @@ class StreamDrainReceipt:
     interrupted_epoch: bool
     outputs_settled: bool = False
     processing_revision: str | None = None
-    system_revision: str | None = None
+    engine_revision: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -90,10 +90,10 @@ class StreamDrainReceipt:
         if not isinstance(value, Mapping) or set(value) != {
             "generation", "acquisition_revision", "last_sequence",
             "completed_trials", "interrupted_epoch", "outputs_settled",
-            "processing_revision", "system_revision",
+            "processing_revision", "engine_revision",
         }:
             raise ValueError("Missing or invalid stream drain receipt")
-        for field in ("generation", "acquisition_revision", "processing_revision", "system_revision"):
+        for field in ("generation", "acquisition_revision", "processing_revision", "engine_revision"):
             if value[field] is not None and (
                 not isinstance(value[field], str) or not value[field]
             ):

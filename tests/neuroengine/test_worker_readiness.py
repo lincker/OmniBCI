@@ -31,7 +31,7 @@ from omnibci.infrastructure.process_lifecycle import (
 def test_worker_reports_ready_after_construction_before_loop(worker_type, service_path, run_name):
     reporter = MagicMock(spec=StartupReporter)
     worker = worker_type(MagicMock(), startup_reporter=reporter,
-                         settings_snapshot={"CONFIG.module_revisions": {"acquisition": "r", "processing": "r", "stimulation": "r", "actuation": "r"}, "CONFIG.system_revision": "system", "CONFIG.generation": "g"})
+                         settings_snapshot={"CONFIG.module_revisions": {"acquisition": "r", "processing": "r", "stimulation": "r", "actuation": "r"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "g"})
     worker.data_source = MagicMock()
     with patch(service_path) as service:
         service.return_value.run.side_effect = lambda: reporter.ready.assert_called_once_with()
@@ -88,19 +88,19 @@ def _engine_with_channels(*, delayed=None, stale=False, timeout=1):
         if index == 1 and delayed is not None:
             receiver.poll.side_effect = delayed.wait
         receiver.recv.return_value = StartupReport.ready(
-            name, module_revisions={"acquisition" if index == 0 else "processing": "old" if stale else "r"}, system_revision="system", generation="g",
+            name, module_revisions={"acquisition" if index == 0 else "processing": "old" if stale else "r"}, engine_revision="engine", generation="g",
         )
         channels.append(StartupChannel(name, process, receiver, MagicMock(spec=StartupReporter)))
     event_bus = MagicMock(start=AsyncMock(), stop=AsyncMock())
     gateway = MagicMock(start=AsyncMock(), stop=AsyncMock())
     engine = NeuroEngine(event_bus, MagicMock(), workers[0], MagicMock(), workers[1],
                          MagicMock(), gateway, startup_channels=tuple(channels),
-                         startup_timeout_s=timeout, module_revisions={"acquisition": "r", "processing": "r"}, system_revision="system", generation="g")
+                         startup_timeout_s=timeout, module_revisions={"acquisition": "r", "processing": "r"}, engine_revision="engine", generation="g")
     return engine, channels
 
 
 _SNAPSHOT = {"CONFIG.module_revisions": {"acquisition": "r", "processing": "r"},
-             "CONFIG.system_revision": "system", "CONFIG.generation": "g"}
+             "CONFIG.engine_revision": "engine", "CONFIG.generation": "g"}
 
 
 @pytest.mark.asyncio
@@ -266,7 +266,7 @@ def _pinned_worker_snapshot(decoder_alias, broken_kind=None):
     from omnibci.application.plugin_profiles import ProfileBinding
     from omnibci.domain.channel_mapping import ProcessingInput
     from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-    snapshot = {"CONFIG.module_revisions": {"acquisition": "r", "processing": "r", "stimulation": "r", "actuation": "r"}, "CONFIG.system_revision": "system", "CONFIG.generation": "g", "ACQUISITION.sample_rate": 250,
+    snapshot = {"CONFIG.module_revisions": {"acquisition": "r", "processing": "r", "stimulation": "r", "actuation": "r"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "g", "ACQUISITION.sample_rate": 250,
                 "ACQUISITION.signal_source": "file_reader"}
     bindings = []
     for slot, kind, alias, parameters in (
@@ -294,7 +294,7 @@ def test_spawned_configured_worker_reports_real_plugin_initialization(kind, brok
     commands, data, events = (context.Queue() for _ in range(3))
     receiver, sender = context.Pipe(duplex=False)
     component = "Acquisition" if kind == "acquisition" else "Signal Processing"
-    reporter = StartupReporter(sender, component=component, module_revisions={kind: "r"}, system_revision="system", generation="g")
+    reporter = StartupReporter(sender, component=component, module_revisions={kind: "r"}, engine_revision="engine", generation="g")
     broken_kind = ("acquisition" if kind == "acquisition" else "decoder") if broken else None
     snapshot = _pinned_worker_snapshot(decoder_alias, broken_kind)
     worker_type = AcquisitionWorker if kind == "acquisition" else SignalProcessingWorker
@@ -309,11 +309,11 @@ def test_spawned_configured_worker_reports_real_plugin_initialization(kind, brok
         if broken and kind == "acquisition":
             with pytest.raises(ChildProcessStartupError, match="missing-plugin") as raised:
                 wait_for_startup_report(receiver, process, component=component, timeout_s=15,
-                                        expected_module_revisions={kind: "r"}, expected_system_revision="system", expected_generation="g")
+                                        expected_module_revisions={kind: "r"}, expected_engine_revision="engine", expected_generation="g")
             assert raised.value.report.stage == ("signal_source" if kind == "acquisition" else "decoder")
         else:
             report = wait_for_startup_report(receiver, process, component=component, timeout_s=15,
-                                              expected_module_revisions={kind: "r"}, expected_system_revision="system", expected_generation="g")
+                                              expected_module_revisions={kind: "r"}, expected_engine_revision="engine", expected_generation="g")
             assert report.generation == "g"
             if kind == "processing":
                 assert not constructed.exists()
@@ -324,7 +324,7 @@ def test_spawned_configured_worker_reports_real_plugin_initialization(kind, brok
                 source = SignalInfo("file_reader", 250, (ChannelDescriptor(0, "O1"),), 1,
                                     connection_id="connection")
                 plan = compile_processing_plan(source, ProcessingInput(), acquisition_revision="r")
-                receipt = {"generation": "g", "acquisition_revision": "r", "processing_revision": "r", "system_revision": "system", "connection_id": "connection",
+                receipt = {"generation": "g", "acquisition_revision": "r", "processing_revision": "r", "engine_revision": "engine", "connection_id": "connection",
                            "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input"}
                 commands.put((SignalProcessorCommand.prepare_signal, CommandRequest("prepare", {
                     "plan": plan.to_dict(), "receipt": receipt,

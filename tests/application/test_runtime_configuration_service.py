@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from omnibci.application.plugin_profiles import ActivationSet, ModuleActivation, ProfileRevisionConflict, SystemSettings
+from omnibci.application.plugin_profiles import ActivationSet, ModuleActivation, ProfileRevisionConflict, EngineSettings
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.processing_source import processing_input
 from omnibci.application.runtime_admission import RuntimeAdmission
@@ -59,7 +59,7 @@ def edit(runtime, slot, values):
 
 def request(runtime, module="processing", *, selections=None, **options):
     service, defaults, _ = runtime
-    current = service.profiles.repository.get_module(module) if module != "system" else service.profiles.repository.get_system()
+    current = service.profiles.repository.get_module(module) if module != "engine" else service.profiles.repository.get_engine()
     bindings = [item for item in (defaults if selections is None else selections) if item["slot"].startswith(f"{module}.")]
     return service.plan(module, bindings, expected_revision=current.revision if current else None, **options, settings=section_settings(service.profiles.settings_source(), module))
 
@@ -176,10 +176,10 @@ def test_no_semantic_change_does_not_restart(runtime):
 
 
 @pytest.mark.parametrize("module,key,value,strategy", [
-    ("system", "NEUROENGINE.queue_size", 123, "rebuild"),
+    ("engine", "NEUROENGINE.queue_size", 123, "rebuild"),
     ("processing", "ALGORITHM.baseline_duration", 3.0, "rebuild"),
     ("actuation", "ACTUATION.watchdog_timeout_s", 3.0, "module"),
-    ("system", "debug", True, "rebuild"),
+    ("engine", "debug", True, "rebuild"),
 ])
 def test_runtime_host_changes_use_the_owning_section(runtime, module, key, value, strategy):
     service, _, before = runtime
@@ -193,13 +193,13 @@ def test_runtime_host_changes_use_the_owning_section(runtime, module, key, value
 @pytest.mark.parametrize("running", [False, True])
 @pytest.mark.parametrize("key,value", [("LOGGING.level", "DEBUG"), ("NEUROENGINE.command_timeout_s", 30.0),
                                       ("PLUGINS.user_dir", "/new/plugins")])
-def test_changed_backend_startup_settings_do_not_block_system_plan(runtime, running, key, value):
+def test_changed_server_startup_settings_do_not_block_engine_plan(runtime, running, key, value):
     service, _, before = runtime
     service.engine.is_engine_ready = running
     service.profiles.settings_source = lambda: {**before.settings(), key: value}
-    plan = request(runtime, "system")
+    plan = request(runtime, "engine")
     assert not plan.errors
-    assert key not in service.resolve_plan(plan.plan_id).system.settings
+    assert key not in service.resolve_plan(plan.plan_id).engine.settings
     assert service.profiles.repository.get_activation_set() == before
 
 
@@ -275,14 +275,14 @@ def test_external_peer_connecting_after_review_is_rechecked(runtime, module, par
         assert service.resolve_plan(plan.plan_id).plan == plan
 
 
-@pytest.mark.parametrize("changed", ["generation", "applied", "running", "system"])
+@pytest.mark.parametrize("changed", ["generation", "applied", "running", "engine"])
 def test_stale_runtime_plan_cannot_execute(runtime, changed):
     service, _, before = runtime
     plan = request(runtime)
     if changed == "applied":
         service.engine.applied_revisions["processing"] = "changed"
-    elif changed == "system":
-        service.profiles.repository.save_system(SystemSettings({"debug": True}), expected_revision=before.system.revision)
+    elif changed == "engine":
+        service.profiles.repository.save_engine(EngineSettings({"debug": True}), expected_revision=before.engine.revision)
     elif changed == "running":
         service.engine.is_engine_ready = False
     else:
@@ -326,11 +326,11 @@ def test_stopped_acquisition_can_select_an_empty_configuration(runtime):
 
 
 @pytest.mark.parametrize("role", ["stimulation", "actuation"])
-def test_system_change_rechecks_connected_external_outputs(runtime, role):
+def test_engine_change_rechecks_connected_external_outputs(runtime, role):
     service, _, before = runtime
     service.engine.applied_snapshot[f"{role.upper()}.auto_spawn"] = False
     service.profiles.settings_source = lambda: {**before.settings(), "debug": True}
-    plan = request(runtime, "system")
+    plan = request(runtime, "engine")
     assert not plan.errors
     service.engine.is_peer_connected = lambda selected: selected == role
     with pytest.raises(PluginSchemaError, match="externally managed"):

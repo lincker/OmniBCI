@@ -287,7 +287,7 @@ def test_external_edit_invalidates_previous_revision(host_files):
 
 
 @pytest.mark.parametrize("edited_file", ["defaults", "user"])
-def test_comment_only_external_edits_are_preserved_without_invalidating_backend_values(host_files, edited_file):
+def test_comment_only_external_edits_are_preserved_without_invalidating_server_values(host_files, edited_file):
     defaults, user_file = host_files
     settings = OmniBCISettings(defaults_file=defaults)
     _, revision = settings.read_saved()

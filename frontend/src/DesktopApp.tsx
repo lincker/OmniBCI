@@ -50,7 +50,7 @@ function ConnectionPage({ connection, onError }: { connection: ConnectionInfo; o
   </main>;
 }
 
-/** A backend change creates a new React tree and discards all prior runtime state. */
+/** A server change creates a new React tree and discards all prior runtime state. */
 export default function DesktopApp() {
   const { t } = useI18n();
   const bridge = desktopBridge();
@@ -78,7 +78,7 @@ export default function DesktopApp() {
   return <div className="desktop-shell">
     {workspace && <div className="desktop-connection-bar" aria-label={t("desktop.connection")}>
       <strong>{connection.kind === "local" ? t("desktop.local") : t("desktop.remote")}</strong>
-      <span className="desktop-backend-address" title={connection.url}>{connection.url}</span>
+      <span className="desktop-server-address" title={connection.url}>{connection.url}</span>
       {connection.kind === "remote" && connection.url?.startsWith("http:") && <span>{t("desktop.http")}</span>}
       <span role="status">{connection.status === "ready" ? t("app.connected") : connection.status === "stopping" ? t("desktop.stopping") : t("desktop.lost")}</span>
       <button disabled={connection.status === "stopping"} onClick={() => {

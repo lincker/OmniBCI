@@ -65,7 +65,7 @@ class SignalProcessor:
         generation: str | None = None,
         processing_revision: str | None = None,
         acquisition_revision: str | None = None,
-        system_revision: str | None = None,
+        engine_revision: str | None = None,
         settings_snapshot: dict | None = None,
         runtime_counters=None,
     ) -> None:
@@ -116,7 +116,7 @@ class SignalProcessor:
         revisions = (settings_snapshot or {}).get("CONFIG.module_revisions", {})
         self.processing_revision = processing_revision if processing_revision is not None else revisions.get("processing")
         self.acquisition_revision = acquisition_revision if acquisition_revision is not None else revisions.get("acquisition")
-        self.system_revision = system_revision if system_revision is not None else (settings_snapshot or {}).get("CONFIG.system_revision")
+        self.engine_revision = engine_revision if engine_revision is not None else (settings_snapshot or {}).get("CONFIG.engine_revision")
         self._last_sequence = runtime_counters[2] if runtime_counters is not None else -1
         self._drain_failure: str | None = None
 
@@ -239,7 +239,7 @@ class SignalProcessor:
         processing_started = False
         try:
             if (barrier.generation != self.generation
-                    or barrier.system_revision != self.system_revision):
+                    or barrier.engine_revision != self.engine_revision):
                 raise ValueError("Drain barrier belongs to a different runtime generation or revision")
             if barrier.input_id is not None and barrier.input_id != (self._signal_receipt or {}).get("input_id"):
                 raise ValueError("Drain barrier belongs to a previous processing input")
@@ -270,7 +270,7 @@ class SignalProcessor:
                 self._input_attached = False
             receipt = StreamDrainReceipt(
                 generation=self.generation, acquisition_revision=barrier.acquisition_revision,
-                processing_revision=self.processing_revision, system_revision=self.system_revision,
+                processing_revision=self.processing_revision, engine_revision=self.engine_revision,
                 last_sequence=self._last_sequence, completed_trials=self.completed_trials,
                 interrupted_epoch=interrupted,
             )
@@ -395,7 +395,7 @@ class SignalProcessor:
             if source_snapshot is not None:
                 if (not isinstance(source_snapshot, dict)
                         or source_snapshot.get("CONFIG.generation") != self.generation
-                        or source_snapshot.get("CONFIG.system_revision") != self.system_revision
+                        or source_snapshot.get("CONFIG.engine_revision") != self.engine_revision
                         or source_snapshot.get("CONFIG.module_revisions", {}).get("processing") != self.processing_revision):
                     raise ValueError("Signal source context belongs to a different processing runtime")
                 for key in tuple(snapshot):
@@ -415,13 +415,13 @@ class SignalProcessor:
             plan = ResolvedSignalPlan.from_dict(payload["plan"])
             receipt = payload["receipt"]
             if (not isinstance(receipt, dict)
-                    or set(receipt) != {"generation", "acquisition_revision", "processing_revision", "system_revision", "connection_id",
+                    or set(receipt) != {"generation", "acquisition_revision", "processing_revision", "engine_revision", "connection_id",
                                        "source_fingerprint", "plan_fingerprint", "input_id"}
                     or not isinstance(receipt["input_id"], str) or not receipt["input_id"]
                     or receipt["generation"] != self.generation
                     or receipt["processing_revision"] != self.processing_revision
                     or receipt["acquisition_revision"] != acquisition_revision
-                    or receipt["system_revision"] != self.system_revision
+                    or receipt["engine_revision"] != self.engine_revision
                     or receipt["connection_id"] != plan.source.connection_id
                     or not receipt["connection_id"]
                     or receipt["source_fingerprint"] != plan.source.fingerprint
@@ -452,7 +452,7 @@ class SignalProcessor:
 
     def _reset_input(self, request):
         """Invalidate an input whose producer is gone; never claim it drained."""
-        expected = {"generation": self.generation, "system_revision": self.system_revision,
+        expected = {"generation": self.generation, "engine_revision": self.engine_revision,
                     **({"expected_acquisition_revision": self.acquisition_revision}
                        if isinstance(request.payload, dict) and "expected_acquisition_revision" in request.payload
                        else {"expected_revision": self.processing_revision})}
@@ -476,7 +476,7 @@ class SignalProcessor:
             self._signal_plan = None
             self._drain_failure = None
             result = CommandResult(request.command_id, EventType.ResetProcessingInput.name, ok=True,
-                                   data={"generation": self.generation, "system_revision": self.system_revision,
+                                   data={"generation": self.generation, "engine_revision": self.engine_revision,
                                          "processing_revision": self.processing_revision, "attached": False})
         self._publish_configuration_result(result)
 
@@ -486,7 +486,7 @@ class SignalProcessor:
     def _stage_configuration(self, request):
         newly_staged, result = self._configuration_transactions.stage(
             request, generation=self.generation, revision=self.processing_revision,
-            system_revision=self.system_revision, drained=self.current_epoch is None,
+            engine_revision=self.engine_revision, drained=self.current_epoch is None,
             current_snapshot=self._settings_snapshot, sample_rate=self._sample_rate,
             baseline_duration=self._baseline_duration, signal_plan=self._signal_plan,
         )
@@ -511,20 +511,20 @@ class SignalProcessor:
         _, candidate = pending
         self._install_configuration(candidate.settings_snapshot, pipeline=candidate)
         result = self._configuration_transactions.complete_applied(
-            generation=self.generation, revision=self.processing_revision, system_revision=self.system_revision,
+            generation=self.generation, revision=self.processing_revision, engine_revision=self.engine_revision,
         )
         self._publish_configuration_result(result)
 
     def _cancel_pending_configuration(self, message):
         result = self._configuration_transactions.cancel_pending(
-            message, generation=self.generation, revision=self.processing_revision, system_revision=self.system_revision,
+            message, generation=self.generation, revision=self.processing_revision, engine_revision=self.engine_revision,
         )
         if result is not None:
             self._publish_configuration_result(result)
 
     def _cancel_configuration(self, request):
         for result in self._configuration_transactions.cancel(
-            request, generation=self.generation, revision=self.processing_revision, system_revision=self.system_revision,
+            request, generation=self.generation, revision=self.processing_revision, engine_revision=self.engine_revision,
         ):
             self._publish_configuration_result(result)
 

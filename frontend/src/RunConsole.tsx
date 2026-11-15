@@ -83,10 +83,10 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
   const [controlsLoading, setControlsLoading] = useState(false);
   const stimulationNotice = runtimeControls.notices.stimulation;
   const actuationNotice = runtimeControls.notices.actuation;
-  const operationReason = (module: ConfigurationModule | "system", allowModuleRecovery = false) => {
+  const operationReason = (module: ConfigurationModule | "engine", allowModuleRecovery = false) => {
     let reason = runtimeBlockReason(runtime, module);
-    if (allowModuleRecovery && reason === "feedback.recovery" && !runtime.status?.recovery.system) {
-      reason = runtime.error || runtime.status?.errors?.system || runtime.status?.errors?.[module] ? "feedback.runtimeUnavailable" : null;
+    if (allowModuleRecovery && reason === "feedback.recovery" && !runtime.status?.recovery.engine) {
+      reason = runtime.error || runtime.status?.errors?.engine || runtime.status?.errors?.[module] ? "feedback.runtimeUnavailable" : null;
     }
     return runtimeControls.enginePending || runtimeControls.pending(module) ? t("feedback.busy") : reason ? t(reason) : null;
   };
@@ -104,7 +104,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
   const matches = (module: ConfigurationModule, applied = false) => current.modules[module].ready
     && activation(module)?.revision === runtime.status?.accepted[module]
     && (!applied || !running || (activation(module)?.revision === runtime.status?.applied?.[module]
-      && runtime.status?.accepted.system === runtime.status?.applied?.system));
+      && runtime.status?.accepted.engine === runtime.status?.applied?.engine));
   const readyFor = (module: ConfigurationModule) => !current.modules[module].error && !runtime.error && matches(module);
   const currentBindings = (module: ConfigurationModule) => collectCurrentBindings(module, current.entries, current.filterOrder, activation(module));
   const currentSource = currentBindings("acquisition").find((item) => item.slot === "acquisition.source");
@@ -171,7 +171,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
   const recovery = runtime.status?.recovery ?? {};
   const recoverStimulation = externalStimulation && !!recovery.stimulation && !stimulation.data?.engine_connected;
   const recoverActuation = externalActuation && !!recovery.actuation && !engine.data?.actuation_connected;
-  const startReason = operationReason("system", true) ?? engineReason ?? (running ? t("run.reason.alreadyRunning") : null);
+  const startReason = operationReason("engine", true) ?? engineReason ?? (running ? t("run.reason.alreadyRunning") : null);
   const stopReason = stop.pending ? t("feedback.busy") : engineReason
     ?? (!running && !runtimeControls.busy && !runtime.inProgress && !Object.keys(recovery).length ? t("run.reason.notRunning") : null);
   const sourceConfigurationReason = currentReason("acquisition") ?? (!currentSource ? t("run.reason.selectSource") : recordingReason);
@@ -398,7 +398,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
       {decoderConfigured && signal.error && <p className="error" role="alert">{signal.error.message}</p>}
       {decoderConfigured && !missingDetector && engineAvailable && !signal.error && signal.data && !signal.data.readiness.ready && processingRunning && <p className="meta">{t("run.prepareSignalHelp")}</p>}
     </section>
-      <section className="card"><h2><Icon name="system" />{t("run.stimulation")}</h2>
+      <section className="card"><h2><Icon name="monitor" />{t("run.stimulation")}</h2>
         {externalStimulation && <p className="meta"><strong>{t("run.externalStimulation")}</strong><br />{t("run.externalStimulationHelp")}</p>}
         <p>{!externalStimulation && <Dot on={stimulationAvailable ? stimulation.data?.process_alive : undefined}
           label={t(stimulation.data?.process_alive ? "run.processRunning" : "run.processStopped")} />}
@@ -451,7 +451,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
           : t("run.invalidControl", { label: translateControlLabel(trialError.name, trialError.label, t) })}</p>}
         {actionErrors([[t("run.triggerTrial"), trigger.error]])}
       </section>
-      <section className="card"><h2><Icon name="system" />{t("run.actuation")}</h2>
+      <section className="card"><h2><Icon name="monitor" />{t("run.actuation")}</h2>
         {externalActuation && <p className="meta">{t("run.externalActuationHelp")}</p>}
         <p><Dot on={engineAvailable ? actuationRunning : undefined} label={t(actuationRunning ? "run.running" : "run.reason.actuationStopped")} />
           <Dot on={engineAvailable ? engine.data?.actuation_connected : undefined}

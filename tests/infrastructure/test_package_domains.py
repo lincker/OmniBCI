@@ -10,7 +10,7 @@ from tests.infrastructure.test_package_installer import _archive, _installer, _m
 from tests.infrastructure.test_plugin_contributions import _write_package, _selection, _contribution
 
 
-@pytest.mark.parametrize("domain", [None, "", "system", "unknown", 1])
+@pytest.mark.parametrize("domain", [None, "", "engine", "unknown", 1])
 def test_manifest_requires_a_valid_package_domain(tmp_path, domain):
     location = _write_package(tmp_path)
     manifest = tomlkit.loads((location / "manifest.toml").read_text())

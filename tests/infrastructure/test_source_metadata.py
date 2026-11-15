@@ -115,7 +115,7 @@ def _worker():
     bus = MagicMock()
     worker = AcquisitionRuntime(source, MagicMock(), MagicMock(), event_bus=bus,
                                 source_id="test_source", processing_active=ThreadEvent(),
-                                generation="generation", acquisition_revision="revision", system_revision="system")
+                                generation="generation", acquisition_revision="revision", engine_revision="engine")
     return worker, source, bus
 
 
@@ -261,7 +261,7 @@ async def test_invalid_or_stale_output_descriptor_is_not_used(descriptor):
 async def test_input_attachment_rejects_missing_or_stale_receipt_without_starting_source():
     worker, source, bus = _worker()
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
-    receipt = {"generation": worker.generation, "acquisition_revision": worker.acquisition_revision, "processing_revision": "processing", "system_revision": worker.system_revision,
+    receipt = {"generation": worker.generation, "acquisition_revision": worker.acquisition_revision, "processing_revision": "processing", "engine_revision": worker.engine_revision,
                "connection_id": worker.connection_id, "source_fingerprint": worker._descriptor.fingerprint,
                "plan_fingerprint": "a" * 64, "input_id": "input"}
     for payload in (None, {**receipt, "connection_id": "old"}, {**receipt, "acquisition_revision": "old"},
@@ -290,7 +290,7 @@ async def test_source_starts_without_a_prepared_processing_plan():
 async def test_input_attachment_uses_new_connection_after_reconnection():
     worker, source, bus = _worker()
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
-    old_receipt = {"generation": worker.generation, "acquisition_revision": worker.acquisition_revision, "processing_revision": "processing", "system_revision": worker.system_revision,
+    old_receipt = {"generation": worker.generation, "acquisition_revision": worker.acquisition_revision, "processing_revision": "processing", "engine_revision": worker.engine_revision,
                    "connection_id": worker.connection_id, "source_fingerprint": worker._descriptor.fingerprint,
                    "plan_fingerprint": "a" * 64, "input_id": "input"}
     async def disconnect():

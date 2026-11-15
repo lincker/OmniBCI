@@ -46,8 +46,8 @@ def stopped_runtime(profiles):
 
 def accept_plan(profiles, runtime, plan):
     stored = runtime.resolve_plan(plan.plan_id)
-    if stored.system:
-        profiles.repository.save_system(stored.system, expected_revision=plan.expected_revisions["system"])
+    if stored.engine:
+        profiles.repository.save_engine(stored.engine, expected_revision=plan.expected_revisions["engine"])
     for module, candidate in stored.candidates.items():
         profiles.repository.save_module(candidate, expected_revision=plan.expected_revisions[module])
 
@@ -57,7 +57,7 @@ def test_acquisition_can_be_selected_and_started_without_other_modules(profiles)
     plan = runtime.plan("acquisition", [source_request(profiles)], expected_revision=None, settings={})
     assert not plan.errors
     assert plan.signal_summary is None
-    assert set(plan.target_revisions) == {"acquisition", "system"}
+    assert set(plan.target_revisions) == {"acquisition", "engine"}
     accept_plan(profiles, runtime, plan)
     snapshot = accepted_runtime_settings(profiles=profiles)
     assert [item["slot"] for item in snapshot["PLUGINS.bindings"]] == ["acquisition.source"]
@@ -78,7 +78,7 @@ async def test_first_acquisition_apply_executes_without_preparing_an_experiment(
     assert runtime.operation(operation["operation_id"])["status"] == "succeeded"
     assert [b.slot for b in profiles.repository.get_module("acquisition").bindings] == ["acquisition.source"]
     assert not acquisition.mock_calls and not commands.mock_calls
-    assert profiles.repository.get_system() is not None
+    assert profiles.repository.get_engine() is not None
     assert profiles.repository.list_module_history("acquisition")[0].entry_id == operation["operation_id"]
 
 
@@ -139,7 +139,7 @@ def test_acquisition_still_validates_its_own_parameters(profiles):
 
 
 def test_unrelated_module_write_does_not_expire_reviewed_plan(profiles):
-    profiles.repository.save_system(profiles.propose_system(section_settings(profiles.settings_source(), "system")), expected_revision=None)
+    profiles.repository.save_engine(profiles.propose_engine(section_settings(profiles.settings_source(), "engine")), expected_revision=None)
     runtime = stopped_runtime(profiles)
     plan = runtime.plan("acquisition", [source_request(profiles)], expected_revision=None, settings={})
     profiles.repository.save_module(profiles.propose("stimulation", [], settings=section_settings(profiles.settings_source(), "stimulation")), expected_revision=None)
@@ -148,8 +148,8 @@ def test_unrelated_module_write_does_not_expire_reviewed_plan(profiles):
         runtime.plan("stimulation", [], expected_revision=None, settings={})
 
 
-def test_existing_system_keeps_single_module_target_scoped(profiles):
-    profiles.repository.save_system(profiles.propose_system(section_settings(profiles.settings_source(), "system")), expected_revision=None)
+def test_existing_engine_keeps_single_module_target_scoped(profiles):
+    profiles.repository.save_engine(profiles.propose_engine(section_settings(profiles.settings_source(), "engine")), expected_revision=None)
     runtime = stopped_runtime(profiles)
     plan = runtime.plan("stimulation", [], expected_revision=None, settings={})
     assert set(plan.target_revisions) == {"stimulation"}

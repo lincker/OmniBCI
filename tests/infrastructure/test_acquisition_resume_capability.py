@@ -30,14 +30,14 @@ def test_checkpoint_receipt_exposes_only_explicit_live_resume_guarantee(declared
     acquisition = AcquisitionRuntime(
         source, Queue(), DataManager(Queue()), SimpleNamespace(put_event=events.append),
         source_id="test-source",
-        generation="run", acquisition_revision="revision", system_revision="system",
+        generation="run", acquisition_revision="revision", engine_revision="engine",
     )
     acquisition._configuration_command(AcquisitionCommand.get_checkpoint, CommandRequest("inspect", {
-        "generation": "run", "expected_revision": "revision", "system_revision": "system",
+        "generation": "run", "expected_revision": "revision", "engine_revision": "engine",
     }))
     receipt = events[-1].data
     assert receipt.ok
-    assert receipt.data == {"generation": "run", "acquisition_revision": "revision", "system_revision": "system", "supported": False,
+    assert receipt.data == {"generation": "run", "acquisition_revision": "revision", "engine_revision": "engine", "supported": False,
                             "checkpoint": None, "resume_without_checkpoint_safe": expected}
 
 

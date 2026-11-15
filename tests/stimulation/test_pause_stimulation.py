@@ -14,7 +14,7 @@ def app():
     instance.result_command_queue = Queue()
     instance.event_bus = Mock()
     instance.stimulator = Mock()
-    instance._runtime_snapshot = {"CONFIG.module_revisions": {"stimulation": "revision"}, "CONFIG.system_revision": "system", "CONFIG.generation": "generation"}
+    instance._runtime_snapshot = {"CONFIG.module_revisions": {"stimulation": "revision"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "generation"}
     instance._paused = False
     return instance
 
@@ -53,7 +53,7 @@ def test_pause_joins_renderer_clears_trigger_and_cancels_future_trials():
         assert result.ok
         assert result.data == {
             "paused": True, "renderer_stopped": True, "cancelled_trials": 2,
-            "generation": "generation", "module_revision": "revision", "system_revision": "system",
+            "generation": "generation", "module_revision": "revision", "engine_revision": "engine",
         }
         instance._put_stim_command_queue(Event(EventType.StartStimTrial, CommandRequest(
             "late-trial", {"n_trials": 1},

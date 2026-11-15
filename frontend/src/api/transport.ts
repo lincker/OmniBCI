@@ -7,7 +7,7 @@ export async function requestApi<T>(path: string, options: RequestInit,
   const desktop = desktopBridge();
   const owner = currentConnection();
   if (desktop && (!owner?.id || owner.status !== "ready")) {
-    throw new Error("Backend connection is unavailable. Reconnect before sending commands.");
+    throw new Error("Server connection is unavailable. Reconnect before sending commands.");
   }
   const controller = new AbortController();
   const untrack = trackRequest(controller);
@@ -23,12 +23,12 @@ export async function requestApi<T>(path: string, options: RequestInit,
     });
     const result = await consume(response);
     if (controller.signal.aborted || (desktop && currentConnection()?.id !== owner!.id)) {
-      throw new DOMException("The backend connection changed or the request was cancelled.", "AbortError");
+      throw new DOMException("The server connection changed or the request was cancelled.", "AbortError");
     }
     return result;
   } catch (cause) {
     if (options.method && !["GET", "HEAD"].includes(options.method.toUpperCase())) {
-      throw new Error("The request was interrupted. The backend may have applied the change; check its current state before retrying.");
+      throw new Error("The request was interrupted. The server may have applied the change; check its current state before retrying.");
     }
     throw cause;
   } finally {

@@ -80,7 +80,7 @@ class Actuation:
         identity = None
         if self._external_node:
             identity = PeerIdentity("actuation", source["CONFIG.module_revisions"]["actuation"],
-                                    source["CONFIG.system_revision"], source["CONFIG.generation"])
+                                    source["CONFIG.engine_revision"], source["CONFIG.generation"])
         self.peer_channel = PeerChannel(engine_peer_config(
             host, port, identity=identity, reconnect=not self._external_node,
             on_disconnect=self._connection_lost if self._external_node else None,
@@ -395,7 +395,7 @@ class Actuation:
                     "execution_complete": True, "outputs_settled": True,
                     "generation": snapshot.get("CONFIG.generation"),
                     "module_revision": snapshot.get("CONFIG.module_revisions", {}).get("actuation"),
-                    "system_revision": snapshot.get("CONFIG.system_revision"),
+                    "engine_revision": snapshot.get("CONFIG.engine_revision"),
                 },
             )
         except Exception as exc:
@@ -431,7 +431,7 @@ class Actuation:
                     request.command_id, EventType.ResumeActuation.name, ok=True,
                     data={"resumed": True, "paused": False, "generation": snapshot.get("CONFIG.generation"),
                           "module_revision": snapshot.get("CONFIG.module_revisions", {}).get("actuation"),
-                          "system_revision": snapshot.get("CONFIG.system_revision")},
+                          "engine_revision": snapshot.get("CONFIG.engine_revision")},
                 )
         self.event_bus.put_event(Event(EventType.CommandResult, result))
 

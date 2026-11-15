@@ -1,4 +1,4 @@
-# REST contract guard: docs/openapi.json must stay in sync with the backend.
+# REST contract guard: docs/openapi.json must stay in sync with the server.
 #
 # Changes to presentation schemas or routes must include a regenerated spec.
 # Run python scripts/export_openapi.py locally and commit the result.

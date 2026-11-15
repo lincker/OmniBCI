@@ -4,7 +4,7 @@ import { EventEmitter } from "node:events";
 import { createInterface } from "node:readline";
 
 export interface ControlResult { ok: boolean; errors?: string[]; forced?: boolean }
-export interface BackendReady { url: string; instance_id: string }
+export interface ServerReady { url: string; instance_id: string }
 const shutdownStages = {
   waiting_for_requests: "Waiting for active requests",
   waiting_for_configuration: "Waiting for configuration changes",
@@ -13,11 +13,11 @@ const shutdownStages = {
   stopping_actuation_process: "Stopping the actuation process",
   draining_acquisition: "Draining acquisition and processing",
   stopping_engine: "Stopping the engine",
-  stopped: "Backend stopped; waiting for exit",
+  stopped: "Server stopped; waiting for exit",
 } as const;
 
 /** A child is owned only after this object has spawned it; never discover/kill by name. */
-export class LocalBackend extends EventEmitter {
+export class LocalServer extends EventEmitter {
   readonly token = randomBytes(32).toString("hex");
   private readonly launchId = randomUUID();
   private child?: ChildProcessWithoutNullStreams;
@@ -25,10 +25,10 @@ export class LocalBackend extends EventEmitter {
   private exited: Promise<void> = Promise.resolve();
   private phase?: keyof typeof shutdownStages;
 
-  get shutdownStage(): string { return this.phase ? shutdownStages[this.phase] : "Waiting for backend acknowledgement"; }
+  get shutdownStage(): string { return this.phase ? shutdownStages[this.phase] : "Waiting for server acknowledgement"; }
 
-  async start(python: string, cwd: string, packaged: boolean, log: (text: string) => void): Promise<BackendReady> {
-    if (this.child) throw new Error("Local backend is already owned.");
+  async start(python: string, cwd: string, packaged: boolean, log: (text: string) => void): Promise<ServerReady> {
+    if (this.child) throw new Error("Local server is already owned.");
     const env: NodeJS.ProcessEnv = { ...process.env, PYTHONUTF8: "1", PYTHONUNBUFFERED: "1" };
     // Do not let the user's shell redirect the bundled interpreter or its imports.
     for (const name of ["PYTHONPATH", "PYTHONHOME", "OMNIBCI_API_TOKEN"]) delete env[name];
@@ -45,10 +45,10 @@ export class LocalBackend extends EventEmitter {
         try { process.kill(-child.pid, "SIGKILL"); } catch { /* Group already gone. */ }
       }
     });
-    const ready = new Promise<BackendReady>((resolve, reject) => {
+    const ready = new Promise<ServerReady>((resolve, reject) => {
       let received = false;
       let broken = false;
-      const timer = setTimeout(() => reject(new Error("Local backend startup exceeded 60 seconds.")), 60_000);
+      const timer = setTimeout(() => reject(new Error("Local server startup exceeded 60 seconds.")), 60_000);
       const fail = (error: Error) => {
         clearTimeout(timer);
         if (!received) reject(error);
@@ -57,13 +57,13 @@ export class LocalBackend extends EventEmitter {
         if (received && !broken) {
           broken = true;
           this.emit("protocol-error", error);
-          // EOF tells the private backend to run its normal shutdown cleanup.
+          // EOF tells the private server to run its normal shutdown cleanup.
           child.stdin.end();
         }
       };
       child.once("error", fail);
       child.once("close", (code, signal) => {
-        const error = new Error(`Local backend exited (${code ?? signal ?? "unknown"}).`);
+        const error = new Error(`Local server exited (${code ?? signal ?? "unknown"}).`);
         clearTimeout(timer);
         if (!received) reject(error);
         for (const item of this.pending.values()) item.reject(error);
@@ -74,7 +74,7 @@ export class LocalBackend extends EventEmitter {
       let buffered = 0;
       child.stdout.on("data", data => {
         buffered += data.length;
-        if (buffered > 1024 * 1024) fail(new Error("Invalid backend control output."));
+        if (buffered > 1024 * 1024) fail(new Error("Invalid server control output."));
       });
       const lines = createInterface({ input: child.stdout });
       lines.on("line", line => {
@@ -83,22 +83,22 @@ export class LocalBackend extends EventEmitter {
         try {
           const message = JSON.parse(line);
           if (message.event === "ready") {
-            if (received || message.launch_id !== this.launchId || typeof message.instance_id !== "string" || !message.instance_id) throw new Error("Backend identity mismatch.");
+            if (received || message.launch_id !== this.launchId || typeof message.instance_id !== "string" || !message.instance_id) throw new Error("Server identity mismatch.");
             const url = new URL(message.url);
             if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port
-              || url.username || url.password || url.pathname !== "/" || url.search || url.hash) throw new Error("Invalid local backend address.");
+              || url.username || url.password || url.pathname !== "/" || url.search || url.hash) throw new Error("Invalid local server address.");
             received = true; clearTimeout(timer);
             resolve({ url: url.origin, instance_id: message.instance_id });
           } else if (message.event === "shutdown_progress") {
-            if (typeof message.phase !== "string" || !Object.prototype.hasOwnProperty.call(shutdownStages, message.phase)) throw new Error("Invalid backend shutdown stage.");
+            if (typeof message.phase !== "string" || !Object.prototype.hasOwnProperty.call(shutdownStages, message.phase)) throw new Error("Invalid server shutdown stage.");
             this.phase = message.phase as keyof typeof shutdownStages;
           } else if (message.event === "result" && typeof message.id === "string") {
             if (typeof message.ok !== "boolean" || message.errors !== undefined
-              && (!Array.isArray(message.errors) || message.errors.some((item: unknown) => typeof item !== "string"))) throw new Error("Invalid backend control result.");
+              && (!Array.isArray(message.errors) || message.errors.some((item: unknown) => typeof item !== "string"))) throw new Error("Invalid server control result.");
             const item = this.pending.get(message.id);
             if (item) { this.pending.delete(message.id); item.resolve(message); }
-          } else if (message.event === "error") fail(new Error(String(message.message ?? "Backend startup failed.")));
-          else throw new Error("Invalid backend control message.");
+          } else if (message.event === "error") fail(new Error(String(message.message ?? "Server startup failed.")));
+          else throw new Error("Invalid server control message.");
         } catch (error) { fail(error as Error); }
       });
     });
@@ -113,7 +113,7 @@ export class LocalBackend extends EventEmitter {
 
   command(op: "prepare_shutdown" | "resume" | "shutdown"): Promise<ControlResult> {
     const child = this.child;
-    if (!child || !child.stdin.writable) return Promise.reject(new Error("Local backend is not running."));
+    if (!child || !child.stdin.writable) return Promise.reject(new Error("Local server is not running."));
     if (op !== "shutdown") this.phase = undefined;
     const id = randomUUID();
     return new Promise((resolve, reject) => {
@@ -130,7 +130,7 @@ export class LocalBackend extends EventEmitter {
     const child = this.child;
     if (!child?.pid) return this.exited;
     try {
-      if (process.platform === "win32") child.kill("SIGKILL"); // Backend owns a kill-on-close Windows Job.
+      if (process.platform === "win32") child.kill("SIGKILL"); // Server owns a kill-on-close Windows Job.
       else process.kill(-child.pid, "SIGKILL");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;

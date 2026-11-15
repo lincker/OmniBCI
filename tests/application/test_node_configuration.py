@@ -36,7 +36,7 @@ def runtime():
         "sample_rate": 1000, "channel_count": 2, "data_file_path": "private/source.cnt",
     })
     return {
-        "CONFIG.module_revisions": {'acquisition': "a" * 64, 'processing': "a" * 64, 'stimulation': "a" * 64, 'actuation': "a" * 64}, "CONFIG.system_revision": "c" * 64, "CONFIG.generation": "engine-generation-1",
+        "CONFIG.module_revisions": {'acquisition': "a" * 64, 'processing': "a" * 64, 'stimulation': "a" * 64, 'actuation': "a" * 64}, "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "engine-generation-1",
         "ACQUISITION.sample_rate": 1000, "ACQUISITION.channel_count": 2,
         "STIMULATION.server_ip": "192.0.2.1", "STIMULATION.server_port": 8765,
         "NEUROENGINE.queue_size": 100, "STIMULATION.renderer": "pyopengl",
@@ -87,7 +87,7 @@ def test_node_needs_only_owned_plugins(runtime, role, kinds, alias):
     assert {kind for kind, _ in catalog.calls} == kinds
     assert {item["kind"] for item in result["PLUGINS.bindings"]} == kinds
     assert result[alias].startswith("local_")
-    assert result["CONFIG.system_revision"] == runtime["CONFIG.system_revision"]
+    assert result["CONFIG.engine_revision"] == runtime["CONFIG.engine_revision"]
     assert result["CONFIG.generation"] == runtime["CONFIG.generation"]
     assert result["CONFIG.node_role"] == role
     if role == "engine":
@@ -133,7 +133,7 @@ def test_stimulation_node_preserves_an_explicit_absent_trigger(runtime):
     assert {kind for kind, _ in catalog.calls} == {"paradigm"}
     assert {item["slot"] for item in result["PLUGINS.bindings"]} == {"stimulation.paradigm"}
     assert "ACQUISITION.trigger" not in result
-    assert result["CONFIG.system_revision"] == runtime["CONFIG.system_revision"]
+    assert result["CONFIG.engine_revision"] == runtime["CONFIG.engine_revision"]
     assert result["CONFIG.generation"] == runtime["CONFIG.generation"]
 
 
@@ -153,7 +153,7 @@ def test_projection_requires_no_installed_catalog_and_preserves_parent_identity(
     dto = project_node_configuration(runtime, "stimulation")
     assert dto.role == "stimulation"
     assert dto.module_revisions == {"stimulation": runtime["CONFIG.module_revisions"]["stimulation"]}
-    assert dto.system_revision == runtime["CONFIG.system_revision"]
+    assert dto.engine_revision == runtime["CONFIG.engine_revision"]
     assert dto.generation == runtime["CONFIG.generation"]
     assert dto.to_dict()["format_version"] == 1
     assert dto.settings["STIMULATION.auto_spawn"] is False
@@ -290,7 +290,7 @@ def test_node_channel_labels_must_be_a_list_of_strings(runtime, labels):
         NodeConfiguration.from_dict(data)
 
 
-@pytest.mark.parametrize("change", ["foreign_binding", "foreign_setting", "unknown_field", "version", "revision", "generation", "role", "context", "missing_binding", "duplicate_binding"])
+@pytest.mark.parametrize("change", ["foreign_binding", "foreign_setting", "unknown_field", "version", "unsupported_version", "legacy_identity", "legacy_identity_extra", "revision", "generation", "role", "context", "missing_binding", "duplicate_binding"])
 def test_remote_envelope_rejects_invalid_or_unowned_content(runtime, change):
     data = project_node_configuration(runtime, "stimulation").to_dict()
     if change == "foreign_binding":
@@ -301,6 +301,12 @@ def test_remote_envelope_rejects_invalid_or_unowned_content(runtime, change):
         data["extra"] = True
     elif change == "version":
         data["format_version"] = True
+    elif change == "unsupported_version":
+        data["format_version"] = 2
+    elif change == "legacy_identity":
+        data["system_revision"] = data.pop("engine_revision")
+    elif change == "legacy_identity_extra":
+        data["system_revision"] = data["engine_revision"]
     elif change == "revision":
         data["module_revisions"][next(iter(data["module_revisions"]))] = "not-a-revision"
     elif change == "generation":
@@ -348,7 +354,7 @@ def test_nodes_can_start_before_source_expectations_are_confirmed(runtime, role,
     assert "ACQUISITION.channel_count" not in dto.settings
     assert "ACQUISITION.sample_rate" not in result
     assert "ACQUISITION.channel_count" not in result
-    assert result["CONFIG.system_revision"] == runtime["CONFIG.system_revision"]
+    assert result["CONFIG.engine_revision"] == runtime["CONFIG.engine_revision"]
 
 
 def test_nonowned_plugin_parameters_never_receive_local_schema_validation(runtime):

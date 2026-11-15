@@ -26,7 +26,7 @@ function harness() {
   globalThis.setTimeout = (callback) => { reconnect = callback; return 1; };
   globalThis.clearTimeout = () => {};
   globalThis.window = { omnibciDesktop: { subscribeResults(_id, listener) { deliver = listener; return () => {}; } } };
-  desktop.setDesktopConnection({ id: "backend", kind: "local", status: "ready" });
+  desktop.setDesktopConnection({ id: "server", kind: "local", status: "ready" });
   const values = [], effects = [];
   let cursor = 0;
   const dispatcher = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;

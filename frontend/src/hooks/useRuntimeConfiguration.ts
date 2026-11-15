@@ -8,7 +8,7 @@ import { runtimeConfigApi as api, type RuntimePlanRequest, type RuntimePlan,
 import type { ModuleRestoration } from "./useCurrentConfiguration";
 
 export type ConfigurationSection = RuntimePlanRequest["module"];
-export const configurationSections: ConfigurationSection[] = ["acquisition", "processing", "stimulation", "actuation", "system"];
+export const configurationSections: ConfigurationSection[] = ["acquisition", "processing", "stimulation", "actuation", "engine"];
 export const operationActive = (operation: RuntimeOperation | null | undefined) => operation?.status === "queued" || operation?.status === "applying";
 const message = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 type RequestError = string | { key: TranslationKey; params?: TranslationParams } | null;
@@ -21,8 +21,8 @@ type Attempt = {
 };
 
 export function operationAffects(operation: RuntimeOperation, module: ConfigurationSection) {
-  return module === "system" || operation.module === "system"
-    || operation.affected_modules.includes("system") || operation.affected_modules.includes(module);
+  return module === "engine" || operation.module === "engine"
+    || operation.affected_modules.includes("engine") || operation.affected_modules.includes(module);
 }
 
 export function useRuntimeConfiguration() {
@@ -94,7 +94,7 @@ export function useRuntimeConfiguration() {
     const related = configurationSections.filter((section) => {
       const entry = values.current[section];
       const running = current?.operations?.[section];
-      return module === "system" || section === "system" || section === module
+      return module === "engine" || section === "engine" || section === module
         || !!running && operationActive(running) && operationAffects(running, module)
         || !!entry?.operation && operationActive(entry.operation) && operationAffects(entry.operation, module);
     });
@@ -103,11 +103,11 @@ export function useRuntimeConfiguration() {
       const entry = values.current[section];
       return entry?.submitting || entry?.uncertain || operationActive(entry?.operation) || operationActive(current?.operations?.[section]);
     });
-    const recoveryRequired = Object.keys(current?.recovery ?? {}).some((section) => module === "system" || section === "system" || section === module);
+    const recoveryRequired = Object.keys(current?.recovery ?? {}).some((section) => module === "engine" || section === "engine" || section === module);
     const requestError = own.requestError;
     return { operation, completedOperation: own.completed, reviewing: !!own.reviewing, submitting: !!own.submitting,
       uncertain, ownUncertain: !!own.uncertain, recoveryError: current?.recovery?.[module], inProgress, recoveryRequired, blocked: !current?.operations || !current.recovery || inProgress || recoveryRequired || !!error
-        || !!current?.errors?.[module] || !!current?.errors?.system,
+        || !!current?.errors?.[module] || !!current?.errors?.engine,
       requestError: requestError && typeof requestError !== "string" ? t(requestError.key, requestError.params) : requestError ?? null };
   };
   const review = async (body: RuntimePlanRequest) => {
@@ -185,8 +185,8 @@ export function useRuntimeConfiguration() {
       } else update(module, { requestError: message(cause) });
     } finally { update(module, { submitting: false }); }
   };
-  return { status, plan, error, state, completedRestorations, inProgress: state("system").inProgress,
-    blocked: state("system").blocked, review, apply, execute, refresh, retryUnconfirmed,
+  return { status, plan, error, state, completedRestorations, inProgress: state("engine").inProgress,
+    blocked: state("engine").blocked, review, apply, execute, refresh, retryUnconfirmed,
     reviewPlan: (target: RuntimePlan, restoreModule?: ConfigurationModule) => {
       if (state(target.module).blocked || values.current[target.module]?.reviewing) return;
       update(target.module, { restoration: restoreModule ? { planId: target.plan_id, module: restoreModule } : undefined,

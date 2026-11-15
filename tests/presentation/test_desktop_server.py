@@ -19,7 +19,7 @@ from omnibci.presentation.server import _bootstrap
 
 
 @pytest.mark.parametrize("message", [None, {}, {"op": "bootstrap", "token": "short", "launch_id": "test"}])
-def test_invalid_bootstrap_never_starts_a_backend(message):
+def test_invalid_bootstrap_never_starts_a_server(message):
     import io
     content = "" if message is None else json.dumps(message) + "\n"
     with pytest.raises(ValueError):
@@ -27,11 +27,11 @@ def test_invalid_bootstrap_never_starts_a_backend(message):
 
 
 @pytest.fixture
-def desktop_backend(tmp_path):
+def desktop_server(tmp_path):
     directory = tmp_path / "config"
     directory.mkdir()
     (directory / "settings.toml").write_text(
-        "[LOGGING]\nfile_path = " + json.dumps(str(tmp_path / "backend.log")) + "\n", encoding="utf-8",
+        "[LOGGING]\nfile_path = " + json.dumps(str(tmp_path / "server.log")) + "\n", encoding="utf-8",
     )
     environment = {**os.environ, "OMNIBCI_CONFIG_DIR": str(directory),
                    "OMNIBCI_PLUGIN_DIR": str(tmp_path / "plugins")}
@@ -61,10 +61,10 @@ def desktop_backend(tmp_path):
                     result = output.get(timeout=30)
                 except queue.Empty:
                     log.seek(0)
-                    pytest.fail("Backend control timed out: " + log.read())
+                    pytest.fail("Server control timed out: " + log.read())
                 if result is None:
                     log.seek(0)
-                    pytest.fail("Backend exited before replying: " + log.read())
+                    pytest.fail("Server exited before replying: " + log.read())
                 if result["event"] == "shutdown_progress":
                     assert isinstance(result["phase"], str)
                     continue
@@ -97,9 +97,9 @@ def request(ready, path, *, method="GET"):
 
 
 @pytest.mark.integration
-def test_desktop_handshake_prepare_resume_and_clean_shutdown(desktop_backend):
-    process, send, receive, ready = desktop_backend
-    with request(ready, "/api/v1/system/info") as response:
+def test_desktop_handshake_prepare_resume_and_clean_shutdown(desktop_server):
+    process, send, receive, ready = desktop_server
+    with request(ready, "/api/v1/server/info") as response:
         assert json.load(response)["data"]["instance_id"] == ready["instance_id"]
     send("prepare_shutdown", id="prepare")
     assert receive() == {"event": "result", "id": "prepare", "ok": True, "errors": []}
@@ -121,8 +121,8 @@ def test_desktop_handshake_prepare_resume_and_clean_shutdown(desktop_backend):
 
 
 @pytest.mark.integration
-def test_parent_pipe_eof_stops_backend(desktop_backend):
-    process, _, _, _ = desktop_backend
+def test_parent_pipe_eof_stops_server(desktop_server):
+    process, _, _, _ = desktop_server
     process.stdin.close()
     assert process.wait(timeout=15) == 0
 

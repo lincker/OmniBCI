@@ -1,9 +1,9 @@
 debug = false
 
 [LOGGING]
-# Backend process only; applied when the API server starts.
+# Server process only; applied when the API server starts.
 level = "INFO"
-# Relative to the platform user log directory; the filename includes the backend PID.
+# Relative to the platform user log directory; the filename includes the server PID.
 file_path = "omnibci.log"
 
 [ALGORITHM]

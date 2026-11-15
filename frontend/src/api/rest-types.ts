@@ -4,15 +4,15 @@
  */
 
 export interface paths {
-    "/api/v1/system/info": {
+    "/api/v1/server/info": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** System Info */
-        get: operations["system_info_api_v1_system_info_get"];
+        /** Server Info */
+        get: operations["server_info_api_v1_server_info_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -21,15 +21,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/system/logs": {
+    "/api/v1/server/logs": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Backend Logs */
-        get: operations["backend_logs_api_v1_system_logs_get"];
+        /** Server Logs */
+        get: operations["server_logs_api_v1_server_logs_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -453,14 +453,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Backend startup settings */
+        /** Server startup settings */
         get: operations["get_config_api_v1_config_get"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
-        /** Save settings for the next backend startup */
+        /** Save settings for the next server startup */
         patch: operations["patch_config_api_v1_config_patch"];
         trace?: never;
     };
@@ -620,15 +620,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/config/system": {
+    "/api/v1/config/engine": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get System */
-        get: operations["get_system_api_v1_config_system_get"];
+        /** Get Engine */
+        get: operations["get_engine_api_v1_config_engine_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -972,8 +972,8 @@ export interface components {
             generation: string;
             /** Acquisition Revision */
             acquisition_revision: string | null;
-            /** System Revision */
-            system_revision: string | null;
+            /** Engine Revision */
+            engine_revision: string | null;
             /** Source Id */
             source_id: string;
             /** Connection Id */
@@ -1049,8 +1049,8 @@ export interface components {
             generation: string;
             /** Acquisition Revision */
             acquisition_revision: string | null;
-            /** System Revision */
-            system_revision: string | null;
+            /** Engine Revision */
+            engine_revision: string | null;
             /** Source Id */
             source_id: string | null;
             /** Connection Id */
@@ -1214,20 +1214,6 @@ export interface components {
             message: string;
             data?: components["schemas"]["AcquisitionStatusResponse"] | null;
         };
-        /** ApiResponse[BackendLogsResponse] */
-        ApiResponse_BackendLogsResponse_: {
-            /**
-             * Success
-             * @default true
-             */
-            success: boolean;
-            /**
-             * Message
-             * @default ok
-             */
-            message: string;
-            data?: components["schemas"]["BackendLogsResponse"] | null;
-        };
         /** ApiResponse[ConfigResponse] */
         ApiResponse_ConfigResponse_: {
             /**
@@ -1241,6 +1227,20 @@ export interface components {
              */
             message: string;
             data?: components["schemas"]["ConfigResponse"] | null;
+        };
+        /** ApiResponse[EngineSettingsResponse] */
+        ApiResponse_EngineSettingsResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["EngineSettingsResponse"] | null;
         };
         /** ApiResponse[EngineStatusResponse] */
         ApiResponse_EngineStatusResponse_: {
@@ -1452,6 +1452,34 @@ export interface components {
             message: string;
             data?: components["schemas"]["RuntimePlanResponse"] | null;
         };
+        /** ApiResponse[ServerInfoResponse] */
+        ApiResponse_ServerInfoResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["ServerInfoResponse"] | null;
+        };
+        /** ApiResponse[ServerLogsResponse] */
+        ApiResponse_ServerLogsResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["ServerLogsResponse"] | null;
+        };
         /** ApiResponse[SignalPreviewResponse] */
         ApiResponse_SignalPreviewResponse_: {
             /**
@@ -1493,34 +1521,6 @@ export interface components {
              */
             message: string;
             data?: components["schemas"]["StimulationStatusResponse"] | null;
-        };
-        /** ApiResponse[SystemInfoResponse] */
-        ApiResponse_SystemInfoResponse_: {
-            /**
-             * Success
-             * @default true
-             */
-            success: boolean;
-            /**
-             * Message
-             * @default ok
-             */
-            message: string;
-            data?: components["schemas"]["SystemInfoResponse"] | null;
-        };
-        /** ApiResponse[SystemSettingsResponse] */
-        ApiResponse_SystemSettingsResponse_: {
-            /**
-             * Success
-             * @default true
-             */
-            success: boolean;
-            /**
-             * Message
-             * @default ok
-             */
-            message: string;
-            data?: components["schemas"]["SystemSettingsResponse"] | null;
         };
         /** ApiResponse[list[MarketPackageResponse]] */
         ApiResponse_list_MarketPackageResponse__: {
@@ -1612,15 +1612,6 @@ export interface components {
             /** Data */
             data?: components["schemas"]["ProfileHistoryResponse"][] | null;
         };
-        /** BackendLogsResponse */
-        BackendLogsResponse: {
-            /** Filename */
-            filename: string;
-            /** Lines */
-            lines: string[];
-            /** Truncated */
-            truncated: boolean;
-        };
         /** ChannelBindingModel */
         ChannelBindingModel: {
             /** Name */
@@ -1662,7 +1653,7 @@ export interface components {
             key: string;
             /**
              * Value
-             * @description Saved value for the next backend startup
+             * @description Saved value for the next server startup
              */
             value: unknown;
             /**
@@ -1672,14 +1663,14 @@ export interface components {
             type: string;
             /**
              * Requires
-             * @description backend-restart
+             * @constant
              */
-            requires: string;
+            requires: "server-restart";
             /** Description */
             description: string;
             /**
              * Active Value
-             * @description Value captured when this backend started
+             * @description Value captured when this server started
              */
             active_value: unknown;
             /**
@@ -1758,6 +1749,15 @@ export interface components {
             configuration_version?: number | null;
             /** @description Required as an explicit object for processing.decoder; omit for other plugin roles. */
             processing_input?: components["schemas"]["ProcessingInputModel"] | null;
+        };
+        /** EngineSettingsResponse */
+        EngineSettingsResponse: {
+            /** Revision */
+            revision: string | null;
+            /** Settings */
+            settings: {
+                [key: string]: unknown;
+            };
         };
         /** EngineStatusResponse */
         EngineStatusResponse: {
@@ -1969,7 +1969,7 @@ export interface components {
             modules: {
                 [key: string]: components["schemas"]["ModuleActivationResponse"];
             };
-            system: components["schemas"]["SystemSettingsResponse"] | null;
+            engine: components["schemas"]["EngineSettingsResponse"] | null;
             /** Errors */
             errors?: {
                 [key: string]: string;
@@ -2000,8 +2000,8 @@ export interface components {
             module_revisions: {
                 [key: string]: string;
             };
-            /** System Revision */
-            system_revision: string;
+            /** Engine Revision */
+            engine_revision: string;
             /** Generation */
             generation: string | null;
             /** Settings */
@@ -2142,10 +2142,10 @@ export interface components {
              */
             revision: string;
             /**
-             * Backend Restart Required
-             * @description Whether any saved backend settings differ from the startup snapshot
+             * Server Restart Required
+             * @description Whether any saved server settings differ from the startup snapshot
              */
-            backend_restart_required: boolean;
+            server_restart_required: boolean;
         };
         /** PluginConfigurationResponse */
         PluginConfigurationResponse: {
@@ -2386,7 +2386,7 @@ export interface components {
              * Module
              * @enum {string}
              */
-            module: "acquisition" | "processing" | "stimulation" | "actuation" | "system";
+            module: "acquisition" | "processing" | "stimulation" | "actuation" | "engine";
             /** Affected Modules */
             affected_modules: string[];
             /** Operation Id */
@@ -2419,7 +2419,7 @@ export interface components {
              * Module
              * @enum {string}
              */
-            module: "acquisition" | "processing" | "stimulation" | "actuation" | "system";
+            module: "acquisition" | "processing" | "stimulation" | "actuation" | "engine";
             /** Expected Revision */
             expected_revision?: string | null;
             /** Refresh Slots */
@@ -2470,7 +2470,7 @@ export interface components {
              * Module
              * @enum {string}
              */
-            module: "acquisition" | "processing" | "stimulation" | "actuation" | "system";
+            module: "acquisition" | "processing" | "stimulation" | "actuation" | "engine";
         };
         /** SelectProfileBindingRequest */
         SelectProfileBindingRequest: {
@@ -2478,6 +2478,30 @@ export interface components {
             slot: string;
             /** Profile Id */
             profile_id: string;
+        };
+        /** ServerInfoResponse */
+        ServerInfoResponse: {
+            /** App Version */
+            app_version: string;
+            /**
+             * Desktop Api Version
+             * @default 1
+             * @constant
+             */
+            desktop_api_version: 1;
+            /** Instance Id */
+            instance_id: string;
+            /** Auth Enabled */
+            auth_enabled: boolean;
+        };
+        /** ServerLogsResponse */
+        ServerLogsResponse: {
+            /** Filename */
+            filename: string;
+            /** Lines */
+            lines: string[];
+            /** Truncated */
+            truncated: boolean;
         };
         /** SetPackageEnabledRequest */
         SetPackageEnabledRequest: {
@@ -2637,30 +2661,6 @@ export interface components {
             /** Capture Id */
             capture_id: string;
         };
-        /** SystemInfoResponse */
-        SystemInfoResponse: {
-            /** App Version */
-            app_version: string;
-            /**
-             * Desktop Api Version
-             * @default 1
-             * @constant
-             */
-            desktop_api_version: 1;
-            /** Instance Id */
-            instance_id: string;
-            /** Auth Enabled */
-            auth_enabled: boolean;
-        };
-        /** SystemSettingsResponse */
-        SystemSettingsResponse: {
-            /** Revision */
-            revision: string | null;
-            /** Settings */
-            settings: {
-                [key: string]: unknown;
-            };
-        };
         /** TrialResponse */
         TrialResponse: {
             /** Generation */
@@ -2706,7 +2706,7 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    system_info_api_v1_system_info_get: {
+    server_info_api_v1_server_info_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -2721,7 +2721,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse_SystemInfoResponse_"];
+                    "application/json": components["schemas"]["ApiResponse_ServerInfoResponse_"];
                 };
             };
             /** @description Bad request */
@@ -2789,7 +2789,7 @@ export interface operations {
             };
         };
     };
-    backend_logs_api_v1_system_logs_get: {
+    server_logs_api_v1_server_logs_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -2804,7 +2804,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse_BackendLogsResponse_"];
+                    "application/json": components["schemas"]["ApiResponse_ServerLogsResponse_"];
                 };
             };
             /** @description Bad request */
@@ -6232,7 +6232,7 @@ export interface operations {
             };
         };
     };
-    get_system_api_v1_config_system_get: {
+    get_engine_api_v1_config_engine_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -6247,7 +6247,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse_SystemSettingsResponse_"];
+                    "application/json": components["schemas"]["ApiResponse_EngineSettingsResponse_"];
                 };
             };
             /** @description Bad request */

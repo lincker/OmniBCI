@@ -4,7 +4,7 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from omnibci.application.activation_settings import MODULES, SYSTEM_SETTING_DEFAULTS
+from omnibci.application.activation_settings import MODULES, ENGINE_SETTING_DEFAULTS
 from omnibci.application.config_errors import ConfigProfileConflictError
 from omnibci.application.plugin_profiles import (
     PluginProfileNotFoundError, PluginProfileValidationError,
@@ -16,7 +16,7 @@ from omnibci.application.services.plugin_profile_service import PluginProfileSer
 from omnibci.presentation.errors import ApiError
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.plugin_config import (
-    ConfigurationModule, ModuleActivationResponse, ModulesResponse, SystemSettingsResponse,
+    ConfigurationModule, ModuleActivationResponse, ModulesResponse, EngineSettingsResponse,
     ModuleHistoryResponse, ProfileHistoryResponse, RevertProfileRequest, CreatePluginProfileRequest,
     PluginConfigurationResponse, PluginKind, PluginProfileResponse, UpdatePluginProfileRequest,
 )
@@ -105,8 +105,8 @@ def _module_response(module, activation, svc):
     }
 
 
-def _system_response(system):
-    return system.to_dict() if system is not None else {"revision": None, "settings": dict(SYSTEM_SETTING_DEFAULTS)}
+def _engine_response(engine_settings):
+    return engine_settings.to_dict() if engine_settings is not None else {"revision": None, "settings": dict(ENGINE_SETTING_DEFAULTS)}
 
 
 @router.get("/modules", response_model=ApiResponse[ModulesResponse])
@@ -118,11 +118,11 @@ def get_modules(svc: PluginProfileService = Depends(get_plugin_profile_service))
         except (ValueError, KeyError, RuntimeError, OSError) as exc:
             errors[module] = str(exc)
     try:
-        system = _system_response(svc.repository.get_system())
+        engine_settings = _engine_response(svc.repository.get_engine())
     except (ValueError, KeyError, RuntimeError, OSError) as exc:
-        system = None
-        errors["system"] = str(exc)
-    return ApiResponse(data={"modules": modules, "system": system, "errors": errors})
+        engine_settings = None
+        errors["engine"] = str(exc)
+    return ApiResponse(data={"modules": modules, "engine": engine_settings, "errors": errors})
 
 
 @router.get("/modules/{module}", response_model=ApiResponse[ModuleActivationResponse])
@@ -151,10 +151,10 @@ def module_history_entry(module: ConfigurationModule, entry_id: str,
         return ApiResponse(data=entry.activation.to_dict())
 
 
-@router.get("/system", response_model=ApiResponse[SystemSettingsResponse])
-def get_system(svc: PluginProfileService = Depends(get_plugin_profile_service)):
+@router.get("/engine", response_model=ApiResponse[EngineSettingsResponse])
+def get_engine(svc: PluginProfileService = Depends(get_plugin_profile_service)):
     with _configuration_errors():
-        return ApiResponse(data=_system_response(svc.repository.get_system()))
+        return ApiResponse(data=_engine_response(svc.repository.get_engine()))
 
 
 @router.get("/plugin-profiles/{profile_id}/history", response_model=ApiResponse[list[ProfileHistoryResponse]])

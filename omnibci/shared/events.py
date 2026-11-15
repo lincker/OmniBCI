@@ -33,8 +33,6 @@ class EventType(IntEnum):
     PeerDeliveryFault = 602  # local channel -> owner: delivery stopped, not an execution receipt
     PeerHello = 701          # external peer -> engine: pinned runtime identity
     PeerAccepted = 702       # engine -> external peer: matching identity accepted
-    # Legacy numeric values are part of the versioned IPC wire contract.
-    CloseAllNeuroEngineProcessSystem = 33
     # stimulation
     StartStimTrial = 311
     StimulationAck = 312   # stim → engine: ack/result of a stimulation command

@@ -44,7 +44,7 @@ class ApiAccessMiddleware:
         write = scope["type"] == "http" and scope["method"] not in {"GET", "HEAD", "OPTIONS"}
         if write and self.gate.prepared:
             await JSONResponse(
-                {"success": False, "code": "CONFLICT", "message": "Backend is preparing to shut down", "detail": None},
+                {"success": False, "code": "CONFLICT", "message": "Server is preparing to shut down", "detail": None},
                 status_code=409,
             )(scope, receive, send)
             return

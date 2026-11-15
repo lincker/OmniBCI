@@ -27,7 +27,7 @@ def signal_service(tmp_path):
     ), 2, connection_id="connection")
     setup = ProcessingInput(outputs=(ChannelBinding("O1", "channel-0"),)).to_dict()
     snapshot = { "CONFIG.module_revisions": {"acquisition": "a" * 64, "processing": "p" * 64},
-                "CONFIG.system_revision": "s" * 64,
+                "CONFIG.engine_revision": "s" * 64,
                 "CONFIG.generation": "generation", "ACQUISITION.sample_rate": 500,
                 "ACQUISITION.signal_source": "source", "PLUGINS.bindings": [
                     {"slot": "processing.decoder", "processing_input": setup,
@@ -40,7 +40,7 @@ def signal_service(tmp_path):
                                materialize=lambda activation: {},
                                catalog=SimpleNamespace(get=lambda *args: SimpleNamespace(channel_requirements=None)))
     profiles.repository.get_module = lambda module: profiles.repository.get_activation_set().modules.get(module)
-    profiles.repository.get_system = lambda: profiles.repository.get_activation_set().system
+    profiles.repository.get_engine = lambda: profiles.repository.get_activation_set().engine
     acquisition = SimpleNamespace(lifecycle_lock=RLock(), cached_descriptor=metadata.to_dict(),
                                   handle_get_status=lambda query: SimpleNamespace(streaming=False, connected=True))
     acquisition.cached_descriptor_for = lambda binding: deepcopy(acquisition.cached_descriptor)
@@ -57,7 +57,7 @@ def signal_service(tmp_path):
             current = engine.applied_snapshot
             return SimpleNamespace(data=StreamDrainReceipt(
                 current["CONFIG.generation"], current["CONFIG.module_revisions"]["acquisition"],
-                0, 0, False, system_revision=current["CONFIG.system_revision"],
+                0, 0, False, engine_revision=current["CONFIG.engine_revision"],
                 processing_revision=current["CONFIG.module_revisions"]["processing"] if payload.get("drain", True) else None,
             ).to_dict())
         if event is EventType.ResetProcessingInput:
@@ -537,7 +537,7 @@ def test_metadata_drift_detaches_but_is_not_silently_accepted_on_retry(signal_se
 def test_current_input_fault_is_visible_and_quarantines_only_processing(signal_service):
     service, _, _, _ = signal_service
     receipt = service.prepare()
-    fault = {key: receipt[key] for key in ("generation", "system_revision", "acquisition_revision", "input_id")}
+    fault = {key: receipt[key] for key in ("generation", "engine_revision", "acquisition_revision", "input_id")}
     service.on_input_fault(Event(EventType.ProcessingInputFault, {**fault, "input_id": "old-input", "reason": "old failure"}))
     assert service.read()["readiness"]["ready"]
     service.on_input_fault(Event(EventType.ProcessingInputFault, {**fault, "reason": "Processing input queue is full"}))

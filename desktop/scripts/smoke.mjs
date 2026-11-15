@@ -31,19 +31,19 @@ if (options.packaged) {
 }
 if (!python) throw new Error("Supply --python for development, or --packaged for a built app.");
 const directory = await mkdtemp(path.join(tmpdir(), "OmniBCI smoke 数据 "));
-const backendLogs = [];
+const serverLogs = [];
 for (const mode of ["local", "remote"]) {
   const configuration = path.join(directory, mode, "config");
-  const logfile = path.join(directory, mode, "backend.log");
+  const logfile = path.join(directory, mode, "server.log");
   await mkdir(configuration, { recursive: true });
   await writeFile(path.join(configuration, "settings.toml"), `[LOGGING]\nfile_path = ${JSON.stringify(logfile)}\n`, "utf8");
-  backendLogs.push(logfile);
+  serverLogs.push(logfile);
 }
 const output = path.resolve(options.output ?? path.join(root, "artifacts/smoke"));
 await mkdir(output, { recursive: true });
-await build({ entryPoints: [path.join(root, "src/local-backend.ts")], outfile: path.join(directory, "backend.cjs"), bundle: true, platform: "node", format: "cjs" });
-const { LocalBackend } = createRequire(import.meta.url)(path.join(directory, "backend.cjs"));
-const remote = new LocalBackend();
+await build({ entryPoints: [path.join(root, "src/local-server.ts")], outfile: path.join(directory, "server.cjs"), bundle: true, platform: "node", format: "cjs" });
+const { LocalServer } = createRequire(import.meta.url)(path.join(directory, "server.cjs"));
+const remote = new LocalServer();
 let application;
 let stage = "launch";
 const diagnostics = [];
@@ -90,6 +90,7 @@ try {
   const page = await application.firstWindow();
   page.setDefaultTimeout(30_000);
   page.on("pageerror", error => diagnostics.push(error.stack ?? error.message));
+  await page.getByRole("combobox").selectOption("en");
   await page.getByRole("heading", { name: "Connect your workspace" }).waitFor();
   const initial = await page.evaluate(() => window.omnibciDesktop.getConnection());
   assert.equal(initial.id, "");
@@ -104,9 +105,8 @@ try {
 
   // Native prompts are stubbed only by the test driver, never by the shipped app.
   await application.evaluate(({ dialog }) => {
-    dialog.showMessageBox = async (_window, options) => ({ response: options.buttons?.includes("Stop and continue")
-      ? options.buttons.indexOf("Stop and continue") : options.buttons?.includes("Disconnect")
-        ? options.buttons.indexOf("Disconnect") : 0, checkboxChecked: false });
+    dialog.showMessageBox = async (_window, options) => ({ response: ["Discard changes", "Stop and continue", "Disconnect"]
+      .map(label => options.buttons?.indexOf(label) ?? -1).find(index => index >= 0) ?? 0, checkboxChecked: false });
   });
   stage = "local connection";
   await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -121,18 +121,28 @@ try {
     });
     return { status: response.status, body: await response.json() };
   }, { route, method, body });
-  const system = await api("/system/info");
-  assert.equal(system.status, 200);
-  assert.equal(system.body.data.auth_enabled, true);
+  const serverInfo = await api("/server/info");
+  assert.equal(serverInfo.status, 200);
+  assert.equal(serverInfo.body.data.auth_enabled, true);
+  assert.equal(serverInfo.body.data.desktop_api_version, 1);
   assert.equal((await api("/engine/status")).body.data.running, false);
-  assert.equal((await timedFetch(local.url + "/api/v1/system/info")).status, 401);
+  assert.equal((await timedFetch(local.url + "/api/v1/server/info")).status, 401);
+  for (const route of ["/system/info", "/system/logs", "/backend/info", "/backend/logs", "/config/system", "/config/activation"]) {
+    assert.equal((await api(route)).status, 404, route);
+  }
   await page.waitForFunction(() => document.querySelector(".connection-open"), null, { timeout: 20_000 });
   await page.screenshot({ path: path.join(output, "local-workspace.png") });
 
-  stage = "file selection and configuration";
+  stage = "independent Engine startup";
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await page.getByText("Select a recording on the backend computer in Acquisition setup, then save and apply the profile before starting.", { exact: true }).waitFor();
-  assert.equal(await page.getByRole("button", { name: "Start engine", exact: true }).isDisabled(), true);
+  await page.getByRole("button", { name: "Start engine", exact: true }).click();
+  await page.getByText("Engine running", { exact: true }).first().waitFor({ timeout: 60_000 });
+  assert.deepEqual((await api("/engine/status")).body.data, {
+    running: true, acquisition_alive: false, processor_alive: false,
+    stimulation_connected: false, actuation_alive: false, actuation_connected: false,
+  });
+
+  stage = "file selection and current configuration";
   await page.getByRole("button", { name: "Setup", exact: true }).click();
   await page.getByRole("heading", { name: "Acquisition source", exact: true }).waitFor();
   // Input is supplied by the test, outside the installation. No fixture is shipped.
@@ -146,24 +156,42 @@ try {
   await page.getByRole("button", { name: "Browse…", exact: true }).click();
   await page.waitForFunction(({ id, value }) => document.getElementById(id)?.value === value,
     { id: await recordingInput.getAttribute("id"), value: recording });
-  await page.getByRole("button", { name: "Save profile", exact: true }).click();
-  await page.getByText("Profile saved. Review and apply it to change the selected configuration.", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "Review and apply profile", exact: true }).click();
-  await page.getByRole("button", { name: "Apply configuration", exact: true }).click();
-  await page.getByRole("dialog").waitFor({ state: "hidden" });
-  await pollUntil("Saved recording activation", async () => {
-    const response = await api("/config/activation");
+  assert.equal((await api("/config/modules/acquisition")).body.data.revision, null);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await pollUntil("Current recording configuration", async () => {
+    const response = await api("/config/modules/acquisition");
     return { status: response.status, path: response.body.data?.bindings.find(binding => binding.slot === "acquisition.source")?.parameters.data_file_path };
   }, current => current.status === 200 && current.path === recording);
+  await pollUntil("Connected recording", async () => (await api("/acquisition/status")).body.data,
+    current => current.connected === true && current.streaming === false);
+  assert.equal((await api("/engine/status")).body.data.processor_alive, false);
+  assert.deepEqual((await api("/config/plugin-profiles")).body.data, []);
+
+  stage = "current Processing configuration";
+  await page.getByRole("button", { name: "Signal Processing", exact: true }).click();
+  await page.getByRole("heading", { name: "Decoder", exact: true }).waitFor();
+  const decoder = (await api("/config/plugin-catalog/decoder")).body.data
+    .find(item => item.plugin_type === "THUBCI_SSVEP_classic40CCA");
+  assert.ok(decoder?.available, "The bundled CCA decoder must be available");
+  await page.getByRole("combobox", { name: /^Plugin and version/ }).selectOption(JSON.stringify([
+    decoder.selection.package_id, decoder.selection.contribution_id, decoder.selection.version,
+  ]));
+  await page.getByRole("button", { name: "Epoching", exact: true }).click();
+  await page.getByRole("heading", { name: "Epoch boundary detector", exact: true }).waitFor();
+  await page.getByRole("combobox", { name: /^Plugin and version/ }).locator("option:checked").filter({ hasText: "Default Epoch Detector" }).waitFor({ state: "attached" });
 
   stage = "real file replay";
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await page.getByRole("button", { name: "Start engine", exact: true }).click();
-  await page.getByText("Engine running", { exact: true }).first().waitFor({ timeout: 60_000 });
+  await page.getByRole("button", { name: "Start processing", exact: true }).click();
+  await pollUntil("Independent Processing startup", async () => (await api("/engine/status")).body.data,
+    current => current.processor_alive === true);
   const workers = (await api("/engine/status")).body.data;
   assert.equal(workers.acquisition_alive, true);
   assert.equal(workers.processor_alive, true);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  assert.equal(workers.stimulation_connected, false);
+  assert.equal(workers.actuation_alive, false);
+  assert.equal((await api("/acquisition/status")).body.data.streaming, false);
+  assert.deepEqual((await api("/config/plugin-profiles")).body.data, []);
   await page.getByRole("button", { name: "Start reading", exact: true }).click();
   const recorded = await pollUntil("First decoded file trial", async () => {
     const response = await api("/results");
@@ -171,6 +199,12 @@ try {
   }, current => current.status === 200 && current.trials?.length > 0, 90_000);
   assert.ok(recorded.trials.length > 0);
   await page.getByRole("button", { name: "Stop reading", exact: true }).click();
+  await pollUntil("Stopped reading", async () => (await api("/acquisition/status")).body.data,
+    current => current.connected === true && current.streaming === false);
+  assert.equal((await api("/engine/status")).body.data.processor_alive, true);
+  await page.getByRole("button", { name: "Stop processing", exact: true }).click();
+  await pollUntil("Independent Processing stop", async () => (await api("/engine/status")).body.data,
+    current => current.processor_alive === false && current.acquisition_alive === true && current.running === true);
   await page.getByRole("button", { name: "Results", exact: true }).click();
   await page.getByRole("heading", { name: "Trial results", exact: true }).waitFor();
   await page.getByRole("table", { name: "Trial results", exact: true }).waitFor();
@@ -193,8 +227,8 @@ try {
     if (originalEnvironment[name] === undefined) delete process.env[name];
     else process.env[name] = originalEnvironment[name];
   }
-  await page.getByRole("radio", { name: "Remote backend", exact: true }).check();
-  await page.getByLabel("Backend address", { exact: true }).fill(ready.url);
+  await page.getByRole("radio", { name: "Remote server", exact: true }).check();
+  await page.getByLabel("Server address", { exact: true }).fill(ready.url);
   await page.getByLabel("Access token", { exact: true }).fill("incorrect-token");
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await pollUntil("Rejected remote token", () => page.evaluate(() => window.omnibciDesktop.getConnection()),
@@ -209,17 +243,18 @@ try {
   const remoteConnection = await page.evaluate(() => window.omnibciDesktop.getConnection());
   assert.equal(remoteConnection.kind, "remote");
   assert.notEqual(remoteConnection.id, local.id);
-  assert.equal((await api("/system/info")).body.data.instance_id, ready.instance_id);
+  assert.equal((await api("/server/info")).body.data.instance_id, ready.instance_id);
   assert.equal((await api("/engine/status")).body.data.running, false);
   await page.waitForFunction(() => document.querySelector(".connection-open"), null, { timeout: 20_000 });
   await page.screenshot({ path: path.join(output, "remote-workspace.png") });
   await page.evaluate(() => window.omnibciDesktop.disconnect());
-  assert.equal((await timedFetch(ready.url + "/api/v1/system/info", { headers: { Authorization: `Bearer ${remote.token}` } })).status, 200);
+  await page.getByRole("heading", { name: "Connect your workspace" }).waitFor();
+  assert.equal((await timedFetch(ready.url + "/api/v1/server/info", { headers: { Authorization: `Bearer ${remote.token}` } })).status, 200);
   stage = "app exit";
   await bounded(application.close(), "App exit");
   application = undefined;
-  assert.equal((await bounded(remote.command("shutdown"), "Remote backend shutdown")).ok, true);
-  await bounded(remote.waitForExit(), "Remote backend exit");
+  assert.equal((await bounded(remote.command("shutdown"), "Remote server shutdown")).ok, true);
+  await bounded(remote.waitForExit(), "Remote server exit");
   await writeFile(path.join(output, "result.json"), JSON.stringify({ ok: true, packaged, directory, prefs }, null, 2));
   console.log(`Desktop smoke passed (${packaged ? "packaged" : "development"}); artifacts: ${output}`);
 } catch (error) {
@@ -236,7 +271,7 @@ try {
     else process.env[name] = originalEnvironment[name];
   }
   const cleanup = [];
-  cleanup.push(bounded(remote.force(), "Remote backend cleanup", 10_000));
+  cleanup.push(bounded(remote.force(), "Remote server cleanup", 10_000));
   if (application) cleanup.push((async () => {
     // On failure, cleanup must not leave a dirty editor confirmation blocking quit.
     await bounded(application.evaluate(({ dialog }) => {
@@ -250,15 +285,15 @@ try {
   })());
   const outcomes = await Promise.allSettled(cleanup);
   for (const outcome of outcomes) if (outcome.status === "rejected") diagnostics.push(`Cleanup failed: ${outcome.reason}\n`);
-  for (const logfile of backendLogs) {
+  for (const logfile of serverLogs) {
     try {
-      // The backend suffixes its configured filename with its process ID.
+      // The server suffixes its configured filename with its process ID.
       const entries = await readdir(path.dirname(logfile));
-      for (const entry of entries.filter(name => /^backend-backend-\d+\.log$/.test(name))) {
-        diagnostics.push(`\nBackend log (${entry}):\n${await readFile(path.join(path.dirname(logfile), entry), "utf8")}`);
+      for (const entry of entries.filter(name => /^server-server-\d+\.log$/.test(name))) {
+        diagnostics.push(`\nServer log (${entry}):\n${await readFile(path.join(path.dirname(logfile), entry), "utf8")}`);
       }
     }
-    catch { /* The backend may have failed before opening its log. */ }
+    catch { /* The server may have failed before opening its log. */ }
   }
   await writeFile(path.join(output, "diagnostics.log"), diagnostics.join(""));
 }

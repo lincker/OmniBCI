@@ -4,7 +4,7 @@ from unittest.mock import Mock
 import pytest
 
 from omnibci import bootstrap
-from omnibci.application.activation_settings import SYSTEM_SETTING_DEFAULTS
+from omnibci.application.activation_settings import ENGINE_SETTING_DEFAULTS
 from omnibci.bootstrap import _RuntimeSettings, build_container
 from omnibci.conf import OmniBCISettings
 from omnibci.infrastructure.config_paths import config_root
@@ -100,7 +100,7 @@ async def test_fresh_installation_does_not_select_plugins(monkeypatch):
     assert container.acquisition_service._device_metadata() == (None, None, None)
     snapshot = container.engine_service._snapshot_provider()
     assert snapshot["PLUGINS.bindings"] == []
-    assert profiles.repository.get_system() is not None
+    assert profiles.repository.get_engine() is not None
     assert all(module is None for module in profiles.repository.get_activation_set().modules.values())
 
 
@@ -108,7 +108,7 @@ def test_status_reads_applied_values_while_engine_running():
     engine = Mock(is_engine_ready=True, applied_snapshot={"ACQUISITION.sample_rate": 250})
     profiles = Mock()
     profiles.repository.get_module.return_value = None
-    profiles.repository.get_system.return_value = None
+    profiles.repository.get_engine.return_value = None
     profiles.materialize.return_value = {"ACQUISITION.sample_rate": 1000}
     view = _RuntimeSettings(engine, profiles)
     assert view.get("ACQUISITION.sample_rate") == 250
@@ -158,21 +158,21 @@ async def test_bootstrap_ignores_retired_plugin_settings(bootstrap_settings):
     assert container.plugin_profile_service.repository.list_profiles() == []
     assert bootstrap_settings._config_path.read_bytes() == original_settings
     snapshot = container.engine_service._snapshot_provider()
-    assert {key: snapshot[key] for key in SYSTEM_SETTING_DEFAULTS} == SYSTEM_SETTING_DEFAULTS
-    assert container.plugin_profile_service.repository.get_system().settings == SYSTEM_SETTING_DEFAULTS
+    assert {key: snapshot[key] for key in ENGINE_SETTING_DEFAULTS} == ENGINE_SETTING_DEFAULTS
+    assert container.plugin_profile_service.repository.get_engine().settings == ENGINE_SETTING_DEFAULTS
 
 
 @pytest.mark.asyncio
-async def test_backend_restart_changes_command_timeout_without_blocking_system_review(bootstrap_settings):
+async def test_server_restart_changes_command_timeout_without_blocking_engine_review(bootstrap_settings):
     first = await build_container()
     before = _configure(first)
     bootstrap_settings.set("NEUROENGINE.command_timeout_s", 15.0)
     bootstrap_settings.save()
     original_files = _toml_files(config_root())
 
-    plan = first.runtime_configuration.plan("system", [], expected_revision=before.system.revision,
-                                            settings=before.system.settings)
-    assert plan.target_revisions["system"] == before.system.revision
+    plan = first.runtime_configuration.plan("engine", [], expected_revision=before.engine.revision,
+                                            settings=before.engine.settings)
+    assert plan.target_revisions["engine"] == before.engine.revision
     assert not plan.errors
     assert first.command_results._timeout_s == 10.0
     assert _toml_files(config_root()) == original_files
@@ -180,30 +180,30 @@ async def test_backend_restart_changes_command_timeout_without_blocking_system_r
     restarted = await build_container()
 
     assert restarted.command_results._timeout_s == 15.0
-    plan = restarted.runtime_configuration.plan("system", [], expected_revision=before.system.revision,
-                                                settings=before.system.settings)
-    assert plan.target_revisions["system"] == before.system.revision
+    plan = restarted.runtime_configuration.plan("engine", [], expected_revision=before.engine.revision,
+                                                settings=before.engine.settings)
+    assert plan.target_revisions["engine"] == before.engine.revision
     assert plan.changed_settings == ()
     assert not plan.errors
     assert _toml_files(config_root()) == original_files
 
 
 @pytest.mark.asyncio
-async def test_plugin_directory_edits_do_not_block_system_review(bootstrap_settings, monkeypatch, tmp_path):
+async def test_plugin_directory_edits_do_not_block_engine_review(bootstrap_settings, monkeypatch, tmp_path):
     container = await build_container()
     before = _configure(container)
     bootstrap_settings.set("PLUGINS.user_dir", str(tmp_path / "masked-by-environment"))
     bootstrap_settings.save()
     original_files = _toml_files(config_root())
 
-    plan = container.runtime_configuration.plan("system", [], expected_revision=before.system.revision,
-                                                settings=before.system.settings)
+    plan = container.runtime_configuration.plan("engine", [], expected_revision=before.engine.revision,
+                                                settings=before.engine.settings)
 
-    assert plan.target_revisions["system"] == before.system.revision
+    assert plan.target_revisions["engine"] == before.engine.revision
     assert not plan.errors
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "changed-effective-path"))
-    plan = container.runtime_configuration.plan("system", [], expected_revision=before.system.revision,
-                                                settings=before.system.settings)
+    plan = container.runtime_configuration.plan("engine", [], expected_revision=before.engine.revision,
+                                                settings=before.engine.settings)
     assert not plan.errors
     assert _toml_files(config_root()) == original_files
 
@@ -281,7 +281,7 @@ async def test_broken_activation_keeps_management_available_without_replacement(
     with pytest.raises(RuntimeError, match="configuration is invalid"):
         container.engine_service._module_snapshot_provider("acquisition")
     assert path.read_bytes() == original_files[path]
-    assert repository.get_system() is not None
+    assert repository.get_engine() is not None
 
 
 @pytest.mark.asyncio
@@ -295,6 +295,6 @@ async def test_saved_edit_during_bootstrap_does_not_change_loaded_startup_baseli
     service = container.plugin_profile_service
 
     assert container.command_results._timeout_s == 10.0
-    candidate = service.propose_system(SYSTEM_SETTING_DEFAULTS)
-    assert candidate.settings == SYSTEM_SETTING_DEFAULTS
+    candidate = service.propose_engine(ENGINE_SETTING_DEFAULTS)
+    assert candidate.settings == ENGINE_SETTING_DEFAULTS
     assert "NEUROENGINE.command_timeout_s" not in candidate.settings

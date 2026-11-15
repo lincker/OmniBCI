@@ -76,8 +76,8 @@ parameters or schema defaults.
   application boundary. The host determines whether it can safely apply a change
   at a trial boundary, rebuild a module, or rebuild a larger runtime graph.
 - `x-widget`: `file-path`, supported only on string fields. The desktop client
-  offers a native file picker when connected to its own local backend. Remote
-  connections keep a text field for a path on the backend machine. This hint
+  offers a native file picker when connected to its own local server. Remote
+  connections keep a text field for a path on the server machine. This hint
   neither reads files nor changes parameter validation.
 
 Metadata is preserved without changing parameter values. These annotations do
@@ -87,7 +87,7 @@ The bundled File Reader starts with an empty recording path so a new installatio
 can open its configuration interface without test data. An empty path can be
 saved, but the acquisition worker rejects it before starting. Existing saved
 recording paths are retained; files are validated on the machine running the
-backend.
+server.
 
 ## Acquisition source context
 

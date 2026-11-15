@@ -40,7 +40,7 @@ export const pluginConfigApi = {
   profiles: (kind?: PluginKind) => request<PluginProfile[]>(`/plugin-profiles${kind ? `?kind=${kind}` : ""}`),
   modules: () => request<ModulesResponse>("/modules"),
   module: (module: ConfigurationModule) => request<ModuleActivation>(`/modules/${module}`),
-  system: () => request<S["SystemSettingsResponse"]>("/system"),
+  engine: () => request<S["EngineSettingsResponse"]>("/engine"),
   moduleHistory: (module: ConfigurationModule) => request<ModuleHistory[]>(`/modules/${module}/history`),
   moduleRevision: (module: ConfigurationModule, entryId: string) => request<ModuleActivation>(`/modules/${module}/history/${encodeURIComponent(entryId)}`),
   moduleRevertPlan: (module: ConfigurationModule, entryId: string) => request<S["RuntimePlanResponse"]>(`/modules/${module}/revert-plan`, "POST", { entry_id: entryId }),

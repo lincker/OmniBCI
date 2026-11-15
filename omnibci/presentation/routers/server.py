@@ -1,4 +1,4 @@
-"""Versioned system handshake and read-only backend diagnostics."""
+"""Versioned Server handshake and read-only server diagnostics."""
 from importlib.metadata import PackageNotFoundError, version
 from typing import Literal
 
@@ -13,41 +13,41 @@ try:
 except PackageNotFoundError:
     APP_VERSION = "1.0.0"
 
-router = APIRouter(prefix="/system", tags=["System"])
+router = APIRouter(prefix="/server", tags=["Server"])
 
 
-class SystemInfoResponse(BaseModel):
+class ServerInfoResponse(BaseModel):
     app_version: str
     desktop_api_version: Literal[1] = 1
     instance_id: str
     auth_enabled: bool
 
 
-class BackendLogsResponse(BaseModel):
+class ServerLogsResponse(BaseModel):
     filename: str
     lines: list[str]
     truncated: bool
 
 
-@router.get("/info", response_model=ApiResponse[SystemInfoResponse])
-def system_info(request: Request):
-    return ApiResponse(data=SystemInfoResponse(
+@router.get("/info", response_model=ApiResponse[ServerInfoResponse])
+def server_info(request: Request):
+    return ApiResponse(data=ServerInfoResponse(
         app_version=APP_VERSION,
         instance_id=request.app.state.instance_id,
         auth_enabled=request.app.state.auth_enabled,
     ))
 
 
-@router.get("/logs", response_model=ApiResponse[BackendLogsResponse])
-def backend_logs(request: Request, response: Response):
-    logging = getattr(request.app.state, "backend_logging", None)
+@router.get("/logs", response_model=ApiResponse[ServerLogsResponse])
+def server_logs(request: Request, response: Response):
+    logging = getattr(request.app.state, "server_logging", None)
     if logging is None:
-        raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, "Backend logs are unavailable")
+        raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, "Server logs are unavailable")
     try:
         lines, truncated = logging.read_tail()
     except OSError as exc:
-        raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, "Backend logs are unavailable") from exc
+        raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, "Server logs are unavailable") from exc
     response.headers["Cache-Control"] = "no-store"
-    return ApiResponse(data=BackendLogsResponse(
+    return ApiResponse(data=ServerLogsResponse(
         filename=logging.file_path.name, lines=lines, truncated=truncated,
     ))

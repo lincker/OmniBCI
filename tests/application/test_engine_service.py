@@ -428,7 +428,7 @@ def running_modules(engine_service, mock_engine):
     engine_service._engine_thread.is_alive.return_value = True
     engine_service._applied_snapshot = {
         "CONFIG.generation": "foundation",
-        "CONFIG.system_revision": "system",
+        "CONFIG.engine_revision": "engine",
         "CONFIG.module_revisions": {module: module for module in (
             "acquisition", "processing", "stimulation", "actuation",
         )},
@@ -443,7 +443,7 @@ def running_modules(engine_service, mock_engine):
 
     def request(event, payload=None):
         calls.append(event.name)
-        data = {"generation": "foundation", "system_revision": "system"}
+        data = {"generation": "foundation", "engine_revision": "engine"}
         if event is EventType.GetSourceCheckpoint:
             data.update(acquisition_revision="acquisition", supported=True, checkpoint={"cursor": 7})
         elif event is EventType.RestoreSourceCheckpoint:
@@ -543,7 +543,7 @@ async def test_processing_start_does_not_require_source_checkpoint(running_modul
     acquisition.handle_get_status.return_value.streaming = True
     commands.request.side_effect = None
     commands.request.return_value = SimpleNamespace(data={
-        "generation": "foundation", "system_revision": "system",
+        "generation": "foundation", "engine_revision": "engine",
         "acquisition_revision": "acquisition", "supported": False,
         "resume_without_checkpoint_safe": False,
     })
@@ -738,7 +738,7 @@ async def test_failed_external_resume_remains_recoverable_before_active_flag_is_
 
 
 @pytest.mark.asyncio
-async def test_backend_shutdown_waits_for_a_foundation_start_that_is_not_ready_yet(engine_service):
+async def test_server_shutdown_waits_for_a_foundation_start_that_is_not_ready_yet(engine_service):
     entered, release = asyncio.Event(), asyncio.Event()
     order = []
 
@@ -813,7 +813,7 @@ async def test_external_recovery_can_rebuild_foundation_and_publish_only_retaine
     assert [binding["plugin_id"] for snapshot in engine.runtime_package_snapshots
             for binding in snapshot.get("PLUGINS.bindings", [])] == ["retained"]
 
-    engine._snapshot_provider = lambda: {"CONFIG.system_revision": "system", "CONFIG.module_revisions": {}, "PLUGINS.bindings": []}
+    engine._snapshot_provider = lambda: {"CONFIG.engine_revision": "engine", "CONFIG.module_revisions": {}, "PLUGINS.bindings": []}
     engine._engine_factory = lambda snapshot: graph
     engine._module_snapshot_provider = MagicMock(side_effect=AssertionError("Recovery must not read selected values"))
     thread = MagicMock()
@@ -837,7 +837,7 @@ async def test_external_recovery_can_rebuild_foundation_and_publish_only_retaine
     assert engine.admission.recovery_status.keys() == {module}
 
     def stopped(event):
-        return SimpleNamespace(data={"generation": engine.generation, "system_revision": "system",
+        return SimpleNamespace(data={"generation": engine.generation, "engine_revision": "engine",
                                      "module_revision": module, "paused": True,
                                      "execution_complete": True, "outputs_settled": True})
     commands.request.side_effect = stopped
@@ -852,8 +852,8 @@ async def test_external_recovery_can_rebuild_foundation_and_publish_only_retaine
 
 
 @pytest.mark.asyncio
-async def test_foundation_start_still_rejects_system_recovery(engine_service):
-    engine_service.admission.quarantine("Unknown foundation ownership", "system")
+async def test_foundation_start_still_rejects_engine_recovery(engine_service):
+    engine_service.admission.quarantine("Unknown foundation ownership", "engine")
     with pytest.raises(ProfileRevisionConflict, match="recovery"):
         await engine_service.handle_start_engine(StartEngineCommand())
 
@@ -870,7 +870,7 @@ async def test_unreleased_managed_output_still_blocks_foundation_restart(running
     with pytest.raises(RuntimeError, match="not confirmed"):
         await engine.handle_stop_engine(StopEngineCommand())
     assert engine.restart_blocked
-    assert engine.admission.recovery_status.keys() == {"system", "actuation"}
+    assert engine.admission.recovery_status.keys() == {"engine", "actuation"}
     with pytest.raises(ProfileRevisionConflict, match="recovery"):
         await engine.handle_start_engine(StartEngineCommand())
     manager.stop.side_effect = lambda: setattr(manager, "is_alive", False)

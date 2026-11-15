@@ -23,7 +23,7 @@ def selected_snapshot(revision="old"):
                      {"window_duration": 1.0, "offset_time": 0.0}),
                     ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
                 )]
-    return {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": revision}, "CONFIG.system_revision": "system", "CONFIG.generation": "run",
+    return {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": revision}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "run",
             "ACQUISITION.signal_source": "file_reader",
             "ACQUISITION.sample_rate": 250, "ALGORITHM.baseline_duration": 0.2,
             "PLUGINS.bindings": bindings}

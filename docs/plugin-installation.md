@@ -16,9 +16,9 @@ The Windows path uses platformdirs' default local-data policy. The platformdirs
 result is authoritative; applications should use the path provider instead of
 constructing these examples.
 
-The Backend resolves this directory once at startup and retains it for catalog
+The Server resolves this directory once at startup and retains it for catalog
 scanning, package installation, and managed child processes. Saving a different
-`PLUGINS.user_dir` takes effect after restarting the Backend; restarting only the
+`PLUGINS.user_dir` takes effect after restarting the Server; restarting only the
 Engine does not switch plugin directories.
 
 ```text
@@ -84,9 +84,9 @@ same admission system so they cannot race a reference check and removal. The
 runtime provider should include both applied and pending transition snapshots;
 `package_references_from_settings` adapts pinned `PLUGINS.bindings`.
 
-Use one backend owner for each configuration/plugin directory. The filesystem
+Use one server owner for each configuration/plugin directory. The filesystem
 lock serializes package-state writes, but live process references and command
-admission belong to that backend. Separate backend instances must use separate
+admission belong to that server. Separate server instances must use separate
 directories; this implementation does not coordinate their runtime ownership.
 
 Mount `plugin_packages.router`, and set `app.state.plugin_installation_service`.

@@ -1,9 +1,9 @@
 # OmniBCI desktop
 
 The desktop application uses Electron with the existing web console and a bundled
-CPython backend. Each installer supports both **Local** and **Remote** connections.
-Local mode starts the included backend; remote mode connects to an existing server
-without starting a local backend. The first release is for internal installation:
+CPython server. Each installer supports both **Local** and **Remote** connections.
+Local mode starts the included server; remote mode connects to an existing server
+without starting a local server. The first release is for internal installation:
 there is no automatic updater, public release publishing, or store distribution.
 
 ## First launch and data
@@ -12,26 +12,26 @@ Choose a connection mode on the connection screen. For local work, select your o
 CNT recording in the acquisition settings before starting the engine. An empty
 data-source configuration is valid while editing; it must not start acquisition.
 The installer contains no demonstration recording or repository test fixtures.
-In remote mode, data paths refer to the backend machine; the desktop file picker
+In remote mode, data paths refer to the server machine; the desktop file picker
 cannot select files on that machine.
 
 The desktop remembers the last connection mode and remote address, but does not
-persist authentication tokens. Local backend credentials are generated for each
+persist authentication tokens. Local server credentials are generated for each
 launch and remain in the Electron main process. Switching connections clears the
 previous connection's runtime state and result subscriptions.
 
-The Results page shows the latest 200 decoded trials held in backend memory.
-Restarting the engine or backend clears that view. Historical result export is
-not part of the minimal runtime. The desktop asks before stopping the local backend.
-Disconnecting from a remote backend leaves that service and its experiment running.
+The Results page shows the latest 200 decoded trials held in server memory.
+Restarting the engine or server clears that view. Historical result export is
+not part of the minimal runtime. The desktop asks before stopping the local server.
+Disconnecting from a remote server leaves that service and its experiment running.
 No user configuration, plugins, logs, recordings, or exports are stored in the
 application's installation directory. Desktop preferences and logs live below
 Electron's per-user `userData` directory, in `desktop/connection.json` and
-`desktop/logs/`. Existing backend platform-specific user paths remain in use.
+`desktop/logs/`. Existing server platform-specific user paths remain in use.
 
-## Run a remote backend
+## Run a remote server
 
-On the backend machine, install OmniBCI with its production/stimulation dependencies
+On the server machine, install OmniBCI with its production/stimulation dependencies
 and start the normal server entrypoint with a strong private token:
 
 ```sh
@@ -40,7 +40,7 @@ OMNIBCI_API_TOKEN='replace-with-a-long-random-token' \
 ```
 
 In PowerShell set `$env:OMNIBCI_API_TOKEN` first, then run the same Python command.
-Enter the server's base address, such as `http://backend-host:8000`, and its token
+Enter the server's base address, such as `http://server-host:8000`, and its token
 in the desktop's Remote connection form. Set the same token environment variable
 on separately launched stimulation/actuation nodes that need to authenticate to
 that API. Do not place credentials in the URL.
@@ -51,11 +51,11 @@ WebSocket forwarding. Enter its `https://` base address; certificate validation 
 not disabled by the desktop. The proxy must forward authentication headers.
 
 `--desktop` is a separate, private JSONL control protocol over inherited
-stdin/stdout. It is used only for an owned local backend and does not expose a
+stdin/stdout. It is used only for an owned local server and does not expose a
 public HTTP shutdown endpoint. Closing the parent's pipe initiates normal cleanup.
-On Windows, the backend owns the process-tree Job Object; its exit closes that job.
+On Windows, the server owns the process-tree Job Object; its exit closes that job.
 Electron's death alone does not guarantee immediate worker termination if the
-backend is stuck before it can process EOF. Forced process termination also cannot
+server is stuck before it can process EOF. Forced process termination also cannot
 confirm that physical acquisition or stimulation hardware has stopped. Verify
 device shutdown independently in the hardware validation procedure.
 
@@ -155,7 +155,7 @@ npm --prefix desktop run typecheck
 npm --prefix desktop test
 ```
 
-For fast iteration, install the backend into a development environment and give
+For fast iteration, install the server into a development environment and give
 the desktop its **absolute** interpreter path:
 
 ```sh
@@ -243,7 +243,7 @@ This preserves compatible existing pins; use an intentional resolver update when
 changing dependency versions. If the dependency graph adds a native package,
 require a wheel or explicitly review its source build before changing the build
 allowlist. Rebuild and verify every target after changing any runtime pin. Update
-desktop and backend application versions together. Check native-wheel minimum OS
+desktop and server application versions together. Check native-wheel minimum OS
 requirements when raising versions, not only package names or resolver success.
 
 ## Internal installation checklist
@@ -252,13 +252,16 @@ Run this on a clean machine with no system Python, including a path containing
 spaces and non-ASCII characters:
 
 1. Install and launch. Confirm the empty workspace is usable and no data is
-   silently selected. Starting acquisition without a source must give a clear error.
-2. Select a real recording on that machine; start reading and confirm decoded
-   results appear. Stop reading and confirm the source stops. Restart the engine
-   and confirm the live result view clears.
+   silently selected. Start Engine and confirm all four modules remain stopped.
+   Starting acquisition without a source must give a clear error.
+2. Select a real recording on that machine and connect using its current values
+   without saving a Profile. Configure and start Processing separately, then start
+   reading and confirm decoded results appear. Stop reading while retaining the
+   source connection. Stop Processing while Acquisition and Engine remain available.
+   Restart Engine and confirm the live result view clears.
 3. Close or switch connections during work. Check cancellation, graceful stop,
-   and cleanup of owned backend/worker processes.
-4. Connect to a separate remote backend with authentication. Check live results,
+   and cleanup of owned server/worker processes.
+4. Connect to a separate remote server with authentication. Check live results,
    reconnect behavior and that disconnecting does not stop the remote experiment.
 5. Restart and reinstall. Confirm per-user configuration is retained and no
    resources were written into the installed application. Check logs and the

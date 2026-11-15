@@ -8,7 +8,7 @@ import tomlkit
 
 from omnibci.application.plugin_profiles import (
     ModuleActivation, PluginProfile, PluginProfileNotFoundError, PluginProfileStorageError,
-    PluginProfileValidationError, PluginSelection, ProfileBinding, ProfileRevisionConflict, SystemSettings,
+    PluginProfileValidationError, PluginSelection, ProfileBinding, ProfileRevisionConflict, EngineSettings,
 )
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 
@@ -35,7 +35,7 @@ def _module(profile):
 def test_missing_reads_do_not_create_storage(repository):
     assert repository.list_profiles() == []
     assert repository.get_module("acquisition") is None
-    assert repository.get_system() is None
+    assert repository.get_engine() is None
     assert all(item is None for item in repository.get_activation_set().revisions().values())
     with pytest.raises(PluginProfileNotFoundError):
         repository.get_profile(str(uuid4()))
@@ -57,6 +57,28 @@ def test_profile_save_writes_integer_history_and_preserves_current(repository, p
     entries[0].profile.parameters["channels"].append(4)
     assert fresh.get_profile(profile.profile_id).parameters["channels"] == [1, 2]
     assert (repository.root / "plugin-profiles" / profile.profile_id / "current.toml").is_file()
+
+
+def test_engine_namespace_change_preserves_existing_settings_modules_and_history(repository, profile):
+    saved = repository.save_profile(profile)
+    modules = {"acquisition": repository.save_module(_module(saved))}
+    for module in ("processing", "stimulation", "actuation"):
+        modules[module] = repository.save_module(ModuleActivation(module, {}, ()))
+    for module in modules.values():
+        repository.record_module_history(module, str(uuid4()))
+    path = repository.root / "settings.toml"
+    path.write_text('[engine]\n"NEUROENGINE.queue_size" = 100\ndebug = false\n', encoding="utf-8")
+    before = {item: item.read_bytes() for item in repository.root.rglob("*.toml")}
+
+    accepted = repository.get_activation_set()
+
+    assert accepted.engine.settings == {"NEUROENGINE.queue_size": 100, "debug": False}
+    assert accepted.engine.revision != "388c8997fdb5461903849aa0f8dd1072e1a5db9d24490096a25c77cfbfd1fe27"
+    assert dict(accepted.modules) == modules
+    assert repository.get_profile_revision(saved.profile_id, 1).profile == saved
+    for name, module in modules.items():
+        assert repository.list_module_history(name)[0].activation == module
+    assert {item: item.read_bytes() for item in repository.root.rglob("*.toml")} == before
 
 
 def test_stale_profile_writes_and_owning_capability_change_are_rejected(repository, profile):
@@ -130,18 +152,18 @@ def test_rollback_current_writes_do_not_add_history(repository):
     assert repository.list_module_history("processing") == [entry]
 
 
-def test_system_cas_and_compensation_restore_absence_without_history(repository):
-    original = repository.save_system(SystemSettings({"debug": False}))
+def test_engine_cas_and_compensation_restore_absence_without_history(repository):
+    original = repository.save_engine(EngineSettings({"debug": False}))
     with pytest.raises(ProfileRevisionConflict):
-        repository.save_system(SystemSettings({"debug": True}))
+        repository.save_engine(EngineSettings({"debug": True}))
     with pytest.raises(ProfileRevisionConflict):
-        repository.remove_system(expected_revision="0" * 64)
-    repository.remove_system(expected_revision=original.revision)
-    assert repository.get_system() is None
+        repository.remove_engine(expected_revision="0" * 64)
+    repository.remove_engine(expected_revision=original.revision)
+    assert repository.get_engine() is None
     original_module = repository.save_module(ModuleActivation("actuation", {}, ()))
     repository.remove_module("actuation", expected_revision=original_module.revision)
     assert repository.get_module("actuation") is None
-    assert not (repository.root / "activation" / "history" / "system").exists()
+    assert not (repository.root / "activation" / "history" / "engine").exists()
 
 
 def test_different_modules_do_not_share_thread_or_file_lock(repository):

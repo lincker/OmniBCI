@@ -63,7 +63,7 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
                                 processing_input=ProcessingInput(outputs=(ChannelBinding("Pz", "channel-0"), ChannelBinding("O2", "channel-8"))))
     missing_decoder = profiles.create("decoder", decoder_a.selection, "Missing channel", {},
                                       processing_input=ProcessingInput(outputs=(ChannelBinding("NotPresent", "not-present"),)))
-    profiles.repository.save_system(profiles.propose_system(section_settings(host, "system")), expected_revision=None)
+    profiles.repository.save_engine(profiles.propose_engine(section_settings(host, "engine")), expected_revision=None)
     for module in ("acquisition", "processing", "stimulation"):
         profiles.repository.save_module(profiles.propose(module, [item for item in selections if item["slot"].startswith(f"{module}.")], settings=section_settings(profiles.settings_source(), module)),
                                expected_revision=None)

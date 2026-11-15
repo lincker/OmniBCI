@@ -21,7 +21,7 @@ from omnibci.infrastructure.actuation.process_manager import (
 
 def _effector_snapshot(effector="logger"):
     return {"ACTUATION.effector": effector, "CONFIG.module_revisions": {"actuation": "revision"},
-            "CONFIG.system_revision": "system", "CONFIG.generation": "run"}
+            "CONFIG.engine_revision": "engine", "CONFIG.generation": "run"}
 
 
 def _cooperative_child(stop_event, stopped_flag):
@@ -54,7 +54,7 @@ def startup_pipe(monkeypatch):
     receiver = MagicMock()
     receiver.poll.return_value = True
     receiver.recv.return_value = StartupReport.ready(
-        "Actuation", module_revisions={"actuation": "revision"}, system_revision="system", generation="run")
+        "Actuation", module_revisions={"actuation": "revision"}, engine_revision="engine", generation="run")
     sender = MagicMock()
     pipe = MagicMock(return_value=(receiver, sender))
     monkeypatch.setattr(process_manager_module.mp, "Pipe", pipe)
@@ -276,7 +276,7 @@ class TestSpawnMode:
             "Actuation",
             stage="initialization",
             error=RuntimeError("effector unavailable"),
-            module_revisions={"actuation": "revision"}, system_revision="system", generation="run",
+            module_revisions={"actuation": "revision"}, engine_revision="engine", generation="run",
         )
         manager = ActuationProcessManager()
 
@@ -457,7 +457,7 @@ class TestEngineLifecycleHook:
         svc = NeuroEngineService(engine_factory=lambda snapshot: engine,
                                  snapshot_provider=lambda: {"PLUGINS.bindings": [],
                                                            "CONFIG.module_revisions": {"actuation": "actuation"},
-                                                           "CONFIG.system_revision": "system"},
+                                                           "CONFIG.engine_revision": "engine"},
                                  actuation_process_manager=manager)
         asyncio.run(svc.startup())
         asyncio.run(svc.handle_start_engine(StartEngineCommand()))

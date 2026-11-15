@@ -17,7 +17,7 @@ def signal_client(tmp_path):
     path = tmp_path / "settings.toml"
     path.write_text('[NEUROENGINE]\nqueue_size = 100\n', encoding="utf-8")
     service = SignalSetupService(
-        OmniBCISettings(path), SimpleNamespace(repository=SimpleNamespace(get_module=lambda module: None, get_system=lambda: None), materialize=lambda _: {}),
+        OmniBCISettings(path), SimpleNamespace(repository=SimpleNamespace(get_module=lambda module: None, get_engine=lambda: None), materialize=lambda _: {}),
         SimpleNamespace(admission=None, applied_snapshot=None, is_engine_ready=False,
                         is_module_running=lambda module: False),
         SimpleNamespace(cached_descriptor_for=lambda binding: None), None,

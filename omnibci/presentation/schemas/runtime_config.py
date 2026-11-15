@@ -22,7 +22,7 @@ class DraftPluginBindingRequest(BaseModel):
 
 class RuntimePlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    module: Literal["acquisition", "processing", "stimulation", "actuation", "system"]
+    module: Literal["acquisition", "processing", "stimulation", "actuation", "engine"]
     expected_revision: str | None = None
     refresh_slots: list[str] | None = None
     bindings: list[SelectProfileBindingRequest | DraftPluginBindingRequest]
@@ -55,11 +55,11 @@ class RuntimePlanResponse(BaseModel):
     changed_settings: list[str]
     errors: list[str]
     signal_summary: str | None = None
-    module: Literal["acquisition", "processing", "stimulation", "actuation", "system"]
+    module: Literal["acquisition", "processing", "stimulation", "actuation", "engine"]
 
 
 class RuntimeOperationResponse(BaseModel):
-    module: Literal["acquisition", "processing", "stimulation", "actuation", "system"]
+    module: Literal["acquisition", "processing", "stimulation", "actuation", "engine"]
     affected_modules: list[str]
     operation_id: str
     plan_id: str
@@ -88,10 +88,11 @@ class RuntimeConfigurationResponse(BaseModel):
 
 
 class NodeConfigurationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
     format_version: Literal[1]
     role: Literal["stimulation", "actuation"]
     module_revisions: dict[str, str]
-    system_revision: str
+    engine_revision: str
     generation: str | None
     settings: dict[str, Any]
     bindings: list[ProfileBindingResponse]

@@ -11,7 +11,7 @@ const strategies: Record<string, TranslationKey> = {
   rebuild: "runtime.strategy.rebuild",
 };
 
-export function runtimeBlockReason(runtime: RuntimeConfiguration, module: ConfigurationSection = "system"): TranslationKey | null {
+export function runtimeBlockReason(runtime: RuntimeConfiguration, module: ConfigurationSection = "engine"): TranslationKey | null {
   const state = runtime.state(module);
   if (!state.blocked) return null;
   if (state.uncertain) return "feedback.confirming";
@@ -21,7 +21,7 @@ export function runtimeBlockReason(runtime: RuntimeConfiguration, module: Config
 }
 
 /** Routine feedback stays beside the editor actions; failures use the global status. */
-export function RuntimeConfigurationProgress({ runtime, module = "system" }: { runtime: RuntimeConfiguration; module?: ConfigurationSection }) {
+export function RuntimeConfigurationProgress({ runtime, module = "engine" }: { runtime: RuntimeConfiguration; module?: ConfigurationSection }) {
   const { t } = useI18n();
   const state = runtime.state(module);
   const operation = state.operation;
@@ -37,7 +37,7 @@ export function RuntimeConfigurationProgress({ runtime, module = "system" }: { r
 export function RuntimeConfigurationStatus({ runtime }: { runtime: RuntimeConfiguration }) {
   const { t } = useI18n();
   const labels: Record<ConfigurationSection, TranslationKey> = {
-    acquisition: "run.acquisition", processing: "run.signalProcessing", stimulation: "run.stimulation", actuation: "run.actuation", system: "run.engine",
+    acquisition: "run.acquisition", processing: "run.signalProcessing", stimulation: "run.stimulation", actuation: "run.actuation", engine: "run.engine",
   };
   const states = configurationSections.map((module) => ({ module, ...runtime.state(module) }))
     .filter((state) => state.operation?.error || state.recoveryError || state.requestError || state.ownUncertain
@@ -73,11 +73,11 @@ export function RuntimeConfigurationReview({ runtime }: { runtime: RuntimeConfig
     select_on_start: "feedback.impactNextStart", no_change: "feedback.impactNoChange",
     trial_boundary: "feedback.impactTrial", module: "feedback.impactModule", rebuild: "feedback.impactRebuild",
   };
-  const applyMethod = plan.strategy === "rebuild" && plan.module !== "system" ? "runtime.strategy.rebuildModule"
-    : plan.strategy === "select_on_start" && plan.module === "system" ? "runtime.strategy.selectEngineOnStart"
+  const applyMethod = plan.strategy === "rebuild" && plan.module !== "engine" ? "runtime.strategy.rebuildModule"
+    : plan.strategy === "select_on_start" && plan.module === "engine" ? "runtime.strategy.selectEngineOnStart"
     : Object.prototype.hasOwnProperty.call(strategies, plan.strategy) ? strategies[plan.strategy] : null;
-  const applyImpact = plan.strategy === "rebuild" && plan.module !== "system" ? "feedback.impactModuleRestart"
-    : plan.strategy === "select_on_start" && plan.module === "system" ? "feedback.impactNextEngineStart"
+  const applyImpact = plan.strategy === "rebuild" && plan.module !== "engine" ? "feedback.impactModuleRestart"
+    : plan.strategy === "select_on_start" && plan.module === "engine" ? "feedback.impactNextEngineStart"
     : Object.prototype.hasOwnProperty.call(impact, plan.strategy) ? impact[plan.strategy] : "feedback.impactUnknown";
   return <dialog ref={dialog} className="config-dialog configuration-review" aria-labelledby="configuration-review-title"
     aria-describedby="configuration-review-impact"

@@ -3,7 +3,7 @@ import { ApiError } from "../api/client";
 
 /**
  * Wrap a control action for a button: disables while pending (no double
- * fire), surfaces failures as a displayable string.  Backend business
+ * fire), surfaces failures as a displayable string.  Server business
  * branches (409/503) carry a stable ErrorCode — shown inline, never thrown.
  */
 export function useAction<A extends unknown[]>(

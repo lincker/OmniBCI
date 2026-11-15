@@ -38,7 +38,7 @@ def module_runtime_identity(snapshot: dict | None, module: str) -> tuple:
     """Only owned configuration and its runtime determine child reuse."""
     snapshot = snapshot or {}
     return (snapshot.get("CONFIG.module_revisions", {}).get(module),
-            snapshot.get("CONFIG.system_revision"), snapshot.get("CONFIG.generation"))
+            snapshot.get("CONFIG.engine_revision"), snapshot.get("CONFIG.generation"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,19 +51,19 @@ class StartupReport:
     error_type: str | None = None
     message: str | None = None
     module_revisions: dict[str, str] | None = None
-    system_revision: str | None = None
+    engine_revision: str | None = None
     generation: str | None = None
 
     @classmethod
     def ready(cls, component: str, *, module_revisions: dict[str, str] | None = None,
-              system_revision: str | None = None,
+              engine_revision: str | None = None,
               generation: str | None = None) -> "StartupReport":
         return cls(
             component=component,
             state=ChildProcessState.READY,
             stage="ready",
             module_revisions=dict(module_revisions) if module_revisions is not None else None,
-            system_revision=system_revision,
+            engine_revision=engine_revision,
             generation=generation,
         )
 
@@ -75,7 +75,7 @@ class StartupReport:
         stage: str,
         error: BaseException,
         module_revisions: dict[str, str] | None = None,
-        system_revision: str | None = None,
+        engine_revision: str | None = None,
         generation: str | None = None,
     ) -> "StartupReport":
         return cls(
@@ -85,7 +85,7 @@ class StartupReport:
             error_type=type(error).__name__,
             message=str(error),
             module_revisions=dict(module_revisions) if module_revisions is not None else None,
-            system_revision=system_revision,
+            engine_revision=engine_revision,
             generation=generation,
         )
 
@@ -117,12 +117,12 @@ class StartupReporter:
 
     def __init__(self, connection: Any, *, component: str,
                  module_revisions: dict[str, str] | None = None,
-                 system_revision: str | None = None, generation: str | None = None) -> None:
+                 engine_revision: str | None = None, generation: str | None = None) -> None:
         self._connection = connection
         self._component = component
         self._reported = False
         self._module_revisions = dict(module_revisions) if module_revisions is not None else None
-        self._system_revision = system_revision
+        self._engine_revision = engine_revision
         self._generation = generation
 
     @property
@@ -132,7 +132,7 @@ class StartupReporter:
     def ready(self) -> bool:
         return self._send(StartupReport.ready(
             self._component, module_revisions=self._module_revisions,
-            system_revision=self._system_revision, generation=self._generation,
+            engine_revision=self._engine_revision, generation=self._generation,
         ))
 
     def failed(self, stage: str, error: BaseException) -> bool:
@@ -141,7 +141,7 @@ class StartupReporter:
                 self._component,
                 stage=stage,
                 error=error,
-                module_revisions=self._module_revisions, system_revision=self._system_revision,
+                module_revisions=self._module_revisions, engine_revision=self._engine_revision,
                 generation=self._generation,
             )
         )
@@ -200,7 +200,7 @@ def wait_for_startup_report(
     component: str,
     timeout_s: float,
     expected_module_revisions: dict[str, str] | None = None,
-    expected_system_revision: str | None = None,
+    expected_engine_revision: str | None = None,
     expected_generation: str | None = None,
 ) -> StartupReport:
     """Wait boundedly for one valid READY/FAILED report.
@@ -246,7 +246,7 @@ def wait_for_startup_report(
                 )
             for label, expected, actual in (
                 ("module revisions", expected_module_revisions, report.module_revisions),
-                ("system revision", expected_system_revision, report.system_revision),
+                ("Engine revision", expected_engine_revision, report.engine_revision),
                 ("generation", expected_generation, report.generation),
             ):
                 if expected is not None and actual != expected:

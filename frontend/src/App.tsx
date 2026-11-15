@@ -8,7 +8,7 @@ import { useRuntimeControls } from "./hooks/useRuntimeControls";
 import { useCurrentConfiguration } from "./hooks/useCurrentConfiguration";
 import { RuntimeConfigurationStatus, RuntimeConfigurationReview } from "./RuntimeConfiguration";
 import { ConfigCard } from "./ConfigCard";
-import { BackendLogs } from "./BackendLogs";
+import { ServerLogs } from "./ServerLogs";
 import { PluginProfiles } from "./PluginProfiles";
 import { PluginMarket } from "./PluginMarket";
 import { ConfigDialog } from "./ConfigDialog";
@@ -22,7 +22,7 @@ import "./styles.css";
 
 const setupPages = [
   ["acquisition", "app.acquisition", "signal"], ["processing", "app.processing", "workflow"],
-  ["stimulation", "app.stimulation", "system"], ["actuation", "app.actuation", "plug"],
+  ["stimulation", "app.stimulation", "monitor"], ["actuation", "app.actuation", "plug"],
 ] as const;
 const settingsPages = [["general", "app.general", "settings"], ["logs", "app.logs", "profile"]] as const;
 type SetupPage = typeof setupPages[number][0];
@@ -164,7 +164,7 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
               <section className="card"><h2>{t("app.results")} <span className="count">{feed.trials.length}</span></h2>
                 <TrialResults trials={feed.trials} generation={feed.generation} stale={!!feed.error} /></section>
             </div>
-            : view === "logs" ? <BackendLogs navigation={navigation} />
+            : view === "logs" ? <ServerLogs navigation={navigation} />
             : <ConfigCard navigation={navigation}
               preferences={preferences} onDirtyChange={setDirty} onBusyChange={setBusy}
               runtime={runtime} />}

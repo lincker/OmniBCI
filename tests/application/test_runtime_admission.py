@@ -126,13 +126,13 @@ def test_nested_command_cannot_expand_its_owners_scope():
                 pass
 
 
-def test_system_transition_conflicts_with_every_module_reservation():
+def test_engine_transition_conflicts_with_every_module_reservation():
     gate = RuntimeAdmission()
     reservation = gate.reserve_transition("stimulation")
     with pytest.raises(ProfileRevisionConflict):
-        gate.reserve_transition("system")
+        gate.reserve_transition("engine")
     gate.release_reservation(reservation)
-    with gate.transition("system"):
+    with gate.transition("engine"):
         assert gate.owns("processing")
 
 
@@ -170,7 +170,7 @@ async def test_engine_stop_waits_for_existing_module_stop():
             order.append("module")
 
     async def stop_engine():
-        async with gate.stop_transition("system"):
+        async with gate.stop_transition("engine"):
             order.append("engine")
 
     module = asyncio.create_task(stop_module())
@@ -186,8 +186,8 @@ async def test_engine_stop_waits_for_existing_module_stop():
 def test_clearing_foundation_recovery_preserves_unconfirmed_module_state():
     gate = RuntimeAdmission()
     gate.quarantine("External output not settled", "actuation")
-    gate.quarantine("Foundation not stopped", "system")
-    gate.clear_quarantine("system")
+    gate.quarantine("Foundation not stopped", "engine")
+    gate.clear_quarantine("engine")
     assert gate.recovery_status == {"actuation": "External output not settled"}
     gate.clear_quarantine()
     assert gate.recovery_status == {}

@@ -71,15 +71,15 @@ def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int | 
     if before_fixed != after_fixed:
         raise ValueError("Source or detector topology changes require a module restart")
     from omnibci.application.activation_settings import SECTION_SETTING_KEYS
-    fixed_keys = SECTION_SETTING_KEYS["processing"] | SECTION_SETTING_KEYS["system"] | SECTION_SETTING_KEYS["acquisition"]
+    fixed_keys = SECTION_SETTING_KEYS["processing"] | SECTION_SETTING_KEYS["engine"] | SECTION_SETTING_KEYS["acquisition"]
     fixed_keys = fixed_keys | {key for key in current.keys() | snapshot.keys()
                               if key.startswith("ACQUISITION.") and key != "ACQUISITION.trigger"}
     if (any(current.get(key) != snapshot.get(key) for key in fixed_keys)
             or current.get("CONFIG.generation") != snapshot.get("CONFIG.generation")
-            or current.get("CONFIG.system_revision") != snapshot.get("CONFIG.system_revision")
+            or current.get("CONFIG.engine_revision") != snapshot.get("CONFIG.engine_revision")
             or current.get("CONFIG.module_revisions", {}).get("acquisition")
                 != snapshot.get("CONFIG.module_revisions", {}).get("acquisition")):
-        raise ValueError("Source or system context changes require a runtime restart")
+        raise ValueError("Source or Engine context changes require a runtime restart")
     if boundary == "trial":
         before_slots = [(b.slot, b.selection, b.configuration_version) for b in previous if b.kind in flexible]
         after_slots = [(b.slot, b.selection, b.configuration_version) for b in selected if b.kind in flexible]

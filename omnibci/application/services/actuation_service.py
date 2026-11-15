@@ -91,7 +91,7 @@ class ActuationAppService:
     @staticmethod
     def _check_receipt(data, snapshot, *flags):
         if (not isinstance(data, dict) or data.get("generation") != snapshot.get("CONFIG.generation")
-                or data.get("system_revision") != snapshot.get("CONFIG.system_revision")
+                or data.get("engine_revision") != snapshot.get("CONFIG.engine_revision")
                 or data.get("module_revision") != snapshot.get("CONFIG.module_revisions", {}).get("actuation")
                 or any(data.get(flag) is not True for flag in flags)):
             raise RuntimeError("Actuation did not confirm the requested boundary")

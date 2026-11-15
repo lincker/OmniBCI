@@ -320,7 +320,7 @@ class AcquisitionAppService:
             if chunk is None:
                 raise LookupError("The preview chunk is not retained")
             if any(chunk.get(key) != result.get(key) for key in (
-                    "capture_id", "generation", "acquisition_revision", "system_revision", "source_id", "connection_id")):
+                    "capture_id", "generation", "acquisition_revision", "engine_revision", "source_id", "connection_id")):
                 raise ProfileRevisionConflict("Preview chunk belongs to a different capture")
             if chunk.get("sequence_id") != sequence_id:
                 raise RuntimeError("Preview cache returned a different sequence")

@@ -8,9 +8,9 @@ from threading import RLock
 from time import monotonic
 from uuid import UUID, uuid4
 
-from omnibci.application.activation_settings import MODULES, SECTIONS, SYSTEM_SETTING_DEFAULTS
+from omnibci.application.activation_settings import MODULES, SECTIONS, ENGINE_SETTING_DEFAULTS
 from omnibci.application.plugin_profiles import (
-    ActivationSet, ModuleActivation, SystemSettings, ProfileRevisionConflict, MODULE_KINDS,
+    ActivationSet, ModuleActivation, EngineSettings, ProfileRevisionConflict, MODULE_KINDS,
 )
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.processing_source import processing_input
@@ -21,12 +21,12 @@ from omnibci.application.services.command_result_service import CommandDeliveryE
 def read_configuration(repository, sections):
     """Read only the persisted inputs owned or consumed by this operation."""
     return ActivationSet({module: repository.get_module(module) for module in MODULES if module in sections},
-                         repository.get_system())
+                         repository.get_engine())
 
 
 def operation_scopes(stored):
     plan = stored.plan
-    if plan.module == "system" or stored.system is not None:
+    if plan.module == "engine" or stored.engine is not None:
         return tuple(MODULES)
     if plan.module == "acquisition" and plan.running and plan.strategy not in ("select_on_start", "no_change"):
         return ("acquisition", "processing")
@@ -72,13 +72,13 @@ class ConfigurationPlan:
 class PlannedConfiguration:
     plan: ConfigurationPlan
     candidates: dict[str, ModuleActivation]
-    system: SystemSettings | None
+    engine: EngineSettings | None
     created_at: float
     restored_from: str | None = None
 
     def activation_set(self, current):
         return ActivationSet({**current.modules, **self.candidates},
-                             self.system if self.system is not None else current.system)
+                             self.engine if self.engine is not None else current.engine)
 
 
 class RuntimeConfigurationService:
@@ -116,7 +116,7 @@ class RuntimeConfigurationService:
         accepted, errors = {}, {}
         for section in SECTIONS:
             try:
-                value = (self.profiles.repository.get_system() if section == "system"
+                value = (self.profiles.repository.get_engine() if section == "engine"
                          else self.profiles.repository.get_module(section))
                 accepted[section] = value.revision if value is not None else None
             except (ValueError, KeyError, RuntimeError, OSError) as exc:
@@ -140,12 +140,12 @@ class RuntimeConfigurationService:
              settings: dict | None = None, refresh_slots: list[str] | None = None) -> ConfigurationPlan:
         if module not in SECTIONS:
             raise PluginSchemaError("Unsupported configuration section")
-        if module == "system":
+        if module == "engine":
             if bindings or refresh_slots:
-                raise PluginSchemaError("System settings cannot contain plugin bindings")
+                raise PluginSchemaError("Engine settings cannot contain plugin bindings")
             if settings is None:
-                raise PluginSchemaError("Current system settings are required")
-            candidate = self.profiles.propose_system(settings)
+                raise PluginSchemaError("Current Engine settings are required")
+            candidate = self.profiles.propose_engine(settings)
         else:
             if settings is None:
                 raise PluginSchemaError("Current module settings are required")
@@ -171,28 +171,28 @@ class RuntimeConfigurationService:
         return stored.plan
 
     def _prepare(self, module, candidate, expected_revision, *, restored_from=None):
-        dependencies = {module, "system"}
+        dependencies = {module, "engine"}
         if module == "processing":
             dependencies.add("acquisition")
         if module == "acquisition" and self.engine.is_module_running("processing"):
             dependencies.add("processing")
-        if module == "system":
+        if module == "engine":
             dependencies.update(SECTIONS)
         current = read_configuration(self.profiles.repository, dependencies)
         revisions = current.revisions()
         if revisions[module] != expected_revision:
             raise ProfileRevisionConflict("The module configuration changed; reload before planning")
-        candidates = {} if module == "system" else {module: candidate}
-        system = candidate if module == "system" else None
-        if system is None and current.system is None:
-            system = self.profiles.propose_system(SYSTEM_SETTING_DEFAULTS)
-        combined = ActivationSet({**current.modules, **candidates}, system or current.system)
+        candidates = {} if module == "engine" else {module: candidate}
+        engine_settings = candidate if module == "engine" else None
+        if engine_settings is None and current.engine is None:
+            engine_settings = self.profiles.propose_engine(ENGINE_SETTING_DEFAULTS)
+        combined = ActivationSet({**current.modules, **candidates}, engine_settings or current.engine)
         targets = {name: value.revision for name, value in candidates.items()}
-        if system is not None:
-            targets["system"] = system.revision
-        before = current.system if module == "system" else current.modules[module]
-        old = {b.slot: b for b in before.bindings} if module != "system" and before else {}
-        new = {b.slot: b for b in candidate.bindings} if module != "system" else {}
+        if engine_settings is not None:
+            targets["engine"] = engine_settings.revision
+        before = current.engine if module == "engine" else current.modules[module]
+        old = {b.slot: b for b in before.bindings} if module != "engine" and before else {}
+        new = {b.slot: b for b in candidate.bindings} if module != "engine" else {}
         slots = sorted(s for s in old.keys() | new.keys()
                        if self._binding_values(old.get(s)) != self._binding_values(new.get(s)))
         if [s for s in old if s.startswith("processing.filter.")] != [s for s in new if s.startswith("processing.filter.")]:
@@ -204,12 +204,12 @@ class RuntimeConfigurationService:
         running = self.engine.is_engine_ready
         applied = self.engine.applied_revisions if running else None
         strategy = self._strategy(module, slots, changed_settings, old, new) if changed else "no_change"
-        if changed and system is not None and system.revision != revisions["system"]:
+        if changed and engine_settings is not None and engine_settings.revision != revisions["engine"]:
             strategy = "rebuild"
         if changed and (not running or module in ("acquisition", "processing")
                         and not self.engine.is_module_running(module)):
             strategy = "select_on_start"
-        if (running and module != "system" and not self.engine.is_module_running(module)
+        if (running and module != "engine" and not self.engine.is_module_running(module)
                 and applied.get(module) != candidate.revision):
             strategy = "select_on_start" if module in ("acquisition", "processing") else "module"
         expected = {key: revisions[key] for key in SECTIONS if key in dependencies}
@@ -219,7 +219,7 @@ class RuntimeConfigurationService:
         except (ValueError, KeyError) as exc:
             errors.append(str(exc))
         if running and any(applied.get(key) != revision for key, revision in expected.items()
-                           if revision is not None and (key == "system" or self.engine.is_module_running(key))):
+                           if revision is not None and (key == "engine" or self.engine.is_module_running(key))):
             errors.append("Applied and selected module revisions differ; reconcile the runtime before applying")
         projection = {"PLUGINS.bindings": [b.to_dict() for b in combined.bindings()]}
         plan = ConfigurationPlan(
@@ -229,7 +229,7 @@ class RuntimeConfigurationService:
             tuple(slots), changed_settings, tuple(errors),
             self._signal_summary(projection) if module == "processing" else None,
         )
-        return PlannedConfiguration(plan, candidates, system, monotonic(), restored_from)
+        return PlannedConfiguration(plan, candidates, engine_settings, monotonic(), restored_from)
 
     @staticmethod
     def _signal_summary(snapshot):
@@ -320,7 +320,7 @@ class RuntimeConfigurationService:
                     raise ProfileRevisionConflict("Resolve or stop the uncertain runtime module before starting")
                 start_foundation = module in ("acquisition", "processing") and not self.engine.is_engine_ready
                 scopes = tuple(MODULES) if (start_foundation
-                                           or self.profiles.repository.get_system() is None) else (module,)
+                                           or self.profiles.repository.get_engine() is None) else (module,)
                 reservation = self._admission.reserve_transition(scopes, recovery=start_foundation)
                 self._current_requests[operation_id] = request
                 self._operations[operation_id] = dict(
@@ -497,7 +497,7 @@ class RuntimeConfigurationService:
                 binding.processing_input)
 
     def _strategy(self, module, slots, settings, old, new):
-        if module in ("system", "acquisition"):
+        if module in ("engine", "acquisition"):
             return "rebuild"
         if module in ("stimulation", "actuation"):
             return "module"

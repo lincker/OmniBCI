@@ -23,7 +23,7 @@ def running(engine, snapshot):
 
 
 def test_running_publication_uses_applied_snapshot_without_reading_saved_files(engine):
-    running(engine, {"CONFIG.module_revisions": {'acquisition': "running", 'processing': "running", 'stimulation': "running", 'actuation': "running"}, "CONFIG.system_revision": "c" * 64, "nested": {"value": 1}})
+    running(engine, {"CONFIG.module_revisions": {'acquisition': "running", 'processing': "running", 'stimulation': "running", 'actuation': "running"}, "CONFIG.engine_revision": "c" * 64, "nested": {"value": 1}})
     selected = Mock(side_effect=AssertionError("must not read saved configuration"))
     state, snapshot = engine.node_configuration_snapshot(selected)
     assert state == "running"
@@ -33,9 +33,9 @@ def test_running_publication_uses_applied_snapshot_without_reading_saved_files(e
 
 
 def test_idle_publication_ignores_historical_applied_snapshot(engine):
-    engine._applied_snapshot = {"CONFIG.module_revisions": {'acquisition': "old", 'processing': "old", 'stimulation': "old", 'actuation': "old"}, "CONFIG.system_revision": "c" * 64, "CONFIG.generation": "old"}
-    assert engine.node_configuration_snapshot(lambda: {"CONFIG.module_revisions": {'acquisition': "selected", 'processing': "selected", 'stimulation': "selected", 'actuation': "selected"}, "CONFIG.system_revision": "c" * 64}) == (
-        "selected", {"CONFIG.module_revisions": {'acquisition': "selected", 'processing': "selected", 'stimulation': "selected", 'actuation': "selected"}, "CONFIG.system_revision": "c" * 64})
+    engine._applied_snapshot = {"CONFIG.module_revisions": {'acquisition': "old", 'processing': "old", 'stimulation': "old", 'actuation': "old"}, "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "old"}
+    assert engine.node_configuration_snapshot(lambda: {"CONFIG.module_revisions": {'acquisition': "selected", 'processing': "selected", 'stimulation': "selected", 'actuation': "selected"}, "CONFIG.engine_revision": "c" * 64}) == (
+        "selected", {"CONFIG.module_revisions": {'acquisition': "selected", 'processing': "selected", 'stimulation': "selected", 'actuation': "selected"}, "CONFIG.engine_revision": "c" * 64})
 
 
 @pytest.mark.parametrize("phase", ["starting", "stopping", "failed_stop", "dead_thread", "apply", "recovery"])

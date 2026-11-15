@@ -83,7 +83,7 @@ class ValueDecoder(Decoder):
     decoder = next(item for item in catalog.list_contributions("decoder")
                    if item.package.identifier == "Tests.trial_fixture")
     detector = catalog.resolve_selection("epoch_detector", builtin_selection("epoch_detector", "DEFAULT_EPOCH_DETECTOR"))
-    snapshot = {"CONFIG.module_revisions": {"acquisition": "old", "processing": "old", "stimulation": "old", "actuation": "old"}, "CONFIG.system_revision": "system", "CONFIG.generation": "run",
+    snapshot = {"CONFIG.module_revisions": {"acquisition": "old", "processing": "old", "stimulation": "old", "actuation": "old"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "run",
                 "ACQUISITION.sample_rate": 250, "ALGORITHM.baseline_duration": 0.0,
                 "ACQUISITION.signal_source": "test-source",
                 "PLUGINS.bindings": [
@@ -98,7 +98,7 @@ class ValueDecoder(Decoder):
     context = mp.get_context("spawn")
     commands, data, events = (context.Queue() for _ in range(3))
     receiver, sender = context.Pipe(duplex=False)
-    reporter = StartupReporter(sender, component="Signal Processing", module_revisions={"processing": "old"}, system_revision="system", generation="run")
+    reporter = StartupReporter(sender, component="Signal Processing", module_revisions={"processing": "old"}, engine_revision="engine", generation="run")
     worker = SignalProcessingWorker(commands, DataManager(data), EventBus(events),
                                     settings_snapshot=snapshot, startup_reporter=reporter)
     process = context.Process(target=worker.run)
@@ -106,11 +106,11 @@ class ValueDecoder(Decoder):
         process.start()
         reporter.close()
         wait_for_startup_report(receiver, process, component="Signal Processing", timeout_s=10,
-                                expected_module_revisions={"processing": "old"}, expected_system_revision="system", expected_generation="run")
+                                expected_module_revisions={"processing": "old"}, expected_engine_revision="engine", expected_generation="run")
         source = SignalInfo("test-source", 250, (ChannelDescriptor(0, "O1"),), 1,
                             connection_id="connection")
         plan = compile_processing_plan(source, ProcessingInput(), acquisition_revision="old")
-        receipt = {"generation": "run", "acquisition_revision": "old", "processing_revision": "old", "system_revision": "system", "connection_id": "connection",
+        receipt = {"generation": "run", "acquisition_revision": "old", "processing_revision": "old", "engine_revision": "engine", "connection_id": "connection",
                    "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input"}
         commands.put((SignalProcessorCommand.prepare_signal, CommandRequest("prepare", {
             "plan": plan.to_dict(), "receipt": receipt,
@@ -123,7 +123,7 @@ class ValueDecoder(Decoder):
         data.put(SignalChunk(1.0, 1, np.array([[1., 1., 1.], [7., 0., 0.]])))
         _wait_file(plugin / "epoch-1")
         commands.put((SignalProcessorCommand.stage_configuration, CommandRequest("update", {
-            "settings_snapshot": replacement, "expected_revision": "old", "generation": "run", "system_revision": "system", "boundary": "trial",
+            "settings_snapshot": replacement, "expected_revision": "old", "generation": "run", "engine_revision": "engine", "boundary": "trial",
         })))
         _wait_file(plugin / "constructed-2")
         data.put(SignalChunk(2.0, 2, np.array([[1., 1., 1.], [0., 9., 0.]])))

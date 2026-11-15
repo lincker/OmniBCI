@@ -1,8 +1,8 @@
-"""Backend settings API rejects Engine and plugin fields."""
+"""Server settings API rejects Engine and plugin fields."""
 
 import pytest
 
-from omnibci.application.activation_settings import BACKEND_STARTUP_DEFAULTS
+from omnibci.application.activation_settings import SERVER_STARTUP_DEFAULTS
 from omnibci.application.services.config_service import ConfigService
 from omnibci.conf import OmniBCISettings
 
@@ -25,7 +25,7 @@ def test_get_saved_settings_shape(config_client):
     data = response.json()["data"]
     assert set(data) == {"entries", "revision"}
     assert len(data["revision"]) == 64
-    assert {entry["key"]: entry["value"] for entry in data["entries"]} == {**BACKEND_STARTUP_DEFAULTS, "NEUROENGINE.command_timeout_s": 32}
+    assert {entry["key"]: entry["value"] for entry in data["entries"]} == {**SERVER_STARTUP_DEFAULTS, "NEUROENGINE.command_timeout_s": 32}
     assert all(set(entry) == {"key", "value", "type", "requires", "description", "active_value", "restart_required"}
                for entry in data["entries"])
 
@@ -55,7 +55,7 @@ def test_patch_saves_host_settings(config_client, tmp_path):
     assert response.json()["data"] == {
         "revision": config_client.get("/api/v1/config").json()["data"]["revision"],
         "saved": ["NEUROENGINE.command_timeout_s"],
-        "backend_restart_required": True,
+        "server_restart_required": True,
     }
     fresh = OmniBCISettings(tmp_path / "settings.toml")
     assert fresh.get("NEUROENGINE.command_timeout_s") == 64
@@ -135,7 +135,7 @@ def test_stale_browser_save_returns_conflict_and_preserves_newer_values(config_c
     assert stale.json()["code"] == "CONFLICT"
     data = config_client.get("/api/v1/config").json()["data"]
     assert data["revision"] == updated_revision
-    assert {entry["key"]: entry["value"] for entry in data["entries"]} == {**BACKEND_STARTUP_DEFAULTS, "NEUROENGINE.command_timeout_s": 64}
+    assert {entry["key"]: entry["value"] for entry in data["entries"]} == {**SERVER_STARTUP_DEFAULTS, "NEUROENGINE.command_timeout_s": 64}
 
 
 @pytest.mark.parametrize("method", ["GET", "PATCH"])

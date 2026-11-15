@@ -205,7 +205,7 @@ test("external stimulation offers preparation before connecting and enabling its
   assert.equal(prepare.props.disabled, false);
   assert.match(text(card(tree, "Stimulation")), /External stimulation mode/);
   assert.match(text(card(tree, "Stimulation")), /run mode in the stimulation configuration page/);
-  assert.doesNotMatch(text(card(tree, "Stimulation")), /backend host configuration/);
+  assert.doesNotMatch(text(card(tree, "Stimulation")), /server host configuration/);
   assert.match(description(tree, actionButton(tree, "Trigger trial")), /Enable stimulation first/);
   assert.equal(selection.settings["STIMULATION.auto_spawn"], false);
   const connected = render({ selection, stimulation: { ...ready, active: false, process_alive: false } });
@@ -591,7 +591,7 @@ test("active decoder input does not present cached readiness as current after a 
 
 test("recovery explains blocked actions while retaining usable stop controls", () => {
   const tree = render({ acquisition: { connected: true, streaming: true },
-    runtime: { status: { accepted: revisionMap(revision), applied: revisionMap(revision), operations: {}, recovery: { system: "Foundation state unknown" } },
+    runtime: { status: { accepted: revisionMap(revision), applied: revisionMap(revision), operations: {}, recovery: { engine: "Foundation state unknown" } },
       blocked: true, recoveryRequired: true, inProgress: false } });
   for (const label of ["Start engine", "Disconnect", "Launch stimulation", "Trigger trial"]) {
     const button = actionButton(tree, label);

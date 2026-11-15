@@ -20,7 +20,7 @@ const { SchemaForm, schemaErrors } = await server.ssrLoadModule("/src/SchemaForm
 const { default: App } = await server.ssrLoadModule("/src/App.tsx");
 const { I18nProvider } = await server.ssrLoadModule("/src/i18n.tsx");
 const { recordingPathMissing } = await server.ssrLoadModule("/src/RunConsole.tsx");
-const ready = (id = "backend-A", kind = "local") => ({ id, kind, status: "ready", url: "http://127.0.0.1:49152" });
+const ready = (id = "server-A", kind = "local") => ({ id, kind, status: "ready", url: "http://127.0.0.1:49152" });
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 beforeEach(() => {
   globalThis.window = { omnibciDesktop: {}, localStorage: { getItem: () => "en" }, navigator: { language: "en" } };
@@ -41,14 +41,14 @@ test("all REST entrypoints carry the current connection and preserve ZIP bytes",
   assert.equal(requests.length, 3);
   requests.forEach((request) => {
     assert.ok(request.path.startsWith("app://omnibci/api/v1/"), "Desktop development requests must not bypass the main-process proxy");
-    assert.equal(request.headers.get("X-OmniBCI-Connection-Id"), "backend-A");
+    assert.equal(request.headers.get("X-OmniBCI-Connection-Id"), "server-A");
     assert.equal(request.redirect, "error");
   });
   assert.equal(requests[2].body, archive);
   assert.equal(requests[2].headers.get("Content-Type"), "application/zip");
 });
 
-test("switching backend aborts the request and discards a delayed consumed response", async () => {
+test("switching server aborts the request and discards a delayed consumed response", async () => {
   const body = deferred();
   const started = deferred();
   let signal;
@@ -59,9 +59,9 @@ test("switching backend aborts the request and discards a delayed consumed respo
   };
   const request = requestJson("/api/v1/engine/status");
   await started.promise;
-  desktop.setDesktopConnection(ready("backend-B", "remote"));
+  desktop.setDesktopConnection(ready("server-B", "remote"));
   assert.equal(signal.aborted, true);
-  body.resolve({ success: true, data: { backend: "A" } });
+  body.resolve({ success: true, data: { server: "A" } });
   await assert.rejects(request, { name: "AbortError" });
 });
 
@@ -107,22 +107,22 @@ test("desktop results subscriptions suppress old connection events and close onc
   let deliver;
   let unsubscribed = 0;
   window.omnibciDesktop.subscribeResults = (id, listener) => {
-    assert.equal(id, "backend-A"); deliver = listener;
+    assert.equal(id, "server-A"); deliver = listener;
     return () => { unsubscribed += 1; };
   };
   const events = [];
   const socket = openResultsSocket((event) => events.push(event));
   deliver({ type: "open" });
   deliver({ type: "message", data: "first" });
-  desktop.setDesktopConnection(ready("backend-B"));
-  deliver({ type: "message", data: "old backend" });
+  desktop.setDesktopConnection(ready("server-B"));
+  deliver({ type: "message", data: "old server" });
   socket.close(); socket.close();
   deliver({ type: "message", data: "after close" });
   assert.deepEqual(events, [{ type: "open" }, { type: "message", data: "first" }, { type: "closed" }]);
   assert.equal(unsubscribed, 1);
 });
 
-test("file fields allow blank setup and offer native selection only on the local backend", () => {
+test("file fields allow blank setup and offer native selection only on the local server", () => {
   const schema = { type: "object", required: ["path"], properties: {
     path: { type: "string", default: "", "x-widget": "file-path", "x-scope": "machine" },
   } };
@@ -131,7 +131,7 @@ test("file fields allow blank setup and offer native selection only on the local
   assert.match(render(), /Browse…/);
   desktop.setDesktopConnection(ready("remote", "remote"));
   assert.doesNotMatch(render(), /Browse…/);
-  assert.match(render(), /Path on the backend computer/);
+  assert.match(render(), /Path on the server computer/);
   delete window.omnibciDesktop;
   assert.doesNotMatch(render(), /Browse…/);
 });

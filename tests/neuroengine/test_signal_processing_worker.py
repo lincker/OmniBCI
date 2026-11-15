@@ -75,7 +75,7 @@ class TestAlgorithmLoading:
         from omnibci.domain.channel_mapping import ChannelDescriptor, ProcessingInput, SignalInfo, compile_processing_plan
         from omnibci.infrastructure.signal_processing.signal_configuration import load_signal_pipeline
         from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-        snapshot = {"ACQUISITION.sample_rate": 1000, "CONFIG.module_revisions": {"acquisition": "test-revision", "processing": "test-revision", "stimulation": "test-revision", "actuation": "test-revision"}, "CONFIG.system_revision": "system"}
+        snapshot = {"ACQUISITION.sample_rate": 1000, "CONFIG.module_revisions": {"acquisition": "test-revision", "processing": "test-revision", "stimulation": "test-revision", "actuation": "test-revision"}, "CONFIG.engine_revision": "engine"}
         bindings = []
         descriptors = []
         for slot, kind, alias, parameters in (
@@ -141,12 +141,12 @@ class TestProcessorWiring:
         inputs = ProcessingInput()
         plan = compile_processing_plan(source, inputs, acquisition_revision="test-revision")
         receipt = {
-            "generation": "test-run", "acquisition_revision": "test-revision", "processing_revision": "test-revision", "system_revision": "system",
+            "generation": "test-run", "acquisition_revision": "test-revision", "processing_revision": "test-revision", "engine_revision": "engine",
             "connection_id": source.connection_id,
             "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
         }
         snapshot = {
-            "CONFIG.module_revisions": {"acquisition": "test-revision", "processing": "test-revision", "stimulation": "test-revision", "actuation": "test-revision"}, "CONFIG.system_revision": "system", "CONFIG.generation": "test-run",
+            "CONFIG.module_revisions": {"acquisition": "test-revision", "processing": "test-revision", "stimulation": "test-revision", "actuation": "test-revision"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "test-run",
             "ACQUISITION.signal_source": source.source_id,
             "PLUGINS.bindings": [ProfileBinding(
                 "processing.decoder", "decoder", None,
@@ -215,7 +215,7 @@ class TestProcessorWiring:
             baseline_duration=0.3,
             filters=[],
             generation=None,
-            processing_revision=None, acquisition_revision=None, system_revision=None,
+            processing_revision=None, acquisition_revision=None, engine_revision=None,
             settings_snapshot=worker._snapshot(), runtime_counters=None,
         )
         assert worker.signal_processor is processor

@@ -64,7 +64,7 @@ def make_app(monkeypatch, role, *, external=True, setup_error=False, cleanup_err
     monkeypatch.setattr(module, "PeerChannel", peer_factory)
     monkeypatch.setattr(module, "Stimulator" if role == "stimulation" else "Actuator",
                         Mock(return_value=driver))
-    snapshot = {"CONFIG.module_revisions": {'acquisition': "a" * 64, 'processing': "a" * 64, 'stimulation': "a" * 64, 'actuation': "a" * 64}, "CONFIG.system_revision": "c" * 64, "CONFIG.generation": "run-1"}
+    snapshot = {"CONFIG.module_revisions": {'acquisition': "a" * 64, 'processing': "a" * 64, 'stimulation': "a" * 64, 'actuation': "a" * 64}, "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "run-1"}
     if external:
         snapshot["CONFIG.node_role"] = role
     app = getattr(module, role.capitalize())(settings_snapshot=snapshot)
@@ -81,7 +81,7 @@ def test_managed_process_keeps_existing_transport_without_identity(monkeypatch, 
 def test_external_process_has_pinned_identity_and_single_connection(monkeypatch, role):
     app, peer, config, lifecycle, queue = make_app(monkeypatch, role)
     assert config.transport._client.identity.to_dict() == {
-        "role": role, "module_revision": "a" * 64, "system_revision": "c" * 64, "generation": "run-1",
+        "role": role, "module_revision": "a" * 64, "engine_revision": "c" * 64, "generation": "run-1",
     }
     assert config.transport._client._reconnect is False
 
@@ -188,7 +188,7 @@ def test_real_effector_failed_cleanup_cannot_restart_from_supervisor(monkeypatch
         raise RuntimeError("transport ended")
 
     peer.wait_until_connected.side_effect = disconnected
-    fetch = Mock(side_effect=[Mock(module_revisions={"actuation": "a" * 64}, system_revision="c" * 64, generation="run-1"),
+    fetch = Mock(side_effect=[Mock(module_revisions={"actuation": "a" * 64}, engine_revision="c" * 64, generation="run-1"),
                               AssertionError("unsafe retry after failed device cleanup")])
     factory = Mock(return_value=app)
     sleep = Mock()
@@ -199,7 +199,7 @@ def test_real_effector_failed_cleanup_cannot_restart_from_supervisor(monkeypatch
     monkeypatch.setattr(conf, "settings", Mock())
 
     with pytest.raises(RuntimeError, match="device still held"):
-        node_client.run_configured_node("actuation", factory, backend_url="http://backend")
+        node_client.run_configured_node("actuation", factory, server_url="http://server")
     fetch.assert_called_once()
     factory.assert_called_once()
     sleep.assert_not_called()

@@ -1,5 +1,5 @@
 import { runtimeController } from "./module-fixtures.mjs";
-/** Engine review and backend startup saves share one settings page. */
+/** Engine review and server startup saves share one settings page. */
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import React from "react";
@@ -103,12 +103,12 @@ async function saveShortcut(component, modifiers = {}) {
 
 async function withSettings(action, overrides = {}) {
   const cfg = { revision: "a".repeat(64), entries: [
-    { key: "LOGGING.level", type: "string", value: "INFO", active_value: "INFO", restart_required: false, requires: "backend-restart", description: "Log level" },
-    { key: "LOGGING.file_path", type: "string", value: "omnibci.log", active_value: "omnibci.log", restart_required: false, requires: "backend-restart", description: "Log path" },
-    { key: "NEUROENGINE.command_timeout_s", type: "float", value: 10, active_value: 10, restart_required: false, requires: "backend-restart", description: "Command timeout" },
-    { key: "PLUGINS.user_dir", type: "string", value: "", active_value: "", restart_required: false, requires: "backend-restart", description: "Plugin directory" },
+    { key: "LOGGING.level", type: "string", value: "INFO", active_value: "INFO", restart_required: false, requires: "server-restart", description: "Log level" },
+    { key: "LOGGING.file_path", type: "string", value: "omnibci.log", active_value: "omnibci.log", restart_required: false, requires: "server-restart", description: "Log path" },
+    { key: "NEUROENGINE.command_timeout_s", type: "float", value: 10, active_value: 10, restart_required: false, requires: "server-restart", description: "Command timeout" },
+    { key: "PLUGINS.user_dir", type: "string", value: "", active_value: "", restart_required: false, requires: "server-restart", description: "Plugin directory" },
   ] };
-  const system = { revision: overrides.systemRevision === undefined ? "system-accepted" : overrides.systemRevision,
+  const engine = { revision: overrides.engineRevision === undefined ? "engine-accepted" : overrides.engineRevision,
     settings: { "NEUROENGINE.queue_size": 32, "NEUROENGINE.startup_timeout_s": 5, debug: false } };
   const calls = [], reviews = [], dirty = [], busy = [];
   const originalFetch = globalThis.fetch;
@@ -119,12 +119,12 @@ async function withSettings(action, overrides = {}) {
     let data;
     if (path === "/api/v1/config" && method === "GET") {
       if (overrides.reloadError && calls.some((call) => call.method === "PATCH")) throw new Error("Settings refresh failed");
-      if (overrides.backendReloadError && calls.filter((call) => call.path === path).length > 1) throw new Error("Backend settings refresh failed");
+      if (overrides.serverReloadError && calls.filter((call) => call.path === path).length > 1) throw new Error("Server settings refresh failed");
       data = cfg;
-    } else if (path === "/api/v1/config/system" && method === "GET") {
-      if (overrides.systemReloadError && calls.filter((call) => call.path === path).length > 1) throw new Error("Engine settings refresh failed");
-      if (calls.filter((call) => call.path === path).length > 1) await overrides.systemReloadWait;
-      data = system;
+    } else if (path === "/api/v1/config/engine" && method === "GET") {
+      if (overrides.engineReloadError && calls.filter((call) => call.path === path).length > 1) throw new Error("Engine settings refresh failed");
+      if (calls.filter((call) => call.path === path).length > 1) await overrides.engineReloadWait;
+      data = engine;
     }
     else if (path === "/api/v1/config" && method === "PATCH") {
       if (body.expected_revision !== cfg.revision) return { ok: false, status: 409, json: async () => ({ code: "CONFLICT", message: "Settings changed" }) };
@@ -133,27 +133,27 @@ async function withSettings(action, overrides = {}) {
         entry.value = body.updates[entry.key]; entry.restart_required = entry.value !== entry.active_value;
       }
       cfg.revision = "b".repeat(64);
-      data = { saved: Object.keys(body.updates), backend_restart_required: cfg.entries.some((entry) => entry.restart_required), revision: cfg.revision };
+      data = { saved: Object.keys(body.updates), server_restart_required: cfg.entries.some((entry) => entry.restart_required), revision: cfg.revision };
     } else throw new Error(`Unexpected request: ${method} ${path}`);
     return { ok: true, json: async () => ({ success: true, data: structuredClone(data) }) };
   };
-  const runtime = { blocked: false, status: { running: overrides.running ?? false, accepted: { system: system.revision } },
+  const runtime = { blocked: false, status: { running: overrides.running ?? false, accepted: { engine: engine.revision } },
     review: async (request) => { reviews.push(request); return { plan_id: `plan-${reviews.length}` }; }, ...overrides.runtime };
   const component = harness({ navigation: null, preferences: React.createElement("p", null, "Console preferences"),
     onDirtyChange: (value) => dirty.push(value), onBusyChange: (value) => busy.push(value), runtime });
   const complete = async (settings = reviews.at(-1).settings) => {
-    system.revision = "system-applied"; system.settings = structuredClone(settings);
-    runtime.status.accepted = { system: system.revision };
-    runtime.completedOperation = { operation_id: "applied-operation", plan_id: `plan-${reviews.length}`, module: "system",
-      status: "succeeded", target_revisions: { system: system.revision } };
+    engine.revision = "engine-applied"; engine.settings = structuredClone(settings);
+    runtime.status.accepted = { engine: engine.revision };
+    runtime.completedOperation = { operation_id: "applied-operation", plan_id: `plan-${reviews.length}`, module: "engine",
+      status: "succeeded", target_revisions: { engine: engine.revision } };
     component.rerender(); await component.settle();
   };
-  try { await component.settle(); await action({ component, calls, reviews, dirty, busy, cfg, system, runtime, complete }); }
+  try { await component.settle(); await action({ component, calls, reviews, dirty, busy, cfg, engine, runtime, complete }); }
   finally { component.dispose(); globalThis.fetch = originalFetch; }
 }
 
 for (const running of [false, true]) {
-  test(`System settings show independent Engine and Backend groups while running=${running}`, async () => {
+  test(`Engine settings show independent Engine and Server groups while running=${running}`, async () => {
     await withSettings(async ({ component, calls }) => {
       assert.equal(input(component, "NEUROENGINE.queue_size").props.value, "32");
       assert.equal(input(component, "NEUROENGINE.startup_timeout_s").props.value, "5");
@@ -161,8 +161,8 @@ for (const running of [false, true]) {
       assert.equal(input(component, "NEUROENGINE.command_timeout_s").props.value, "10");
       assert.equal(input(component, "LOGGING.file_path").props.value, "omnibci.log");
       assert.match(text(component.tree), /Console preferences/);
-      assert.match(text(component.tree), /Backend/);
-      assert.deepEqual([...new Set(calls.map((call) => call.path))].sort(), ["/api/v1/config", "/api/v1/config/system"]);
+      assert.match(text(component.tree), /Server/);
+      assert.deepEqual([...new Set(calls.map((call) => call.path))].sort(), ["/api/v1/config", "/api/v1/config/engine"]);
     }, { running });
   });
 }
@@ -173,7 +173,7 @@ test("Engine Review submits current values without saving host settings first", 
     await change(component, "NEUROENGINE.startup_timeout_s", "8.5");
     input(component, "debug").props.onChange({ target: { checked: true } }); await component.settle();
     await click(component, "Review Engine settings");
-    assert.deepEqual(reviews, [{ module: "system", bindings: [], expected_revision: "system-accepted",
+    assert.deepEqual(reviews, [{ module: "engine", bindings: [], expected_revision: "engine-accepted",
       settings: { "NEUROENGINE.queue_size": 64, "NEUROENGINE.startup_timeout_s": 8.5, debug: true } }]);
     assert.equal(calls.some((call) => call.method === "PATCH"), false);
     assert.equal(dirty.at(-1), true, "Review does not acknowledge application");
@@ -185,27 +185,27 @@ test("an absent Engine configuration can review declared defaults without a save
     await click(component, "Review Engine settings");
     assert.equal(reviews[0].expected_revision, null);
     assert.equal(reviews[0].settings["NEUROENGINE.queue_size"], 32);
-  }, { systemRevision: null });
+  }, { engineRevision: null });
 });
 
-test("Backend saves only its own values and leaves the Engine draft pending", async () => {
+test("Server saves only its own values and leaves the Engine draft pending", async () => {
   await withSettings(async ({ component, calls, reviews, dirty }) => {
     await change(component, "NEUROENGINE.queue_size", "64");
     await change(component, "NEUROENGINE.command_timeout_s", "20");
-    await click(component, "Save Backend settings");
+    await click(component, "Save Server settings");
     assert.deepEqual(calls.filter((call) => call.method === "PATCH").map((call) => call.body), [{
       updates: { "NEUROENGINE.command_timeout_s": 20 }, expected_revision: "a".repeat(64),
     }]);
     assert.equal(input(component, "NEUROENGINE.queue_size").props.value, "64");
     assert.equal(dirty.at(-1), true); assert.equal(reviews.length, 0);
-    assert.match(text(component.tree), /Backend restart required/);
+    assert.match(text(component.tree), /Server restart required/);
     assert.match(text(component.tree), /Current: 10/);
     await click(component, "Review Engine settings");
-    assert.equal(reviews[0].expected_revision, "system-accepted");
+    assert.equal(reviews[0].expected_revision, "engine-accepted");
   });
 });
 
-test("unsaved Backend fields do not block Engine review", async () => {
+test("unsaved Server fields do not block Engine review", async () => {
   await withSettings(async ({ component, reviews, calls }) => {
     await change(component, "LOGGING.file_path", "new.log");
     await change(component, "NEUROENGINE.queue_size", "64");
@@ -216,12 +216,12 @@ test("unsaved Backend fields do not block Engine review", async () => {
   });
 });
 
-test("runtime recovery blocks Engine review while Backend saves remain available", async () => {
+test("runtime recovery blocks Engine review while Server saves remain available", async () => {
   await withSettings(async ({ component, calls, reviews }) => {
     await change(component, "NEUROENGINE.queue_size", "64");
     await change(component, "NEUROENGINE.command_timeout_s", "20");
     assert.equal(button(component.tree, "Review Engine settings").props.disabled, true);
-    await click(component, "Save Backend settings");
+    await click(component, "Save Server settings");
     assert.equal(reviews.length, 0);
     assert.equal(calls.filter((call) => call.method === "PATCH").length, 1);
   }, { runtime: { blocked: true, recoveryRequired: true } });
@@ -236,7 +236,7 @@ test("confirmed Engine application advances its baseline and preserves later edi
     assert.equal(input(component, "NEUROENGINE.queue_size").props.value, "128");
     assert.equal(dirty.at(-1), true);
     await click(component, "Review Engine settings");
-    assert.equal(reviews.at(-1).expected_revision, "system-applied");
+    assert.equal(reviews.at(-1).expected_revision, "engine-applied");
     assert.equal(reviews.at(-1).settings["NEUROENGINE.queue_size"], 128);
   });
 });
@@ -253,13 +253,13 @@ test("reverting to the old Engine value while applying remains a new edit", asyn
 });
 
 test("an accepted revision arriving before operation completion preserves a reverted edit", async () => {
-  await withSettings(async ({ component, system, runtime, dirty, complete }) => {
+  await withSettings(async ({ component, engine, runtime, dirty, complete }) => {
     await change(component, "NEUROENGINE.queue_size", "64");
     await click(component, "Review Engine settings");
     runtime.inProgress = true; component.rerender(); await component.settle();
     await change(component, "NEUROENGINE.queue_size", "32");
-    system.revision = "system-applied"; system.settings["NEUROENGINE.queue_size"] = 64;
-    runtime.status.accepted = { system: system.revision }; component.rerender(); await component.settle();
+    engine.revision = "engine-applied"; engine.settings["NEUROENGINE.queue_size"] = 64;
+    runtime.status.accepted = { engine: engine.revision }; component.rerender(); await component.settle();
     assert.equal(input(component, "NEUROENGINE.queue_size").props.value, "32");
     runtime.inProgress = false;
     await complete();
@@ -302,13 +302,13 @@ test("confirmed Engine application preserves an invalid edit made during applica
 });
 
 test("an external Engine update never silently rebases a dirty editor", async () => {
-  await withSettings(async ({ component, system, runtime, reviews }) => {
+  await withSettings(async ({ component, engine, runtime, reviews }) => {
     await change(component, "NEUROENGINE.queue_size", "64");
-    system.revision = "another-client"; system.settings["NEUROENGINE.queue_size"] = 256;
-    runtime.status.accepted = { system: "another-client" }; component.rerender(); await component.settle();
+    engine.revision = "another-client"; engine.settings["NEUROENGINE.queue_size"] = 256;
+    runtime.status.accepted = { engine: "another-client" }; component.rerender(); await component.settle();
     assert.equal(input(component, "NEUROENGINE.queue_size").props.value, "64");
     await click(component, "Review Engine settings");
-    assert.equal(reviews[0].expected_revision, "system-accepted");
+    assert.equal(reviews[0].expected_revision, "engine-accepted");
   });
 });
 
@@ -325,9 +325,9 @@ for (const [key, value] of [["NEUROENGINE.queue_size", ""], ["NEUROENGINE.queue_
 }
 
 for (const [key, value] of [["NEUROENGINE.command_timeout_s", "0"], ["NEUROENGINE.command_timeout_s", "Infinity"], ["LOGGING.file_path", " "]]) {
-  test(`invalid Backend ${key}=${value} stays editable without being saved`, async () => {
+  test(`invalid Server ${key}=${value} stays editable without being saved`, async () => {
     await withSettings(async ({ component, calls, dirty }) => {
-      await change(component, key, value); await click(component, "Save Backend settings");
+      await change(component, key, value); await click(component, "Save Server settings");
       assert.equal(calls.some((call) => call.method === "PATCH"), false);
       assert.equal(input(component, key).props.value, value); assert.equal(dirty.at(-1), true);
     });
@@ -336,19 +336,19 @@ for (const [key, value] of [["NEUROENGINE.command_timeout_s", "0"], ["NEUROENGIN
 
 test("clearing the plugin directory restores the default and clears restart pending", async () => {
   await withSettings(async ({ component, calls }) => {
-    await change(component, "PLUGINS.user_dir", "/tmp/omnibci-plugins"); await click(component, "Save Backend settings");
-    assert.match(text(component.tree), /Backend restart required/);
-    await change(component, "PLUGINS.user_dir", ""); await click(component, "Save Backend settings");
+    await change(component, "PLUGINS.user_dir", "/tmp/omnibci-plugins"); await click(component, "Save Server settings");
+    assert.match(text(component.tree), /Server restart required/);
+    await change(component, "PLUGINS.user_dir", ""); await click(component, "Save Server settings");
     assert.equal(calls.filter((call) => call.method === "PATCH").at(-1).body.updates["PLUGINS.user_dir"], "");
-    assert.doesNotMatch(text(component.tree), /Backend restart required|Restart the backend/);
+    assert.doesNotMatch(text(component.tree), /Server restart required|Restart the server/);
   });
 });
 
-test("a rejected Backend save preserves both drafts and navigation protection", async () => {
+test("a rejected Server save preserves both drafts and navigation protection", async () => {
   await withSettings(async ({ component, dirty, busy }) => {
     await change(component, "NEUROENGINE.queue_size", "64");
     await change(component, "LOGGING.file_path", "new.log");
-    await click(component, "Save Backend settings");
+    await click(component, "Save Server settings");
     assert.match(text(component.tree), /VALIDATION_ERROR.*Value is invalid/);
     assert.equal(input(component, "LOGGING.file_path").props.value, "new.log");
     assert.equal(input(component, "NEUROENGINE.queue_size").props.value, "64");
@@ -356,29 +356,29 @@ test("a rejected Backend save preserves both drafts and navigation protection", 
   }, { patchError: true });
 });
 
-test("a failed Backend reload keeps the visible draft until saved values are confirmed", async () => {
+test("a failed Server reload keeps the visible draft until saved values are confirmed", async () => {
   await withSettings(async ({ component, dirty, cfg }) => {
-    await change(component, "LOGGING.file_path", "new.log"); await click(component, "Save Backend settings");
+    await change(component, "LOGGING.file_path", "new.log"); await click(component, "Save Server settings");
     assert.equal(cfg.entries.find((entry) => entry.key === "LOGGING.file_path").value, "new.log");
     assert.match(text(component.tree), /Settings refresh failed/);
     assert.equal(dirty.at(-1), true);
   }, { reloadError: true });
 });
 
-test("a stale Backend save preserves edits until an explicit refresh", async () => {
+test("a stale Server save preserves edits until an explicit refresh", async () => {
   await withSettings(async ({ component, cfg, dirty }) => {
     await change(component, "LOGGING.file_path", "new.log"); cfg.revision = "c".repeat(64);
-    await click(component, "Save Backend settings");
+    await click(component, "Save Server settings");
     assert.match(text(component.tree), /CONFLICT.*Refresh/); assert.equal(dirty.at(-1), true);
     elements(component.tree).find((item) => item.props["aria-label"] === "Refresh settings").props.onClick();
     await component.settle(); dialog(component).props.onConfirm(); await component.settle();
     assert.equal(dirty.at(-1), false);
-    await change(component, "LOGGING.file_path", "new.log"); await click(component, "Save Backend settings");
+    await change(component, "LOGGING.file_path", "new.log"); await click(component, "Save Server settings");
     assert.equal(cfg.entries.find((entry) => entry.key === "LOGGING.file_path").value, "new.log");
   });
 });
 
-test("partial refresh success never combines a new Backend revision with a discarded draft", async () => {
+test("partial refresh success never combines a new Server revision with a discarded draft", async () => {
   await withSettings(async ({ component, cfg, dirty }) => {
     await change(component, "NEUROENGINE.queue_size", "64");
     await change(component, "LOGGING.file_path", "draft.log");
@@ -388,15 +388,15 @@ test("partial refresh success never combines a new Backend revision with a disca
     await component.settle(); dialog(component).props.onConfirm(); await component.settle();
     assert.match(text(component.tree), /Engine settings refresh failed/);
     assert.equal(input(component, "LOGGING.file_path").props.value, "another-client.log");
-    assert.equal(button(component.tree, "Save Backend settings").props.disabled, true);
+    assert.equal(button(component.tree, "Save Server settings").props.disabled, true);
     assert.equal(input(component, "NEUROENGINE.queue_size").props.value, "64");
     assert.equal(dirty.at(-1), true);
-  }, { systemReloadError: true });
+  }, { engineReloadError: true });
 });
 
 test("partial refresh failure keeps editing blocked until the other request settles", async () => {
-  let finishSystemRead;
-  const systemReloadWait = new Promise((resolve) => { finishSystemRead = resolve; });
+  let finishEngineRead;
+  const engineReloadWait = new Promise((resolve) => { finishEngineRead = resolve; });
   await withSettings(async ({ component, busy, dirty }) => {
     await change(component, "NEUROENGINE.queue_size", "64");
     await change(component, "LOGGING.file_path", "draft.log");
@@ -404,12 +404,12 @@ test("partial refresh failure keeps editing blocked until the other request sett
     await component.settle(); dialog(component).props.onConfirm(); await component.settle();
     assert.equal(busy.at(-1), true);
     assert.equal(input(component, "NEUROENGINE.queue_size").props.disabled, true);
-    finishSystemRead(); await component.settle();
+    finishEngineRead(); await component.settle();
     assert.equal(input(component, "NEUROENGINE.queue_size").props.value, "32");
     assert.equal(input(component, "LOGGING.file_path").props.value, "draft.log");
     assert.equal(busy.at(-1), false); assert.equal(dirty.at(-1), true);
-    assert.match(text(component.tree), /Backend settings refresh failed/);
-  }, { backendReloadError: true, systemReloadWait });
+    assert.match(text(component.tree), /Server settings refresh failed/);
+  }, { serverReloadError: true, engineReloadWait });
 });
 
 test("Discard restores both groups without saving or applying", async () => {
@@ -427,7 +427,7 @@ test("Discard restores both groups without saving or applying", async () => {
 });
 
 for (const modifiers of [{ ctrlKey: true }, { ctrlKey: false, metaKey: true, key: "S" }]) {
-  test(`Backend save shortcut stays independent of runtime recovery (${JSON.stringify(modifiers)})`, async () => {
+  test(`Server save shortcut stays independent of runtime recovery (${JSON.stringify(modifiers)})`, async () => {
     await withSettings(async ({ component, calls, reviews }) => {
       await change(component, "NEUROENGINE.command_timeout_s", "20");
       assert.equal(await saveShortcut(component, modifiers), true);
@@ -455,7 +455,7 @@ test("shortcuts ignore extra modifiers, handled keys, repeats, composition and o
 });
 
 for (const available of [true, false]) {
-  test(`Backend keyboard save restores field or heading focus (available=${available})`, async () => {
+  test(`Server keyboard save restores field or heading focus (available=${available})`, async () => {
     const originalDocument = globalThis.document;
     let fieldFocus = 0, headingFocus = 0;
     globalThis.document = { activeElement: { isConnected: available, getClientRects: () => available ? [{}] : [], focus() { fieldFocus += 1; } } };

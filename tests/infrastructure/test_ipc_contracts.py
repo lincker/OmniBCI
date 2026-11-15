@@ -124,8 +124,19 @@ class TestFraming:
 
 
 class TestVersionPolicy:
+    def test_engine_identity_requires_only_current_protocol(self):
+        assert PROTOCOL_VERSION == 1
+        assert SUPPORTED_VERSIONS == {1}
+        with pytest.raises(UnsupportedProtocolVersion):
+            require_supported_version(2)
+
     def test_supported_versions_contains_protocol_version(self):
         assert PROTOCOL_VERSION in SUPPORTED_VERSIONS
+
+    @pytest.mark.parametrize("version", [True, 1.0, "1", None])
+    def test_protocol_version_requires_an_integer(self, version):
+        with pytest.raises(UnsupportedProtocolVersion):
+            require_supported_version(version)
 
     def test_unsupported_version_is_dropped(self):
         body = event_to_body(Event(EventType.TrialCompleted, 1)).encode()

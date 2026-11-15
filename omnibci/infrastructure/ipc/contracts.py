@@ -7,15 +7,15 @@ Both directions encode/decode through here, so the format cannot drift between
 ends — the class of bug that previously made a channel one-directional
 (``event_type`` vs ``type``, ``to_dict`` vs ``to_json``).
 
-Wire format (backward compatible with the previous ad-hoc JSON):
+Wire format:
     Frame header: 4-byte version + 4-byte body_size  (see protocol.Frame)
     Frame body:   JSON object  {"type": <int EventType>, "data": <any>}
 
 Versioning:
     PROTOCOL_VERSION stamps every outgoing frame. Stream readers reject an
     unsupported header before reading its body; the lower-level body_to_event
-    compatibility API logs and returns None. Bump PROTOCOL_VERSION and extend
-    SUPPORTED_VERSIONS when the body shape changes incompatibly.
+    body decoder logs and returns None. Version 1 requires engine_revision
+    in peer identities; old identity fields are rejected.
 
 The wire contract stays free of framework serializers; the outbound payload
 adapter is imported lazily only while encoding rich domain values.
@@ -31,7 +31,7 @@ from omnibci.infrastructure.ipc.protocol import Frame, MAX_FRAME_BODY_BYTES
 logger = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = 1
-SUPPORTED_VERSIONS = frozenset({1})
+SUPPORTED_VERSIONS = frozenset({PROTOCOL_VERSION})
 
 
 class UnsupportedProtocolVersion(ValueError):
@@ -39,7 +39,7 @@ class UnsupportedProtocolVersion(ValueError):
 
 
 class InvalidEventBody(ValueError):
-    """A complete frame body is not a valid v1 Event envelope."""
+    """A complete frame body is not a valid Event envelope."""
 
 
 def require_supported_version(frame_version: int) -> None:
@@ -50,7 +50,7 @@ def require_supported_version(frame_version: int) -> None:
     continuing after an unsupported header would require trusting/skipping its
     advertised body length, so the safe response is to close the connection.
     """
-    if frame_version not in SUPPORTED_VERSIONS:
+    if type(frame_version) is not int or frame_version not in SUPPORTED_VERSIONS:
         raise UnsupportedProtocolVersion(
             f"unsupported IPC protocol version {frame_version}"
         )

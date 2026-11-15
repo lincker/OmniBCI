@@ -1,4 +1,4 @@
-/** Runtime configuration contracts are generated from the backend schema. */
+/** Runtime configuration contracts are generated from the server schema. */
 import type { components } from "./rest-types";
 import { configRequest } from "./plugin-config";
 

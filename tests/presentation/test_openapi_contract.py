@@ -26,8 +26,8 @@ def spec():
 
 EXPECTED_OPERATIONS = {
     ("/healthz", "get"),
-    ("/api/v1/system/info", "get"),
-    ("/api/v1/system/logs", "get"),
+    ("/api/v1/server/info", "get"),
+    ("/api/v1/server/logs", "get"),
     # engine
     ("/api/v1/engine/start", "post"),
     ("/api/v1/engine/stop", "post"),
@@ -75,7 +75,7 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/config/modules/{module}/history", "get"),
     ("/api/v1/config/modules/{module}/history/{entry_id}", "get"),
     ("/api/v1/config/modules/{module}/revert-plan", "post"),
-    ("/api/v1/config/system", "get"),
+    ("/api/v1/config/engine", "get"),
     ("/api/v1/config/plugin-profiles/{profile_id}/history", "get"),
     ("/api/v1/config/plugin-profiles/{profile_id}/revert", "post"),
     ("/api/v1/config/runtime", "get"),
@@ -142,18 +142,30 @@ def _schema(spec, name):
 
 
 class TestResponseDtos:
-    def test_backend_logs_contract(self, spec):
-        schema = _schema(spec, "BackendLogsResponse")
+    def test_server_logs_contract(self, spec):
+        schema = _schema(spec, "ServerLogsResponse")
         assert set(schema["properties"]) == {"filename", "lines", "truncated"}
         assert set(schema["required"]) == {"filename", "lines", "truncated"}
-        operation = spec["paths"]["/api/v1/system/logs"]["get"]
+        operation = spec["paths"]["/api/v1/server/logs"]["get"]
         assert not operation.get("parameters")
         assert "503" in operation["responses"]
 
     def test_desktop_handshake_contract(self, spec):
-        assert set(_schema(spec, "SystemInfoResponse")["properties"]) == {
+        props = _schema(spec, "ServerInfoResponse")["properties"]
+        assert set(props) == {
             "app_version", "desktop_api_version", "instance_id", "auth_enabled",
         }
+        assert props["desktop_api_version"]["const"] == 1
+
+    def test_engine_configuration_and_node_identity_contract(self, spec):
+        assert set(_schema(spec, "ModulesResponse")["properties"]) == {"modules", "engine", "errors"}
+        assert set(_schema(spec, "EngineSettingsResponse")["properties"]) == {"revision", "settings"}
+        scopes = _schema(spec, "RuntimePlanRequest")["properties"]["module"]["enum"]
+        assert set(scopes) == {"acquisition", "processing", "stimulation", "actuation", "engine"}
+        node = _schema(spec, "NodeConfigurationResponse")["properties"]
+        assert set(node) == {"format_version", "role", "module_revisions", "engine_revision",
+                             "generation", "settings", "bindings"}
+        assert node["format_version"]["const"] == 1
 
     def test_host_configuration_has_no_application_profile_contract(self, spec):
         assert not any(path.startswith("/api/v1/config/profiles") for path in spec["paths"])
@@ -167,7 +179,7 @@ class TestResponseDtos:
         assert request["properties"]["expected_revision"]["pattern"] == "^[0-9a-f]{64}$"
         assert request["additionalProperties"] is False
         assert set(_schema(spec, "PatchConfigResponse")["properties"]) == {
-            "saved", "backend_restart_required", "revision",
+            "saved", "server_restart_required", "revision",
         }
 
 

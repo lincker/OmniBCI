@@ -8,7 +8,7 @@ Run from the project root with the venv active:
     python scripts/run_stimulation.py
 
 The process:
-  1. Fetches its configuration from --backend (or OMNIBCI_BACKEND_URL)
+  1. Fetches its configuration from --server (or OMNIBCI_SERVER_URL)
   2. Initializes its pinned Trigger, Paradigm, and Renderer
   3. Verifies the matching NeuroEngine revision and generation before commands
   4. Forwards trial/result commands to the running paradigm
@@ -27,7 +27,7 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 from omnibci.infrastructure.stimulation.application import Stimulation
-from omnibci.infrastructure.plugins.node_client import node_backend_argument, run_configured_node
+from omnibci.infrastructure.plugins.node_client import node_server_argument, run_configured_node
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,10 +37,10 @@ logger = logging.getLogger("run_stimulation")
 
 
 def main(argv=None) -> None:
-    backend = node_backend_argument("stimulation", argv)
+    server = node_server_argument("stimulation", argv)
     logger.info("Starting Stimulation process...")
     try:
-        run_configured_node("stimulation", Stimulation, backend_url=backend)
+        run_configured_node("stimulation", Stimulation, server_url=server)
     except KeyboardInterrupt:
         logger.info("Stimulation process stopped by user.")
 

@@ -71,7 +71,7 @@ async def test_source_only_read_does_not_accumulate_processing_data_and_confirms
         source, Queue(), data, SimpleNamespace(put_event=events.append),
         source_id="source", processing_active=active,
         runtime_counters=counters, generation="run", acquisition_revision="source-v1",
-        system_revision="system",
+        engine_revision="engine",
     )
     await acquisition.fetch()
     assert data.empty()
@@ -127,7 +127,7 @@ def test_processing_adopts_new_acquisition_context_without_restarting(monkeypatc
     assert "STIMULATION.renderer" not in processor._settings_snapshot
 
 
-@pytest.mark.parametrize("key", ["CONFIG.generation", "CONFIG.system_revision", "CONFIG.module_revisions"])
+@pytest.mark.parametrize("key", ["CONFIG.generation", "CONFIG.engine_revision", "CONFIG.module_revisions"])
 def test_processing_rejects_source_context_for_another_runtime(key):
     plan = _plan()
     processor = _processor(plan)

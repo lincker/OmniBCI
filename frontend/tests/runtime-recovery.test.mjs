@@ -14,7 +14,7 @@ const { runtimeConfigApi } = await server.ssrLoadModule("/src/api/runtime-config
 const { ApiError } = await server.ssrLoadModule("/src/api/client.ts");
 const { RuntimeConfigurationReview, RuntimeConfigurationStatus } = await server.ssrLoadModule("/src/RuntimeConfiguration.tsx");
 const history = { status: "recovery_required", module: "acquisition", affected_modules: ["acquisition"], operation_id: "failed-operation", error: "Unknown startup" };
-const plan = { expected_revisions: { system: "sys" }, module: "acquisition", plan_id: "new-plan", target_revisions: { acquisition: "new-revision" }, errors: [] };
+const plan = { expected_revisions: { engine: "sys" }, module: "acquisition", plan_id: "new-plan", target_revisions: { acquisition: "new-revision" }, errors: [] };
 
 function hookRenderer(status) {
   const values = [status, plan, {}, null, {}];
@@ -55,7 +55,7 @@ test("a confirmed cleared quarantine permits Apply despite failed-operation hist
 });
 
 for (const [label, status] of [
-  ["not ready but quarantined", { running: false, recovery: { system: "Unknown runtime" }, operations: { acquisition: history } }],
+  ["not ready but quarantined", { running: false, recovery: { engine: "Unknown runtime" }, operations: { acquisition: history } }],
   ["missing status", null],
   ["missing recovery acknowledgement", { running: false, operations: { acquisition: history } }],
 ]) {
@@ -70,12 +70,12 @@ for (const [label, status] of [
   });
 }
 
-test("a rejected host-settings review clears the previous plan and displays the backend error", async () => {
+test("a rejected host-settings review clears the previous plan and displays the server error", async () => {
   const status = { running: false, recovery: {}, operations: {} };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
-  const message = "Backend restart required for LOGGING.level";
-  const request = { module: "system", bindings: [], refresh_slots: [] };
+  const message = "Server restart required for LOGGING.level";
+  const request = { module: "engine", bindings: [], refresh_slots: [] };
   let submitted = 0;
   runtimeConfigApi.plan = async (body) => {
     assert.deepEqual(body, request);
@@ -88,10 +88,10 @@ test("a rejected host-settings review clears the previous plan and displays the 
     assert.equal(await render().review(request), null);
     const hook = render();
     assert.equal(hook.plan, null);
-    assert.equal(hook.state("system").requestError, message);
+    assert.equal(hook.state("engine").requestError, message);
     assert.equal(hook.reviewing, false);
     assert.match(renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(RuntimeConfigurationStatus, { runtime: hook }))),
-      /Backend restart required for LOGGING.level/);
+      /Server restart required for LOGGING.level/);
     assert.equal(renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(RuntimeConfigurationReview, { runtime: hook }))), "");
     await hook.apply();
     assert.equal(submitted, 0);
@@ -197,7 +197,7 @@ test("confirming an interrupted Apply records the original operation success wit
 
 test("only the successful reviewed revert marks its module for current-value synchronization", async () => {
   const original = { ...runtimeConfigApi };
-  const status = { running: false, recovery: {}, operations: {}, accepted: { processing: "before", system: "sys" } };
+  const status = { running: false, recovery: {}, operations: {}, accepted: { processing: "before", engine: "sys" } };
   const render = hookRenderer(status);
   const target = { ...plan, plan_id: "restore-plan", module: "processing", target_revisions: { processing: "restored" } };
   const other = { module: "acquisition", affected_modules: ["acquisition"], operation_id: "another-operation", plan_id: "another-plan", status: "succeeded", target_revisions: { acquisition: "other" } };
@@ -216,18 +216,18 @@ test("only the successful reviewed revert marks its module for current-value syn
   } finally { Object.assign(runtimeConfigApi, original); }
 });
 
-test("affected modules and system recovery bound the configuration gate", () => {
+test("affected modules and engine recovery bound the configuration gate", () => {
   const status = { running: true, operations: { processing: { module: "processing", affected_modules: ["acquisition", "processing"], status: "applying" } }, recovery: {} };
   const runtime = hookRenderer(status)();
   assert.equal(runtime.state("acquisition").blocked, true);
   assert.equal(runtime.state("processing").blocked, true);
   assert.equal(runtime.state("stimulation").blocked, false);
   assert.equal(runtime.state("actuation").blocked, false);
-  assert.equal(runtime.state("system").blocked, true);
+  assert.equal(runtime.state("engine").blocked, true);
   status.operations = {}; status.recovery = { processing: "Unknown processing" };
   assert.equal(runtime.state("processing").blocked, true);
   assert.equal(runtime.state("stimulation").blocked, false);
-  status.recovery.system = "Unknown engine";
+  status.recovery.engine = "Unknown engine";
   assert.equal(runtime.state("stimulation").blocked, true);
 });
 
@@ -308,7 +308,7 @@ test("an interrupted action confirms its original operation once without resendi
   } finally { Object.assign(runtimeConfigApi, original); }
 });
 
-test("a rejected action preserves the backend validation error without leaving an uncertain operation", async () => {
+test("a rejected action preserves the server validation error without leaving an uncertain operation", async () => {
   const render = hookRenderer({ recovery: {}, operations: {} });
   await assert.rejects(render().execute("acquisition", currentConfiguration, async () => {
     throw new ApiError(409, "CONFLICT", "Current configuration changed");

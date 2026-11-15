@@ -1,4 +1,4 @@
-"""Current configuration and its user action have one backend owner."""
+"""Current configuration and its user action have one server owner."""
 import asyncio
 import threading
 from copy import deepcopy
@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from omnibci.application.plugin_profiles import ModuleActivation, ProfileBinding, PluginSelection, ProfileRevisionConflict, SystemSettings
+from omnibci.application.plugin_profiles import ModuleActivation, ProfileBinding, PluginSelection, ProfileRevisionConflict, EngineSettings
 from omnibci.application.runtime_admission import RuntimeAdmission
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.services.engine_service import NeuroEngineService
@@ -21,15 +21,15 @@ def current_action():
         selection=PluginSelection("test.source", "default", "1.0.0"),
         parameters={}, configuration_version=1,
     ),))
-    system = SystemSettings({})
+    engine_settings = EngineSettings({})
     repository = Mock()
     repository.get_module.side_effect = lambda section: module if section == "acquisition" else None
-    repository.get_system.return_value = system
+    repository.get_engine.return_value = engine_settings
     profiles = Mock(repository=repository)
     profiles.propose.return_value = module
     engine = SimpleNamespace(
         admission=RuntimeAdmission(), is_engine_ready=True, generation="engine",
-        applied_revisions={"acquisition": module.revision, "system": system.revision},
+        applied_revisions={"acquisition": module.revision, "engine": engine_settings.revision},
         applied_snapshot={}, restart_blocked=False, runtime_package_snapshots=(),
         is_module_running=lambda _: False, is_peer_connected=lambda _: False,
     )
@@ -134,7 +134,7 @@ async def test_stop_waits_for_cancelled_connection_request_to_finish(current_act
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("scope", ["acquisition", "system"])
+@pytest.mark.parametrize("scope", ["acquisition", "engine"])
 async def test_current_action_rejects_its_own_or_foundation_recovery(current_action, scope):
     service, executor, configuration = current_action
     service.engine.admission.quarantine("Unconfirmed ownership", scope)

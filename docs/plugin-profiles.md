@@ -26,27 +26,27 @@ current values never requires saving a Profile first.
   configuration without submitting edits.
 - **Start engine** starts shared infrastructure without selecting plugins,
   applying module edits, or starting any module. **Stop engine** stops all modules.
-- An external node checks its own module revision and the shared system revision.
+- An external node checks its own module revision and the Engine configuration revision.
   With the engine running, the module button prepares its current configuration
   while disconnected. Start/connect the external node, then enable Stimulation
   or start Actuation. No Acquisition selection or A/P worker is required.
   Changing a connected external node's configuration requires disconnecting it.
-  A shared system rebuild also requires disconnecting external nodes.
+  An Engine rebuild also requires disconnecting external nodes.
 
 There is no global **Apply current configuration** or **Update saved profile**
-button. Shared system settings retain explicit review; module settings, including
+button. Engine settings retain explicit review; module settings, including
 Processing's pre-trigger duration, travel with that module's current values.
 Editing, loading and saving remain independent of runtime application. Browsing a different plugin
 or Profile does not silently change running parameters.
 
 Current edits survive page navigation. Refresh initializes current values from
-the backend's accepted modules; unapplied browser edits are not stored on disk.
-Connect and Start use one backend request. A failed request preserves current
+the server's accepted modules; unapplied browser edits are not stored on disk.
+Connect and Start use one server request. A failed request preserves current
 edits; confirmed application advances only that request's editor baseline.
 Concurrent edits from another client produce a revision conflict instead of
 being overwritten by an automatic refresh and retry.
 When a conflict exists, **Load accepted configuration** explicitly replaces that
-module's edits with the backend values and resets its editor baseline.
+module's edits with the server values and resets its editor baseline.
 Decoder current values and Profiles include the channel mapping described in
 [channel mapping](channel-mapping.md). An empty output list explicitly selects
 all source signal channels; live source metadata remains authoritative.
@@ -73,7 +73,7 @@ a newer saved revision can be shown as changed since application.
 ## Storage and ownership
 
 The root is `OMNIBCI_CONFIG_DIR` when set, otherwise
-`platformdirs.user_config_path("OmniBCI", appauthor=False)` on the backend machine.
+`platformdirs.user_config_path("OmniBCI", appauthor=False)` on the server machine.
 
 ```text
 plugin-profiles/<uuid>/current.toml
@@ -94,12 +94,12 @@ an empty table is an accepted empty configuration. The first module application
 includes declared initial Engine defaults in its plan if they have not yet been
 accepted. Starting an empty engine can also accept these defaults without selecting plugins.
 
-Backend startup settings share this file but retain separate revision checks.
+Server startup settings share this file but retain separate revision checks.
 Both writers use `.host-settings.lock` and atomic replacement, changing only
 their own fields. A failed Engine application restores only `[engine]`, preserving
-Backend saves. Engine review submits current values directly; only Backend
-startup settings use the settings Save action. The old `activation/system.toml`
-and `locks/system.lock` are no longer read or written.
+Server saves. Engine review submits current values directly; only Server
+startup settings use the settings Save action. Engine settings have no separate
+activation file or lock.
 
 Atomic replacement preserves the prior file on write failure. Profiles are
 format version 2 with exact package pins. Legacy flat profile files and the old

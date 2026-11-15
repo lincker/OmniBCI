@@ -15,7 +15,7 @@ def frame(sequence=0, capture="a", generation="g", values=None):
                              timestamp_ns="1800000000000000001", original_shape=[2, 2],
                              dtype="float64", row_indices=[0, 1], sample_start=0, sample_count=2,
                              values=np.array([[1, 2], [0, 1]]) if values is None else values,
-                             descriptor=None, connection_id="c", source_id="s", acquisition_revision="r", system_revision="system",
+                             descriptor=None, connection_id="c", source_id="s", acquisition_revision="r", engine_revision="engine",
                              trigger_row_index=1))
 
 

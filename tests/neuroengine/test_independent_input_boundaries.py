@@ -75,7 +75,7 @@ def input_pair(monkeypatch, data=None):
     acquisition = AcquisitionRuntime(
         source, Queue(), data, SimpleNamespace(put_event=events.append),
         source_id=plan.source.source_id,
-        processing_active=gate, generation="generation-one", system_revision="system",
+        processing_active=gate, generation="generation-one", engine_revision="engine",
         acquisition_revision=plan.acquisition_revision,
     )
     acquisition.connection_id = plan.source.connection_id
@@ -101,7 +101,7 @@ async def test_attach_and_detach_use_fifo_without_stopping_source_or_replaying_g
     assert processor._last_sequence == 4
     data.put_data(SignalChunk(0, 5, np.zeros((4, 3))))
     acquisition._last_sequence = acquisition._last_processing_sequence = 5
-    identity = {"generation": acquisition.generation, "system_revision": acquisition.system_revision,
+    identity = {"generation": acquisition.generation, "engine_revision": acquisition.engine_revision,
                 "expected_revision": acquisition.acquisition_revision}
     await acquisition.execute((AcquisitionCommand.detach_processing, CommandRequest("detach", identity)))
     assert not data.has_consumer
@@ -185,19 +185,19 @@ async def test_processing_readiness_wait_does_not_block_acquisition_stop():
 def test_source_reset_rejects_old_identity_and_preserves_processing_runtime(monkeypatch):
     _, processor, _, receipt, events = input_pair(monkeypatch)
     processor._reset_input(CommandRequest("wrong-source", {
-        "generation": "generation-one", "system_revision": "system",
+        "generation": "generation-one", "engine_revision": "engine",
         "expected_acquisition_revision": "old-source",
     }))
     assert not events.pop().data.ok
     assert processor._signal_receipt == receipt
     processor._reset_input(CommandRequest("old-input-fault", {
-        "generation": "generation-one", "system_revision": "system",
+        "generation": "generation-one", "engine_revision": "engine",
         "expected_acquisition_revision": receipt["acquisition_revision"], "input_id": "old-input",
     }))
     assert not events.pop().data.ok
     assert processor._signal_receipt == receipt
     processor._reset_input(CommandRequest("source-exited", {
-        "generation": "generation-one", "system_revision": "system",
+        "generation": "generation-one", "engine_revision": "engine",
         "expected_acquisition_revision": receipt["acquisition_revision"],
     }))
     result = events.pop().data
@@ -218,7 +218,7 @@ async def test_full_processing_queue_does_not_stop_acquisition_or_preview():
                              stop_stream=AsyncMock())
     source.stop_stream.side_effect = lambda: setattr(source, "is_streaming", False)
     acquisition = AcquisitionRuntime(source, Queue(), data, SimpleNamespace(put_event=events.append),
-                                     source_id="source", generation="run", system_revision="system",
+                                     source_id="source", generation="run", engine_revision="engine",
                                      acquisition_revision="acquisition", processing_active=gate)
     acquisition._processing_receipt = {"input_id": "input-one"}
     acquisition.preview = SimpleNamespace(active=True, offer=MagicMock(), finish=MagicMock())
@@ -233,11 +233,11 @@ async def test_full_processing_queue_does_not_stop_acquisition_or_preview():
 
 
 def test_engine_routes_input_fault_with_attachment_identity_only_to_processing():
-    engine = _make_engine(generation="run", system_revision="system",
+    engine = _make_engine(generation="run", engine_revision="engine",
                           module_revisions={"acquisition": "acquisition", "processing": "processing"})
     engine._ready_modules.add("processing")
     engine.signal_processing_worker.is_alive.return_value = True
-    fault = {"generation": "run", "system_revision": "system", "acquisition_revision": "acquisition",
+    fault = {"generation": "run", "engine_revision": "engine", "acquisition_revision": "acquisition",
              "input_id": "failed-input", "reason": "queue full"}
     engine._on_processing_input_fault(Event(EventType.ProcessingInputFault, fault))
     command, request = engine.processor_command_queue.put_nowait.call_args.args[0]

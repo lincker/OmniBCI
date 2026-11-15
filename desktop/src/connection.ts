@@ -7,11 +7,11 @@ type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
 interface Target { url: string; token: string; instance: string }
 export const CONNECTION_HEADER = "X-OmniBCI-Connection-Id";
 
-export function backendOrigin(value: string): string {
+export function serverOrigin(value: string): string {
   const url = new URL(value);
   if (!["http:", "https:"].includes(url.protocol) || !url.hostname || url.username || url.password
     || url.search || url.hash || url.pathname !== "/") {
-    throw new Error("Enter an HTTP(S) backend origin without a path or credentials.");
+    throw new Error("Enter an HTTP(S) server origin without a path or credentials.");
   }
   return url.origin;
 }
@@ -31,8 +31,8 @@ export function proxyError(status: number, message: string): Response {
   return Response.json({ success: false, code: "DESKTOP_CONNECTION_ERROR", message }, { status });
 }
 
-/** Owns one selected backend. Every asynchronous operation captures its generation. */
-export class BackendConnection extends EventEmitter {
+/** Owns one selected server. Every asynchronous operation captures its generation. */
+export class ServerConnection extends EventEmitter {
   info: ConnectionInfo = { id: "", kind: null, status: "disconnected" };
   private target?: Target;
   private controllers = new Set<AbortController>();
@@ -45,22 +45,22 @@ export class BackendConnection extends EventEmitter {
   }
 
   private async identify(url: string, token: string, signal?: AbortSignal): Promise<string> {
-    const response = await this.fetcher(url + "/api/v1/system/info", {
+    const response = await this.fetcher(url + "/api/v1/server/info", {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
       redirect: "error", credentials: "omit", signal: signal ?? AbortSignal.timeout(10_000),
     });
-    if (!response.ok) throw new Error(`Backend handshake failed (HTTP ${response.status}).`);
+    if (!response.ok) throw new Error(`Server handshake failed (HTTP ${response.status}).`);
     const envelope = await response.json();
     const value = envelope?.data;
     if (envelope?.success !== true || value?.desktop_api_version !== 1 || value?.auth_enabled !== true
       || typeof value?.instance_id !== "string" || !value.instance_id || typeof value?.app_version !== "string") {
-      throw new Error("The backend must be upgraded and token authentication enabled.");
+      throw new Error("The server must support desktop protocol 1 and enable token authentication.");
     }
     return value.instance_id;
   }
 
   async connect(kind: "local" | "remote", address: string, token: string, expectedInstance?: string): Promise<void> {
-    const url = backendOrigin(address);
+    const url = serverOrigin(address);
     if (typeof token !== "string" || !token.trim() || /[\r\n]/.test(token)) throw new Error("An access token is required.");
     this.disconnect();
     const id = randomUUID();
@@ -70,7 +70,7 @@ export class BackendConnection extends EventEmitter {
     try {
       const instance = await this.identify(url, token, AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]));
       if (this.info.id !== id) throw new Error("Connection changed.");
-      if (expectedInstance && instance !== expectedInstance) throw new Error("Local backend identity did not match its launch.");
+      if (expectedInstance && instance !== expectedInstance) throw new Error("Local server identity did not match its launch.");
       this.target = { url, token, instance };
       this.publish({ status: "ready", error: undefined });
     } catch (error) {
@@ -102,9 +102,9 @@ export class BackendConnection extends EventEmitter {
   async request(path: string, init: RequestInit = {}, connectionId = this.info.id): Promise<Response> {
     const target = this.target;
     if (!target || !connectionId || connectionId !== this.info.id) return proxyError(409, "Connection changed or disconnected.");
-    if (this.info.status === "failed" || this.info.status === "connecting") return proxyError(503, "Backend connection is unavailable.");
+    if (this.info.status === "failed" || this.info.status === "connecting") return proxyError(503, "Server connection is unavailable.");
     const method = (init.method ?? "GET").toUpperCase();
-    if (this.info.status === "stopping" && !["GET", "HEAD"].includes(method)) return proxyError(409, "The backend is stopping.");
+    if (this.info.status === "stopping" && !["GET", "HEAD"].includes(method)) return proxyError(409, "The server is stopping.");
     if (!["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].includes(method)) return proxyError(405, "Method not allowed.");
     let destination: string;
     try { destination = target.url + apiPath(path); }
@@ -150,8 +150,8 @@ export class BackendConnection extends EventEmitter {
       }), { status: response.status, headers: responseHeaders });
     } catch (error) {
       this.controllers.delete(controller);
-      if (!signal.aborted && this.info.id === connectionId) this.failed("Connection lost; backend state is unknown.");
-      return proxyError(503, signal.aborted ? "Request canceled; check backend state before retrying." : "Backend request failed.");
+      if (!signal.aborted && this.info.id === connectionId) this.failed("Connection lost; server state is unknown.");
+      return proxyError(503, signal.aborted ? "Request canceled; check server state before retrying." : "Server request failed.");
     }
   }
 
@@ -178,16 +178,16 @@ export class BackendConnection extends EventEmitter {
         socket.on("open", () => { if (id === this.info.id && this.info.status !== "stopping") this.publish({ status: "ready", error: undefined }); emit({ type: "open" }); });
         socket.on("message", data => emit({ type: "message", data: data.toString() }));
         socket.on("error", () => {
-          if (!canceled && id === this.info.id && this.info.status !== "stopping") this.failed("Results connection failed; backend state is unknown.");
+          if (!canceled && id === this.info.id && this.info.status !== "stopping") this.failed("Results connection failed; server state is unknown.");
           emit({ type: "error", data: "Results connection failed." });
         });
         socket.on("close", () => {
           this.sockets.delete(socket!);
-          if (!canceled && id === this.info.id && this.info.status !== "stopping") this.failed("Connection lost; backend state is unknown.");
+          if (!canceled && id === this.info.id && this.info.status !== "stopping") this.failed("Connection lost; server state is unknown.");
           emit({ type: "closed" });
         });
       } catch {
-        if (!canceled && id === this.info.id) this.failed("Results connection failed; backend state is unknown.");
+        if (!canceled && id === this.info.id) this.failed("Results connection failed; server state is unknown.");
         emit({ type: "closed" });
       }
     })();
@@ -196,7 +196,7 @@ export class BackendConnection extends EventEmitter {
 }
 
 /** The immutable initiator identity is supplied by Electron, never by page headers. */
-export async function handleApiRequest(connection: BackendConnection,
+export async function handleApiRequest(connection: ServerConnection,
   request: Request & { initiatorOrigin?: string }, devOrigin?: string): Promise<Response> {
   const origin = request.initiatorOrigin;
   if (origin !== "app://omnibci" && (!devOrigin || origin !== devOrigin)) return proxyError(403, "Untrusted request origin.");

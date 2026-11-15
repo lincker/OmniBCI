@@ -101,7 +101,7 @@ class AcquisitionRuntime:
         source_id: str,
         generation: str | None = None,
         acquisition_revision: str | None = None,
-        system_revision: str | None = None,
+        engine_revision: str | None = None,
         preview_queue=None,
         processing_active=None,
         runtime_counters=None,
@@ -121,7 +121,7 @@ class AcquisitionRuntime:
         self._processing_failed = False
         self.generation = generation
         self.acquisition_revision = acquisition_revision
-        self.system_revision = system_revision
+        self.engine_revision = engine_revision
         self._runtime_counters = runtime_counters
         self._last_sequence = runtime_counters[2] if runtime_counters is not None else -1
         self._last_processing_sequence = self._last_sequence
@@ -218,7 +218,7 @@ class AcquisitionRuntime:
                 if self.processing_active is not None and not self.processing_active.is_set():
                     data = StreamDrainReceipt(
                         generation=self.generation, acquisition_revision=self.acquisition_revision,
-                        system_revision=self.system_revision, last_sequence=self._last_sequence,
+                        engine_revision=self.engine_revision, last_sequence=self._last_sequence,
                         completed_trials=0, interrupted_epoch=False,
                     ).to_dict()
                     self._emit_command_result(request, command, ok=True, data=data)
@@ -226,7 +226,7 @@ class AcquisitionRuntime:
                 try:
                     self.data_manager.put_data(StreamBarrier(
                         request.command_id, self.generation, self.acquisition_revision,
-                        self._last_processing_sequence, system_revision=self.system_revision,
+                        self._last_processing_sequence, engine_revision=self.engine_revision,
                         input_id=(self._processing_receipt or {}).get("input_id"),
                     ))
                 except Full:
@@ -275,7 +275,7 @@ class AcquisitionRuntime:
 
     def _preview_identity(self) -> dict:
         return {"generation": self.generation, "acquisition_revision": self.acquisition_revision,
-                "system_revision": self.system_revision,
+                "engine_revision": self.engine_revision,
                 "source_id": self.source_id, "connection_id": self.connection_id}
 
     def _preview_command(self, command, request) -> dict:
@@ -312,7 +312,7 @@ class AcquisitionRuntime:
             payload = request.payload
             if (not isinstance(payload, dict) or payload.get("generation") != self.generation
                     or payload.get("expected_revision") != self.acquisition_revision
-                    or payload.get("system_revision") != self.system_revision):
+                    or payload.get("engine_revision") != self.engine_revision):
                 raise ValueError("Acquisition command belongs to a different runtime generation or revision")
             self._require_healthy_stream()
             if self.data_source.is_streaming or self.fetch_task is not None:
@@ -330,7 +330,7 @@ class AcquisitionRuntime:
                 self.data_source.restore_checkpoint(payload.get("checkpoint"))
                 data = {"restored": True}
             data.update(generation=self.generation, acquisition_revision=self.acquisition_revision,
-                        system_revision=self.system_revision)
+                        engine_revision=self.engine_revision)
             self._emit_command_result(request, command, ok=True, data=data)
         except Exception as exc:
             self._emit_command_result(request, command, ok=False, message=str(exc),
@@ -532,7 +532,7 @@ class AcquisitionRuntime:
     def _validate_signal_receipt(self, receipt) -> None:
         expected = {
             "generation": self.generation, "acquisition_revision": self.acquisition_revision,
-            "system_revision": self.system_revision, "connection_id": self.connection_id,
+            "engine_revision": self.engine_revision, "connection_id": self.connection_id,
             "source_fingerprint": self._descriptor.fingerprint if self._descriptor else None,
         }
         if (not isinstance(receipt, dict) or self._descriptor is None
@@ -562,7 +562,7 @@ class AcquisitionRuntime:
                 self._processing_failed = False
                 self.processing_active.set()
             else:
-                expected = {"generation": self.generation, "system_revision": self.system_revision,
+                expected = {"generation": self.generation, "engine_revision": self.engine_revision,
                             "expected_revision": self.acquisition_revision}
                 if not isinstance(payload, dict) or any(payload.get(key) != value for key, value in expected.items()):
                     raise ValueError("Processing input belongs to another acquisition runtime")
@@ -573,14 +573,14 @@ class AcquisitionRuntime:
                 if (attached or self._processing_receipt is not None) and payload.get("drain", True):
                     self.data_manager.put_data(StreamBarrier(
                         request.command_id, self.generation, self.acquisition_revision,
-                        self._last_processing_sequence, system_revision=self.system_revision,
+                        self._last_processing_sequence, engine_revision=self.engine_revision,
                         command=EventType.DetachProcessingInput.name,
                         input_id=(self._processing_receipt or {}).get("input_id"),
                     ))
                 else:
                     data = StreamDrainReceipt(self.generation, self.acquisition_revision,
                                               self._last_sequence, 0, False,
-                                              system_revision=self.system_revision).to_dict()
+                                              engine_revision=self.engine_revision).to_dict()
                     self._emit_command_result(request, command, ok=True, data=data)
                 self._processing_receipt = None
         except Full:
@@ -668,7 +668,7 @@ class AcquisitionRuntime:
             try:
                 self.data_manager.put_data(StreamBarrier(
                     None, self.generation, self.acquisition_revision, self._last_processing_sequence,
-                    system_revision=self.system_revision,
+                    engine_revision=self.engine_revision,
                     command=EventType.DetachProcessingInput.name if detach else EventType.StopAndDrain.name,
                     input_id=(self._processing_receipt or {}).get("input_id"),
                 ))
@@ -684,7 +684,7 @@ class AcquisitionRuntime:
         logger.error("Processing input disabled: %s", reason)
         if self.event_bus is not None:
             self.event_bus.put_event(Event(EventType.ProcessingInputFault, {
-                "generation": self.generation, "system_revision": self.system_revision,
+                "generation": self.generation, "engine_revision": self.engine_revision,
                 "acquisition_revision": self.acquisition_revision,
                 "input_id": (receipt or {}).get("input_id"), "reason": reason,
             }))

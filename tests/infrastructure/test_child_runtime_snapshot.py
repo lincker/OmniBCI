@@ -27,7 +27,7 @@ MANAGERS = (
 def _snapshot(key, revision="revision-1"):
     snapshot = {
         key: "selected-plugin",
-        "CONFIG.module_revisions": {"acquisition": revision, "processing": revision, "stimulation": revision, "actuation": revision}, "CONFIG.system_revision": "system",
+        "CONFIG.module_revisions": {"acquisition": revision, "processing": revision, "stimulation": revision, "actuation": revision}, "CONFIG.engine_revision": "engine",
         "CONFIG.generation": "graph-1",
         "STIMULATION.auto_spawn": True,
         "ACTUATION.auto_spawn": True,
@@ -55,7 +55,7 @@ def _mock_spawning(monkeypatch, module, component):
         snapshot = kwargs.get("kwargs", {}).get("settings_snapshot", {})
         receiver.recv.return_value = StartupReport.ready(
             component, module_revisions={component.lower(): snapshot["CONFIG.module_revisions"][component.lower()]},
-            system_revision=snapshot["CONFIG.system_revision"],
+            engine_revision=snapshot["CONFIG.engine_revision"],
             generation=snapshot.get("CONFIG.generation"),
         )
         child = Mock(pid=123, exitcode=0)
@@ -130,7 +130,7 @@ def test_processing_update_does_not_restart_or_relabel_output_child(monkeypatch,
 
 
 @pytest.mark.parametrize(("module", "manager_class", "component", "key"), MANAGERS)
-@pytest.mark.parametrize("field", ["own", "CONFIG.system_revision", "CONFIG.generation"])
+@pytest.mark.parametrize("field", ["own", "CONFIG.engine_revision", "CONFIG.generation"])
 def test_output_child_restarts_for_own_identity_changes(monkeypatch, module, manager_class, component, key, field):
     factory = _mock_spawning(monkeypatch, module, component)
     manager = manager_class()
@@ -218,7 +218,7 @@ def _ready_with_current_plugin_directory(*args, settings_snapshot):
     reporter = StartupReporter(
         connection, component=settings_snapshot["TEST.component"],
         module_revisions={settings_snapshot["TEST.component"].lower(): settings_snapshot["CONFIG.module_revisions"][settings_snapshot["TEST.component"].lower()]},
-        system_revision=settings_snapshot["CONFIG.system_revision"],
+        engine_revision=settings_snapshot["CONFIG.engine_revision"],
         generation=settings_snapshot["CONFIG.generation"],
     )
     if os.environ.get("OMNIBCI_PLUGIN_DIR") != settings_snapshot["TEST.plugin_dir"]:

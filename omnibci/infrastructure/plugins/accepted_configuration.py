@@ -19,10 +19,10 @@ def accepted_runtime_settings(*, profiles=None, active_kinds=None) -> dict:
             modules.add("acquisition")
         accepted = ActivationSet(
             {module: profiles.repository.get_module(module) for module in modules},
-            profiles.repository.get_system(),
+            profiles.repository.get_engine(),
         )
-        if accepted.system is None:
-            raise PluginSchemaError("System settings are not selected; apply module configuration before starting")
+        if accepted.engine is None:
+            raise PluginSchemaError("Engine settings are not selected; apply module configuration before starting")
         required = {
             "acquisition": "acquisition.source", "decoder": "processing.decoder",
             "epoch_detector": "processing.epoch_detector", "paradigm": "stimulation.paradigm",

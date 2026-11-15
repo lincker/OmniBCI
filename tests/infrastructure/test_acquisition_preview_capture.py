@@ -18,7 +18,7 @@ from omnibci.infrastructure.acquisition.preview_capture import PreviewCapture
 from omnibci.infrastructure.ipc.data_manager import DataManager
 
 
-IDENTITY = {"generation": "run", "acquisition_revision": "revision", "system_revision": "system", "connection_id": "connection",
+IDENTITY = {"generation": "run", "acquisition_revision": "revision", "engine_revision": "engine", "connection_id": "connection",
             "source_id": "source"}
 
 
@@ -92,7 +92,7 @@ def test_a_second_start_is_rejected_and_stale_stop_cannot_end_current_capture():
     assert producer.snapshot()["observed"] == 0
 
 
-@pytest.mark.parametrize("field", ["generation", "acquisition_revision", "system_revision", "connection_id", "source_id"])
+@pytest.mark.parametrize("field", ["generation", "acquisition_revision", "engine_revision", "connection_id", "source_id"])
 def test_frames_from_a_read_started_in_another_context_are_ignored(field):
     producer, frames = capture()
     producer.offer(chunk(), {**IDENTITY, field: "old"})
@@ -162,7 +162,7 @@ def runtime(source=None, frames=None):
     events, main = [], Queue()
     acquisition = AcquisitionRuntime(
         source or Source(), Queue(), DataManager(main), SimpleNamespace(put_event=events.append),
-        source_id="source", generation="run", acquisition_revision="revision", system_revision="system",
+        source_id="source", generation="run", acquisition_revision="revision", engine_revision="engine",
         preview_queue=Queue() if frames is None else frames,
     )
     acquisition.connection_id = "connection"

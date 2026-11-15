@@ -49,7 +49,7 @@ def test_standalone_and_managed_projection_match_after_saved_profile_edit(profil
     standalone = accepted_runtime_settings(profiles=profiles, active_kinds={"effector"})
 
     assert standalone == profiles.materialize(ActivationSet(
-        {"actuation": accepted.modules["actuation"]}, accepted.system,
+        {"actuation": accepted.modules["actuation"]}, accepted.engine,
     ))
     assert "ACQUISITION.sample_rate" not in standalone
     assert standalone["CONFIG.module_revisions"]["acquisition"] is None
@@ -88,7 +88,7 @@ def test_stimulation_accepts_an_explicit_configuration_without_trigger(profiles)
     accepted = profiles.repository.get_activation_set()
     snapshot = accepted_runtime_settings(profiles=profiles, active_kinds={"paradigm", "trigger"})
     assert snapshot == profiles.materialize(ActivationSet(
-        {"stimulation": accepted.modules["stimulation"]}, accepted.system,
+        {"stimulation": accepted.modules["stimulation"]}, accepted.engine,
     ))
     assert not any(binding["slot"] == "stimulation.trigger" for binding in snapshot["PLUGINS.bindings"])
     assert profiles.repository.get_activation_set() == accepted
@@ -142,12 +142,12 @@ def test_unavailable_active_output_is_rejected_before_launch(profiles, monkeypat
     ("stimulation", "Stimulation"),
     ("actuation", "Actuation"),
 ])
-def test_scripts_start_backend_configured_supervisor(monkeypatch, role, class_name):
+def test_scripts_start_server_configured_supervisor(monkeypatch, role, class_name):
     script = import_module(f"scripts.run_{role}")
     supervisor = Mock()
     application = Mock()
     monkeypatch.setattr(script, "run_configured_node", supervisor)
     monkeypatch.setattr(script, class_name, application)
-    script.main(["--backend", "http://192.0.2.1:8000"])
-    supervisor.assert_called_once_with(role, application, backend_url="http://192.0.2.1:8000")
+    script.main(["--server", "http://192.0.2.1:8000"])
+    supervisor.assert_called_once_with(role, application, server_url="http://192.0.2.1:8000")
     application.assert_not_called()

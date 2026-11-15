@@ -24,15 +24,15 @@ def test_output_changes_do_not_invalidate_processing_replacement():
     assert before["CONFIG.module_revisions"]["processing"] == "old"
 
 
-@pytest.mark.parametrize("field", ["CONFIG.system_revision", "acquisition"])
+@pytest.mark.parametrize("field", ["CONFIG.engine_revision", "acquisition"])
 def test_processing_replacement_rejects_changed_dependency(field):
     before = selected_snapshot()
     after = deepcopy(before)
     if field == "acquisition":
         after["CONFIG.module_revisions"][field] = "different-source"
     else:
-        after[field] = "different-system"
-    with pytest.raises(ValueError, match="Source or system"):
+        after[field] = "different-engine"
+    with pytest.raises(ValueError, match="Source or Engine"):
         _build(before, after)
 
 

@@ -8,7 +8,7 @@ export function openResultsSocket(listener: (event: ResultsEvent) => void): Resu
   const desktop = desktopBridge();
   if (desktop) {
     const owner = currentConnection()?.id;
-    if (!owner) throw new Error("No backend connection selected.");
+    if (!owner) throw new Error("No server connection selected.");
     let closed = false;
     const unsubscribe = desktop.subscribeResults(owner, (event) => {
       if (!closed && currentConnection()?.id === owner) listener(event);

@@ -44,7 +44,7 @@ def command_scopes(event_type):
                               (300, "stimulation"), (400, "actuation")):
             if lower <= int(event_type) < lower + 100:
                 return (module,)
-    return ("system",)
+    return ("engine",)
 
 
 class CommandExecutor(Protocol):

@@ -205,12 +205,12 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
   data.profileKinds = [];
   configure?.(data);
   const modules = ["acquisition", "processing", "stimulation", "actuation"];
-  data.revisions = Object.fromEntries([...modules, "system"].map((module) => [module, data.activation ? `${module}-accepted` : null]));
+  data.revisions = Object.fromEntries([...modules, "engine"].map((module) => [module, data.activation ? `${module}-accepted` : null]));
   data.modules = () => ({ modules: Object.fromEntries(modules.map((module) => [module, {
     module, revision: data.revisions[module], settings: Object.fromEntries(Object.entries(data.activation?.settings ?? {})
       .filter(([key]) => key.startsWith(`${module.toUpperCase()}.`) || module === "processing" && key === "ALGORITHM.baseline_duration")),
     bindings: clone((data.activation?.bindings ?? []).filter((binding) => binding.slot.startsWith(`${module}.`))),
-  }])), system: { revision: data.revisions.system, settings: {} } });
+  }])), engine: { revision: data.revisions.engine, settings: {} } });
   const runtimeStatus = { recovery: {}, operations: {}, running: engineRunning, accepted: clone(data.revisions),
     applied: engineRunning ? clone(data.revisions) : null, generation: engineRunning ? "generation-a" : null };
   const calls = { create: [], connect: [] };
@@ -237,7 +237,7 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
       ...body.bindings.map((item) => ({ ...clone(item), kind: "acquisition", configuration_version: item.configuration_version ?? 1,
         profile_id: null, profile_revision: null }))];
     data.revisions.acquisition = `connection-${calls.connect.length}`;
-    data.revisions.system ??= "system-first";
+    data.revisions.engine ??= "engine-first";
     runtimeStatus.running = true; runtimeStatus.generation = "generation-a";
     runtimeStatus.accepted = clone(data.revisions); runtimeStatus.applied = clone(data.revisions);
     data.source.connected = true; data.source.connection_id = "connection-a";
@@ -1087,10 +1087,10 @@ test("a successful history revert replaces only that module current values and f
   });
 });
 
-test("a changed shared system revision invalidates source observations without changing its module hash", async () => {
+test("a changed shared engine revision invalidates source observations without changing its module hash", async () => {
   await withProfiles("acquisition", async (h, _, data) => {
     assert.equal(metadata(h).props.canRead, true);
-    data.runtime.status.accepted = { ...data.runtime.status.accepted, system: "new-system" };
+    data.runtime.status.accepted = { ...data.runtime.status.accepted, engine: "new-engine" };
     h.updateProps({ runtime: data.runtime }); await h.settle();
     assert.equal(metadata(h).props.canRead, false);
   }, { engineRunning: true });

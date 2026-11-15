@@ -35,7 +35,7 @@ def _snapshot(revision="revision-1"):
     return {
         "CONFIG.module_revisions": {"acquisition": revision, "processing": revision,
                                     "stimulation": revision, "actuation": revision},
-        "CONFIG.system_revision": "system-1",
+        "CONFIG.engine_revision": "engine-1",
         "ACQUISITION.sample_rate": 250,
         "STIMULATION.paradigm": "selected-paradigm",
         "ACTUATION.effector": "selected-effector",

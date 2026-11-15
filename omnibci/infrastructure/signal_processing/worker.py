@@ -72,7 +72,7 @@ class SignalProcessingWorker(mp.Process):
             generation=(self.settings_snapshot or {}).get("CONFIG.generation"),
             processing_revision=(self.settings_snapshot or {}).get("CONFIG.module_revisions", {}).get("processing"),
             acquisition_revision=(self.settings_snapshot or {}).get("CONFIG.module_revisions", {}).get("acquisition"),
-            system_revision=(self.settings_snapshot or {}).get("CONFIG.system_revision"),
+            engine_revision=(self.settings_snapshot or {}).get("CONFIG.engine_revision"),
             settings_snapshot=self._snapshot(),
             runtime_counters=self.runtime_counters,
         )

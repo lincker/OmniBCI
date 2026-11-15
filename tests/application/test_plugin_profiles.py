@@ -8,7 +8,7 @@ import pytest
 from omnibci.application.plugin_profiles import (
     ActivationSet, ModuleActivation, ModuleActivationRevision, PluginProfile,
     PluginProfileValidationError, PluginSelection, ProfileBinding, ProfileRevision,
-    SystemSettings, module_for_slot,
+    EngineSettings, module_for_slot,
 )
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 
@@ -105,7 +105,7 @@ def test_module_and_setting_ownership_are_checked():
         with pytest.raises(PluginProfileValidationError):
             ModuleActivation(module, settings, bindings)
     with pytest.raises(PluginProfileValidationError):
-        SystemSettings({"ACTUATION.auto_spawn": True})
+        EngineSettings({"ACTUATION.auto_spawn": True})
 
 
 @pytest.mark.parametrize("version", [None, "", "*", ">=1", "1.0.*", " 1.0.0", "1.0.0."])
@@ -133,7 +133,7 @@ def test_stored_revisions_and_removed_fields_are_verified():
         with pytest.raises(PluginProfileValidationError):
             ModuleActivation.from_dict(changed)
     with pytest.raises(PluginProfileValidationError, match="revision"):
-        SystemSettings.from_dict({"settings": {"debug": True}, "revision": "0" * 64})
+        EngineSettings.from_dict({"settings": {"debug": True}, "revision": "0" * 64})
     profile = PluginProfile(str(uuid4()), "Source", "acquisition", _binding().selection, {})
     with pytest.raises(PluginProfileValidationError):
         PluginProfile.from_dict({**profile.to_dict(), "manual_montage": {}})
@@ -144,12 +144,12 @@ def test_stored_revisions_and_removed_fields_are_verified():
 def test_activation_set_keeps_absence_explicit_and_copies_mapping():
     acquisition = ModuleActivation("acquisition", {}, ())
     modules = {"acquisition": acquisition}
-    selected = ActivationSet(modules, SystemSettings({"NEUROENGINE.queue_size": 20, "debug": False}))
+    selected = ActivationSet(modules, EngineSettings({"NEUROENGINE.queue_size": 20, "debug": False}))
     modules.clear()
     assert selected.modules["acquisition"] == acquisition
     assert selected.modules["processing"] is None
     assert selected.revisions()["processing"] is None
-    assert selected.revisions()["system"] == selected.system.revision
+    assert selected.revisions()["engine"] == selected.engine.revision
     assert selected.settings() == {"NEUROENGINE.queue_size": 20, "debug": False}
     with pytest.raises(TypeError):
         selected.modules["processing"] = None

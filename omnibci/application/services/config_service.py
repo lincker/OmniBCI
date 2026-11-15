@@ -1,11 +1,11 @@
-"""Backend startup settings share storage with independently applied Engine settings."""
+"""Server startup settings share storage with independently applied Engine settings."""
 
 import math
 import threading
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
-from omnibci.application.activation_settings import backend_startup_settings
+from omnibci.application.activation_settings import server_startup_settings
 from omnibci.conf import OmniBCISettings
 
 
@@ -18,10 +18,10 @@ class ConfigPolicy:
 
 # Engine and module settings are written only by their runtime application flow.
 CONFIG_WHITELIST: Dict[str, ConfigPolicy] = {
-    "LOGGING.level": ConfigPolicy("string", "backend-restart", "Backend logging level"),
-    "LOGGING.file_path": ConfigPolicy("string", "backend-restart", "Log path; relative paths use the user log directory"),
-    "NEUROENGINE.command_timeout_s": ConfigPolicy("float", "backend-restart", "Seconds to wait for a module command result"),
-    "PLUGINS.user_dir": ConfigPolicy("string", "backend-restart", "Plugin directory default; OMNIBCI_PLUGIN_DIR overrides it at backend startup"),
+    "LOGGING.level": ConfigPolicy("string", "server-restart", "Server logging level"),
+    "LOGGING.file_path": ConfigPolicy("string", "server-restart", "Log path; relative paths use the user log directory"),
+    "NEUROENGINE.command_timeout_s": ConfigPolicy("float", "server-restart", "Seconds to wait for a module command result"),
+    "PLUGINS.user_dir": ConfigPolicy("string", "server-restart", "Plugin directory default; OMNIBCI_PLUGIN_DIR overrides it at server startup"),
 }
 
 
@@ -59,17 +59,17 @@ class ConfigValidationError(ValueError):
 
 
 class ConfigService:
-    """Save backend values while retaining the snapshot captured at startup."""
+    """Save server values while retaining the snapshot captured at startup."""
 
     def __init__(self, settings: OmniBCISettings, *, active_settings: dict | None = None) -> None:
         self._settings = settings
-        self._active = backend_startup_settings(settings.saved_snapshot() if active_settings is None else active_settings)
+        self._active = server_startup_settings(settings.saved_snapshot() if active_settings is None else active_settings)
         self._write_lock = threading.RLock()
 
     def read(self) -> Tuple[List[dict], str]:
         with self._write_lock:
             saved, revision = self._settings.read_saved()
-        snapshot = backend_startup_settings(saved)
+        snapshot = server_startup_settings(saved)
         return [{
             "key": key,
             "value": snapshot.get(key),

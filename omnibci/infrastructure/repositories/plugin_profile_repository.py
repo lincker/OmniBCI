@@ -17,7 +17,7 @@ from omnibci.application.plugin_profiles import (
     PLUGIN_KINDS, ActivationSet, ModuleActivation, ModuleActivationRevision,
     PluginProfile, PluginProfileNotFoundError, PluginProfileStorageError,
     PluginProfileValidationError, ProfileRevision, ProfileRevisionConflict,
-    SystemSettings, validate_profile_id,
+    EngineSettings, validate_profile_id,
 )
 from omnibci.infrastructure.config_paths import config_root
 from omnibci.conf import OmniBCISettings
@@ -264,16 +264,16 @@ class TomlPluginProfileRepository:
         validate_profile_id(entry_id)
         return next((item for item in self.list_module_history(module) if item.entry_id == entry_id), None)
 
-    def get_system(self) -> SystemSettings | None:
-        return self._settings.get_system()
+    def get_engine(self) -> EngineSettings | None:
+        return self._settings.get_engine()
 
-    def save_system(self, settings: SystemSettings, expected_revision: str | None = None) -> SystemSettings:
+    def save_engine(self, settings: EngineSettings, expected_revision: str | None = None) -> EngineSettings:
         self._expected_revision(expected_revision)
-        return self._settings.save_system(settings, expected_revision)
+        return self._settings.save_engine(settings, expected_revision)
 
-    def remove_system(self, *, expected_revision: str) -> None:
+    def remove_engine(self, *, expected_revision: str) -> None:
         self._expected_revision(expected_revision)
-        self._settings.remove_system(expected_revision)
+        self._settings.remove_engine(expected_revision)
 
     def get_activation_set(self) -> ActivationSet:
         if not self.root.exists():
@@ -281,4 +281,4 @@ class TomlPluginProfileRepository:
         with ExitStack() as stack:
             for section in MODULES:
                 stack.enter_context(self._access(section))
-            return ActivationSet({module: self._read_module(module) for module in MODULES}, self.get_system())
+            return ActivationSet({module: self._read_module(module) for module in MODULES}, self.get_engine())

@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from omnibci.application.plugin_profiles import SystemSettings
+from omnibci.application.plugin_profiles import EngineSettings
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 
@@ -17,7 +17,7 @@ async def test_module_acknowledgement_and_rollback_preserve_concurrent_output_up
     service._running = service._accepting_commands = True
     service._engine_thread = Mock(is_alive=Mock(return_value=True))
     original = {
-        "CONFIG.generation": "generation", "CONFIG.system_revision": "system",
+        "CONFIG.generation": "generation", "CONFIG.engine_revision": "engine",
         "CONFIG.module_revisions": {"stimulation": "s0", "actuation": "e0"},
         "STIMULATION.renderer": "old", "ACTUATION.server_port": 1234,
         "PLUGINS.bindings": [
@@ -49,13 +49,13 @@ async def test_module_acknowledgement_and_rollback_preserve_concurrent_output_up
 
 def test_foundation_settings_do_not_parse_idle_module_files():
     repository = SimpleNamespace(
-        get_system=Mock(return_value=SystemSettings({})),
+        get_engine=Mock(return_value=EngineSettings({})),
         get_module=Mock(side_effect=ValueError("idle module is corrupt")),
         get_activation_set=Mock(side_effect=ValueError("idle module is corrupt")),
     )
     profiles = SimpleNamespace(repository=repository, materialize=lambda selected: selected,
                                validate_module=Mock())
     selected = accepted_runtime_settings(profiles=profiles, active_kinds=set())
-    assert selected.system is not None
+    assert selected.engine is not None
     repository.get_module.assert_not_called()
     repository.get_activation_set.assert_not_called()

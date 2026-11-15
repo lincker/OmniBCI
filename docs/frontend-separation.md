@@ -1,4 +1,4 @@
-# Web and backend contracts
+# Web and server contracts
 
 The React console in `frontend/` is shared by browsers and the Electron desktop
 application. The Python API owns configuration and runtime control. Acquisition
@@ -35,14 +35,18 @@ Acquisition stream. It does not start or reconfigure another module.
 See [stage2-design.md](stage2-design.md) for the operating sequence and
 [channel-mapping.md](channel-mapping.md) for input mapping.
 
-Settings / General separates Engine current values from Backend startup values.
+Settings / General separates Engine current values from Server startup values.
 Engine review posts explicit `settings` to `/config/apply-plan` with
-`module: "system"`; successful application saves `[engine]` in the user
-`settings.toml`. Backend Save uses `PATCH /config` with `expected_revision`.
+`module: "engine"`; successful application saves `[engine]` in the user
+`settings.toml`. Server Save uses `PATCH /config` with `expected_revision`.
 `GET /config` returns saved `value`, startup `active_value`, and `restart_required`
-for each Backend field; PATCH reports `backend_restart_required`. Restarting only
-the Engine does not apply pending Backend startup values. Sharing a file does not
+for each Server field; PATCH reports `server_restart_required`. Restarting only
+the Engine does not apply pending Server startup values. Sharing a file does not
 combine their revision checks or the four module configurations.
+
+Server diagnostics use `/server/info` and `/server/logs`. Desktop connections
+require `desktop_api_version: 1`; Engine configuration and status use the
+`engine` section and `engine_revision` fields throughout.
 
 ## REST
 
@@ -133,9 +137,9 @@ retained by the console.
 ## Browser and desktop transport
 
 Browsers use same-origin REST and WebSocket routes. Electron uses the same UI,
-with a restricted preload API and a main-process backend proxy. The main process
+with a restricted preload API and a main-process server proxy. The main process
 owns credentials, connection identity, local Python startup and shutdown, and the
-local recording-file picker. Switching backends cancels old requests and result
+local recording-file picker. Switching servers cancels old requests and result
 subscriptions. See [desktop.md](desktop.md) for packaging and connection details.
 
 ## Contract verification

@@ -193,7 +193,7 @@ function SchemaField({ schema, value, onChange, disabled, label }: FieldProps) {
         : <input id={id} type="number" value={typeof value === "number" || typeof value === "string" ? value : ""}
           min={schema.minimum} max={schema.maximum} step={schema.type === "integer" ? 1 : "any"} disabled={disabled}
           onChange={(event) => onChange(event.target.value === "" ? "" : Number(event.target.value))} />}
-    {schema["x-widget"] === "file-path" && <span className="setting-detail">{t("schema.backendPath")}</span>}
+    {schema["x-widget"] === "file-path" && <span className="setting-detail">{t("schema.serverPath")}</span>}
     {schema["x-scope"] === "machine" && <span className="setting-detail">{t("schema.machineSpecific")}</span>}
     {fileError && <span className="error" role="alert">{fileError}</span>}
   </div>;

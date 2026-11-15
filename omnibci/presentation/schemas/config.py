@@ -1,17 +1,17 @@
-"""Backend startup settings and the values captured by the running backend."""
+"""Server startup settings and the values captured by the running server."""
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class ConfigEntry(BaseModel):
     key: str = Field(..., description="Dotted host settings key")
-    value: Any = Field(..., description="Saved value for the next backend startup")
+    value: Any = Field(..., description="Saved value for the next server startup")
     type: str = Field(..., description="string | float")
-    requires: str = Field(..., description="backend-restart")
+    requires: Literal["server-restart"]
     description: str
-    active_value: Any = Field(..., description="Value captured when this backend started")
+    active_value: Any = Field(..., description="Value captured when this server started")
     restart_required: bool = Field(..., description="Saved value differs from the startup snapshot")
 
 
@@ -29,7 +29,8 @@ class PatchConfigRequest(BaseModel):
 
 
 class PatchConfigResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     saved: List[str]
     revision: str = Field(..., description="Revision after saving the host settings")
-    backend_restart_required: bool = Field(
-        ..., description="Whether any saved backend settings differ from the startup snapshot")
+    server_restart_required: bool = Field(
+        ..., description="Whether any saved server settings differ from the startup snapshot")

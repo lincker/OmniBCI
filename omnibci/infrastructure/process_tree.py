@@ -1,11 +1,11 @@
-"""Keep desktop-owned Windows subprocesses in the backend's lifetime."""
+"""Keep desktop-owned Windows subprocesses in the server's lifetime."""
 import os
 
 
 def own_windows_process_tree():
     """Keep the returned Job handle open until process exit kills descendants.
 
-    The backend itself belongs to the Job. Do not close the handle during normal
+    The server itself belongs to the Job. Do not close the handle during normal
     cleanup: closing it terminates this process as well as remaining children.
     """
     if os.name != "nt":

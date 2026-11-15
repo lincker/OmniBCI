@@ -7,7 +7,7 @@ import pytest
 
 from omnibci.application.plugin_profiles import (
     ActivationSet, ModuleActivation, PluginProfileNotFoundError, PluginSelection,
-    ProfileBinding, ProfileRevisionConflict, SystemSettings,
+    ProfileBinding, ProfileRevisionConflict, EngineSettings,
 )
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 from omnibci.application.plugin_schema import PluginSchemaError
@@ -138,17 +138,17 @@ def test_each_section_copies_only_its_owned_host_settings(service):
         candidate = service.propose(module, [], settings=section_settings(service.settings_source(), module))
         assert candidate.settings == settings
         service.repository.save_module(candidate, expected_revision=None)
-    assert service.repository.get_system() is None
-    system = service.propose_system(section_settings(service.settings_source(), "system"))
-    assert system.settings == {"NEUROENGINE.queue_size": 64, "debug": True}
-    service.repository.save_system(system, expected_revision=None)
+    assert service.repository.get_engine() is None
+    engine_settings = service.propose_engine(section_settings(service.settings_source(), "engine"))
+    assert engine_settings.settings == {"NEUROENGINE.queue_size": 64, "debug": True}
+    service.repository.save_engine(engine_settings, expected_revision=None)
     values = runtime(service)
-    assert values["CONFIG.system_revision"] == system.revision
+    assert values["CONFIG.engine_revision"] == engine_settings.revision
     assert set(values["CONFIG.module_revisions"]) == set(expected)
     assert not {"CONFIG.revision", "LOGGING.level", "unknown", "ACQUISITION.sample_rate"} & values.keys()
 
 
-def test_module_acceptance_preserves_other_modules_and_never_initializes_system(service):
+def test_module_acceptance_preserves_other_modules_and_never_initializes_engine(service):
     processing = service.repository.save_module(service.propose("processing", [], settings=section_settings(service.settings_source(), "processing")), expected_revision=None)
     source = select(service, create_source(service), "acquisition.source")
     service.settings_source = lambda: {"NEUROENGINE.queue_size": 250, "ALGORITHM.baseline_duration": 9.0}
@@ -158,15 +158,15 @@ def test_module_acceptance_preserves_other_modules_and_never_initializes_system(
     assert candidate.settings == {}
     assert candidate.revision == source.revision
     assert service.repository.get_module("processing") == processing
-    assert service.repository.get_system() is None
+    assert service.repository.get_engine() is None
 
 
 @pytest.mark.parametrize("key,value", [
     ("LOGGING.level", "DEBUG"), ("NEUROENGINE.command_timeout_s", 20.0), ("PLUGINS.user_dir", "/new/plugins"),
 ])
-def test_backend_startup_edits_do_not_block_system_candidates(service, key, value):
+def test_server_startup_edits_do_not_block_engine_candidates(service, key, value):
     service.settings_source = lambda: {key: value}
-    assert service.propose_system({"NEUROENGINE.queue_size": 32}).settings == {"NEUROENGINE.queue_size": 32}
+    assert service.propose_engine({"NEUROENGINE.queue_size": 32}).settings == {"NEUROENGINE.queue_size": 32}
     assert service.propose("processing", [], settings=section_settings(service.settings_source(), "processing")).settings == {}
 
 
@@ -179,7 +179,7 @@ def test_materialized_runtime_uses_pinned_source_values_and_generation(service):
     assert values["CONFIG.module_revisions"]["acquisition"] == source.revision
     assert values["CONFIG.generation"] == "run-1"
     assert values["CONFIG.module_revisions"]["processing"] is None
-    assert values["CONFIG.system_revision"] == SystemSettings({}).revision
+    assert values["CONFIG.engine_revision"] == EngineSettings({}).revision
 
 
 @pytest.mark.parametrize("kind,slot,alias", [
@@ -192,7 +192,7 @@ def test_idle_missing_source_package_does_not_block_foundation_or_outputs(servic
         replace(source.bindings[0], selection=PluginSelection("missing.source", "reader", "1.0.0")),
     ))
     service.repository.save_module(missing, expected_revision=source.revision)
-    service.repository.save_system(service.propose_system(section_settings(service.settings_source(), "system")), expected_revision=None)
+    service.repository.save_engine(service.propose_engine(section_settings(service.settings_source(), "engine")), expected_revision=None)
     plugin = definition(service, kind, alias)
     output = select(service, service.create(kind, plugin.selection, "Output", {}), slot)
     original_get = service.catalog.get
@@ -311,9 +311,9 @@ def test_profile_schema_unknown_parameters_are_still_rejected(service):
         service.create("acquisition", plugin.selection, "Invalid", {"unknown": True})
 
 
-def test_backend_restart_does_not_add_backend_values_to_runtime(service):
-    previous = service.repository.save_system(service.propose_system(section_settings(service.settings_source(), "system")), expected_revision=None)
+def test_server_restart_does_not_add_server_values_to_runtime(service):
+    previous = service.repository.save_engine(service.propose_engine(section_settings(service.settings_source(), "engine")), expected_revision=None)
     restarted = PluginProfileService(service.repository, service.catalog,
         settings_source=lambda: {"NEUROENGINE.queue_size": 100, "debug": False, "NEUROENGINE.command_timeout_s": 20.0})
-    assert restarted.propose_system(previous.settings) == previous
+    assert restarted.propose_engine(previous.settings) == previous
     assert "NEUROENGINE.command_timeout_s" not in restarted.materialize(service.repository.get_activation_set())

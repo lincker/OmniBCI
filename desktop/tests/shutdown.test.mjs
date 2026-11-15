@@ -13,10 +13,10 @@ after(async () => { delete globalThis.__desktopDialogs; await rm(temporary, { re
 const hooks = { responses: [], messages: [], };
 globalThis.__desktopDialogs = hooks;
 hooks.fetch = async url => {
-  if (url.endsWith("/system/info")) return Response.json({ success: true, data: {
-    desktop_api_version: 1, app_version: "1.0.0", instance_id: "backend", auth_enabled: true,
+  if (url.endsWith("/server/info")) return Response.json({ success: true, data: {
+    desktop_api_version: 1, app_version: "1.0.0", instance_id: "server", auth_enabled: true,
   } });
-  assert.fail(`Unexpected backend request: ${url}`);
+  assert.fail(`Unexpected server request: ${url}`);
 };
 await build({ entryPoints: [fileURLToPath(new URL("../src/main.ts", import.meta.url))],
   outfile: path.join(temporary, "main.cjs"), platform: "node", format: "cjs", bundle: true,
@@ -43,8 +43,8 @@ await build({ entryPoints: [fileURLToPath(new URL("../src/main.ts", import.meta.
       contents: await readFile(args.path, "utf8") + `
         export const fixture = { connection, disconnect,
           setLanguage(value) { language = value; },
-          reset(owned) { language = "en"; backend = owned; window = {}; editor = { dirty: false, busy: false }; },
-          getBackend() { return backend; },
+          reset(owned) { language = "en"; server = owned; window = {}; editor = { dirty: false, busy: false }; },
+          getServer() { return server; },
         };
       `, loader: "ts",
     }));
@@ -74,26 +74,26 @@ test("keeping the window after an incomplete stop reports errors and permits ano
   assert.equal(fixture.connection.info.status, "ready");
 });
 
-test("confirmed shutdown waits for the owned backend to exit before disconnecting", async () => {
+test("confirmed shutdown waits for the owned server to exit before disconnecting", async () => {
   hooks.responses.push(1);
   assert.equal(await fixture.disconnect(), true);
   assert.deepEqual(owned.calls, ["prepare_shutdown", "shutdown"]);
   assert.equal(owned.exited, true);
-  assert.equal(fixture.getBackend(), undefined);
+  assert.equal(fixture.getServer(), undefined);
   assert.equal(fixture.connection.info.status, "disconnected");
 });
 
-test("final shutdown errors are reported after exit and release stale backend ownership", async () => {
+test("final shutdown errors are reported after exit and release stale server ownership", async () => {
   hooks.responses.push(1);
   owned.command = async op => { owned.calls.push(op); return op === "shutdown"
     ? { ok: false, errors: ["Device stop not confirmed"] } : { ok: true }; };
   await assert.rejects(fixture.disconnect(), /Device stop not confirmed/);
   assert.equal(owned.exited, true);
-  assert.equal(fixture.getBackend(), undefined);
+  assert.equal(fixture.getServer(), undefined);
   assert.equal(fixture.connection.info.status, "disconnected");
 });
 
-test("an interrupted final reply still waits for exit and releases backend ownership", async () => {
+test("an interrupted final reply still waits for exit and releases server ownership", async () => {
   hooks.responses.push(1);
   owned.command = async op => {
     owned.calls.push(op);
@@ -102,7 +102,7 @@ test("an interrupted final reply still waits for exit and releases backend owner
   };
   await assert.rejects(fixture.disconnect(), /Control pipe closed/);
   assert.equal(owned.exited, true);
-  assert.equal(fixture.getBackend(), undefined);
+  assert.equal(fixture.getServer(), undefined);
   assert.equal(fixture.connection.info.status, "disconnected");
 });
 
@@ -111,7 +111,7 @@ test("native shutdown confirmations follow Chinese without changing cancellation
   fixture.setLanguage("zh");
   hooks.responses.push(0);
   assert.equal(await fixture.disconnect(), false);
-  assert.equal(hooks.messages[0].message, "停止本地后端？");
+  assert.equal(hooks.messages[0].message, "停止本地服务端？");
   assert.deepEqual(hooks.messages[0].buttons, ["取消", "停止并继续"]);
   assert.deepEqual(owned.calls, []);
   assert.equal(fixture.connection.info.status, "ready");

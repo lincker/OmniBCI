@@ -12,15 +12,15 @@ const temporary = await mkdtemp(path.join(tmpdir(), "omnibci-desktop-tests-"));
 after(() => rm(temporary, { recursive: true, force: true }));
 await build({ entryPoints: [fileURLToPath(new URL("../src/connection.ts", import.meta.url))],
   outfile: path.join(temporary, "connection.cjs"), platform: "node", format: "cjs", bundle: true });
-const { BackendConnection, backendOrigin, apiPath, handleApiRequest, CONNECTION_HEADER } = createRequire(import.meta.url)(path.join(temporary, "connection.cjs"));
-const info = (instance = "backend-1") => Response.json({ success: true, data: {
+const { ServerConnection, serverOrigin, apiPath, handleApiRequest, CONNECTION_HEADER } = createRequire(import.meta.url)(path.join(temporary, "connection.cjs"));
+const info = (instance = "server-1") => Response.json({ success: true, data: {
   desktop_api_version: 1, app_version: "1.0.0", instance_id: instance, auth_enabled: true,
 } });
 
-test("backend and proxy paths cannot choose another target or carry credentials", () => {
-  assert.equal(backendOrigin("http://127.0.0.1:8000"), "http://127.0.0.1:8000");
+test("server and proxy paths cannot choose another target or carry credentials", () => {
+  assert.equal(serverOrigin("http://127.0.0.1:8000"), "http://127.0.0.1:8000");
   for (const url of ["file:///etc/passwd", "http://user:secret@host", "https://host/api", "https://host/?token=x"]) {
-    assert.throws(() => backendOrigin(url));
+    assert.throws(() => serverOrigin(url));
   }
   assert.equal(apiPath("/api/v1/results?example=value"), "/api/v1/results?example=value");
   for (const value of ["//evil/api/v1/data", "https://evil/api/v1/data", "/api/v1/%2e%2e/config", "/etc/passwd"]) {
@@ -29,32 +29,70 @@ test("backend and proxy paths cannot choose another target or carry credentials"
 });
 
 test("handshake requires authentication and the desktop protocol", async () => {
-  const connection = new BackendConnection(async () => Response.json({ success: true, data: { desktop_api_version: 1, auth_enabled: false } }));
-  await assert.rejects(connection.connect("remote", "http://localhost:8000", "private-test-credential"), /upgraded/);
+  const connection = new ServerConnection(async () => Response.json({ success: true, data: { desktop_api_version: 1, auth_enabled: false } }));
+  await assert.rejects(connection.connect("remote", "http://localhost:8000", "private-test-credential"), /protocol 1/);
   assert.equal(connection.info.status, "failed");
   assert.equal(connection.info.id, "");
   assert.equal(JSON.stringify(connection.info).includes("private-test-credential"), false);
 });
 
-test("local handshake matches the exact launched backend", async () => {
-  const connection = new BackendConnection(async () => info("another-process"));
+test("handshake uses the Server endpoint and protocol version 1", async () => {
+  const calls = [];
+  const connection = new ServerConnection(async url => {
+    calls.push(url);
+    return Response.json({ success: true, data: {
+      desktop_api_version: 1, app_version: "1.0.0", instance_id: "server", auth_enabled: true,
+    } });
+  });
+  await connection.connect("remote", "http://localhost:8000", "secret");
+  assert.deepEqual(calls, ["http://localhost:8000/api/v1/server/info"]);
+  assert.equal(connection.info.status, "ready");
+  connection.disconnect();
+});
+
+test("handshake rejects an unsupported desktop protocol without a fallback", async () => {
+  const calls = [];
+  const connection = new ServerConnection(async url => {
+    calls.push(url);
+    return Response.json({ success: true, data: {
+      desktop_api_version: 2, app_version: "1.0.0", instance_id: "server", auth_enabled: true,
+    } });
+  });
+  await assert.rejects(connection.connect("remote", "http://localhost:8000", "secret"), /protocol 1/);
+  assert.deepEqual(calls, ["http://localhost:8000/api/v1/server/info"]);
+  assert.equal(connection.info.status, "failed");
+});
+
+test("a missing Server endpoint fails without probing old endpoints", async () => {
+  const calls = [];
+  const connection = new ServerConnection(async url => {
+    calls.push(url);
+    return new Response(null, { status: 404 });
+  });
+  await assert.rejects(connection.connect("remote", "http://localhost:8000", "secret"), /HTTP 404/);
+  assert.deepEqual(calls, ["http://localhost:8000/api/v1/server/info"]);
+  assert.equal(connection.info.status, "failed");
+});
+
+test("local handshake matches the exact launched server", async () => {
+  const connection = new ServerConnection(async () => info("another-process"));
   await assert.rejects(connection.connect("local", "http://127.0.0.1:8000", "secret", "my-process"), /identity/);
 });
 
 test("proxy owns authentication, preserves raw uploads and never follows redirects", async () => {
   let forwarded;
-  const connection = new BackendConnection(async (url, init) => {
-    if (url.endsWith("/system/info")) return info();
+  const connection = new ServerConnection(async (url, init) => {
+    if (url.endsWith("/server/info")) return info();
     forwarded = { url, init };
     return Response.json({ success: true });
   });
-  await connection.connect("remote", "http://backend:8000", "private-token");
+  await connection.connect("remote", "http://server:8000", "private-token");
   const body = new Uint8Array([80, 75, 3, 4]);
   const response = await connection.request("/api/v1/plugin-packages/install", {
     method: "POST", body, headers: { "Content-Type": "application/zip", Authorization: "bad", Cookie: "secret=bad" },
   });
   await response.json();
-  assert.equal(forwarded.url, "http://backend:8000/api/v1/plugin-packages/install");
+  assert.equal(forwarded.url, "http://server:8000/api/v1/plugin-packages/install");
   assert.equal(forwarded.init.headers.get("Authorization"), "Bearer private-token");
   assert.equal(forwarded.init.headers.get("Cookie"), null);
   assert.equal(forwarded.init.body, body);
@@ -62,13 +100,13 @@ test("proxy owns authentication, preserves raw uploads and never follows redirec
   assert.equal(forwarded.init.credentials, "omit");
 });
 
-test("switching cancels old requests and does not redirect a delayed write to the new backend", async () => {
+test("switching cancels old requests and does not redirect a delayed write to the new server", async () => {
   let release;
   let oldSignal;
   const calls = [];
-  const connection = new BackendConnection(async (url, init) => {
+  const connection = new ServerConnection(async (url, init) => {
     calls.push(url);
-    if (url.endsWith("/system/info")) return info();
+    if (url.endsWith("/server/info")) return info();
     oldSignal = init.signal;
     return new Promise(resolve => { release = () => resolve(Response.json({ old: true })); });
   });
@@ -85,7 +123,7 @@ test("switching cancels old requests and does not redirect a delayed write to th
 
 test("response streaming remains guarded after headers have arrived", async () => {
   let finish;
-  const connection = new BackendConnection(async url => url.endsWith("/system/info") ? info() : new Response(new ReadableStream({
+  const connection = new ServerConnection(async url => url.endsWith("/server/info") ? info() : new Response(new ReadableStream({
     start(controller) { finish = () => { controller.enqueue(new TextEncoder().encode("old result")); controller.close(); }; },
   })));
   await connection.connect("remote", "http://first:8000", "one");
@@ -98,8 +136,8 @@ test("response streaming remains guarded after headers have arrived", async () =
 
 test("preparing shutdown allows reads but rejects new mutation calls", async () => {
   let requests = 0;
-  const connection = new BackendConnection(async url => {
-    if (url.endsWith("/system/info")) return info();
+  const connection = new ServerConnection(async url => {
+    if (url.endsWith("/server/info")) return info();
     requests++; return Response.json({ success: true });
   });
   await connection.connect("local", "http://127.0.0.1:8000", "secret");
@@ -109,10 +147,10 @@ test("preparing shutdown allows reads but rejects new mutation calls", async () 
   assert.equal(requests, 1);
 });
 
-test("failed mutation is not retried and reports an unknown backend state", async () => {
+test("failed mutation is not retried and reports an unknown server state", async () => {
   let attempts = 0;
-  const connection = new BackendConnection(async url => {
-    if (url.endsWith("/system/info")) return info();
+  const connection = new ServerConnection(async url => {
+    if (url.endsWith("/server/info")) return info();
     attempts++; throw new Error("socket closed");
   });
   await connection.connect("remote", "http://localhost:8000", "secret");
@@ -121,8 +159,8 @@ test("failed mutation is not retried and reports an unknown backend state", asyn
   assert.match(connection.info.error, /unknown/);
 });
 
-test("development CORS preflight is origin-bound and never reaches the backend", async () => {
-  const connection = new BackendConnection(async () => assert.fail("Preflight must not contact the backend"));
+test("development CORS preflight is origin-bound and never reaches the server", async () => {
+  const connection = new ServerConnection(async () => assert.fail("Preflight must not contact the server"));
   const request = Object.assign(new Request("app://omnibci/api/v1/config", { method: "OPTIONS", headers: {
     "Access-Control-Request-Method": "PATCH", "Access-Control-Request-Headers": `content-type, ${CONNECTION_HEADER}`,
   } }), { initiatorOrigin: "http://127.0.0.1:5173" });
@@ -138,10 +176,10 @@ test("development CORS preflight is origin-bound and never reaches the backend",
   assert.equal((await handleApiRequest(connection, request, "http://127.0.0.1:5173")).status, 403);
 });
 
-test("the development request uses the same selected backend and injects CORS on errors", async () => {
+test("the development request uses the same selected server and injects CORS on errors", async () => {
   const calls = [];
-  const connection = new BackendConnection(async (url, init) => {
-    if (url.endsWith("/system/info")) return info();
+  const connection = new ServerConnection(async (url, init) => {
+    if (url.endsWith("/server/info")) return info();
     calls.push({ url, init }); return Response.json({ success: false }, { status: 422 });
   });
   await connection.connect("remote", "https://laboratory.example", "secret");
@@ -159,8 +197,8 @@ test("the development request uses the same selected backend and injects CORS on
 test("a failed HTTP command closes the live results socket so the renderer can reconnect", async () => {
   const server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
   await new Promise(resolve => server.once("listening", resolve));
-  const connection = new BackendConnection(async url => {
-    if (url.endsWith("/system/info")) return info();
+  const connection = new ServerConnection(async url => {
+    if (url.endsWith("/server/info")) return info();
     throw new Error("HTTP connection reset");
   });
   let unsubscribe;

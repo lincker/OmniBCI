@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from omnibci.infrastructure.ipc.contracts import encode_event
+from omnibci.infrastructure.ipc.contracts import PROTOCOL_VERSION, encode_event
 from omnibci.infrastructure.ipc import network, peer_transport
 from omnibci.infrastructure.ipc.network import (
     NetworkClient, NetworkServer, StreamCleanupError, read_event_frame,
@@ -15,6 +15,15 @@ from omnibci.shared.events import Event, EventType
 
 
 IDENTITY = PeerIdentity("actuation", "a" * 64, "c" * 64, "generation-1")
+
+
+@pytest.mark.parametrize("keep_current", [False, True])
+def test_old_configuration_identity_field_is_rejected(keep_current):
+    payload = IDENTITY.to_dict()
+    payload["system_revision"] = payload["engine_revision"]
+    if not keep_current:
+        del payload["engine_revision"]
+    assert not IDENTITY.matches(payload)
 
 
 async def wait_for(predicate):
@@ -155,7 +164,7 @@ def test_keepalive_cannot_bypass_handshake():
         server, port = await listen()
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
         try:
-            writer.write(Frame("", version=1).to_bytes())
+            writer.write(Frame("", version=PROTOCOL_VERSION).to_bytes())
             await writer.drain()
             assert await asyncio.wait_for(reader.read(), 1) == b""
             assert not server.is_connected

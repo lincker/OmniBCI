@@ -13,7 +13,7 @@ import pytest
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.acquisition.logging import AcquisitionLogForwarder, AcquisitionLogListener
 from omnibci.infrastructure.acquisition.preprocessing import TriggerEdgePreprocessor
-from omnibci.infrastructure.backend_logging import BackendLogging
+from omnibci.infrastructure.server_logging import ServerLogging
 
 
 PREFIX = "omnibci.infrastructure.acquisition"
@@ -31,33 +31,33 @@ def emit_from_child(queue, stop):
 
 
 @pytest.mark.integration
-def test_spawned_trigger_summaries_reach_the_existing_backend_file(tmp_path):
+def test_spawned_trigger_summaries_reach_the_existing_server_file(tmp_path):
     context = mp.get_context("spawn")
     queue = context.Queue(maxsize=16)
     stop = context.Event()
     listener = AcquisitionLogListener(queue)
     process = context.Process(target=emit_from_child, args=(queue, stop))
     try:
-        with BackendLogging({"LOGGING.file_path": str(tmp_path / "events.log")}) as backend:
+        with ServerLogging({"LOGGING.file_path": str(tmp_path / "events.log")}) as server:
             listener.start()
             process.start()
             deadline = monotonic() + 5
-            while "sequence_id=42" not in "\n".join(backend.read_tail()[0]):
+            while "sequence_id=42" not in "\n".join(server.read_tail()[0]):
                 assert monotonic() < deadline, "The running worker's trigger summary was not logged"
                 sleep(0.01)
             from fastapi.testclient import TestClient
             from omnibci.presentation.main import create_app
 
             app = create_app(api_token="")
-            app.state.backend_logging = backend
-            response = TestClient(app).get("/api/v1/system/logs")
+            app.state.server_logging = server
+            response = TestClient(app).get("/api/v1/server/logs")
             assert response.status_code == 200
             assert "sequence_id=42" in "\n".join(response.json()["data"]["lines"])
             stop.set()
             process.join(timeout=10)
             assert process.exitcode == 0
             assert listener.stop()
-        text = backend.file_path.read_text()
+        text = server.file_path.read_text()
         assert "sequence_id=42" in text and "suppressed=2" in text
         assert "reason=stream_start" in text
         assert "source_id=scan45" in text and "generation=run-1" in text
@@ -141,7 +141,7 @@ def test_forwarder_restores_existing_logging_configuration_after_failure():
         logger.propagate = previous[1]
 
 
-def test_forwarder_bounds_message_size_and_listener_respects_backend_level(tmp_path):
+def test_forwarder_bounds_message_size_and_listener_respects_server_level(tmp_path):
     queue = Queue()
     listener = AcquisitionLogListener(queue)
     with AcquisitionLogForwarder(queue, source_id="source", generation="run"):
@@ -149,21 +149,21 @@ def test_forwarder_bounds_message_size_and_listener_respects_backend_level(tmp_p
     item = queue.get_nowait()
     assert len(item["msg"]) < 5000
     queue.put_nowait(item)
-    with BackendLogging({"LOGGING.file_path": str(tmp_path / "events.log"), "LOGGING.level": "WARNING"}) as backend:
+    with ServerLogging({"LOGGING.file_path": str(tmp_path / "events.log"), "LOGGING.level": "WARNING"}) as server:
         listener.start()
         assert listener.stop()
-    assert backend.file_path.read_text() == ""
+    assert server.file_path.read_text() == ""
 
 
 def test_listener_ignores_other_logger_names_and_stops_after_channel_failure(tmp_path):
     queue = Queue()
     queue.put_nowait({"name": "other.library", "levelno": logging.INFO, "msg": "must not forward"})
     listener = AcquisitionLogListener(queue)
-    with BackendLogging({"LOGGING.file_path": str(tmp_path / "events.log")}) as backend:
+    with ServerLogging({"LOGGING.file_path": str(tmp_path / "events.log")}) as server:
         listener.start()
         listener.start()
         assert listener.stop() and listener.stop()
-    assert backend.file_path.read_text() == ""
+    assert server.file_path.read_text() == ""
 
     def fail(**kwargs):
         raise OSError("broken log queue")
@@ -188,7 +188,7 @@ def test_listener_thread_start_failure_can_be_cleaned_up(monkeypatch):
     assert listener.stop()
 
 
-def test_blocked_backend_handler_does_not_make_listener_stop_wait_forever(monkeypatch, caplog):
+def test_blocked_server_handler_does_not_make_listener_stop_wait_forever(monkeypatch, caplog):
     queue = Queue()
     entered, release = Event(), Event()
     logger = logging.getLogger(PREFIX)

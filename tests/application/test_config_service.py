@@ -1,9 +1,9 @@
-"""Backend settings save independently of Engine application and startup state."""
+"""Server settings save independently of Engine application and startup state."""
 import math
 
 import pytest
 
-from omnibci.application.activation_settings import BACKEND_STARTUP_DEFAULTS
+from omnibci.application.activation_settings import SERVER_STARTUP_DEFAULTS
 from omnibci.application.config_errors import ConfigProfileConflictError
 from omnibci.application.services.config_service import (
     ConfigKeyNotAllowedError, ConfigService, ConfigValidationError,
@@ -19,11 +19,11 @@ def svc(tmp_path):
     return ConfigService(OmniBCISettings(toml_file=path))
 
 
-def test_lists_backend_settings_and_values_loaded_at_startup(svc):
+def test_lists_server_settings_and_values_loaded_at_startup(svc):
     entries, _ = svc.read()
-    assert {entry["key"]: entry["value"] for entry in entries} == BACKEND_STARTUP_DEFAULTS
+    assert {entry["key"]: entry["value"] for entry in entries} == SERVER_STARTUP_DEFAULTS
     assert all(entry["active_value"] == entry["value"] and not entry["restart_required"] for entry in entries)
-    assert all(entry["requires"] == "backend-restart" for entry in entries)
+    assert all(entry["requires"] == "server-restart" for entry in entries)
 
 
 @pytest.mark.parametrize("key,value", [
@@ -31,7 +31,7 @@ def test_lists_backend_settings_and_values_loaded_at_startup(svc):
     ("ACQUISITION.sample_rate", 500), ("ALGORITHM.baseline_duration", 1.0),
     ("STIMULATION.auto_spawn", False), ("ACTUATION.server_port", 8002),
 ])
-def test_engine_and_module_keys_cannot_partially_write_backend_settings(svc, tmp_path, key, value):
+def test_engine_and_module_keys_cannot_partially_write_server_settings(svc, tmp_path, key, value):
     path = tmp_path / "settings.toml"
     before = path.read_bytes()
     with pytest.raises(ConfigKeyNotAllowedError) as raised:
@@ -47,7 +47,7 @@ def test_engine_and_module_keys_cannot_partially_write_backend_settings(svc, tmp
     ("LOGGING.level", "verbose"), ("LOGGING.level", False),
     ("LOGGING.file_path", " "), ("LOGGING.file_path", 123), ("PLUGINS.user_dir", False),
 ])
-def test_invalid_backend_values_leave_disk_unchanged(svc, tmp_path, key, value):
+def test_invalid_server_values_leave_disk_unchanged(svc, tmp_path, key, value):
     before = (tmp_path / "settings.toml").read_bytes()
     with pytest.raises(ConfigValidationError) as raised:
         svc.save({key: value}, expected_revision=svc.read()[1])
@@ -60,7 +60,7 @@ def test_empty_updates_are_rejected(svc):
         svc.save({}, expected_revision=svc.read()[1])
 
 
-def test_saved_values_remain_pending_until_backend_restart(svc, tmp_path):
+def test_saved_values_remain_pending_until_server_restart(svc, tmp_path):
     saved, restart, revision = svc.save({"LOGGING.level": "DEBUG", "NEUROENGINE.command_timeout_s": 20},
                                       expected_revision=svc.read()[1])
     assert saved == ["LOGGING.level", "NEUROENGINE.command_timeout_s"] and restart
@@ -75,7 +75,7 @@ def test_saved_values_remain_pending_until_backend_restart(svc, tmp_path):
 
 
 def test_explicit_startup_snapshot_is_not_replaced_by_file_edits(svc):
-    active = {**BACKEND_STARTUP_DEFAULTS, "LOGGING.level": "WARNING"}
+    active = {**SERVER_STARTUP_DEFAULTS, "LOGGING.level": "WARNING"}
     service = ConfigService(svc._settings, active_settings=active)
     active["LOGGING.level"] = "ERROR"
     item = next(entry for entry in service.list_entries() if entry["key"] == "LOGGING.level")

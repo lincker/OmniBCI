@@ -92,7 +92,7 @@ async function withApp(action, { desktopMode = false, applying = false } = {}) {
   globalThis.fetch = () => new Promise(() => {});
   runtimeConfigApi.status = async () => structuredClone(state);
   if (desktopMode) {
-    desktop.setDesktopConnection({ id: "backend", kind: "local", status: "ready" });
+    desktop.setDesktopConnection({ id: "server", kind: "local", status: "ready" });
     window.omnibciDesktop = { subscribeResults: () => () => {}, setEditorState: (value) => editorStates.push(value) };
   }
   const focusEvents = [];
@@ -277,10 +277,10 @@ const currentRequest = () => ({ settings: {}, expected_revision: "rev-1", bindin
 async function withSharedAcquisition(action) {
   const original = { ...api }, originalActivation = pluginConfigApi.modules, originalRuntime = { ...runtimeConfigApi };
   const source = { connected: false, streaming: false, connection_id: null }, calls = [];
-  const backend = { status: async () => ({ ...source }) };
+  const server = { status: async () => ({ ...source }) };
   let engineState;
   api.engineStatus = async () => ({ running: engineState?.running ?? false });
-  api.acquisitionStatus = () => backend.status();
+  api.acquisitionStatus = () => server.status();
   try {
     await withApp(async ({ h, state }) => {
       engineState = state;
@@ -304,7 +304,7 @@ async function withSharedAcquisition(action) {
       api.acqStreamStop = async () => { calls.push("stop"); source.streaming = false; };
       const controller = () => (component(h, "PluginProfiles") ?? component(h, "RunConsole")).props.acquisition;
       await controller().refresh(); await h.settle();
-      await action({ h, source, calls, controller, backend, state });
+      await action({ h, source, calls, controller, server, state });
     });
   } finally { Object.assign(api, original); pluginConfigApi.modules = originalActivation; Object.assign(runtimeConfigApi, originalRuntime); }
 }
@@ -348,7 +348,7 @@ test("a pending shared connection survives navigation and blocks duplicate comma
 });
 
 test("a failed connection refreshes actual status and keeps its error when switching pages", async () => {
-  await withSharedAcquisition(async ({ h, source, controller, backend }) => {
+  await withSharedAcquisition(async ({ h, source, controller, server }) => {
     api.acqConnect = async () => { Object.assign(source, { connected: true, connection_id: "source-1" }); throw new Error("Reply timed out"); };
     await controller().connect.run(currentRequest()); await h.settle();
     assert.equal(controller().data.connected, true);
@@ -356,7 +356,7 @@ test("a failed connection refreshes actual status and keeps its error when switc
     component(h, "PluginProfiles").props.onRun(); await h.settle();
     assert.equal(controller().data.connected, true);
     assert.match(controller().connect.error, /Reply timed out/);
-    backend.status = async () => { throw new Error("Status unavailable"); };
+    server.status = async () => { throw new Error("Status unavailable"); };
     await controller().refresh(); await h.settle();
     assert.match(controller().error.message, /Status unavailable/);
     component(h, "RunConsole").props.onEditSetup(); await h.settle();
@@ -365,11 +365,11 @@ test("a failed connection refreshes actual status and keeps its error when switc
 });
 
 for (const staleFailure of [false, true]) test(`older acquisition status cannot overwrite a newer refresh (failure=${staleFailure})`, async () => {
-  await withSharedAcquisition(async ({ h, controller, backend }) => {
+  await withSharedAcquisition(async ({ h, controller, server }) => {
     let resolveOld, rejectOld;
-    backend.status = () => new Promise((resolve, reject) => { resolveOld = resolve; rejectOld = reject; });
+    server.status = () => new Promise((resolve, reject) => { resolveOld = resolve; rejectOld = reject; });
     const older = controller().refresh();
-    backend.status = async () => ({ connected: true, streaming: false, connection_id: "current" });
+    server.status = async () => ({ connected: true, streaming: false, connection_id: "current" });
     await controller().refresh(); await h.settle();
     if (staleFailure) rejectOld(new Error("Old status failure"));
     else resolveOld({ connected: false, streaming: false, connection_id: null });
@@ -380,9 +380,9 @@ for (const staleFailure of [false, true]) test(`older acquisition status cannot 
 });
 
 for (const unavailable of [false, true]) test(`Disconnect rejects a changed or unavailable source (unavailable=${unavailable})`, async () => {
-  await withSharedAcquisition(async ({ h, source, calls, controller, backend }) => {
+  await withSharedAcquisition(async ({ h, source, calls, controller, server }) => {
     await controller().connect.run(currentRequest()); await h.settle();
-    if (unavailable) backend.status = async () => null;
+    if (unavailable) server.status = async () => null;
     else source.connection_id = "replacement";
     await controller().disconnect.run(); await h.settle();
     assert.deepEqual(calls, ["connect"]);

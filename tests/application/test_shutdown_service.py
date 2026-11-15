@@ -1,11 +1,11 @@
-"""Backend closing uses the same complete stop as the Engine control."""
+"""Server closing uses the same complete stop as the Engine control."""
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
-from omnibci.application.services.shutdown_service import BackendShutdownService
+from omnibci.application.services.shutdown_service import ServerShutdownService
 
 
 def _service(calls):
@@ -15,7 +15,7 @@ def _service(calls):
     async def engine():
         calls.append("engine")
 
-    return BackendShutdownService(engine=SimpleNamespace(shutdown=engine),
+    return ServerShutdownService(engine=SimpleNamespace(shutdown=engine),
                                   configuration=SimpleNamespace(wait_for_idle=configuration))
 
 

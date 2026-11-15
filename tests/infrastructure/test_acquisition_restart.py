@@ -39,7 +39,7 @@ async def test_eof_boundary_separates_reads_without_waiting_for_processing(recon
     bus = SimpleNamespace(put_event=events.append)
     acquisition = AcquisitionRuntime(source, Queue(), data, bus, source_id="file_reader",
                                      generation="generation-1",
-                                     acquisition_revision="revision-1", system_revision="system",
+                                     acquisition_revision="revision-1", engine_revision="engine",
                                      processing_active=gate)
     decoder = _Decoder(samples=10)
     processor = _processor(decoder=decoder, bus=bus, data=data)

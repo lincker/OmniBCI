@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from omnibci.application.activation_settings import MODULES, MODULE_SETTING_DEFAULTS, section_settings
 from omnibci.application.plugin_profiles import (
-    ActivationSet, ModuleActivation, SystemSettings, PluginProfile, PluginSelection, ProfileBinding,
+    ActivationSet, ModuleActivation, EngineSettings, PluginProfile, PluginSelection, ProfileBinding,
     MODULE_KINDS, PluginProfileNotFoundError, plugin_kind_for_slot,
 )
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
@@ -158,11 +158,11 @@ class PluginProfileService:
         return (ModuleActivation(module, {**candidate.settings, **normalized}, candidate.bindings)
                 if normalized else candidate)
 
-    def propose_system(self, settings: dict) -> SystemSettings:
-        """Validate submitted Engine settings without consulting backend startup values."""
-        candidate = SystemSettings(settings)
+    def propose_engine(self, settings: dict) -> EngineSettings:
+        """Validate submitted Engine settings without consulting server startup values."""
+        candidate = EngineSettings(settings)
         timeout = candidate.settings.get("NEUROENGINE.startup_timeout_s")
-        return (SystemSettings({**candidate.settings, "NEUROENGINE.startup_timeout_s": float(timeout)})
+        return (EngineSettings({**candidate.settings, "NEUROENGINE.startup_timeout_s": float(timeout)})
                 if type(timeout) is int else candidate)
 
     def validate_module(self, candidate: ModuleActivation, *, active_kinds: set[str] | None = None) -> None:
@@ -200,7 +200,7 @@ class PluginProfileService:
             module: activation_set.modules[module].revision if activation_set.modules[module] else None
             for module in MODULES
         }
-        result["CONFIG.system_revision"] = (activation_set.system or SystemSettings({})).revision
+        result["CONFIG.engine_revision"] = (activation_set.engine or EngineSettings({})).revision
         if generation is not None:
             result["CONFIG.generation"] = generation
         result["PLUGINS.bindings"] = bindings

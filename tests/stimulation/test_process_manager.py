@@ -24,7 +24,7 @@ from omnibci.application.commands.stimulation_commands import StartStimulationCo
 
 def _paradigm_snapshot():
     return {"CONFIG.module_revisions": {"stimulation": "revision"},
-            "CONFIG.system_revision": "system", "CONFIG.generation": "run",
+            "CONFIG.engine_revision": "engine", "CONFIG.generation": "run",
             "PLUGINS.bindings": [{
         "slot": "stimulation.paradigm", "kind": "paradigm", "profile_id": None,
         "selection": {"package_id": "OmniBCI.classic40SSVEP",
@@ -54,7 +54,7 @@ def startup_pipe(monkeypatch):
     receiver = MagicMock()
     receiver.poll.return_value = True
     receiver.recv.return_value = StartupReport.ready(
-        "Stimulation", module_revisions={"stimulation": "revision"}, system_revision="system", generation="run")
+        "Stimulation", module_revisions={"stimulation": "revision"}, engine_revision="engine", generation="run")
     sender = MagicMock()
     pipe = MagicMock(return_value=(receiver, sender))
     monkeypatch.setattr(process_manager_module.mp, "Pipe", pipe)
@@ -124,8 +124,8 @@ def test_ready_status_reports_paradigm_from_pinned_binding(
     mock_process_cls.return_value = process
     manager = StimulationProcessManager()
     snapshot = _paradigm_snapshot()
-    snapshot.update({"CONFIG.module_revisions": {"stimulation": "revision"}, "CONFIG.system_revision": "system", "CONFIG.generation": "run"})
-    startup_pipe.receiver.recv.return_value = StartupReport.ready("Stimulation", module_revisions={"stimulation": "revision"}, system_revision="system", generation="run")
+    snapshot.update({"CONFIG.module_revisions": {"stimulation": "revision"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "run"})
+    startup_pipe.receiver.recv.return_value = StartupReport.ready("Stimulation", module_revisions={"stimulation": "revision"}, engine_revision="engine", generation="run")
     if legacy_alias is not None:
         snapshot["STIMULATION.paradigm"] = legacy_alias
     # A dormant processing profile must not participate in stimulation startup.
@@ -261,7 +261,7 @@ def test_failed_startup_report_is_raised_and_child_is_reaped(
         "Stimulation",
         stage="initialization",
         error=RuntimeError("renderer unavailable"),
-        module_revisions={"stimulation": "revision"}, system_revision="system", generation="run",
+        module_revisions={"stimulation": "revision"}, engine_revision="engine", generation="run",
     )
     manager = StimulationProcessManager()
 

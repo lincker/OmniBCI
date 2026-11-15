@@ -5,7 +5,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class BackendShutdownService:
+class ServerShutdownService:
     def __init__(self, *, engine, configuration):
         self.engine = engine
         self.configuration = configuration
@@ -34,7 +34,7 @@ class BackendShutdownService:
                 try:
                     await function()
                 except Exception as exc:
-                    logger.exception("Backend shutdown failed: %s", label)
+                    logger.exception("Server shutdown failed: %s", label)
                     errors.append(f"{label}: {exc}")
 
             if self.configuration is not None:
