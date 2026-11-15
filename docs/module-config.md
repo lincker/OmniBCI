@@ -102,6 +102,20 @@ Preview and diagnostic logging are not full raw-signal recording.
 If the Processing input queue fills, delivery stops and Processing reports a
 recoverable error while Acquisition continues reading and previewing. Faults
 from a previous input cannot interrupt a newer attachment.
+The real signal queue uses the positive `NEUROENGINE.queue_size` capacity
+(default 100), including input-start and drain markers in the same FIFO. A
+missing drain marker is never reported as a completed drain, including retries.
+
+Each output peer has one sender and a 64-item queue. EventBus handlers enqueue
+without awaiting socket writes, so a slow output cannot delay A/P command
+receipts. Direct terminal-result writes use the same FIFO and await the actual
+write. Queued messages belong to their original socket connection and are never
+replayed after reconnect. Queue overflow or write failure closes that channel
+and marks only its output module for recovery. Command errors distinguish
+definitely unsent requests from unknown execution outcomes; a successful socket
+write alone is never an execution receipt. Prepared listeners remain available
+when no node is connected. External nodes also stop their local output on a
+delivery fault and use their existing reconnect procedure.
 
 Stop closes admission for the affected modules, lets existing operations finish
 or reconcile their bounded timeouts, and then confirms shutdown. Other modules

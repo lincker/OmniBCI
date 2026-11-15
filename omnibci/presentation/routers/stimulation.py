@@ -25,6 +25,7 @@ from omnibci.application.commands.stimulation_commands import (
 )
 from omnibci.application.services.stimulation_service import StimulationAppService
 from omnibci.application.services.command_result_service import (
+    CommandDeliveryError,
     CommandExecutionError,
     CommandRejectedError,
     CommandTimeoutError,
@@ -88,7 +89,7 @@ def stop_stimulation(svc: StimulationAppService = Depends(get_stimulation_servic
     try:
         svc.handle_stop_stimulation(StopStimulationCommand())
         return ApiResponse(message="Stimulation stopped")
-    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
+    except (CommandDeliveryError, CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
         raise command_error_to_api_error(e)
     except ProfileRevisionConflict:
         raise
@@ -112,7 +113,7 @@ def start_trial(
             trial_params=body.trial_params,
         ))
         return ApiResponse(message="Trial started")
-    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
+    except (CommandDeliveryError, CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
         raise command_error_to_api_error(e)
     except ProfileRevisionConflict:
         raise

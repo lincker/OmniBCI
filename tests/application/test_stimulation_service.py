@@ -157,6 +157,37 @@ class TestStimulationStart:
 
 
 class TestStimulationStop:
+    @pytest.mark.parametrize("execution_unknown", [False, True])
+    def test_external_delivery_failure_preserves_output_ownership(
+        self, stimulation_service, engine_service, execution_unknown,
+    ):
+        from omnibci.application.services.command_result_service import CommandDeliveryError
+
+        manager = MagicMock(auto_spawn=False)
+        broker = MagicMock()
+        broker.request.side_effect = CommandDeliveryError(
+            "stim-stop", "StopStimulation", "Peer connection failed",
+            execution_unknown=execution_unknown,
+        )
+        stimulation_service._process_manager = manager
+        stimulation_service._command_results = broker
+        stimulation_service._admission = engine_service.admission
+        stimulation_service._active_identity = (None, None)
+
+        with pytest.raises(CommandDeliveryError):
+            stimulation_service.handle_stop_stimulation(StopStimulationCommand())
+
+        assert stimulation_service._active_identity == (None, None)
+        assert stimulation_service._stop_managed is False
+        assert engine_service.admission.requires_recovery("stimulation")
+        assert not engine_service.admission.requires_recovery("acquisition")
+        manager.stop.assert_not_called()
+
+        broker.request.side_effect = None
+        stimulation_service.handle_stop_stimulation(StopStimulationCommand())
+        assert stimulation_service._active_identity is None
+        assert not engine_service.admission.requires_recovery("stimulation")
+
     def test_stop_dispatches_event(self, stimulation_service, mock_engine):
         stimulation_service._active_identity = (None, None)
         stimulation_service.handle_stop_stimulation(StopStimulationCommand())

@@ -17,7 +17,7 @@ from omnibci.application.queries.engine_queries import GetEngineStatusQuery
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.acquisition_service import AcquisitionAppService
 from omnibci.application.services.command_result_service import (
-    CommandExecutionError, CommandRejectedError, CommandTimeoutError,
+    CommandDeliveryError, CommandExecutionError, CommandRejectedError, CommandTimeoutError,
 )
 
 router = APIRouter(prefix="/engine", tags=["Engine"])
@@ -55,7 +55,7 @@ async def start_module(
     try:
         await svc.start_module(module)
         return ApiResponse(message=f"{module.title()} started")
-    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as exc:
+    except (CommandDeliveryError, CommandRejectedError, CommandExecutionError, CommandTimeoutError) as exc:
         raise command_error_to_api_error(exc)
     except ProfileRevisionConflict:
         raise
@@ -90,7 +90,7 @@ async def stop_module(
         if module == "acquisition":
             acq.reset()
         return ApiResponse(message=f"{module.title()} stopped")
-    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as exc:
+    except (CommandDeliveryError, CommandRejectedError, CommandExecutionError, CommandTimeoutError) as exc:
         raise command_error_to_api_error(exc)
     except ProfileRevisionConflict:
         raise

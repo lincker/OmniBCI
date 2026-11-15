@@ -64,10 +64,11 @@ async def test_slow_stimulation_replacement_does_not_block_actuation():
         await gateway.stop()
 
 
-def input_pair(monkeypatch):
+def input_pair(monkeypatch, data=None):
     plan = _plan()
-    gate = ThreadEvent()
-    data = DataManager(Queue(), processing_active=gate)
+    if data is None:
+        data = DataManager(Queue(), processing_active=ThreadEvent())
+    gate = data.processing_active
     events = []
     source = SimpleNamespace(is_connected=True, is_streaming=True,
                              start_stream=AsyncMock(), stop_stream=AsyncMock())

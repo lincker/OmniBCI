@@ -34,7 +34,7 @@ class _FakeServer:
         if self.stop_error is not None:
             raise self.stop_error
 
-    async def send_event(self, event):
+    async def send_event(self, event, *, connection_token=None):
         self.send_calls.append(event)
         return self.is_connected
 
@@ -69,7 +69,7 @@ class _FakeClient:
         self.writer = None
         self._closing_writers.clear()
 
-    async def send_event(self, event):
+    async def send_event(self, event, *, connection_token=None):
         self.send_calls.append(event)
         return self.is_connected
 

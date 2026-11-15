@@ -26,6 +26,10 @@ class NeuroEngineConfig:
     debug: bool = False                     # asyncio debug mode for the engine loop
     startup_timeout_s: float = 5.0          # configured worker initialization deadline
 
+    def __post_init__(self):
+        if self.queue_size <= 0:
+            raise ValueError("queue_size must be positive")
+
     @classmethod
     def from_settings(cls, settings_snapshot: dict) -> "NeuroEngineConfig":
         """Build host controls from an explicitly supplied runtime snapshot."""
@@ -75,7 +79,7 @@ class NeuroEngineBuilder:
         event_bus = EventBus(event_queue)
 
         # 2. Shared data buffer
-        data_buffer = mp.Queue()
+        data_buffer = mp.Queue(cfg.queue_size)
         processing_active = mp.Event()
         data_manager = DataManager(buffer=data_buffer, processing_active=processing_active)
         # Trial, epoch and source sequence counters outlive individual workers.

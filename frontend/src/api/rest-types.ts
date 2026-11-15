@@ -1838,7 +1838,7 @@ export interface components {
          *     guessing from the HTTP status.  The string value is the wire format.
          * @enum {string}
          */
-        ErrorCode: "BAD_REQUEST" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "VALIDATION_ERROR" | "SERVICE_UNAVAILABLE" | "GATEWAY_TIMEOUT" | "INTERNAL_ERROR" | "ERROR" | "ENGINE_NOT_READY" | "COMMAND_REJECTED" | "COMMAND_EXECUTION_FAILED" | "COMMAND_TIMEOUT" | "CONFIG_KEY_NOT_ALLOWED" | "CONFIG_PROFILE_NOT_FOUND";
+        ErrorCode: "BAD_REQUEST" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "VALIDATION_ERROR" | "SERVICE_UNAVAILABLE" | "GATEWAY_TIMEOUT" | "INTERNAL_ERROR" | "ERROR" | "ENGINE_NOT_READY" | "COMMAND_REJECTED" | "COMMAND_EXECUTION_FAILED" | "COMMAND_TIMEOUT" | "PEER_DELIVERY_FAILED" | "CONFIG_KEY_NOT_ALLOWED" | "CONFIG_PROFILE_NOT_FOUND";
         /**
          * ErrorResponse
          * @description Unified error envelope — mirrors ApiResponse so clients see one consistent

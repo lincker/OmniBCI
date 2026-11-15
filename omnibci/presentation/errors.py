@@ -24,6 +24,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from omnibci.presentation.schemas.common import ErrorCode, ErrorResponse
 from omnibci.application.config_errors import ConfigProfileConflictError, ConfigProfileValidationError
 from omnibci.application.services.command_result_service import (
+    CommandDeliveryError,
     CommandExecutionError,
     CommandRejectedError,
     CommandTimeoutError,
@@ -82,6 +83,17 @@ class ApiError(Exception):
 
 def command_error_to_api_error(exc: Exception) -> ApiError:
     """Translate correlated command failures into stable HTTP semantics."""
+    if isinstance(exc, CommandDeliveryError):
+        return ApiError(
+            503,
+            ErrorCode.PEER_DELIVERY_FAILED,
+            str(exc),
+            detail={
+                "command_id": exc.command_id,
+                "command": exc.command,
+                "execution_unknown": exc.execution_unknown,
+            },
+        )
     if isinstance(exc, CommandRejectedError):
         result = exc.result
         return ApiError(

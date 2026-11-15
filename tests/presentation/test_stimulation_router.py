@@ -97,6 +97,23 @@ class TestStimulationStart:
 
 
 class TestStimulationStop:
+    @pytest.mark.parametrize("execution_unknown", [False, True])
+    def test_delivery_failure_returns_503_with_known_outcome(
+        self, api_client, stimulation_service, execution_unknown,
+    ):
+        from omnibci.application.services.command_result_service import CommandDeliveryError
+
+        stimulation_service.handle_stop_stimulation = MagicMock(side_effect=CommandDeliveryError(
+            "stim-stop", "StopStimulation", "Peer connection failed",
+            execution_unknown=execution_unknown,
+        ))
+
+        response = api_client.post("/api/v1/stimulation/stop")
+
+        assert response.status_code == 503
+        assert response.json()["code"] == "PEER_DELIVERY_FAILED"
+        assert response.json()["detail"]["execution_unknown"] is execution_unknown
+
     def test_stop_returns_200(self, api_client, mock_engine):
         resp = api_client.post("/api/v1/stimulation/stop")
         assert resp.status_code == 200

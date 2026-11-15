@@ -248,6 +248,7 @@ class TestErrorContract:
             # domain-specific
             "ENGINE_NOT_READY",
             "COMMAND_REJECTED", "COMMAND_EXECUTION_FAILED", "COMMAND_TIMEOUT",
+            "PEER_DELIVERY_FAILED",
             # Host configuration and Plugin Profiles.
             "CONFIG_KEY_NOT_ALLOWED", "CONFIG_PROFILE_NOT_FOUND",
         }

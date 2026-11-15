@@ -35,6 +35,10 @@ class StreamCleanupError(RuntimeError):
     """A socket/listener close was requested but could not be confirmed."""
 
 
+class PeerConnectionChanged(ConnectionError):
+    """The queued frame's connection ended before any bytes were written."""
+
+
 def _validate_idle_timeout(value: float | None) -> float | None:
     if value is None:
         return None
@@ -197,6 +201,11 @@ class NetworkServer:
     def is_connected(self) -> bool:
         """Whether at least one accepted client is currently owned by the server."""
         return bool(self._clients)
+
+    @property
+    def connection_token(self) -> frozenset:
+        """Process-local identity of the currently accepted sockets."""
+        return frozenset(self._clients)
 
     async def start(self) -> None:
         """Bind and begin accepting clients; return only after bind succeeds."""
@@ -398,13 +407,13 @@ class NetworkServer:
                 ) from listener_error
             self.status = "STOP"
 
-    async def send_event(self, event: Event) -> bool:
+    async def send_event(self, event: Event, *, connection_token=None) -> bool:
         """Write one Event to at least one active socket.
 
         True confirms only that a framed write/drain succeeded for one currently
         connected peer; it is not an application-level acknowledgement.
         """
-        return await self._send_frame(encode_event(event))
+        return await self._send_frame(encode_event(event), connection_token=connection_token)
 
     async def send(self, message: str) -> bool:
         """Legacy write API with the same socket-delivery-only bool contract."""
@@ -412,9 +421,11 @@ class NetworkServer:
             Frame(message, version=PROTOCOL_VERSION).to_bytes()
         )
 
-    async def _send_frame(self, frame: bytes) -> bool:
+    async def _send_frame(self, frame: bytes, *, connection_token=None) -> bool:
         """Broadcast one frame concurrently; isolate clients and frame ordering."""
         async with self._send_lock:
+            if connection_token is not None and connection_token != self.connection_token:
+                raise PeerConnectionChanged("Peer connections changed before write")
             if self._stopping:
                 logger.debug(
                     "NetworkServer.send: server is stopping/stopped; dropping message"
@@ -518,6 +529,11 @@ class NetworkClient:
     def is_connected(self) -> bool:
         """Whether the supervised connection is currently usable for writes."""
         return self.status == "CONNECTED" and self.writer is not None
+
+    @property
+    def connection_token(self):
+        """The accepted socket itself identifies this connection, not its peer."""
+        return self.writer if self.is_connected else None
 
     async def start(self) -> None:
         """Run connect/receive/reconnect supervision until stopped or cancelled."""
@@ -653,9 +669,9 @@ class NetworkClient:
             self.status = "DISCONNECTED"
         return False
 
-    async def send_event(self, event: Event) -> bool:
+    async def send_event(self, event: Event, *, connection_token=None) -> bool:
         """Write one Event to the active socket, without implying peer handling."""
-        return await self._send_frame(encode_event(event))
+        return await self._send_frame(encode_event(event), connection_token=connection_token)
 
     async def send(self, message: str) -> bool:
         """Legacy write API with the same socket-delivery-only bool contract."""
@@ -663,9 +679,11 @@ class NetworkClient:
             Frame(message, version=PROTOCOL_VERSION).to_bytes()
         )
 
-    async def _send_frame(self, frame: bytes) -> bool:
+    async def _send_frame(self, frame: bytes, *, connection_token=None) -> bool:
         """Send one frame, returning False for disconnects instead of raising."""
         async with self._send_lock:
+            if connection_token is not None and connection_token is not self.connection_token:
+                raise PeerConnectionChanged("Peer connection changed before write")
             if self.status in ("STOPPING", "STOP", "STOP_FAILED"):
                 logger.debug(
                     "NetworkClient.send: client is not writable in state %s",

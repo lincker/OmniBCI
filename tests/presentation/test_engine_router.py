@@ -85,3 +85,20 @@ def test_module_start_reports_foundation_not_ready(api_client, engine_service):
         response = api_client.post("/api/v1/engine/modules/processing/start")
     assert response.status_code == 409
     assert response.json()["code"] == "ENGINE_NOT_READY"
+
+
+@pytest.mark.parametrize("action", ["start", "stop"])
+@pytest.mark.parametrize("execution_unknown", [False, True])
+def test_output_delivery_failure_reports_uncertainty(api_client, engine_service, action, execution_unknown):
+    from omnibci.application.services.command_result_service import CommandDeliveryError
+
+    error = CommandDeliveryError(
+        "output-command", "ResumeActuation" if action == "start" else "SettleActuation",
+        "Peer connection failed", execution_unknown=execution_unknown,
+    )
+    with patch.object(engine_service, f"{action}_module", new_callable=AsyncMock, side_effect=error):
+        response = api_client.post(f"/api/v1/engine/modules/actuation/{action}")
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "PEER_DELIVERY_FAILED"
+    assert response.json()["detail"]["execution_unknown"] is execution_unknown

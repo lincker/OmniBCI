@@ -29,6 +29,7 @@ from omnibci.infrastructure.ipc.protocol import Frame, MAX_FRAME_BODY_BYTES
 from omnibci.infrastructure.ipc.network import (
     NetworkClient,
     NetworkServer,
+    PeerConnectionChanged,
     StreamCleanupError,
 )
 from omnibci.shared.events import Event, EventType
@@ -617,6 +618,50 @@ class TestSafeFrameRead:
 
 
 class TestSendSemantics:
+    @pytest.mark.parametrize("server_side", [True, False])
+    def test_connection_token_is_checked_inside_write_lock(self, server_side):
+        class Writer:
+            def __init__(self):
+                self.frames = []
+
+            def write(self, frame):
+                self.frames.append(frame)
+
+            async def drain(self):
+                pass
+
+        async def scenario():
+            old, new = Writer(), Writer()
+            if server_side:
+                connection = NetworkServer()
+                connection._clients.add(old)
+            else:
+                connection = NetworkClient()
+                connection.status = "CONNECTED"
+                connection.writer = old
+            token = connection.connection_token
+            await connection._send_lock.acquire()
+            pending = asyncio.create_task(connection.send_event(
+                Event(EventType.TrialCompleted, "old"), connection_token=token,
+            ))
+            await asyncio.sleep(0)
+            if server_side:
+                connection._clients = {new}
+            else:
+                connection.writer = new
+            connection._send_lock.release()
+            with pytest.raises(PeerConnectionChanged):
+                await pending
+            assert old.frames == []
+            assert new.frames == []
+            assert await connection.send_event(
+                Event(EventType.TrialCompleted, "new"),
+                connection_token=connection.connection_token,
+            )
+            assert len(new.frames) == 1
+
+        asyncio.run(scenario())
+
     def test_server_send_returns_delivery_status_and_serializes_frames(self):
         async def scenario():
             server = NetworkServer(event_bus=_SpyBus(), host="127.0.0.1", port=0)

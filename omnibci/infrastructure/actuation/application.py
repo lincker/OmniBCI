@@ -110,6 +110,12 @@ class Actuation:
         self._paused = True
         self.should_stop = True
 
+    def _on_delivery_fault(self, event: Event) -> None:
+        fault = event.data
+        if (isinstance(fault, dict) and fault.get("peer") == "engine"
+                and fault.get("channel_id") == self.peer_channel.channel_id):
+            self._connection_lost()
+
     async def serve(self):
         startup_complete = False
         try:
@@ -193,6 +199,8 @@ class Actuation:
         logger.info('---ActuationMain start---')
         # Install the route before a newly connected peer can deliver its first
         # command.  The command remains queued until setup completes.
+        self.event_bus.register_event_listener(
+            event_type=EventType.PeerDeliveryFault, handler=self._on_delivery_fault)
         self.event_bus.register_event_listener(
             event_type=EventType.ActuationCommand, handler=self._enqueue_command)
         self.event_bus.register_event_listener(

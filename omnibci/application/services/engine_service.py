@@ -713,6 +713,24 @@ class NeuroEngineService(EnginePort):
         except Exception:
             return False
 
+    def on_peer_delivery_fault(self, event: Event) -> None:
+        """Keep output delivery failures scoped to the current channel owner."""
+        fault = event.data
+        if (not isinstance(fault, dict) or self._engine is None
+                or fault.get("peer") not in {"stimulation", "actuation"}
+                or not isinstance(fault.get("channel_id"), str)
+                or not isinstance(fault.get("reason"), str)):
+            return
+        try:
+            channel = self._engine.peer_gateway.peer(fault["peer"])
+        except KeyError:
+            return
+        if channel.channel_id != fault["channel_id"]:
+            return
+        self._admission.quarantine(fault["reason"], fault["peer"])
+        if self._commands is not None:
+            self._commands.on_peer_delivery_fault(event)
+
     def subscribe(self, event_type, handler) -> None:
         """
         Register a listener on the engine's event bus.

@@ -30,6 +30,29 @@ class TestNeuroEngineServiceStatus:
         assert result.acquisition_alive is False
         assert result.processor_alive is False
 
+    @pytest.mark.parametrize("module", ["stimulation", "actuation"])
+    def test_peer_delivery_fault_only_quarantines_current_output_channel(self, module):
+        svc = NeuroEngineService(engine_factory=MagicMock())
+        svc._engine = MagicMock()
+        svc._engine.peer_gateway.peer.return_value.channel_id = "current-channel"
+        svc._commands = MagicMock()
+        stale = Event(EventType.PeerDeliveryFault, {
+            "peer": module, "channel_id": "previous-channel", "reason": "write failed",
+        })
+        svc.on_peer_delivery_fault(stale)
+        assert not svc.admission.recovery_required
+        svc._commands.on_peer_delivery_fault.assert_not_called()
+
+        current = Event(EventType.PeerDeliveryFault, {
+            "peer": module, "channel_id": "current-channel", "reason": "write failed",
+        })
+        svc.on_peer_delivery_fault(current)
+        assert svc.admission.recovery_status == {module: "write failed"}
+        svc._commands.on_peer_delivery_fault.assert_called_once_with(current)
+        for independent_module in ("acquisition", "processing"):
+            with svc.admission.command(independent_module):
+                pass
+
 
 class TestNeuroEngineServicePortState:
     @pytest.mark.parametrize("alive", [None, False, True])

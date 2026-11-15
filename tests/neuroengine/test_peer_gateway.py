@@ -37,6 +37,7 @@ class FakeTransport:
         self.started = False
         self.stopped = False
         self._connected = True
+        self.connection_token = object()
         self.lifecycle = lifecycle if lifecycle is not None else []
         self.fail_start = fail_start
         self.fail_stop = fail_stop
@@ -75,7 +76,7 @@ class FakeTransport:
             raise RuntimeError(f"stop failed: {self.name}")
         self.stopped = True
 
-    async def send(self, event) -> bool:
+    async def send(self, event, *, connection_token=None) -> bool:
         self.sent.append(event)
         return True
 
@@ -121,7 +122,7 @@ class TestOutbound:
 
         async def _run():
             await ch.start()
-            sent = await ch._forward(Event(EventType.TrialCompleted, data=1))
+            sent = await ch.send(Event(EventType.TrialCompleted, data=1))
             await ch.stop()
             return sent
 

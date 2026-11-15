@@ -81,6 +81,12 @@ class Stimulation:
         self._paused = True
         self.should_stop = True
 
+    def _on_delivery_fault(self, event: Event) -> None:
+        fault = event.data
+        if (isinstance(fault, dict) and fault.get("peer") == "engine"
+                and fault.get("channel_id") == self.peer_channel.channel_id):
+            self._connection_lost()
+
     async def serve(self):
         startup_complete = False
         try:
@@ -337,6 +343,7 @@ class Stimulation:
                     logging.warning("present_result skipped (bad result %r): %s", data, exc)
 
     def _register_event_listener(self):
+        self.event_bus.register_event_listener(event_type=EventType.PeerDeliveryFault, handler=self._on_delivery_fault)
         self.event_bus.register_event_listener(event_type=EventType.StartStimTrial, handler=self._put_stim_command_queue)
         self.event_bus.register_event_listener(event_type=EventType.TrialCompleted, handler=self._put_sys_command_queue)
         self.event_bus.register_event_listener(event_type=EventType.StopStimulation, handler=self._stop_stimulation_system)

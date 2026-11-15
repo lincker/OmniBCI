@@ -30,6 +30,7 @@ class EventType(IntEnum):
     AcquisitionState = 121  # worker -> API: authoritative device-state snapshot
                             # payload: application.events.AcquisitionSnapshot
     CommandResult = 601      # command consumer -> API: application.events.CommandResult
+    PeerDeliveryFault = 602  # local channel -> owner: delivery stopped, not an execution receipt
     PeerHello = 701          # external peer -> engine: pinned runtime identity
     PeerAccepted = 702       # engine -> external peer: matching identity accepted
     # Legacy numeric values are part of the versioned IPC wire contract.

@@ -211,6 +211,10 @@ class AcquisitionRuntime:
                 await handler()
             if command is AcquisitionCommand.stop_and_drain:
                 self._require_healthy_stream()
+                if self._processing_failed:
+                    raise AcquisitionCommandRejected(
+                        "PROCESSING_INPUT_FAILED", "Processing input failed; drain was not confirmed",
+                    )
                 if self.processing_active is not None and not self.processing_active.is_set():
                     data = StreamDrainReceipt(
                         generation=self.generation, acquisition_revision=self.acquisition_revision,
@@ -562,6 +566,8 @@ class AcquisitionRuntime:
                             "expected_revision": self.acquisition_revision}
                 if not isinstance(payload, dict) or any(payload.get(key) != value for key, value in expected.items()):
                     raise ValueError("Processing input belongs to another acquisition runtime")
+                if self._processing_failed and payload.get("drain", True):
+                    raise ValueError("Processing input failed; drain was not confirmed")
                 attached = self.processing_active.is_set()
                 self.processing_active.clear()
                 if (attached or self._processing_receipt is not None) and payload.get("drain", True):

@@ -18,7 +18,7 @@ from omnibci.application.commands.stimulation_commands import (
 )
 from omnibci.application.ports.engine_port import EnginePort
 from omnibci.application.ports.engine_port import STIMULATION_PEER
-from omnibci.application.services.command_result_service import CommandTimeoutError
+from omnibci.application.services.command_result_service import CommandDeliveryError, CommandTimeoutError
 
 if TYPE_CHECKING:
     from omnibci.application.services.command_result_service import CommandResultBroker
@@ -134,10 +134,9 @@ class StimulationAppService:
                 self._command_results.request(EventType.StopStimulation)
             else:
                 self._put_event(EventType.StopStimulation)
-        except CommandTimeoutError:
-            # The external renderer may have received the stop and disconnected
-            # before its result reached us.  Preserve the last known active
-            # projection; /status exposes the independent peer connection.
+        except (CommandDeliveryError, CommandTimeoutError):
+            # A stop that was not sent or never confirmed does not release the
+            # external renderer. Preserve ownership until a retry is confirmed.
             raise
         except BaseException:
             # The engine may already be down, but the locally-owned renderer

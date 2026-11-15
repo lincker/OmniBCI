@@ -305,6 +305,7 @@ def register_engine_listeners(
         (EventType.TrialCompleted, container.results_service.on_trial_completed),
         (EventType.EpochProcessed, container.results_service.on_epoch_processed),
         (EventType.AcquisitionState, container.acquisition_service.on_acquisition_state),
+        (EventType.PeerDeliveryFault, engine.on_peer_delivery_fault),
         *(
             ((EventType.ProcessingInputFault, container.signal_setup_service.on_input_fault),)
             if container.signal_setup_service is not None

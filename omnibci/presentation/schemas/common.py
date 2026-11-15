@@ -37,6 +37,7 @@ class ErrorCode(str, Enum):
     COMMAND_REJECTED = "COMMAND_REJECTED"        # state/input precondition rejected
     COMMAND_EXECUTION_FAILED = "COMMAND_EXECUTION_FAILED"  # device/plugin/internal fault
     COMMAND_TIMEOUT = "COMMAND_TIMEOUT"          # no terminal consumer result in time
+    PEER_DELIVERY_FAILED = "PEER_DELIVERY_FAILED"  # disconnected or overloaded output channel
 
     # Host configuration and Plugin Profiles.
     CONFIG_KEY_NOT_ALLOWED = "CONFIG_KEY_NOT_ALLOWED"      # key outside the whitelist
