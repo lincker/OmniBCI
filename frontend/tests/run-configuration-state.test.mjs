@@ -10,6 +10,7 @@ after(() => server.close());
 const { useCurrentConfiguration } = await server.ssrLoadModule("/src/hooks/useCurrentConfiguration.ts");
 const { useRuntimeControls } = await server.ssrLoadModule("/src/hooks/useRuntimeControls.ts");
 const { RunConsole } = await server.ssrLoadModule("/src/RunConsole.tsx");
+const { ModuleRuntime } = await server.ssrLoadModule("/src/ModuleRuntime.tsx");
 const { api } = await server.ssrLoadModule("/src/api/client.ts");
 const { pluginConfigApi } = await server.ssrLoadModule("/src/api/plugin-config.ts");
 const { signalConfigApi } = await server.ssrLoadModule("/src/api/signal-config.ts");
@@ -30,6 +31,17 @@ const complete = { revision: "complete", bindings: [source, decoder, detector,
   { slot: "stimulation.trigger", kind: "trigger", selection: selection("trigger"), parameters: {} },
   { slot: "actuation.effector", kind: "effector", selection: selection("effector"), parameters: {} }] };
 
+function moduleRuntime(tree, action) {
+  return elements(tree).find((element) => element.props.className === "module-runtime"
+    && elements(element).some((child) => child.type === "button" && text(child) === action));
+}
+
+function expandModules(tree) {
+  if (Array.isArray(tree)) return tree.map(expandModules);
+  if (!React.isValidElement(tree)) return tree;
+  if (tree.type === ModuleRuntime) return expandModules(ModuleRuntime(tree.props));
+  return React.cloneElement(tree, {}, expandModules(tree.props.children));
+}
 function elements(tree) {
   if (Array.isArray(tree)) return tree.flatMap(elements);
   return React.isValidElement(tree) ? [tree, ...elements(tree.props.children)] : [];
@@ -109,8 +121,8 @@ function componentHarness(props) {
       }])) };
       currentController = current;
       const runtime = runtimeController(props.runtime);
-      const runtimeControls = useRuntimeControls(runtime, current, props.acquisition, props.engine.refresh);
-      tree = RunConsole({ ...props, current, runtime, runtimeControls });
+      const runtimeControls = useRuntimeControls(runtime, current, props.acquisition, props.engine);
+      tree = expandModules(RunConsole({ ...props, current, runtime, runtimeControls }));
     } finally { internal.current = previous; }
     const pending = effects; effects = [];
     pending.forEach((effect) => effect());
@@ -190,11 +202,11 @@ test("a successful empty activation is first-use guidance, not a failed request"
   const pending = deferred();
   await withScenario({ activation: () => pending.promise }, async ({ harness, calls }) => {
     await harness.settle();
-    assert.match(text(region(harness.tree, "Module configurations")), /Loading/);
+    assert.match(text(region(harness.tree, "Current parameters")), /Loading/);
     assert.doesNotMatch(text(harness.tree), /No data source configured/);
     pending.resolve(null); await harness.settle();
     assert.match(text(harness.tree), /No data source configured/);
-    assert.doesNotMatch(text(region(harness.tree, "Module configurations")), /Loading|Unavailable/);
+    assert.doesNotMatch(text(region(harness.tree, "Current parameters")), /Loading|Unavailable/);
     assert.equal(preparation(harness.tree), "Signal preparationSignal processing not enabled");
     assert.equal(alerts(harness.tree), "");
     assert.equal(button(harness.tree, "Start engine").props.disabled, false);
@@ -209,8 +221,8 @@ test("a successful empty activation is first-use guidance, not a failed request"
 test("a source-only configuration renders without processing or trial setup requirements", async () => {
   await withScenario({ activation: async () => sourceOnly, acceptedRevision: sourceOnly.revision }, async ({ harness, calls }) => {
     await harness.settle();
-    assert.match(text(region(harness.tree, "Module configurations")), /example.source/);
-    assert.doesNotMatch(text(region(harness.tree, "Module configurations")), /Loading|Unavailable/);
+    assert.match(text(region(harness.tree, "Current parameters")), /example.source/);
+    assert.doesNotMatch(text(region(harness.tree, "Current parameters")), /Loading|Unavailable/);
     assert.doesNotMatch(text(harness.tree), /No data source configured/);
     assert.equal(preparation(harness.tree), "Signal preparationSignal processing not enabled");
     assert.equal(button(harness.tree, "Start engine").props.disabled, false);
@@ -224,24 +236,24 @@ test("an inline source summary identifies the current configuration without a pr
   const activation = { ...sourceOnly, bindings: [{ ...source, profile_revision: 0 }] };
   await withScenario({ activation: async () => activation, acceptedRevision: activation.revision }, async ({ harness }) => {
     await harness.settle();
-    const summary = text(region(harness.tree, "Module configurations"));
-    assert.match(summary, /Current configuration/);
+    const summary = text(region(harness.tree, "Current parameters"));
+    assert.match(summary, /Current parameters/);
     assert.match(summary, /example\.source\/main/);
     assert.match(summary, /Plugin 1\.0\.0/);
     assert.doesNotMatch(summary, /Profile revision|revision 0/);
   });
 });
 
-test("a saved source summary retains its profile name and selected revision", async () => {
+test("a source loaded from a profile identifies the current plugin without implying a running profile", async () => {
   const activation = { ...sourceOnly, bindings: [{ ...source, profile_id: "saved-source", profile_revision: 3 }] };
   await withScenario({ activation: async () => activation, acceptedRevision: activation.revision,
     profiles: async () => [{ profile_id: "saved-source", name: "Lab source", revision: 4 }] }, async ({ harness }) => {
     await harness.settle();
-    const summary = text(region(harness.tree, "Module configurations"));
-    assert.match(summary, /Lab source/);
+    const summary = text(region(harness.tree, "Current parameters"));
+    assert.doesNotMatch(summary, /Lab source/);
     assert.match(summary, /example\.source\/main/);
     assert.match(summary, /Plugin 1\.0\.0/);
-    assert.match(summary, /Profile revision 3/);
+    assert.doesNotMatch(summary, /Profile revision/);
     assert.doesNotMatch(summary, /not saved as a profile|Profile revision 4/);
   });
 });
@@ -249,7 +261,7 @@ test("a saved source summary retains its profile name and selected revision", as
 test("a complete configuration preserves selected modules and processing readiness", async () => {
   await withScenario({ activation: async () => complete, acceptedRevision: complete.revision, running: true }, async ({ harness, calls }) => {
     await harness.settle();
-    const summary = text(region(harness.tree, "Module configurations"));
+    const summary = text(region(harness.tree, "Current parameters"));
     for (const plugin of ["source", "decoder", "detector", "filter", "visual", "trigger", "effector"]) assert.match(summary, new RegExp(`example.${plugin}`));
     assert.doesNotMatch(summary, /Loading|Unavailable/);
     assert.equal(preparation(harness.tree), "Signal preparationReady");
@@ -264,7 +276,7 @@ test("an activation request failure is unavailable, never an empty configuration
     await harness.settle();
     pending.reject(new Error("Activation request failed")); await harness.settle();
     assert.match(alerts(harness.tree), /Activation request failed/);
-    assert.match(text(region(harness.tree, "Module configurations")), /Unavailable/);
+    assert.match(text(region(harness.tree, "Current parameters")), /Unavailable/);
     assert.equal(preparation(harness.tree), "Signal preparationUnavailable");
     assert.doesNotMatch(text(harness.tree), /No data source configured|Loading/);
     assert.equal(button(harness.tree, "Start engine").props.disabled, false);
@@ -277,8 +289,8 @@ test("a failed stimulation catalog does not hide a valid source or imply acquisi
   await withScenario({ activation: async () => sourceOnly, acceptedRevision: sourceOnly.revision,
     catalog: async () => { throw new Error("Paradigm catalog offline"); } }, async ({ harness, calls }) => {
     await harness.settle();
-    assert.match(text(region(harness.tree, "Module configurations")), /example.source/);
-    assert.doesNotMatch(text(region(harness.tree, "Module configurations")), /Unavailable|Loading/);
+    assert.match(text(region(harness.tree, "Current parameters")), /example.source/);
+    assert.doesNotMatch(text(region(harness.tree, "Current parameters")), /Unavailable|Loading/);
     assert.equal(preparation(harness.tree), "Signal preparationSignal processing not enabled");
     assert.equal(button(harness.tree, "Connect").props.disabled, false);
     assert.equal(button(harness.tree, "Launch stimulation").props.disabled, true);
@@ -290,7 +302,7 @@ test("an unavailable profile library does not invalidate an accepted source conf
   await withScenario({ activation: async () => sourceOnly, acceptedRevision: sourceOnly.revision,
     profiles: async () => { throw new Error("Profile library offline"); } }, async ({ harness }) => {
     await harness.settle();
-    assert.match(text(region(harness.tree, "Module configurations")), /example.source/);
+    assert.match(text(region(harness.tree, "Current parameters")), /example.source/);
     assert.equal(button(harness.tree, "Connect").props.disabled, false);
     assert.equal(preparation(harness.tree), "Signal preparationSignal processing not enabled");
   });
@@ -304,11 +316,11 @@ test("changed configuration waits for the current response and ignores an older 
     harness.updateRuntime({ accepted: revisionMap(sourceOnly.revision) }); await harness.settle();
     old.resolve(null); await harness.settle();
     assert.doesNotMatch(text(harness.tree), /No data source configured/);
-    assert.match(text(region(harness.tree, "Module configurations")), /Loading/);
+    assert.match(text(region(harness.tree, "Current parameters")), /Loading/);
     assert.equal(button(harness.tree, "Connect").props.disabled, true);
     current.resolve(sourceOnly); await harness.settle();
-    assert.match(text(region(harness.tree, "Module configurations")), /example.source/);
-    assert.doesNotMatch(text(region(harness.tree, "Module configurations")), /Loading|Unavailable/);
+    assert.match(text(region(harness.tree, "Current parameters")), /example.source/);
+    assert.doesNotMatch(text(region(harness.tree, "Current parameters")), /Loading|Unavailable/);
     assert.equal(button(harness.tree, "Connect").props.disabled, false);
     assert.deepEqual(calls, []);
   });
@@ -370,7 +382,7 @@ test("retrying invalid trial controls keeps trial submission blocked and stop co
     assert.match(alerts(harness.tree), /Unsupported trial control/);
     assert.equal(button(harness.tree, "Trigger trial").props.disabled, true);
     button(harness.tree, "Retry loading configuration").props.onClick(); await harness.settle();
-    assert.doesNotMatch(text(region(harness.tree, "Module configurations")), /Loading/);
+    assert.doesNotMatch(text(region(harness.tree, "Current parameters")), /Loading/);
     assert.equal(button(harness.tree, "Trigger trial").props.disabled, true,
       "Clearing the old error during retry cannot enable controls that have not reloaded");
     const trialForm = elements(harness.tree).find((item) => item.type === "form" && item.props.className?.includes("trial-controls"));
@@ -827,3 +839,118 @@ for (const [module, setting, prepareLabel, startLabel] of [["stimulation", "STIM
       });
   });
 }
+
+for (const [name, startLabel] of [["acquisition", "Connect"], ["processing", "Start processing"], ["stimulation", "Launch stimulation"], ["actuation", "Start actuation"]]) {
+  test(`${name} with a retained applied revision is not reported running after it stops`, async () => {
+    await withScenario({ activation: async () => complete, acceptedRevision: complete.revision, running: true,
+      processingRunning: false }, async ({ harness }) => {
+      await harness.settle();
+      const state = moduleRuntime(harness.tree, startLabel);
+      assert.match(text(state), name === "acquisition" ? /Not connected/ : /Not running/);
+      assert.match(text(state), /next connection or start uses the current parameters/);
+      assert.doesNotMatch(text(state), /module is using the current parameters/);
+    });
+  });
+}
+
+test("editing a running decoder changes the current summary and reports pending parameters without applying them", async () => {
+  await withScenario({ activation: async () => complete, acceptedRevision: complete.revision, running: true }, async ({ harness, calls }) => {
+    await harness.settle();
+    assert.match(text(moduleRuntime(harness.tree, "Start processing")), /module is using the current parameters/);
+    harness.current.set("processing.decoder", { ...harness.current.get("processing.decoder"),
+      selection: selection("replacement-decoder"), parameters: { duration: 2 } });
+    await harness.settle();
+    const state = moduleRuntime(harness.tree, "Start processing");
+    assert.match(text(region(harness.tree, "Current parameters")), /example\.replacement-decoder/);
+    assert.match(text(state), /Current parameters differ from those in use/);
+    assert.equal(button(state, "Start processing").props.disabled, true);
+    assert.equal(button(state, "Stop processing").props.disabled, false);
+    assert.deepEqual(calls, []);
+  });
+});
+
+test("a loaded decoder appears in the current summary before the server has accepted Processing", async () => {
+  await withScenario({ activation: async () => sourceOnly, acceptedRevision: sourceOnly.revision }, async ({ harness, calls }) => {
+    await harness.settle();
+    harness.current.set("processing.decoder", { selection: selection("loaded-decoder"), plugin: "loaded-decoder", profile: null,
+      name: "", parameters: { duration: 2 }, processingInput: { outputs: [] } });
+    await harness.settle();
+    assert.match(text(region(harness.tree, "Current parameters")), /example\.loaded-decoder/);
+    assert.match(text(moduleRuntime(harness.tree, "Start processing")), /requires an epoch detector/);
+    assert.deepEqual(calls, []);
+  });
+});
+
+for (const uncertainty of [{ uncertain: true }, { recoveryRequired: true }, { inProgress: true }]) {
+  test(`Processing does not claim current parameters are in use during ${Object.keys(uncertainty)[0]}`, async () => {
+    await withScenario({ activation: async () => complete, acceptedRevision: complete.revision, running: true }, async ({ harness }) => {
+      await harness.settle();
+      harness.updateRuntimeState({ scopes: { processing: uncertainty } });
+      await harness.settle();
+      const state = moduleRuntime(harness.tree, "Start processing");
+      assert.match(text(state), /running parameters cannot be confirmed/);
+      assert.doesNotMatch(text(state), /module is using the current parameters/);
+    });
+  });
+}
+
+test("a different applied revision never presents accepted parameters as running values", async () => {
+  await withScenario({ activation: async () => complete, acceptedRevision: complete.revision, running: true,
+    appliedRevisions: { ...revisionMap(complete.revision), processing: "other-running-configuration" } }, async ({ harness }) => {
+    await harness.settle();
+    assert.match(text(moduleRuntime(harness.tree, "Start processing")), /running parameters cannot be confirmed/);
+    assert.doesNotMatch(text(moduleRuntime(harness.tree, "Start processing")), /module is using the current parameters/);
+  });
+});
+
+for (const [name, prepareLabel, stopLabel] of [["stimulation", "Prepare external stimulation", "Stop stimulation"],
+  ["actuation", "Prepare external actuation", "Stop actuation"]]) {
+  test(`external ${name} preparation reports no running module and Stop clears the preparation notice`, async () => {
+    const external = { ...complete, settings: { [`${name.toUpperCase()}.auto_spawn`]: false } };
+    await withScenario({ activation: async () => external, acceptedRevision: external.revision, running: true }, async ({ harness, calls }) => {
+      await harness.settle();
+      await button(harness.tree, prepareLabel).props.onClick();
+      await harness.settle();
+      const state = moduleRuntime(harness.tree, prepareLabel);
+      assert.match(text(state), /Not running/);
+      assert.match(text(state), /configuration was prepared/);
+      assert.doesNotMatch(text(state), /module is using the current parameters/);
+      assert.equal(button(state, stopLabel).props.disabled, false);
+      await button(state, stopLabel).props.onClick();
+      await harness.settle();
+      assert.doesNotMatch(text(moduleRuntime(harness.tree, prepareLabel)), /configuration was prepared/);
+      assert.ok(calls.some(([action]) => action === (name === "stimulation" ? "stimStop" : "moduleStop")));
+    });
+  });
+}
+
+test("an invalid staged filter cannot block Processing until it is added to the chain", async () => {
+  await withScenario({ activation: async () => complete, acceptedRevision: complete.revision, running: true,
+    processingRunning: false }, async ({ harness }) => {
+    await harness.settle();
+    harness.current.set("processing.decoder", { ...harness.current.get("processing.decoder"),
+      requiresProcessingInputReview: false, processingInput: { schema_version: 2, outputs: [] } });
+    const invalid = { selection: selection("filter"), plugin: "filter", profile: null, name: "", processingInput: null,
+      parameters: { cutoff: -1 }, schema: { type: "object", properties: { cutoff: { type: "number", minimum: 0 } } } };
+    harness.current.set("processing.filters", invalid);
+    await harness.settle();
+    assert.equal(button(harness.tree, "Start processing").props.disabled, false);
+    harness.current.set("processing.filter.new", invalid);
+    harness.current.setFilterOrder([...harness.current.filterOrder, "processing.filter.new"]);
+    await harness.settle();
+    assert.equal(button(harness.tree, "Start processing").props.disabled, true);
+    assert.match(text(moduleRuntime(harness.tree, "Start processing")), /cutoff/);
+  });
+});
+
+test("disagreeing Engine and runtime polls cannot report confirmed running parameters", async () => {
+  await withScenario({ activation: async () => complete, acceptedRevision: complete.revision, running: true }, async ({ harness }) => {
+    await harness.settle();
+    harness.updateRuntime({ running: false });
+    await harness.settle();
+    const state = moduleRuntime(harness.tree, "Start processing");
+    assert.match(text(state), /Runtime status is unavailable/);
+    assert.match(text(state), /running parameters cannot be confirmed/);
+    assert.doesNotMatch(text(state), /module is using the current parameters/);
+  });
+});

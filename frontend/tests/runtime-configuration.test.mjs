@@ -1,4 +1,4 @@
-import { runtimeController, currentController, controlsController } from "./module-fixtures.mjs";
+import { runtimeController, currentController } from "./module-fixtures.mjs";
 /** Static render contracts; browser interactions still need browser verification. */
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
@@ -10,6 +10,7 @@ const server = await createServer({ server: { middlewareMode: true, hmr: false, 
 after(() => server.close());
 const { RuntimeConfigurationReview, RuntimeConfigurationStatus, RuntimeConfigurationProgress, runtimeBlockReason } = await server.ssrLoadModule("/src/RuntimeConfiguration.tsx");
 const { RunConsole } = await server.ssrLoadModule("/src/RunConsole.tsx");
+const { useRuntimeControls } = await server.ssrLoadModule("/src/hooks/useRuntimeControls.ts");
 const { I18nProvider, translate } = await server.ssrLoadModule("/src/i18n.tsx");
 const english = { language: "en", t: (key, params) => translate("en", key, params) };
 const { TrialResults } = await server.ssrLoadModule("/src/TrialResults.tsx");
@@ -130,9 +131,15 @@ test("Run preserves independent module controls and permits Stop while configura
     acquisition: { data: { connected: true, streaming: true, sample_rate: 250, channel_count: 8 }, error: null, refresh: noop, pending: false,
       ...Object.fromEntries(["connect", "disconnect", "read", "stopRead"].map((name) => [name, { run: noop, pending: false, error: null }])) },
     feed: { generation: "engine-1", trials: [], acks: [] }, current, onBusyChange: noop, onEditSetup: noop, onResults: noop };
+  function RunWithControls({ runtime: value, streaming }) {
+    const runtime = runtimeController(value);
+    const configuration = currentController(null, current);
+    const acquisition = { ...props.acquisition, data: { ...props.acquisition.data, streaming } };
+    const runtimeControls = useRuntimeControls(runtime, configuration, acquisition, props.engine);
+    return React.createElement(RunConsole, { ...props, runtime, current: configuration, acquisition, runtimeControls });
+  }
   const run = (runtime, streaming) => renderToStaticMarkup(React.createElement(I18nProvider, null,
-    React.createElement(RunConsole, { ...props, runtime: runtimeController(runtime), current: currentController(null, current), runtimeControls: controlsController(),
-      acquisition: { ...props.acquisition, data: { ...props.acquisition.data, streaming } } })));
+    React.createElement(RunWithControls, { runtime, streaming })));
   for (const streaming of [false, true]) {
     const pending = run({ ...baseRuntime, blocked: true, inProgress: true }, streaming);
     assert.doesNotMatch(pending, /aria-label="Engine progress"/);
@@ -151,7 +158,7 @@ test("Run preserves independent module controls and permits Stop while configura
     for (const html of [pending, recovery]) {
       const engineControls = html.match(/<section\b[^>]*aria-label="Engine controls"[^>]*>[\s\S]*?<\/section>/)?.[0];
       assert.ok(engineControls, "Engine controls remain visible while configuration changes or recovery is needed");
-      assert.ok(html.indexOf(engineControls) < html.indexOf('aria-label="Module configurations"'));
+      assert.ok(html.indexOf(engineControls) < html.indexOf('aria-label="Current parameters"'));
       for (const label of ["Start engine", "Stop engine"]) {
         buttonDisabled(engineControls, label);
         const buttons = [...html.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)]
@@ -199,29 +206,23 @@ for (const [name, activeInput, expected] of [
 ]) test(`Run reports ${name} from the active channel mapping`, () => {
   const dispatcher = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
   const previous = dispatcher.current;
-  let stateIndex = 0;
-  // Active mapping is meaningful only after the matching decoder configuration has loaded.
-  const seeded = {
-    99: { active_input: activeInput, readiness: { ready: true } },
-    4: { modules: { processing: { revision: revisions.processing, bindings: [{ slot: "processing.decoder", kind: "decoder",
-      selection: { package_id: "example.decoder", contribution_id: "main", version: "1.0.0" }, parameters: {} }] } }, engine: { revision: revisions.engine } },
-    31: { status: "ready", revision: JSON.stringify(revisions) },
-  };
   dispatcher.current = {
-    useState: (initial) => {
-      const index = stateIndex++;
-      return [Object.hasOwn(seeded, index) ? seeded[index] : typeof initial === "function" ? initial() : initial, noop];
-    },
+    useState: (initial) => [typeof initial === "function" ? initial() : initial, noop],
     useContext: () => english, useRef: (value) => ({ current: value }),
     useCallback: (callback) => callback, useEffect: noop,
   };
   let tree;
   try {
-    tree = RunConsole({ engine: { data: { running: true, processor_alive: true }, error: null, refresh: noop },
-      acquisition: { data: { connected: true, streaming: false }, error: null, refresh: noop, pending: false,
-        ...Object.fromEntries(["connect", "disconnect", "read", "stopRead"].map((name) => [name, { run: noop, pending: false, error: null }])) },
-      feed: { generation: null, trials: [], acks: [] }, runtime: runtimeController(baseRuntime), current: currentController({ revision: revisions.processing, bindings: seeded[4].modules.processing.bindings }, current),
-      runtimeControls: controlsController({ signal: { data: { active_input: activeInput, readiness: { ready: true } }, error: null } }),
+    const engine = { data: { running: true, processor_alive: true }, error: null, refresh: noop };
+    const acquisition = { data: { connected: true, streaming: false }, error: null, refresh: noop, pending: false,
+      ...Object.fromEntries(["connect", "disconnect", "read", "stopRead"].map((name) => [name, { run: noop, pending: false, error: null }])) };
+    const runtime = runtimeController(baseRuntime);
+    const configuration = currentController({ revision: revisions.processing, bindings: [{ slot: "processing.decoder", kind: "decoder",
+      selection: { package_id: "example.decoder", contribution_id: "main", version: "1.0.0" }, parameters: {} }] }, current);
+    const runtimeControls = useRuntimeControls(runtime, configuration, acquisition, engine);
+    tree = RunConsole({ engine, acquisition,
+      feed: { generation: null, trials: [], acks: [] }, runtime, current: configuration,
+      runtimeControls: { ...runtimeControls, signal: { data: { active_input: activeInput, readiness: { ready: true } }, error: null } },
       onBusyChange: noop, onEditSetup: noop, onResults: noop });
   } finally { dispatcher.current = previous; }
   const html = renderToStaticMarkup(React.createElement(I18nProvider, null, tree));

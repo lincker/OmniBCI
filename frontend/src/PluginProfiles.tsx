@@ -1,8 +1,8 @@
-/** Plugin-owned settings, saved profiles, and explicit ordered activation. */
+/** Plugin-owned current parameters and reusable saved profiles. */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ConfigDialog, type ConfigDialogProps } from "./ConfigDialog";
 import { SchemaForm, initialSchemaValue, schemaErrors, sameParameters, normalizedParameters } from "./SchemaForm";
-import { pluginConfigApi as api, selectionKey, type ModuleActivation,
+import { pluginConfigApi as api, selectionKey,
   type PluginDefinition, type PluginKind, type PluginProfile } from "./api/plugin-config";
 import { useI18n, translatePluginName, type TranslationKey } from "./i18n";
 import "./PluginProfiles.css";
@@ -11,7 +11,8 @@ import { ConfigurationHistory } from "./ConfigurationHistory";
 import { AcquisitionMetadata } from "./AcquisitionMetadata";
 import { ProcessingInput, emptyProcessingInput, processingInputErrors } from "./ProcessingInput";
 import { api as controlApi, type DataSourceMetadata } from "./api/client";
-import { RuntimeConfigurationProgress, runtimeBlockReason } from "./RuntimeConfiguration";
+import { ModuleRuntime } from "./ModuleRuntime";
+import type { RuntimeControls } from "./hooks/useRuntimeControls";
 import type { AcquisitionController } from "./hooks/useAcquisition";
 import { currentFromBinding, emptyCurrentConfiguration, type CurrentConfigurationController, type CurrentPluginConfiguration } from "./hooks/useCurrentConfiguration";
 
@@ -36,8 +37,6 @@ const emptyEditor = emptyCurrentConfiguration;
 const observedFields = new Set(["sample_rate", "channel_count", "channel_labels"]);
 const connectionParameters = (parameters: Record<string, unknown>) => Object.fromEntries(
   Object.entries(parameters).filter(([key]) => !observedFields.has(key)));
-const filterInstances = (activation: ModuleActivation | null): FilterInstance[] => activation?.bindings
-  .filter((item) => item.kind === "filter").map((item) => ({ slot: item.slot, ...currentFromBinding(item) })) ?? [];
 
 function focusSection(id: string) {
   if (typeof document === "undefined") return;
@@ -64,6 +63,7 @@ function editorFor(profile: PluginProfile | undefined, definitions: PluginDefini
   if (profile) return { sourceOrigin: "profile", profile, selection: structuredClone(profile.selection),
     configurationVersion: profile.configuration_version,
     schema: definitions.find((item) => selectionKey(item.selection) === selectionKey(profile.selection))?.schema,
+    available: definitions.find((item) => selectionKey(item.selection) === selectionKey(profile.selection))?.available ?? false,
     requiresProcessingInputReview: profile.kind === "decoder" && (!profile.processing_input), plugin: selectionKey(profile.selection), name: profile.name,
     parameters: structuredClone(profile.parameters),
     processingInput: profile.processing_input ? { ...structuredClone(profile.processing_input),
@@ -77,21 +77,21 @@ function editorFor(profile: PluginProfile | undefined, definitions: PluginDefini
   let index = 1;
   while (names.has(`new profile ${index}`)) index += 1;
   return { sourceOrigin: "new", profile: null, selection: definition?.selection ?? null,
-    configurationVersion: definition?.configuration_version ?? undefined, schema: definition?.schema, plugin: pluginKey, name: `new profile ${index}`,
+    configurationVersion: definition?.configuration_version ?? undefined, schema: definition?.schema, available: definition?.available, plugin: pluginKey, name: `new profile ${index}`,
     parameters: ["file_reader", "neuroscan_curry8_reader"].includes(definition?.plugin_type ?? "")
       ? connectionParameters(defaults) : defaults,
     processingInput: definition?.kind === "decoder" ? emptyProcessingInput() : null };
 }
 
-export function PluginProfiles({ module, engineRunning, engineAvailable = true, navigation,
-  runtime, acquisition, current, onBusyChange, onRun }: {
+export function PluginProfiles({ module, engineAvailable = true, navigation,
+  runtime, acquisition, current, runtimeControls, onBusyChange, onRun }: {
   module: Module;
-  engineRunning: boolean;
   engineAvailable?: boolean;
   navigation?: ReactNode;
   runtime: RuntimeConfiguration;
   current: CurrentConfigurationController;
   acquisition: AcquisitionController;
+  runtimeControls: RuntimeControls;
   onBusyChange?: (busy: boolean) => void;
   onRun?: () => void;
 }) {
@@ -100,7 +100,6 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   const slot = slots[module].find((item) => item.slot === slotName) ?? slots[module][0];
   const [profiles, setProfiles] = useState<PluginProfile[]>([]);
   const [definitions, setDefinitions] = useState<PluginDefinition[]>([]);
-  const [activation, setActivation] = useState<ModuleActivation | null>(null);
   const [filterSlot, setFilterSlot] = useState<string | null>(null);
   const editorSlot = slot.kind === "filter" && filterSlot && current.filterOrder.includes(filterSlot) ? filterSlot : slot.slot;
   const editor = current.entries[editorSlot] ?? emptyEditor;
@@ -112,6 +111,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   };
   const [localBusy, setBusy] = useState(true);
   const currentState = current.modules[module];
+  const activation = currentState.activation;
   const runtimeState = runtime.state(module);
   const busy = localBusy || module === "acquisition" && acquisition.pending || (!currentState.ready && !currentState.error);
   const [error, setError] = useState("");
@@ -142,11 +142,6 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   ].filter((selection) => !definitions.some((definition) => selectionKey(definition.selection) === selectionKey(selection)))
     .map((selection) => [selectionKey(selection), selection])).entries()];
   const selectedBinding = activation?.bindings.find((item) => item.slot === editorSlot);
-  const selectedProfile = profiles.find((item) => item.profile_id === selectedBinding?.profile_id);
-  const selectedPlugin = definitions.find((item) => selectedBinding
-    && selectionKey(item.selection) === selectionKey(selectedBinding.selection));
-  const selectionLabel = !engineRunning ? t("profiles.nextStart")
-    : activation && runtime.status?.applied?.[module] === activation.revision ? t("profiles.applied") : t("profiles.selected");
   const baseline = editor.profile ? editorFor(editor.profile, definitions) : emptyEditor;
   const dirty = !!editor.profile && (!sameParameters(editor.parameters, baseline.parameters)
     || !sameParameters(editor.processingInput, baseline.processingInput));
@@ -154,9 +149,6 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     ...(slot.kind === "decoder" ? processingInputErrors(editor.processingInput, t) : [])];
   const missingDecoderInput = slot.kind === "decoder" && (editor.requiresProcessingInputReview || !editor.processingInput);
   const moduleValidation = current.validationError(module);
-  const savedChain = filterInstances(activation);
-  const chainDirty = !sameParameters(chain.map(({ slot, selection, parameters }) => ({ slot, selection, parameters })),
-    savedChain.map(({ slot, selection, parameters }) => ({ slot, selection, parameters })));
   const reportedSource = ["neuroscan_curry8_reader", "file_reader"].includes(definition?.plugin_type ?? "");
   const sourceParameters = editor.parameters;
   const sourceParameterKey = JSON.stringify(sourceParameters);
@@ -180,44 +172,36 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     setSourceMetadata(null);
   }, [sourceMode, editor.plugin, editor.profile?.profile_id, sourceParameterKey, sourceStatus?.connected, sourceStatus?.connection_id, sourceStatus?.streaming, sourceMatches, runtime.status?.generation, runtimeState.blocked]);
 
-  useEffect(() => {
-    let active = true;
-    void api.module(module).then((next) => {
-      if (!active) return;
-      setActivation(next);
-    }).catch((cause) => { if (active) setError(String(cause)); });
-    return () => { active = false; };
-  }, [runtime.status?.accepted[module], runtimeState.operation?.operation_id, runtimeState.operation?.status,
-    runtimeState.completedOperation?.operation_id, slot.kind]);
-
   useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
   useEffect(() => () => { onBusyChange?.(false); }, [onBusyChange]);
 
   const resetEditor = (next: Editor) => {
     metadataGeneration.current += 1; setSourceMetadata(null);
-    setEditor({ ...next, schema: definitions.find((item) => selectionKey(item.selection) === next.plugin)?.schema }); setNotice(null);
+    const definition = definitions.find((item) => selectionKey(item.selection) === next.plugin);
+    setEditor({ ...next, schema: definition?.schema, available: definition?.available ?? false }); setNotice(null);
   };
   const reload = useCallback(async () => {
     const generation = ++loadGeneration.current;
-    const [nextDefinitions, nextProfiles, nextActivation] = await Promise.all([
-      api.catalog(slot.kind), api.profiles(slot.kind), api.module(module),
+    const [nextDefinitions, nextProfiles] = await Promise.all([
+      api.catalog(slot.kind), api.profiles(slot.kind),
     ]);
     if (generation !== loadGeneration.current) return;
-    setDefinitions(nextDefinitions); setProfiles(nextProfiles); setActivation(nextActivation);
+    setDefinitions(nextDefinitions); setProfiles(nextProfiles);
     if (!currentState.ready) return;
     const existing = current.get(slot.slot);
     if (existing) {
       const definition = nextDefinitions.find((item) => selectionKey(item.selection) === existing.plugin);
-      if (definition) current.set(slot.slot, { ...existing, schema: definition.schema });
+      current.set(slot.slot, { ...existing, schema: definition?.schema, available: definition?.available ?? false });
       if (slot.kind === "filter") for (const filterSlot of current.filterOrder) {
         const filter = current.get(filterSlot);
         const filterDefinition = nextDefinitions.find((item) => selectionKey(item.selection) === filter?.plugin);
-        if (filter && filterDefinition) current.set(filterSlot, { ...filter, schema: filterDefinition.schema });
+        if (filter) current.set(filterSlot, { ...filter, schema: filterDefinition?.schema, available: filterDefinition?.available ?? false });
       }
       return;
     }
-    const binding = nextActivation?.bindings.find((item) => item.slot === slot.slot);
-    current.set(slot.slot, binding ? { ...currentFromBinding(binding), schema: nextDefinitions.find((item) => selectionKey(item.selection) === selectionKey(binding.selection))?.schema }
+    const binding = current.modules[module].activation?.bindings.find((item) => item.slot === slot.slot);
+    const definition = nextDefinitions.find((item) => binding && selectionKey(item.selection) === selectionKey(binding.selection));
+    current.set(slot.slot, binding ? { ...currentFromBinding(binding), schema: definition?.schema, available: definition?.available ?? false }
       : slot.kind === "trigger" ? structuredClone(emptyEditor) : editorFor(undefined, nextDefinitions, undefined, nextProfiles));
   }, [slot.kind, slot.slot, currentState.ready]);
 
@@ -274,22 +258,6 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(false); }
   };
-  const connectSource = async () => {
-    if (sourceOperation.current || connectReason) return;
-    sourceOperation.current = true;
-    metadataGeneration.current += 1; setSourceMetadata(null);
-    setBusy(true); setError(""); setNotice(null);
-    try { await acquisition.connect.run(current.request("acquisition")); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { sourceOperation.current = false; setBusy(false); }
-  };
-  const disconnectSource = async () => {
-    if (sourceOperation.current || disconnectReason) return;
-    sourceOperation.current = true;
-    setBusy(true); setError(""); setNotice(null);
-    try { await acquisition.disconnect.run(); }
-    finally { sourceOperation.current = false; setBusy(false); }
-  };
   const readSourceMetadata = async () => {
     if (!canReadSource || busy || sourceOperation.current) return;
     sourceOperation.current = true;
@@ -335,19 +303,10 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     </option>)}
   </>;
 
-  const blockedReason = currentState.error ? "feedback.runtimeUnavailable" : runtimeBlockReason(runtime, module);
   const addFilterReason = busy ? "feedback.busy" : !definition?.available ? "profiles.pluginUnavailable"
     : errors.length > 0 ? "profiles.fixErrors" : null;
   const saveReason = busy ? "feedback.busy" : !definition?.schema ? "profiles.schemaRequired"
     : missingDecoderInput ? "profiles.configureDecoder" : errors.length > 0 ? "profiles.fixErrors" : null;
-  const connectReason = busy ? "feedback.busy" : blockedReason
-    ?? (!engineAvailable || !sourceStatus ? "profiles.sourceUnavailable" : sourceStatus.streaming ? "profiles.stopBeforeConnect"
-      : sourceStatus.connected ? sourceMatches ? "profiles.sourceAlreadyConnected" : "profiles.disconnectChangedSource"
-      : !definition?.available ? "profiles.pluginUnavailable" : errors.length > 0 ? "profiles.fixErrors" : null);
-  const disconnectReason = busy ? "feedback.busy" : runtime.status?.recovery.acquisition
-    ? (!sourceStatus ? "profiles.sourceUnavailable" : null)
-    : blockedReason ?? (!sourceStatus ? "profiles.sourceUnavailable" : !sourceStatus.connected ? "profiles.sourceDisconnectedStatus"
-      : sourceStatus.streaming ? "profiles.stopBeforeConnect" : null);
   const saveAs = () => setDialog({ title: t("profiles.save"), message: t("profiles.saveHelp"),
     confirmLabel: t("profiles.create"), initialValue: editor.profile ? t("profiles.copyName", { name: editor.profile.name }) : editor.name || "new profile 1",
     onConfirm: (name) => { setDialog(null); void save(name); } });
@@ -391,8 +350,8 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
           disabled={busy} className={`explorer-item profile-item ${editor.profile?.profile_id === profile.profile_id ? "selected" : ""}`}
           aria-current={editor.profile?.profile_id === profile.profile_id ? "true" : undefined}
           onClick={() => changeEditor(() => resetEditor(editorFor(profile, definitions)))}>
-          <span>{profile.name}</span>{activation?.bindings.some((item) => item.profile_id === profile.profile_id)
-            && <span className="active-indicator">{t("profiles.selected")}</span>}
+          <span>{profile.name}</span>{editor.profile?.profile_id === profile.profile_id
+            && <span className="profile-loaded-indicator">{t("profiles.loaded")}</span>}
         </button>)}
       </div>
       <div className="explorer-footer"><p>{t("profiles.explorerHint")}</p></div>
@@ -402,7 +361,9 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
       <div className="settings-scroll">
       <header className="editor-heading"><div><p className="eyebrow">{t(`profiles.module.${module}`)} / {t(slot.label)}</p>
         <h1 ref={editorHeading} tabIndex={-1}>{slot.kind === "acquisition" ? t("profiles.acquisitionSource") : t(slot.label)}</h1><p>{t(slot.kind === "acquisition" ? "profiles.connectHint" : "profiles.chooseHint")}</p></div>
+        {onRun && <button className="text-button" onClick={onRun}>{t("profiles.openRun")}</button>}
       </header>
+      <ModuleRuntime module={module} controls={runtimeControls} disabled={busy} />
       {module === "processing" && <nav className="processing-navigation" aria-label={t("profiles.processingNavigation")}>
         {([
           ["processing.decoder", "processing-channel-mapping", "processing.flowMapping"],
@@ -414,31 +375,86 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
       </nav>}
       {(error || currentState.error) && <p className="inline-message error" role="alert">{error || currentState.error}</p>}
       {notice && <p className="inline-message success" role="status">{t(notice)}</p>}
-      {engineRunning && slot.kind !== "acquisition" && <p className="inline-message">{t("profiles.engineRunning")}</p>}
-      {selectedBinding && <div className="binding-summary" aria-label={t("profiles.selectedConfiguration")}>
-        <span>{selectionLabel}: <strong>{selectedPlugin ? translatePluginName(selectedPlugin.plugin_type, selectedPlugin.label, t) : selectedBinding.selection.package_id}</strong></span>
-        {selectedProfile && selectedProfile.revision > selectedBinding.profile_revision && <span>{t("profiles.profileChanged")}</span>}
-        <button disabled={busy} onClick={() => changeEditor(() => resetEditor(currentFromBinding(selectedBinding)))}>{t("profiles.restoreApplied")}</button>
-      </div>}
       {currentState.conflicted && <div className="inline-message" role="status">
         <p id="accepted-configuration-help">{t("profiles.acceptedChanged")}</p>
         <button disabled={busy || runtimeState.inProgress} aria-describedby="accepted-configuration-help" onClick={async () => {
           setBusy(true);
           try {
-            const accepted = await current.loadAccepted(module);
-            if (accepted) setActivation(accepted);
+            await current.loadAccepted(module);
           } finally { setBusy(false); }
         }}>{t("profiles.loadAccepted")}</button>
       </div>}
       {moduleValidation && <p className="inline-message error" role="alert">{moduleValidation}</p>}
-      {module === "processing" && <section className="setting-group">
-        <label className="setting-row" htmlFor="processing-pre-trigger-duration"><span className="setting-label">{t("settings.baselineDuration")}</span>
-          <input id="processing-pre-trigger-duration" type="number" min="0" step="any" disabled={busy || !currentState.ready}
-            value={String(current.settings.processing?.["ALGORITHM.baseline_duration"] ?? 0)}
-            onChange={(event) => current.setSetting("processing", "ALGORITHM.baseline_duration", event.target.value === "" ? "" : Number(event.target.value))} />
-        </label>
-        <p className="setting-description">{t("settings.preTriggerDescription")}</p>
-      </section>}
+        <div className="setting-group profile-selectors"><h2>{t("profiles.pluginAndProfile")}</h2>
+          <label className="setting-row"><span className="setting-label">{t("profiles.pluginAndVersion")}</span>
+            <select value={editor.plugin} disabled={busy} onChange={(event) => choosePlugin(event.target.value)}>{pluginOptions}</select></label>
+          {!noTrigger && <><label className="setting-row"><span className="setting-label">{t("profiles.profile")}</span>
+            <select value={editor.profile?.profile_id ?? ""} disabled={busy || !editor.plugin}
+              onChange={(event) => { const profile = pluginProfiles.find((item) => item.profile_id === event.target.value);
+                changeEditor(() => resetEditor(editorFor(profile, definitions, editor.plugin, profiles))); }}>
+              {!editor.profile && <option value="">{t("profiles.newUnsaved")}</option>}
+              {pluginProfiles.map((profile) => <option key={profile.profile_id} value={profile.profile_id}>{profile.name}</option>)}
+            </select></label>
+          <div className="profile-tools actions">
+            <button disabled={busy || !definition?.schema} onClick={() => newProfile()}>{t("profiles.newProfile")}</button>
+          </div></>}
+          {noTrigger && <p className="setting-description">{t("profiles.noTriggerHint")}</p>}
+          {slot.kind === "acquisition" && <p className="setting-description">{t(sourceMode === "new"
+            ? reportedSource ? "profiles.newSourceHint" : "profiles.newDeclaredSourceHint" : "profiles.sourceConfigurationHint")}</p>}
+          {missingDecoderInput && <p className="setting-description">{t("profiles.configureDecoder")}</p>}
+          {!noTrigger && !pluginProfiles.length && slot.kind !== "acquisition" && <p className="setting-description">{t("profiles.noSavedProfiles")}</p>}
+        </div>
+        {slot.kind === "filter" && <div id="processing-filter-chain" tabIndex={-1} className="setting-group" role="region" aria-label={t("profiles.filterChain")}><h2>{t("profiles.filterChain")}</h2>
+          <p className="setting-description">{t("profiles.filterOrder")}</p>
+          {editorSlot === "processing.filters" && <p className="setting-description" role="status">{t("profiles.filterDraft")}</p>}
+          <ol className="filter-chain">{chain.map((item, index) => <li key={item.slot}>
+            <button aria-pressed={editorSlot === item.slot} disabled={busy} onClick={() => setFilterSlot(item.slot)}>
+              {t("profiles.editFilter", { index: index + 1 })} · {definitions.find((definition) => selectionKey(definition.selection) === item.plugin)?.label ?? item.selection?.package_id}
+            </button>
+            <div className="actions">
+              <button disabled={busy || index === 0} onClick={() => { const next = [...chain]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; setChain(next); }}>{t("profiles.moveUp")}</button>
+              <button disabled={busy || index === chain.length - 1} onClick={() => { const next = [...chain]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; setChain(next); }}>{t("profiles.moveDown")}</button>
+              <button disabled={busy} onClick={() => setChain(chain.filter((previous) => previous.slot !== item.slot))}>{t("profiles.remove")}</button>
+            </div>
+          </li>)}</ol>
+          {!chain.length && <p className="setting-description">{t("profiles.noFilters")}</p>}
+          <div className="actions"><button disabled={busy} onClick={() => setFilterSlot(null)}>{t("profiles.newFilter")}</button>
+            {editorSlot === "processing.filters" && <button className="primary" disabled={!!addFilterReason}
+              aria-describedby="filter-add-help" onClick={() => {
+                const slot = `processing.filter.${crypto.randomUUID()}`;
+                current.set(slot, editor); current.setFilterOrder([...current.filterOrder, slot]); setFilterSlot(slot);
+                setNotice("profiles.filterAdded");
+              }}>{t("profiles.addFilter")}</button>}</div>
+          {editorSlot === "processing.filters" && <p className="action-help" id="filter-add-help">{t(addFilterReason ?? "profiles.addFilterHelp")}</p>}
+        </div>}
+        <div className={slot.kind === "acquisition" ? "acquisition-layout" : "profile-layout"}>
+        <div className="profile-fields">
+        {!noTrigger && <><h2>{t("profiles.currentConfiguration")}</h2>
+        <div id={slot.kind === "decoder" ? "processing-decoder-parameters" : "processing-parameters"}
+          className="profile-parameters" tabIndex={-1} role="region" aria-label={t(slot.label)}>
+          {sourceSchema ? <SchemaForm schema={sourceSchema} value={editor.parameters} disabled={busy} onChange={changeParameters} />
+            : <p className="setting-description">{t("profiles.schemaRequired")}</p>}
+        </div></>}
+        {dimensionSchema && Object.keys(dimensionSchema.properties).length > 0 && <details className="setting-group" open={sourceMode === "new"}>
+          <summary>{t(reportedSource ? "profiles.expectedParameters" : "profiles.dimensionDefaults")}</summary>
+          <p className="setting-description">{t(reportedSource ? sourceMode === "new" ? "profiles.newSourceHint" : "profiles.expectedParametersHint" : "profiles.dimensionDefaultsHint")}</p>
+          {reportedSource ? <dl className="expected-source-parameters">
+            <div><dt>{t("metadata.sampleRate")}</dt><dd>{String(editor.parameters.sample_rate ?? t("metadata.notConfirmed"))}</dd></div>
+            <div><dt>{t("metadata.outputRows")}</dt><dd>{String(editor.parameters.channel_count ?? t("metadata.notConfirmed"))}</dd></div>
+            {definition?.plugin_type === "neuroscan_curry8_reader" && <div><dt>{t("metadata.channelLabels")}</dt>
+              <dd>{Array.isArray(editor.parameters.channel_labels) ? editor.parameters.channel_labels.join(", ") : t("metadata.notConfirmed")}</dd></div>}
+          </dl> : <SchemaForm schema={dimensionSchema} value={editor.parameters} disabled={busy} onChange={changeParameters} />}
+        </details>}
+        </div>
+        {slot.kind === "acquisition" && <div className="acquisition-observations">
+          {reportedSource && (editor.parameters.sample_rate == null || editor.parameters.channel_count == null)
+            && <p className="setting-description">{t("profiles.expectationsUncaptured")}</p>}
+          <AcquisitionMetadata value={sourceMetadata} busy={busy} canRead={canReadSource}
+          readHint={t(sourceStatus?.streaming ? "profiles.stopBeforeRead" : canReadSource ? "profiles.readReady" : "profiles.connectBeforeRead")}
+          onRead={() => void readSourceMetadata()} canUseObserved={canUseObserved}
+          showComparison={sourceSelected || sourceMode !== "new" || !reportedSource}
+          onUseObserved={reportedSource && sourceSelected ? useObservedValues : undefined} /></div>}
+        </div>
       {(module === "stimulation" || module === "actuation") && <section className="setting-group" aria-label={t("profiles.moduleSettings")}>
         <h2>{t("profiles.moduleSettings")}</h2>
         <p className="setting-description">{t("profiles.moduleSettingsHint")}</p>
@@ -478,103 +494,14 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
           <p className="setting-description">{t("profiles.commandAgeHint")}</p>
         </>}
       </section>}
-      <ConfigurationHistory module={module} profile={profiles.find((profile) => profile.profile_id === editor.profile?.profile_id) ?? null}
-        runtime={runtime} onProfileRestored={(profile) => setProfiles((previous) => previous.map((item) => item.profile_id === profile.profile_id ? profile : item))} />
-      <p className="setting-description">{t(current.hasChanges(module, currentState.activation) ? "profiles.pendingCurrent" : "profiles.currentApplied")}</p>
-        <div className="setting-group profile-selectors"><h2>{t("profiles.pluginAndProfile")}</h2>
-          <label className="setting-row"><span className="setting-label">{t("profiles.pluginAndVersion")}</span>
-            <select value={editor.plugin} disabled={busy} onChange={(event) => choosePlugin(event.target.value)}>{pluginOptions}</select></label>
-          {!noTrigger && <><label className="setting-row"><span className="setting-label">{t("profiles.profile")}</span>
-            <select value={editor.profile?.profile_id ?? ""} disabled={busy || !editor.plugin}
-              onChange={(event) => { const profile = pluginProfiles.find((item) => item.profile_id === event.target.value);
-                changeEditor(() => resetEditor(editorFor(profile, definitions, editor.plugin, profiles))); }}>
-              {!editor.profile && <option value="">{t("profiles.newUnsaved")}</option>}
-              {pluginProfiles.map((profile) => <option key={profile.profile_id} value={profile.profile_id}>{profile.name}</option>)}
-            </select></label>
-          <div className="profile-tools actions">
-            <button disabled={busy || !definition?.schema} onClick={() => newProfile()}>{t("profiles.newProfile")}</button>
-          </div></>}
-          {noTrigger && <p className="setting-description">{t("profiles.noTriggerHint")}</p>}
-          {slot.kind === "acquisition" && <p className="setting-description">{t(sourceMode === "new"
-            ? reportedSource ? "profiles.newSourceHint" : "profiles.newDeclaredSourceHint" : "profiles.sourceConfigurationHint")}</p>}
-          {missingDecoderInput && <p className="setting-description">{t("profiles.configureDecoder")}</p>}
-          {!noTrigger && !pluginProfiles.length && slot.kind !== "acquisition" && <p className="setting-description">{t("profiles.noSavedProfiles")}</p>}
-        </div>
-        {slot.kind === "filter" && <div id="processing-filter-chain" tabIndex={-1} className="setting-group" role="region" aria-label={t("profiles.filterChain")}><h2>{t("profiles.filterChain")}</h2>
-          <p className="setting-description">{t("profiles.filterOrder")}</p>
-          <ol className="filter-chain">{chain.map((item, index) => <li key={item.slot}>
-            <button aria-pressed={editorSlot === item.slot} disabled={busy} onClick={() => setFilterSlot(item.slot)}>
-              {t("profiles.editFilter", { index: index + 1 })} · {definitions.find((definition) => selectionKey(definition.selection) === item.plugin)?.label ?? item.selection?.package_id}
-            </button>
-            <div className="actions">
-              <button disabled={busy || index === 0} onClick={() => { const next = [...chain]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; setChain(next); }}>{t("profiles.moveUp")}</button>
-              <button disabled={busy || index === chain.length - 1} onClick={() => { const next = [...chain]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; setChain(next); }}>{t("profiles.moveDown")}</button>
-              <button disabled={busy} onClick={() => setChain(chain.filter((previous) => previous.slot !== item.slot))}>{t("profiles.remove")}</button>
-            </div>
-          </li>)}</ol>
-          {!chain.length && <p className="setting-description">{t("profiles.noFilters")}</p>}
-          <div className="actions"><button disabled={busy} onClick={() => setFilterSlot(null)}>{t("profiles.newFilter")}</button>
-            {editorSlot === "processing.filters" && <button className="primary" disabled={!!addFilterReason}
-              aria-describedby="filter-add-help" onClick={() => {
-                const slot = `processing.filter.${crypto.randomUUID()}`;
-                current.set(slot, editor); current.setFilterOrder([...current.filterOrder, slot]); setFilterSlot(slot);
-                setNotice("profiles.filterAdded");
-              }}>{t("profiles.addFilter")}</button>}</div>
-          {editorSlot === "processing.filters" && <p className="action-help" id="filter-add-help">{t(addFilterReason ?? "profiles.addFilterHelp")}</p>}
-        </div>}
-        <div className={slot.kind === "acquisition" ? "acquisition-layout" : "profile-layout"}>
-        <div className="profile-fields">
-        {!noTrigger && <><div className="setting-group profile-identity"><h2>{t("profiles.currentConfiguration")}</h2></div>
-        <div id={slot.kind === "decoder" ? "processing-decoder-parameters" : "processing-parameters"}
-          className="profile-parameters" tabIndex={-1} role="region" aria-label={t(slot.label)}>
-          {sourceSchema ? <SchemaForm schema={sourceSchema} value={editor.parameters} disabled={busy} onChange={changeParameters} />
-            : <p className="setting-description">{t("profiles.schemaRequired")}</p>}
-        </div></>}
-        {dimensionSchema && Object.keys(dimensionSchema.properties).length > 0 && <details className="setting-group" open={sourceMode === "new"}>
-          <summary>{t(reportedSource ? "profiles.expectedParameters" : "profiles.dimensionDefaults")}</summary>
-          <p className="setting-description">{t(reportedSource ? sourceMode === "new" ? "profiles.newSourceHint" : "profiles.expectedParametersHint" : "profiles.dimensionDefaultsHint")}</p>
-          {reportedSource ? <dl className="expected-source-parameters">
-            <div><dt>{t("metadata.sampleRate")}</dt><dd>{String(editor.parameters.sample_rate ?? t("metadata.notConfirmed"))}</dd></div>
-            <div><dt>{t("metadata.outputRows")}</dt><dd>{String(editor.parameters.channel_count ?? t("metadata.notConfirmed"))}</dd></div>
-            {definition?.plugin_type === "neuroscan_curry8_reader" && <div><dt>{t("metadata.channelLabels")}</dt>
-              <dd>{Array.isArray(editor.parameters.channel_labels) ? editor.parameters.channel_labels.join(", ") : t("metadata.notConfirmed")}</dd></div>}
-          </dl> : <SchemaForm schema={dimensionSchema} value={editor.parameters} disabled={busy} onChange={changeParameters} />}
-        </details>}
-        </div>
-        {slot.kind === "acquisition" && <div className="acquisition-observations"><div className="setting-group source-connection">
-          <h2>{t("profiles.connection")}</h2>
-          <dl className="source-preparation-summary">
-            <div><dt>{t("profiles.startupSource")}</dt><dd>{selectedBinding
-              ? `${selectedProfile?.name ?? (selectedBinding.profile_id || t("profiles.currentSourceConfiguration"))} · ${selectedBinding.selection.package_id}/${selectedBinding.selection.contribution_id} · ${selectedBinding.selection.version}${selectedBinding.profile_id ? ` · ${t("profiles.revision", { revision: selectedBinding.profile_revision })}` : ""}`
-              : t("run.none")}</dd></div>
-            <div><dt>{t("profiles.currentSource")}</dt><dd>{!runtime.status?.running ? t("run.engineStopped")
-              : runtime.status.applied?.[module] !== activation?.revision ? t("profiles.currentSourceUnknown")
-              : selectedBinding ? `${selectedProfile?.name ?? (selectedBinding.profile_id || t("profiles.currentSourceConfiguration"))} · ${selectedBinding.selection.package_id}/${selectedBinding.selection.contribution_id}${selectedBinding.profile_id ? ` · ${t("profiles.revision", { revision: selectedBinding.profile_revision })}` : ""}`
-              : t("run.none")}</dd></div>
-          </dl>
-          <p className="setting-description" id="source-connect-help">{t("profiles.connectHelp")}</p>
-          {connectReason && <p className="action-help" id="source-connect-blocked">{t(connectReason)}</p>}
-          <div className="actions"><button className="primary" disabled={!!connectReason}
-            aria-describedby={connectReason ? "source-connect-blocked source-connect-help" : "source-connect-help"}
-            onClick={() => void connectSource()}>{t("profiles.connectSource")}</button>
-            <button disabled={!!disconnectReason} aria-describedby={disconnectReason
-              ? disconnectReason === "profiles.sourceDisconnectedStatus" ? "source-connection-status" : "source-disconnect-help" : undefined}
-              onClick={() => void disconnectSource()}>{t("profiles.disconnectSource")}</button></div>
-          {disconnectReason && disconnectReason !== "profiles.sourceDisconnectedStatus"
-            && <p className="action-help" id="source-disconnect-help">{t(disconnectReason)}</p>}
-          {acquisition.connect.error && <p className="inline-message error" role="alert"><strong>{t("profiles.connectSource")}:</strong> {acquisition.connect.error}</p>}
-          {acquisition.disconnect.error && <p className="inline-message error" role="alert"><strong>{t("profiles.disconnectSource")}:</strong> {acquisition.disconnect.error}</p>}
-          <p role="status" id="source-connection-status">{t(!sourceStatus ? "profiles.sourceUnavailable" : sourceStatus.streaming ? "profiles.sourceReading"
-            : sourceStatus.connected ? "profiles.currentSourceConnected" : "profiles.sourceDisconnectedStatus")}</p>
-          {reportedSource && (editor.parameters.sample_rate == null || editor.parameters.channel_count == null)
-            && <p className="setting-description">{t("profiles.expectationsUncaptured")}</p>}
-          {onRun && <button className="text-button" disabled={busy} onClick={onRun}>{t("profiles.openRun")}</button>}
-        </div><AcquisitionMetadata value={sourceMetadata} busy={busy} canRead={canReadSource}
-          readHint={t(sourceStatus?.streaming ? "profiles.stopBeforeRead" : canReadSource ? "profiles.readReady" : "profiles.connectBeforeRead")}
-          onRead={() => void readSourceMetadata()} canUseObserved={canUseObserved}
-          showComparison={sourceSelected || sourceMode !== "new" || !reportedSource}
-          onUseObserved={reportedSource && sourceSelected ? useObservedValues : undefined} /></div>}
-        </div>
+        {module === "processing" && <section className="setting-group">
+          <label className="setting-row" htmlFor="processing-pre-trigger-duration"><span className="setting-label">{t("settings.baselineDuration")}</span>
+            <input id="processing-pre-trigger-duration" type="number" min="0" step="any" disabled={busy || !currentState.ready}
+              value={String(current.settings.processing?.["ALGORITHM.baseline_duration"] ?? 0)}
+              onChange={(event) => current.setSetting("processing", "ALGORITHM.baseline_duration", event.target.value === "" ? "" : Number(event.target.value))} />
+          </label>
+          <p className="setting-description">{t("settings.preTriggerDescription")}</p>
+        </section>}
         {slot.kind === "decoder" && definition && <div id="processing-channel-mapping" tabIndex={-1} role="region" aria-label={t("processing.flowMapping")}>
           <ProcessingInput key={`${editor.profile?.profile_id ?? editor.plugin}:${editor.profile?.revision ?? "new"}`}
           value={editor.processingInput} busy={busy}
@@ -582,14 +509,13 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
           configurationRevision={`${runtime.status?.accepted.acquisition}:${runtime.status?.applied?.acquisition}:${runtime.status?.accepted.processing}:${runtime.status?.applied?.processing}`}
           onChange={(processingInput) => { setEditor({ ...editor, processingInput, requiresProcessingInputReview: false }); setNotice(null); }} /></div>}
         {errors.length > 0 && <ul className="schema-errors" role="alert">{errors.map((message) => <li key={message}>{message}</li>)}</ul>}
-
+        <ConfigurationHistory module={module} profile={profiles.find((profile) => profile.profile_id === editor.profile?.profile_id) ?? null}
+          runtime={runtime} onProfileRestored={(profile) => setProfiles((previous) => previous.map((item) => item.profile_id === profile.profile_id ? profile : item))} />
       </div>
       <footer className="editor-footer"><div className="editor-feedback">
         <div className="save-state" role="status">{noTrigger ? t("profiles.noTrigger")
-          : dirty ? t("profiles.unsaved") : editor.profile ? t("profiles.profileSaved") : t("profiles.newNotSaved")}
-          {chainDirty && <span className="pending-state">{t("profiles.chainPending")}</span>}</div>
+          : editor.profile ? t(dirty ? "profiles.modifiedProfile" : "profiles.loadedProfile", { name: editor.profile.name }) : t("profiles.newNotSaved")}</div>
         {!noTrigger && <p className="action-help" id="profile-save-help">{t(saveReason ?? "profiles.saveHelp")}</p>}
-        <RuntimeConfigurationProgress runtime={runtime} module={module} />
       </div>
         <div className="actions">
           <button disabled={localBusy} onClick={() => { void current.reload(module); void reload().catch((cause) => setError(String(cause))); }}>{t("profiles.reload")}</button>
@@ -600,10 +526,10 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
                   setDialog(null); setBusy(true); setError("");
                   void api.delete(editor.profile!).then(() => {
                     setProfiles((profiles) => profiles.filter((profile) => profile.profile_id !== editor.profile!.profile_id));
-                    setEditor({ ...editor, profile: null }); setNotice("profiles.deleted");
+                    setEditor({ ...editor, profile: null, sourceOrigin: "current", name: "" }); setNotice("profiles.deleted");
                   }).catch((cause) => setError(String(cause))).finally(() => setBusy(false));
                 } })}>{t("profiles.deleteProfile")}</button>}
-            <button className="primary" disabled={!!saveReason} aria-describedby="profile-save-help" aria-keyshortcuts="Control+s Meta+s"
+            <button disabled={!!saveReason} aria-describedby="profile-save-help" aria-keyshortcuts="Control+s Meta+s"
               onClick={saveAs}>{t("profiles.save")}</button>
           </>}
         </div>

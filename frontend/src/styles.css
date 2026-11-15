@@ -91,14 +91,13 @@ h2 { color: var(--heading); font-size: 1rem; line-height: 1.4; font-weight: 600;
 button.explorer-item.selected:hover { background: var(--selection); }
 button.explorer-item:active:not(:disabled) { background: var(--press-bg); }
 .activity-item:focus-visible, .explorer-item:focus-visible { outline-offset: -3px; }
-.explorer-item > span:not(.count):not(.active-indicator) { min-width: 0; }
+.explorer-item > span:not(.count):not(.profile-loaded-indicator) { min-width: 0; }
 .explorer-item > .workbench-icon { width: 16px; height: 16px; color: var(--muted); }
 .explorer-item strong { display: block; font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
 .explorer-item small { display: block; font-size: 11px; color: var(--muted); line-height: 1.5; }
 .profile-item { padding-top: 10px; padding-bottom: 10px; align-items: flex-start; }
 .profile-item .workbench-icon { margin-top: 3px; }
 .profile-list { flex: 1; }
-.active-indicator { margin-left: auto; color: var(--ok); font-size: 11px; flex: none; }
 .count { margin-left: auto; padding: 0 5px; line-height: 18px; border-radius: 8px; background: var(--hover); font-size: 11px; color: var(--muted); font-weight: 400; }
 .explorer-footer { margin-top: auto; padding: 18px 18px 20px; border-top: 1px solid var(--border-soft); font-size: 12px; }
 .explorer-footer strong { display: block; font-weight: 500; overflow-wrap: anywhere; line-height: 1.6; }
@@ -143,7 +142,6 @@ button.explorer-item:active:not(:disabled) { background: var(--press-bg); }
 .action-help { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
 .editor-feedback { flex: 1 1 18rem; min-width: 0; }
 .editor-feedback .save-state { flex-wrap: wrap; }
-.pending-state { border-left: 1px solid var(--border); padding-left: 8px; color: var(--heading); }
 .control-feedback { min-width: 0; }
 .engine-card .control-feedback { max-width: 28rem; }
 .action-reasons { margin-top: 8px; }

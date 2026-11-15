@@ -1,5 +1,5 @@
-import { runtimeController, currentController } from "./module-fixtures.mjs";
-/** Exercise profile browsing and explicit activation through component events. */
+import { runtimeController } from "./module-fixtures.mjs";
+/** Exercise profile browsing and module actions through component events. */
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import React from "react";
@@ -14,6 +14,9 @@ const { pluginConfigApi: api, selectionKey } = await server.ssrLoadModule("/src/
 const { api: controlApi } = await server.ssrLoadModule("/src/api/client.ts");
 const { runtimeConfigApi } = await server.ssrLoadModule("/src/api/runtime-config.ts");
 const { useCurrentConfiguration } = await server.ssrLoadModule("/src/hooks/useCurrentConfiguration.ts");
+const { useRuntimeControls } = await server.ssrLoadModule("/src/hooks/useRuntimeControls.ts");
+const { ModuleRuntime } = await server.ssrLoadModule("/src/ModuleRuntime.tsx");
+const { signalConfigApi } = await server.ssrLoadModule("/src/api/signal-config.ts");
 
 const selection = (packageId, version = "1.0.0") => ({ package_id: packageId, contribution_id: "main", version });
 const scanV1 = selection("example.scan45");
@@ -112,7 +115,14 @@ function componentHarness(props) {
     const previous = internals.current;
     internals.current = dispatcher;
     cursor = 0; needsRender = false;
-    try { props.current = useCurrentConfiguration(props.runtime.status.accepted, props.runtime.completedRestorations); tree = PluginProfiles({ ...props, runtime: runtimeController(props.runtime) }); } finally { internals.current = previous; }
+    try {
+      props.current = useCurrentConfiguration(props.runtime.status.accepted, props.runtime.completedRestorations);
+      const runtime = runtimeController(props.runtime);
+      const engine = { data: { running: props.engineRunning, processor_alive: false, actuation_alive: false, actuation_connected: false, ...props.engine },
+        error: props.engineAvailable === false ? new Error("Engine unavailable") : null, refresh: async () => {} };
+      const runtimeControls = useRuntimeControls(runtime, props.current, props.acquisition, engine);
+      tree = PluginProfiles({ ...props, runtime, runtimeControls });
+    } finally { internals.current = previous; }
     const effects = pendingEffects; pendingEffects = [];
     effects.forEach((effect) => effect());
   }
@@ -133,10 +143,12 @@ function componentHarness(props) {
 function elements(tree) {
   if (Array.isArray(tree)) return tree.flatMap(elements);
   if (!React.isValidElement(tree)) return [];
+  if (tree.type === ModuleRuntime) return elements(ModuleRuntime(tree.props));
   return [tree, ...elements(tree.props.children)];
 }
 function text(tree) {
   if (Array.isArray(tree)) return tree.map(text).join("");
+  if (React.isValidElement(tree) && tree.type === ModuleRuntime) return text(ModuleRuntime(tree.props));
   if (React.isValidElement(tree)) return text(tree.props.children);
   return tree === null || tree === undefined || typeof tree === "boolean" ? "" : String(tree);
 }
@@ -197,6 +209,9 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
   const originalApi = { ...api };
   const originalControlApi = { ...controlApi };
   const originalRuntimeApi = { ...runtimeConfigApi };
+  const originalSignalApi = { ...signalConfigApi };
+  const originalDocument = globalThis.document;
+  globalThis.document = { hidden: false };
   const data = fixture();
   data.source = { connected: engineRunning, streaming, connection_id: engineRunning ? "connection-a" : null };
   data.metadata = { source_id: "scan45", connection_id: "connection-a",
@@ -228,6 +243,21 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
     data.profiles.push(saved); return clone(saved);
   };
   controlApi.acquisitionStatus = async () => clone(data.source);
+  controlApi.stimulationStatus = async () => ({ active: false, process_alive: false, engine_connected: false, paradigm: null });
+  signalConfigApi.get = async () => null;
+  data.moduleRequests = [];
+  const startModule = async (module, { operation_id, configuration }) => {
+    data.moduleRequests.push({ module, configuration: clone(configuration) });
+    data.activation ??= { bindings: [] };
+    data.activation.bindings = [...data.activation.bindings.filter((item) => !item.slot.startsWith(`${module}.`)),
+      ...clone(configuration.bindings)];
+    data.revisions[module] = `${module}-started`;
+    runtimeStatus.accepted = clone(data.revisions); runtimeStatus.applied = clone(data.revisions);
+    return { operation_id, module, status: "succeeded", target_revisions: { [module]: data.revisions[module] },
+      result: { configuration_applied: true, action: "started" } };
+  };
+  controlApi.moduleStart = startModule;
+  controlApi.stimStart = (body) => startModule("stimulation", body);
   controlApi.engineStart = async () => { data.events.push("start"); runtimeStatus.running = true; runtimeStatus.applied = clone(data.revisions); runtimeStatus.generation = "generation-a"; };
   controlApi.acqConnect = async ({ operation_id, configuration: body }) => {
     data.events.push("connect"); calls.connect.push(clone(body));
@@ -295,7 +325,11 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
     data.current = () => props.current;
     await action(harness, calls, data);
   }
-  finally { harness.dispose(); Object.assign(api, originalApi); Object.assign(controlApi, originalControlApi); Object.assign(runtimeConfigApi, originalRuntimeApi); }
+  finally {
+    harness.dispose(); Object.assign(api, originalApi); Object.assign(controlApi, originalControlApi);
+    Object.assign(runtimeConfigApi, originalRuntimeApi); Object.assign(signalConfigApi, originalSignalApi);
+    if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument;
+  }
 }
 
 async function saveDraft(harness, { name = "Saved current values" } = {}) {
@@ -583,7 +617,7 @@ test("metadata is fetched explicitly and current parameter edits invalidate it",
     assert.equal(metadata(h).props.value, null);
     assert.equal(metadata(h).props.canRead, false);
     assert.equal(button(h, "Connect").props.disabled, true);
-    assert.match(text(h.tree), /Disconnect before connecting with changed parameters/);
+    assert.match(text(h.tree), /Current parameters differ from the connected source/);
   }, { engineRunning: true });
 });
 
@@ -835,7 +869,8 @@ test("Scan45 retains editable declarations and cannot adopt them as verified obs
 test("source controls disconnect the shared current source while browsing another profile, but never while streaming", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
     await change(harness, "Load saved profile", "lab-b");
-    assert.match(text(harness.tree), /Current source.*Lab A/);
+    assert.match(text(harness.tree), /Loaded profile: Lab B/);
+    assert.doesNotMatch(text(harness.tree), /Current source.*Lab A/);
     assert.equal(button(harness, "Disconnect").props.disabled, false);
     await button(harness, "Disconnect").props.onClick(); await harness.settle();
     assert.deepEqual(data.events, ["disconnect"]);
@@ -1287,4 +1322,137 @@ test("confirmation refreshes the accepted module after invalidating an already o
     assert.equal(current.hasChanges("acquisition", current.modules.acquisition.activation), false);
     assert.equal(current.request("acquisition").expected_revision, "confirmed");
   });
+});
+
+test("loading a profile with already accepted values reports Loaded without an applied profile badge", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    await change(h, "Load saved profile", "lab-a");
+    const loaded = listedProfiles(h).find((item) => text(item).startsWith("Lab A"));
+    assert.ok(loaded);
+    assert.match(text(loaded), /Loaded/);
+    assert.doesNotMatch(text(loaded), /Applied|Selected/);
+    assert.equal(elements(h.tree).some((item) => item.props.className === "active-indicator"), false);
+    assert.match(text(h.tree), /Loaded profile: Lab A/);
+    assert.equal(data.current().hasChanges("acquisition", data.current().modules.acquisition.activation), false);
+    assert.deepEqual(calls, { create: [], connect: [] });
+  }, { engineRunning: true });
+});
+
+test("restoring loaded profile values clears Modified without saving or applying", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    await change(h, "Load saved profile", "lab-b");
+    const original = clone(form(h).props.value);
+    form(h).props.onChange({ ...original, gain: 17 }); await h.settle();
+    assert.match(text(h.tree), /Loaded profile: Lab B · Modified/);
+    form(h).props.onChange(original); await h.settle();
+    assert.match(text(h.tree), /Loaded profile: Lab B/);
+    assert.doesNotMatch(text(h.tree), /Loaded profile: Lab B · Modified/);
+    assert.equal(data.current().get("acquisition.source").profile.profile_id, "lab-b");
+    assert.deepEqual(calls, { create: [], connect: [] });
+  });
+});
+
+test("saving a modified profile reports the new saved copy without using it at runtime", async () => {
+  await withProfiles("acquisition", async (h, calls, data) => {
+    await change(h, "Load saved profile", "lab-b");
+    const accepted = clone(data.activation);
+    form(h).props.onChange({ gain: 13, calibration: [5, 6] }); await h.settle();
+    await saveDraft(h, { name: "Saved draft" });
+    assert.match(text(h.tree), /Current values saved as a new profile/);
+    assert.match(text(h.tree), /Loaded profile: Saved draft/);
+    assert.doesNotMatch(text(h.tree), /Loaded profile: Saved draft · Modified/);
+    assert.equal(calls.create.length, 1);
+    assert.equal(calls.connect.length, 0);
+    assert.deepEqual(data.activation, accepted);
+    assert.equal(data.profiles.find((item) => item.profile_id === "lab-b").parameters.gain, 3);
+  });
+});
+
+for (const [module, slot, profileId] of [
+  ["acquisition", "acquisition.source", "lab-b"],
+  ["processing", "processing.decoder", "decoder-b"],
+]) test(`deleting a loaded ${module} profile retains its current parameters and mapping`, async () => {
+  await withProfiles(module, async (h, calls, data) => {
+    await change(h, "Load saved profile", profileId);
+    const before = clone(data.current().get(slot));
+    const request = clone(data.current().request(module));
+    const accepted = clone(data.activation);
+    const deleted = [];
+    api.delete = async (profile) => {
+      deleted.push(profile.profile_id);
+      data.profiles = data.profiles.filter((item) => item.profile_id !== profile.profile_id);
+    };
+    await click(h, "Delete profile");
+    dialog(h).props.onConfirm(); await h.settle();
+    const current = data.current().get(slot);
+    assert.deepEqual(deleted, [profileId]);
+    assert.equal(current.profile, null);
+    assert.equal(current.sourceOrigin, "current");
+    assert.deepEqual(current.selection, before.selection);
+    assert.deepEqual(current.parameters, before.parameters);
+    assert.deepEqual(current.processingInput, before.processingInput);
+    assert.deepEqual(data.current().request(module), request);
+    assert.equal(control(h, "Load saved profile").props.value, "");
+    assert.ok(!options(control(h, "Load saved profile")).some((item) => item.value === profileId));
+    assert.doesNotMatch(text(h.tree), /Loaded profile:/);
+    assert.equal(button(h, "Save as profile").props.disabled, false);
+    assert.deepEqual(data.activation, accepted);
+    assert.deepEqual(calls, { create: [], connect: [] });
+  });
+});
+
+test("a loaded filter remains explicitly outside the processing chain until added", async () => {
+  await withProfiles("processing", async (h, calls, data) => {
+    const before = clone(data.current().request("processing"));
+    await click(h, "Filters");
+    await change(h, "Load saved profile", "band-b");
+    assert.match(text(h.tree), /This filter is not in the processing chain\. Add it before starting processing\./);
+    assert.deepEqual(data.current().request("processing"), before);
+    assert.equal(data.current().hasChanges("processing", data.current().modules.processing.activation), false);
+    await click(h, "Add filter instance");
+    const after = data.current().request("processing");
+    assert.equal(after.bindings.length, before.bindings.length + 1);
+    assert.equal(after.bindings.find((item) => item.slot === data.current().filterOrder.at(-1)).parameters.gain, 7);
+    assert.equal(data.current().hasChanges("processing", data.current().modules.processing.activation), true);
+    assert.doesNotMatch(text(h.tree), /This filter is not in the processing chain|Filter changes will be used when reading starts/);
+    assert.deepEqual(calls, { create: [], connect: [] });
+  });
+});
+
+for (const [module, start, slot] of [
+  ["processing", "Start processing", "processing.decoder"],
+  ["stimulation", "Launch stimulation", "stimulation.paradigm"],
+  ["actuation", "Start actuation", "actuation.effector"],
+]) test(`${module} starts from Setup with current parameters and no Profile save or acquisition connection`, async () => {
+  await withProfiles(module, async (h, calls, data) => {
+    const others = clone(data.activation.bindings.filter((item) => !item.slot.startsWith(`${module}.`)));
+    if (module === "processing") {
+      assert.equal(button(h, start).props.disabled, true);
+      assert.match(text(h.tree), /requires an epoch detector/);
+      await click(h, "Epoch boundary detector");
+      await click(h, "Decoder");
+    }
+    form(h).props.onChange({ gain: 19, calibration: [3, 4] }); await h.settle();
+    await click(h, start);
+    assert.equal(data.moduleRequests.length, 1);
+    const request = data.moduleRequests[0];
+    assert.equal(request.module, module);
+    assert.ok(request.configuration.bindings.every((item) => item.slot.startsWith(`${module}.`)));
+    assert.equal(request.configuration.bindings.find((item) => item.slot === slot).parameters.gain, 19);
+    assert.deepEqual(calls, { create: [], connect: [] });
+    assert.deepEqual(data.activation.bindings.filter((item) => !item.slot.startsWith(`${module}.`)), others);
+    assert.equal(form(h).props.value.gain, 19);
+    assert.equal(data.current().hasChanges(module, data.current().modules[module].activation), false);
+  }, { engineRunning: true, configure: (data) => { data.source.connected = false; } });
+});
+
+test("invalid current parameters block module startup locally without requiring a Profile", async () => {
+  await withProfiles("actuation", async (h, calls, data) => {
+    form(h).props.onChange({ gain: 0, calibration: [3, 4] }); await h.settle();
+    const start = button(h, "Start actuation");
+    assert.equal(start.props.disabled, true);
+    await start.props.onClick(); await h.settle();
+    assert.deepEqual(data.moduleRequests, []);
+    assert.deepEqual(calls, { create: [], connect: [] });
+  }, { engineRunning: true });
 });

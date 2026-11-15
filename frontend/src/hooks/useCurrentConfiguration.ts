@@ -12,6 +12,7 @@ export type CurrentPluginConfiguration = {
   selection: PluginSelection | null;
   configurationVersion?: number;
   schema?: ConfigurationSchema | null;
+  available?: boolean;
   requiresProcessingInputReview?: boolean;
   plugin: string;
   name: string;

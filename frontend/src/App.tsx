@@ -65,7 +65,7 @@ export default function App({ connected = true, onEditorStateChange }: {
   const runtime = useRuntimeConfiguration();
   const current = useCurrentConfiguration(runtime.status?.accepted, runtime.completedRestorations);
   const acquisition = useAcquisition(runtime, engine.refresh, current);
-  const runtimeControls = useRuntimeControls(runtime, current, acquisition, engine.refresh);
+  const runtimeControls = useRuntimeControls(runtime, current, acquisition, engine);
   useEffect(() => {
     if (connected && !wasConnected.current) {
       void engine.refresh();
@@ -159,8 +159,8 @@ export default function App({ connected = true, onEditorStateChange }: {
         <RuntimeConfigurationStatus runtime={runtime} />
         <fieldset className="desktop-control-guard" disabled={!connected}>
         <div className="editor-viewport">
-          {isSetup ? <PluginProfiles key={view} module={view as SetupPage} engineRunning={engineRunning} engineAvailable={engine.data !== null && engine.error === null} navigation={navigation}
-            runtime={runtime} acquisition={acquisition} current={current}
+          {isSetup ? <PluginProfiles key={view} module={view as SetupPage} engineAvailable={engine.data !== null && engine.error === null} navigation={navigation}
+            runtime={runtime} acquisition={acquisition} current={current} runtimeControls={runtimeControls}
             onBusyChange={setBusy} onRun={() => navigate("run")} />
             : view === "extensions" ? <PluginMarket runtimeBusy={runtime.blocked}
               onBusyChange={setBusy} onDirtyChange={setDirty} onOpenSetup={() => navigate(lastSetup)} />

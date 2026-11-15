@@ -19,7 +19,7 @@ const { openResultsSocket } = await server.ssrLoadModule("/src/api/results-socke
 const { SchemaForm, schemaErrors } = await server.ssrLoadModule("/src/SchemaForm.tsx");
 const { default: App } = await server.ssrLoadModule("/src/App.tsx");
 const { I18nProvider } = await server.ssrLoadModule("/src/i18n.tsx");
-const { recordingPathMissing } = await server.ssrLoadModule("/src/RunConsole.tsx");
+const { recordingPathMissing } = await server.ssrLoadModule("/src/hooks/useRuntimeControls.ts");
 const ready = (id = "server-A", kind = "owned") => ({ id, kind, status: "ready", url: "http://127.0.0.1:49152", canChooseRecordingFile: true });
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 beforeEach(() => {

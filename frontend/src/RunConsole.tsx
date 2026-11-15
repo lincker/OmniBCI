@@ -6,12 +6,12 @@ import { translateControlLabel, translatePluginName, useI18n, type TranslationKe
 import { EpochProcessing } from "./EpochProcessing";
 import { AcquisitionPreview } from "./AcquisitionPreview";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
-import { pluginConfigApi, selectionKey, configurationModules, type ModuleActivation, type PluginProfile, type PluginDefinition } from "./api/plugin-config";
+import { pluginConfigApi, selectionKey, configurationModules, type PluginDefinition } from "./api/plugin-config";
 import { MAX_TRIALS, parseTrialSequence, readTrialControls, type TrialControl } from "./plugin-controls";
-import { runtimeBlockReason } from "./RuntimeConfiguration";
+import { ModuleRuntime } from "./ModuleRuntime";
 import type { AcquisitionController } from "./hooks/useAcquisition";
 import { currentBindings as collectCurrentBindings, type ConfigurationModule, type CurrentConfigurationController } from "./hooks/useCurrentConfiguration";
-import type { RuntimeControls } from "./hooks/useRuntimeControls";
+import { recordingPathMissing, type RuntimeControls } from "./hooks/useRuntimeControls";
 import "./RunConsole.css";
 
 const startupModules = [
@@ -53,11 +53,6 @@ function actionErrors(actions: [string, string | null][]) {
     <p className="inline-message error" role="alert" key={label}><strong>{label}:</strong> {error}</p>);
 }
 
-export function recordingPathMissing(source: Pick<ModuleActivation["bindings"][number], "selection" | "parameters"> | undefined): boolean {
-  return source?.selection.package_id === "OmniBCI.file_reader"
-    && !(typeof source.parameters.data_file_path === "string" && source.parameters.data_file_path.trim());
-}
-
 export function RunConsole({ engine, acquisition, feed, runtime, current, runtimeControls, onEditSetup, onEditProcessing, onResults }: {
   engine: ReturnType<typeof usePoll<EngineStatus>>;
   acquisition: AcquisitionController;
@@ -70,10 +65,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
   current: CurrentConfigurationController;
 }) {
   const { t } = useI18n();
-  const { stimulation, signal, start, stop, launch, stopStim, trigger, readCurrent,
-    startProcessing, stopProcessing, startActuation, stopActuation, stopRead } = runtimeControls;
-  const { connect, disconnect, read } = acquisition;
-  const [profiles, setProfiles] = useState<PluginProfile[]>([]);
+  const { stimulation, signal, start, stop, trigger, operationReason, currentReason, readyFor, matches } = runtimeControls;
   const [selectedParadigm, setSelectedParadigm] = useState<PluginDefinition | null>(null);
   const [controls, setControls] = useState<Record<string, TrialControl>>({});
   const [loadError, setLoadError] = useState<string | { key: TranslationKey; params?: TranslationParams } | null>(null);
@@ -81,72 +73,35 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
   const [trialError, setTrialError] = useState<"count" | "sequence" | { name: string; label: string } | null>(null);
   const [configurationReload, setConfigurationReload] = useState(0);
   const [controlsLoading, setControlsLoading] = useState(false);
-  const stimulationNotice = runtimeControls.notices.stimulation;
-  const actuationNotice = runtimeControls.notices.actuation;
-  const operationReason = (module: ConfigurationModule | "engine", allowModuleRecovery = false) => {
-    let reason = runtimeBlockReason(runtime, module);
-    if (allowModuleRecovery && reason === "feedback.recovery" && !runtime.status?.recovery.engine) {
-      reason = runtime.error || runtime.status?.errors?.engine || runtime.status?.errors?.[module] ? "feedback.runtimeUnavailable" : null;
-    }
-    return runtimeControls.enginePending || runtimeControls.pending(module) ? t("feedback.busy") : reason ? t(reason) : null;
-  };
   const controlsBlocked = !!operationReason("stimulation");
   const running = engine.data?.running ?? false;
-  const connected = acquisition.data?.connected ?? false;
   const reading = acquisition.data?.streaming ?? false;
   const processingRunning = engine.data?.processor_alive ?? false;
-  const actuationRunning = engine.data?.actuation_alive ?? false;
   const engineAvailable = engine.data !== null && !engine.error;
   const acquisitionAvailable = engineAvailable && acquisition.data !== null && !acquisition.error;
   const stimulationAvailable = stimulation.data !== null && !stimulation.error;
   const activation = (module: ConfigurationModule) => current.modules[module].activation;
   const bindings = (module: ConfigurationModule) => activation(module)?.bindings ?? [];
-  const matches = (module: ConfigurationModule, applied = false) => current.modules[module].ready
-    && activation(module)?.revision === runtime.status?.accepted[module]
-    && (!applied || !running || (activation(module)?.revision === runtime.status?.applied?.[module]
-      && runtime.status?.accepted.engine === runtime.status?.applied?.engine));
-  const readyFor = (module: ConfigurationModule) => !current.modules[module].error && !runtime.error && matches(module);
   const currentBindings = (module: ConfigurationModule) => collectCurrentBindings(module, current.entries, current.filterOrder, activation(module));
   const currentSource = currentBindings("acquisition").find((item) => item.slot === "acquisition.source");
   const currentDecoder = currentBindings("processing").some((item) => item.slot === "processing.decoder");
   const currentDetector = currentBindings("processing").some((item) => item.slot === "processing.epoch_detector");
-  const currentParadigmBinding = currentBindings("stimulation").find((item) => item.slot === "stimulation.paradigm");
-  const currentParadigmConfigured = !!currentParadigmBinding;
-  const currentEffector = currentBindings("actuation").some((item) => item.slot === "actuation.effector");
-  const pendingSource = current.hasChanges("acquisition", activation("acquisition"));
-  const pendingStimulation = current.hasChanges("stimulation", activation("stimulation"));
-  const pendingActuation = current.hasChanges("actuation", activation("actuation"));
   const decoderConfigured = readyFor("processing") ? bindings("processing").some((item) => item.slot === "processing.decoder") : null;
   const missingDetector = decoderConfigured && !bindings("processing").some((item) => item.slot === "processing.epoch_detector");
+  const processingDetailsUnavailable = !engineAvailable || !!signal.error || processingRunning && !matches("processing", true);
   const externalStimulation = matches("stimulation") && activation("stimulation")?.settings["STIMULATION.auto_spawn"] === false;
-  const currentExternalStimulation = current.settings.stimulation?.["STIMULATION.auto_spawn"] === false;
-  const currentParadigmUnavailable = !currentExternalStimulation && currentParadigmBinding && selectedParadigm
-    && !selectedParadigm.available && selectionKey(currentParadigmBinding.selection) === selectionKey(selectedParadigm.selection);
-  const stimulationStartLabel = t((runtime.status?.recovery?.stimulation ? externalStimulation : currentExternalStimulation)
-    ? stimulation.data?.engine_connected ? "run.enableStimulation" : "run.prepareExternalStimulation" : "run.launchStimulation");
-  const externalActuation = matches("actuation") && activation("actuation")?.settings["ACTUATION.auto_spawn"] === false;
-  const currentExternalActuation = current.settings.actuation?.["ACTUATION.auto_spawn"] === false;
-  const actuationStartLabel = t((runtime.status?.recovery?.actuation ? externalActuation : currentExternalActuation)
-    && !engine.data?.actuation_connected ? "run.prepareExternalActuation" : "run.startActuation");
   const emptySelection = (module: ConfigurationModule) => t(current.modules[module].error ? "run.unavailable"
     : !readyFor(module) ? "run.loading" : "run.none");
   const sourceNotConfigured = readyFor("acquisition") && !currentSource;
   const selectedName = (slot: string) => {
     const module = slot.split(".")[0] as ConfigurationModule;
     const binding = bindings(module).find((item) => item.slot === slot);
-    if (!binding) return emptySelection(module);
-    return profiles.find((item) => item.profile_id === binding.profile_id)?.name
-      ?? `${binding.selection.package_id}/${binding.selection.contribution_id} · ${binding.selection.version}`;
+    return binding ? `${binding.selection.package_id}/${binding.selection.contribution_id} · ${binding.selection.version}` : emptySelection(module);
   };
-  const selectedPlugin = (binding: ModuleActivation["bindings"][number]) => {
-    const name = binding.slot === "acquisition.source" && !binding.profile_id
-      ? t("profiles.currentSourceConfiguration")
-      : profiles.find((item) => item.profile_id === binding.profile_id)?.name;
-    const identity = `${binding.selection.package_id}/${binding.selection.contribution_id}`;
-    return <><strong>{name ?? identity}</strong>
-      {name && <small className="meta">{identity}</small>}
-      <small className="meta">{t("run.pinnedVersion", { version: binding.selection.version })}
-        {binding.profile_id && <> · {t("run.profileRevision", { revision: binding.profile_revision })}</>}</small></>;
+  const selectedPlugin = (binding: ReturnType<typeof currentBindings>[number]) => {
+    if (!("selection" in binding)) return null;
+    return <><strong>{binding.selection.package_id}/{binding.selection.contribution_id}</strong>
+      <small className="meta">{t("run.pinnedVersion", { version: binding.selection.version })}</small></>;
   };
   const missingRecording = recordingPathMissing(currentSource && "selection" in currentSource ? currentSource : undefined);
   const playback = bindings("acquisition").some((item) => item.slot === "acquisition.source" && item.selection.package_id === "OmniBCI.file_reader");
@@ -160,50 +115,14 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
     && matches("stimulation", true)
     && (!stimulation.data?.active || externalStimulation || stimulation.data.paradigm === selectedParadigm.plugin_type);
   const engineReason = !engineAvailable ? t("run.reason.engineUnavailable") : null;
-  const acquisitionReason = engineReason ?? (!acquisitionAvailable ? t("run.reason.acquisitionUnavailable") : null);
   const stimulationReason = !stimulationAvailable ? t("run.reason.stimulationUnavailable") : null;
-  const recordingReason = missingRecording ? t("run.missingRecording") : null;
-  const currentReason = (module: ConfigurationModule) => current.modules[module].error
-    ?? (!readyFor(module) ? t("run.reason.configurationLoading") : null);
   const trialSetupReason = currentReason("stimulation") ?? (trialControlsReady ? null : t(loadError ? "run.reason.trialControlsUnavailable"
     : !selectedParadigm || !externalStimulation && !selectedParadigm.available ? "run.reason.selectParadigm"
     : running && !matches("stimulation", true) ? "run.reason.selectionNotApplied" : "run.reason.paradigmMismatch"));
   const recovery = runtime.status?.recovery ?? {};
-  const recoverStimulation = externalStimulation && !!recovery.stimulation && !stimulation.data?.engine_connected;
-  const recoverActuation = externalActuation && !!recovery.actuation && !engine.data?.actuation_connected;
   const startReason = operationReason("engine", true) ?? engineReason ?? (running ? t("run.reason.alreadyRunning") : null);
   const stopReason = stop.pending ? t("feedback.busy") : engineReason
     ?? (!running && !runtimeControls.busy && !runtime.inProgress && !Object.keys(recovery).length ? t("run.reason.notRunning") : null);
-  const sourceConfigurationReason = currentReason("acquisition") ?? (!currentSource ? t("run.reason.selectSource") : recordingReason);
-  const connectReason = operationReason("acquisition") ?? acquisitionReason ?? (connected ? t("run.reason.alreadyConnected") : sourceConfigurationReason);
-  const disconnectReason = recovery.acquisition
-    ? (runtimeControls.enginePending || runtimeControls.pending("acquisition") ? t("feedback.busy") : acquisitionReason)
-    : operationReason("acquisition") ?? acquisitionReason ?? (!connected ? t("run.reason.notConnected")
-      : reading ? t("run.reason.stopReading") : null);
-  const readReason = operationReason("acquisition") ?? acquisitionReason ?? (!running ? t("run.reason.startEngine")
-    : !connected ? t("run.reason.notConnected") : sourceConfigurationReason)
-    ?? (!matches("acquisition", true) ? t("run.reason.selectionNotApplied")
-      : reading ? t("run.reason.alreadyReading") : pendingSource ? t("run.reason.reconnectCurrentSource") : null);
-  const stopReadReason = stopRead.pending || acquisition.stopRead.pending ? t("feedback.busy") : acquisitionReason ?? (!reading && !read.pending && !readCurrent.pending ? t("run.reason.notReading") : null);
-  const startProcessingReason = operationReason("processing") ?? engineReason ?? currentReason("processing")
-    ?? (processingRunning ? t("run.reason.processingActive") : !currentDecoder ? t("run.reason.selectDecoder")
-      : !currentDetector ? t("run.reason.missingDetector") : current.validationError("processing"));
-  const stopProcessingReason = stopProcessing.pending ? t("feedback.busy") : engineReason ?? (!processingRunning && !startProcessing.pending && !recovery.processing ? t("run.reason.processingStopped") : null);
-  const startActuationReason = operationReason("actuation", recoverActuation) ?? engineReason ?? (!running ? t("run.reason.startEngine") : null)
-    ?? (recoverActuation ? null : currentReason("actuation") ?? current.validationError("actuation")
-    ?? (pendingActuation && engine.data?.actuation_connected && (externalActuation || currentExternalActuation) ? t("run.reason.disconnectExternal")
-      : actuationRunning ? t("run.reason.actuationActive") : !currentEffector ? t("run.reason.selectEffector") : null));
-  const stopActuationReason = stopActuation.pending ? t("feedback.busy") : engineReason ?? (!actuationRunning && !engine.data?.actuation_connected && !startActuation.pending && !recovery.actuation ? t("run.reason.actuationStopped") : null);
-  const launchReason = operationReason("stimulation", recoverStimulation) ?? engineReason ?? (!running ? t("run.reason.startEngine") : null)
-    ?? stimulationReason ?? (recoverStimulation ? null : currentReason("stimulation") ?? current.validationError("stimulation")
-    ?? (pendingStimulation && stimulation.data?.engine_connected && (externalStimulation || currentExternalStimulation) ? t("run.reason.disconnectExternal") : null)
-    ?? (currentParadigmUnavailable ? t("profiles.pluginUnavailable") : null)
-    ?? (pendingStimulation || currentExternalStimulation || !matches("stimulation", true) ? !currentParadigmConfigured ? t("run.reason.selectParadigm") : null : trialSetupReason)
-    ?? (stimulation.data?.active && (stimulation.data.process_alive || stimulation.data.engine_connected)
-      ? t("run.reason.stimulationActive") : null));
-  const stopStimReason = stopStim.pending ? t("feedback.busy") : stimulationReason
-    ?? (!(stimulation.data?.process_alive || stimulation.data?.active || stimulation.data?.engine_connected || launch.pending || recovery.stimulation)
-      ? t("run.reason.stimulationStopped") : null);
   const triggerReason = operationReason("stimulation") ?? stimulationReason ?? trialSetupReason
     ?? (!stimulation.data?.active ? t(externalStimulation ? "run.reason.enableStimulation" : "run.reason.launchStimulation")
       : !stimulation.data.engine_connected ? t("run.reason.connectStimulation") : null);
@@ -221,11 +140,6 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
     ? targetSequence.length * repetitions : undefined;
   useEffect(() => {
     let alive = true;
-    void pluginConfigApi.profiles().then((value) => { if (alive) setProfiles(value); }).catch(() => {});
-    return () => { alive = false; };
-  }, []);
-  useEffect(() => {
-    let alive = true;
     setLoadError(null);
     setControlsLoading(!!paradigmKey);
     if (!paradigmKey) { setSelectedParadigm(null); setControls({}); return; }
@@ -234,6 +148,10 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
       const paradigm = paradigms.find((item) => selectionKey(item.selection) === paradigmKey);
       setControlsLoading(false);
       setSelectedParadigm(paradigm ?? null);
+      const entry = current.get("stimulation.paradigm");
+      if (entry?.selection && selectionKey(entry.selection) === paradigmKey) {
+        current.set("stimulation.paradigm", { ...entry, available: paradigm?.available ?? false, schema: paradigm?.schema });
+      }
       try {
         const next = readTrialControls(paradigm?.controls);
         setControls((previous) => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
@@ -310,7 +228,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
           <h3 id={`startup-${module.id}-title`}>{t(module.label)}</h3>
           {module.slots.map(([slot, label]) => {
             const filters = slot === "processing.filters";
-            const selected = readyFor(module.id) ? bindings(module.id).filter((item) => filters ? item.kind === "filter" : item.slot === slot) : [];
+            const selected = readyFor(module.id) ? currentBindings(module.id).filter((item) => filters ? item.slot.startsWith("processing.filter.") : item.slot === slot) : [];
             return <div key={slot}><span>{t(label)}</span>
               {!selected.length ? <strong>{emptySelection(module.id)}</strong>
                 : filters ? <ol className="startup-filters" aria-label={t(label)}>
@@ -321,8 +239,6 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
         </section>)}
       </div>
       {configurationModules.some(readyFor) && <p className="meta">{t("run.selectedConfigurationHelp")}</p>}
-      {startupModules.filter((module) => current.modules[module.id].ready && current.hasChanges(module.id, activation(module.id))).map((module) =>
-        <p className="meta" role="status" key={module.id}>{t("run.currentChanges", { module: t(module.label) })}</p>)}
     </section>
     {missingRecording && <p className="inline-message" role="status">{t("run.missingRecording")}</p>}
     {loadError && <div className="inline-message error">
@@ -334,86 +250,40 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
       <button onClick={() => void current.reload(module.id)}>{t("run.retryConfiguration")}</button></div>)}
     <div className="runtime-grid">
       <section className="card"><h2><Icon name="signal" />{t("run.acquisition")}</h2>
-        <p><Dot on={acquisitionAvailable ? connected : undefined} label={t(!acquisitionAvailable ? "run.sourceConnection"
-          : connected ? "run.sourceConnected" : "run.sourceNotConnected")} />
-          <Dot on={acquisitionAvailable ? reading : undefined} label={t(!acquisitionAvailable ? "run.dataReading"
-            : reading ? "run.reading" : "run.notReading")} /></p>
         {acquisition.error && <p className="error" role="alert">{acquisition.error.message}</p>}
         <p className="meta">{acquisitionAvailable ? <>{translatePluginName(acquisition.data?.source ?? "", acquisition.data?.source ?? t("run.noSource"), t)}<br />
           {t("run.acquisitionDetails", { sampleRate: acquisition.data?.sample_rate ?? "—", channelCount: acquisition.data?.channel_count ?? "—" })}</> : t("run.unavailable")}</p>
-        <div className="actions">
-          <button disabled={!!connectReason}
-            aria-describedby={connectReason ? "connection-action-reasons" : "connection-help"}
-            onClick={() => { if (!connectReason) {
-              try {
-                return connect.run(current.request("acquisition"));
-              } catch (cause) { setLoadError(cause instanceof Error ? cause.message : String(cause)); }
-            } }}>{t("run.connect")}</button>
-          <button disabled={!!disconnectReason}
-            aria-describedby={disconnectReason ? "connection-action-reasons" : "connection-help"}
-            onClick={() => { if (!disconnectReason) return disconnect.run(); }}>{t("run.disconnect")}</button>
-        </div>
-        <p className="meta" id="connection-help">{t("run.connectHelp")}</p>
-        {actionReasons("connection-action-reasons", [[t("run.connect"), connectReason], [t("run.disconnect"), disconnectReason]])}
-        {actionErrors([[t("run.connect"), connect.error], [t("run.disconnect"), disconnect.error]])}
-        <div className="actions">
-          <button className="primary" disabled={!!readReason}
-            aria-describedby={readReason ? "reading-action-reasons" : "acquisition-read-help"}
-            onClick={() => { if (!readReason) return readCurrent.run(); }}><Icon name="play" />{t("run.startReading")}</button>
-          <button disabled={!!stopReadReason}
-            aria-describedby={stopReadReason ? "reading-action-reasons" : "acquisition-read-help"}
-            onClick={() => { if (!stopReadReason) return stopRead.run(); }}>{t("run.stopReading")}</button>
-        </div>
-        <p className="meta" id="acquisition-read-help">{t("run.readHelp")}
-          {playback && <> {t("run.playbackRestart")}</>}</p>
-        {actionReasons("reading-action-reasons", [[t("run.startReading"), readReason], [t("run.stopReading"), stopReadReason]])}
-        {actionErrors([[t("run.startReading"), readCurrent.error ?? read.error], [t("run.stopReading"), stopRead.error ?? acquisition.stopRead.error]])}
+        <ModuleRuntime module="acquisition" controls={runtimeControls} showEngineStart={false} />
+        <p className="meta">{t("run.connectHelp")}</p>
+        <p className="meta">{t("run.readHelp")}{playback && <> {t("run.playbackRestart")}</>}</p>
         <AcquisitionPreview generation={running ? runtime.status?.generation : null}
           revision={runtime.status?.applied?.acquisition} connectionId={acquisition.data?.connection_id ?? null}
           streaming={reading} disabled={!!operationReason("acquisition")} />
       </section>
       <section className="card" aria-label={t("run.activeDecoderInput")}>
         <h2><Icon name="workflow" />{t("run.signalProcessing")}</h2>
-        <p><Dot on={engineAvailable ? processingRunning : undefined} label={t(processingRunning ? "run.processRunning" : "run.processStopped")} /></p>
-        <div className="actions">
-          <button disabled={!!startProcessingReason} aria-describedby={startProcessingReason ? "processing-action-reasons" : undefined}
-            onClick={() => { if (!startProcessingReason) return startProcessing.run(); }}>{t("run.startProcessing")}</button>
-          <button disabled={!!stopProcessingReason} aria-describedby={stopProcessingReason ? "processing-action-reasons" : undefined}
-            onClick={() => { if (!stopProcessingReason) return stopProcessing.run(); }}>{t("run.stopProcessing")}</button>
-        </div>
+        <ModuleRuntime module="processing" controls={runtimeControls} showEngineStart={false} />
         <p className="meta">{t("run.processingHelp")}</p>
-        {actionReasons("processing-action-reasons", [[t("run.startProcessing"), startProcessingReason], [t("run.stopProcessing"), stopProcessingReason]])}
-        {actionErrors([[t("run.startProcessing"), startProcessing.error], [t("run.stopProcessing"), stopProcessing.error]])}
         {currentDecoder && !currentDetector && onEditProcessing && <button className="text-button" onClick={onEditProcessing}>{t("run.configureProcessing")}</button>}
       <div className="summary-items"><div><span>{t("run.signalPreparation")}</span>
         <strong>{current.modules.processing.error ? t("run.unavailable") : decoderConfigured === null ? t("run.loading")
-          : !decoderConfigured ? t("run.processingNotConfigured") : !engineAvailable || signal.error ? t("run.unavailable")
+          : processingDetailsUnavailable ? t("run.unavailable") : !decoderConfigured ? t("run.processingNotConfigured")
           : missingDetector ? t("run.epochDetectorMissing") : !processingRunning ? t("run.processStopped") : !signal.data ? t("run.loading")
           : signal.data.readiness.ready ? t("run.ready") : t("run.validatedBeforeReading")}</strong></div>
         <div><span>{t("run.activeDecoderChannels")}</span><strong>{current.modules.processing.error ? t("run.unavailable")
-          : decoderConfigured === null ? t("run.loading") : !decoderConfigured ? t("run.noActiveMapping")
-          : !engineAvailable || signal.error ? t("run.unavailable") : !processingRunning ? t("run.none") : !signal.data ? t("run.loading") : signal.data.active_input
+          : decoderConfigured === null ? t("run.loading") : processingDetailsUnavailable ? t("run.unavailable") : !decoderConfigured ? t("run.noActiveMapping")
+          : !processingRunning ? t("run.none") : !signal.data ? t("run.loading") : signal.data.active_input
           ? signal.data.active_input.outputs.length ? signal.data.active_input.outputs.map((output) => output.name).join(", ") : t("run.allSourceChannels")
           : t("run.noActiveMapping")}</strong></div></div>
       {decoderConfigured && signal.error && <p className="error" role="alert">{signal.error.message}</p>}
-      {decoderConfigured && !missingDetector && engineAvailable && !signal.error && signal.data && !signal.data.readiness.ready && processingRunning && <p className="meta">{t("run.prepareSignalHelp")}</p>}
+      {decoderConfigured && !missingDetector && !processingDetailsUnavailable && signal.data && !signal.data.readiness.ready && processingRunning && <p className="meta">{t("run.prepareSignalHelp")}</p>}
     </section>
       <section className="card"><h2><Icon name="monitor" />{t("run.stimulation")}</h2>
         {externalStimulation && <p className="meta"><strong>{t("run.externalStimulation")}</strong><br />{t("run.externalStimulationHelp")}</p>}
-        <p>{!externalStimulation && <Dot on={stimulationAvailable ? stimulation.data?.process_alive : undefined}
-          label={t(stimulation.data?.process_alive ? "run.processRunning" : "run.processStopped")} />}
-          <Dot on={stimulationAvailable ? stimulation.data?.engine_connected : undefined}
-            label={t(stimulation.data?.engine_connected ? "run.engineConnected" : "run.engineNotConnected")} /></p>
         {stimulation.error && <p className="error" role="alert">{stimulation.error.message}</p>}
-        <p className="meta">{paradigmName}<br />{t("profiles.slotTrigger")}: {selectedName("stimulation.trigger")}</p>
-        <div className="actions"><button disabled={!!launchReason}
-          aria-describedby={launchReason ? "stimulation-action-reasons" : undefined} onClick={() => void launch.run()}>{launch.pending
-            ? t(externalStimulation ? "run.enablingStimulation" : "run.launching") : stimulationStartLabel}</button>
-          <button disabled={!!stopStimReason}
-            aria-describedby={stopStimReason ? "stimulation-action-reasons" : undefined} onClick={() => void stopStim.run()}>{t("run.stopStimulation")}</button></div>
-        {actionReasons("stimulation-action-reasons", [[stimulationStartLabel, launchReason], [t("run.stopStimulation"), stopStimReason]])}
-        {!pendingStimulation && stimulationNotice && <p className="inline-message success" role="status">{t(stimulationNotice)}</p>}
-        {actionErrors([[stimulationStartLabel, launch.error], [t("run.stopStimulation"), stopStim.error]])}
+        {stimulation.data?.active && stimulation.data.engine_connected && matches("stimulation", true)
+          && <p className="meta">{paradigmName}<br />{t("profiles.slotTrigger")}: {selectedName("stimulation.trigger")}</p>}
+        <ModuleRuntime module="stimulation" controls={runtimeControls} showEngineStart={false} />
         <form className="actions trial-controls" onSubmit={(event) => { event.preventDefault(); triggerTrial(); }}>
           {sequenceControl && <div className="trial-sequence">
             <label className="control"><span className="meta">{t("run.targetSequence")}</span>
@@ -452,21 +322,10 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
         {actionErrors([[t("run.triggerTrial"), trigger.error]])}
       </section>
       <section className="card"><h2><Icon name="monitor" />{t("run.actuation")}</h2>
-        {externalActuation && <p className="meta">{t("run.externalActuationHelp")}</p>}
-        <p><Dot on={engineAvailable ? actuationRunning : undefined} label={t(actuationRunning ? "run.running" : "run.reason.actuationStopped")} />
-          <Dot on={engineAvailable ? engine.data?.actuation_connected : undefined}
-            label={t(engine.data?.actuation_connected ? "run.engineConnected" : "run.engineNotConnected")} /></p>
-        <p className="meta">{selectedName("actuation.effector")}</p>
-        <div className="actions">
-          <button disabled={!!startActuationReason} aria-describedby={startActuationReason ? "actuation-action-reasons" : undefined}
-            onClick={() => { if (!startActuationReason) return startActuation.run(); }}>{actuationStartLabel}</button>
-          <button disabled={!!stopActuationReason} aria-describedby={stopActuationReason ? "actuation-action-reasons" : undefined}
-            onClick={() => { if (!stopActuationReason) return stopActuation.run(); }}>{t("run.stopActuation")}</button>
-        </div>
+        {engine.data?.actuation_alive && engine.data.actuation_connected && matches("actuation", true)
+          && <p className="meta">{selectedName("actuation.effector")}</p>}
+        <ModuleRuntime module="actuation" controls={runtimeControls} showEngineStart={false} />
         <p className="meta">{t("run.actuationHelp")}</p>
-        {actionReasons("actuation-action-reasons", [[actuationStartLabel, startActuationReason], [t("run.stopActuation"), stopActuationReason]])}
-        {!current.hasChanges("actuation", activation("actuation")) && actuationNotice && <p className="inline-message success" role="status">{t(actuationNotice)}</p>}
-        {actionErrors([[actuationStartLabel, startActuation.error], [t("run.stopActuation"), stopActuation.error]])}
       </section>
     </div>
     {feed.error && <p className="error" role="alert">{feed.error}</p>}

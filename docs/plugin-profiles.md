@@ -1,6 +1,6 @@
 # Current configuration, saved profiles, and history
 
-Each plugin has editable **Current configuration** values. A saved Profile is a
+Each plugin has editable **Current parameters**. A saved Profile is a
 named reusable copy for one exact package, contribution, and version. Applying
 current values never requires saving a Profile first.
 
@@ -13,6 +13,10 @@ current values never requires saving a Profile first.
   age limits. Saving or loading a plugin Profile leaves these module settings intact.
 - Save current values as a new Profile when they should be reusable. Load a
   Profile to copy its values into the editor. Neither action applies a module.
+- Each Setup page has the same module status and actions as Run. Its current
+  parameter editor remains separate from the running instance. Loading a Profile
+  is labeled **Loaded**; editing it changes the feedback to **Modified**. Neither
+  label means the module is using those values. Saving remains optional.
 - **Connect** applies the current Acquisition values, starts the engine when
   needed, and connects. Metadata inspection is a separate action.
 - **Start reading** requires a source connection and starts Acquisition data flow.
@@ -38,6 +42,15 @@ button. Engine settings retain explicit review; module settings, including
 Processing's pre-trigger duration, travel with that module's current values.
 Editing, loading and saving remain independent of runtime application. Browsing a different plugin
 or Profile does not silently change running parameters.
+
+The status area reports actual module activity separately from parameter changes.
+A retained applied revision does not mean the module is running. Stopped modules
+show **Not running**; connected or running modules report whether they use the
+current parameters. A configuration mismatch or unavailable runtime status is
+shown as unconfirmed. Run's configuration summary shows the current parameters
+that its actions will submit, rather than the previously accepted Profile.
+New filters must be added to the ordered chain before **Start processing** uses
+them; editing the new-filter form alone does not change that chain.
 
 Current edits survive page navigation. Refresh initializes current values from
 the server's accepted modules; unapplied browser edits are not stored on disk.
@@ -67,8 +80,8 @@ disabled packages must be made available before restoring.
 
 Saved Profile history uses integer revisions. Restoring a Profile creates a new
 revision containing the older values. It does not load the editor or apply a
-module. Profile references copied into bindings retain their saved provenance;
-a newer saved revision can be shown as changed since application.
+module. Console module actions submit current values without binding their
+runtime state to a saved Profile identity.
 
 ## Storage and ownership
 

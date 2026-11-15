@@ -1,0 +1,12 @@
+.module-runtime {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 12px 0 20px;
+}
+
+.module-runtime p { margin: 0 0 8px; }
+.module-runtime .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.module-runtime .action-reasons { margin-top: 8px; }
+.module-runtime > :last-child,
+.module-runtime .action-reasons > :last-child { margin-bottom: 0; }

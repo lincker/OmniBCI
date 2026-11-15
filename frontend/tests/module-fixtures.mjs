@@ -39,6 +39,8 @@ export function runtimeController(value = {}) {
 export function currentController(activation, value = {}) {
   const selected = activation?.modules ? activation : moduleConfiguration(activation ?? {});
   return { entries: {}, filterOrder: [], settings: Object.fromEntries(moduleNames.map((module) => [module, selected.modules[module].settings])), acknowledge: () => {}, setSetting: () => {},
+    get(slot) { return this.entries[slot]; },
+    set(slot, entry) { this.entries[slot] = entry; },
     hasChanges: () => false, validationError: () => null,
     request: (module) => ({ expected_revision: selected.modules[module].revision,
       settings: selected.modules[module].settings, bindings: selected.modules[module].bindings }),
@@ -46,12 +48,4 @@ export function currentController(activation, value = {}) {
       activation: selected.modules[module], ready: value.ready ?? true, error: value.error ?? null,
       ...value.modules?.[module],
     }])) };
-}
-
-export function controlsController(value = {}) {
-  const noop = async () => {};
-  return { notices: {}, pending: () => false, enginePending: false, busy: false,
-    stimulation: { data: null, error: null, refresh: noop }, signal: { data: null, error: null, refresh: noop },
-    ...Object.fromEntries(["start", "stop", "launch", "stopStim", "trigger", "readCurrent", "stopRead", "startProcessing", "stopProcessing", "startActuation", "stopActuation"].map((name) => [name, { pending: false, error: null, run: noop }])),
-    ...value };
 }
