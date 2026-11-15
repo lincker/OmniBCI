@@ -72,8 +72,8 @@ The current regression suite checks:
   uncertain responses, and partial refresh failures.
 
 The authoritative runtime and configuration description is
-[module-config.md](module-config.md). Signal contracts are documented in
-[channel-mapping.md](channel-mapping.md); REST and WebSocket payloads are documented
+[module-config.md](module-config.md). Plugin signal contracts are documented in
+[the SDK contract](plugin-manifest.md#sdk-and-construction-api); REST and WebSocket payloads are documented
 in [frontend-separation.md](frontend-separation.md).
 
 ## Performance and physical-device checks

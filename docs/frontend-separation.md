@@ -30,10 +30,9 @@ profiles and independent current values. Saving preserves a reusable Profile;
 loading copies its values into the editor. Connect applies current Acquisition
 values. Start processing, Launch stimulation, and Start actuation apply their own
 current values independently. Start engine provides shared infrastructure only.
-Starting reading prepares Processing if it is already running, then starts the
-Acquisition stream. It does not start or reconfigure another module.
-See [stage2-design.md](stage2-design.md) for the operating sequence and
-[channel-mapping.md](channel-mapping.md) for input mapping.
+Starting reading starts the Acquisition stream independently of Processing.
+See [module operation](module-config.md#independent-modules-on-neuroengine)
+for lifecycle and input preparation behavior.
 
 Settings / General separates Engine current values from Server startup values.
 Engine review posts explicit `settings` to `/config/apply-plan` with

@@ -8,9 +8,9 @@ there is no automatic updater, public release publishing, or store distribution.
 
 ## First launch and data
 
-Choose a connection mode on the connection screen. For local work, select your own
-CNT recording in the acquisition settings before starting the engine. An empty
-data-source configuration is valid while editing; it must not start acquisition.
+Choose a connection mode on the connection screen. Starting Engine initializes
+the foundation without requiring or starting Acquisition. For file acquisition,
+select your own recording in the current Acquisition settings before connecting.
 The installer contains no demonstration recording or repository test fixtures.
 In remote mode, data paths refer to the server machine; the desktop file picker
 cannot select files on that machine.
@@ -129,8 +129,8 @@ headers. Users do not need Python, pip, a compiler, or a development environment
 into the extracted interpreter, then builds OmniBCI from a clean temporary source
 copy. It excludes machine profiles and bytecode, and cannot reuse a stale
 `build/lib` directory from development. The application wheel is installed with
-`--no-deps`. A final check rejects development packages, source test recordings,
-and machine-specific profiles. Downloads and generated resources are ignored by
+`--no-deps`. A final check rejects development packages and source test recordings.
+Downloads and generated resources are ignored by
 Git. A development virtualenv is never copied into the installer.
 
 `runtime-manifest.json` records application, Electron and Python versions, target,
@@ -198,7 +198,7 @@ pinned resolver executable.
 The Python verification runs **the bundled Python version**, in isolated mode and
 from a temporary working directory, both before and after packaging. It checks
 installed versions/import locations, loads plugin sources, validates schemas,
-reads all 281 stimulus frames, and starts a real spawned process that repeats
+reads all 321 resource frames, and starts a real spawned process that repeats
 plugin/resource checks with the same interpreter. The Electron smoke test drives
 the real window, preload, API/WebSocket connection and local/remote lifecycle.
 Its test fixtures are external inputs and never copied into the installer.

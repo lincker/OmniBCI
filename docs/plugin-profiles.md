@@ -47,8 +47,8 @@ Concurrent edits from another client produce a revision conflict instead of
 being overwritten by an automatic refresh and retry.
 When a conflict exists, **Load accepted configuration** explicitly replaces that
 module's edits with the server values and resets its editor baseline.
-Decoder current values and Profiles include the channel mapping described in
-[channel mapping](channel-mapping.md). An empty output list explicitly selects
+Decoder current values and Profiles include a
+[ProcessingInput channel mapping](../omnibci/domain/channel_mapping.py). An empty output list explicitly selects
 all source signal channels; live source metadata remains authoritative.
 
 ## History and restore
@@ -81,7 +81,7 @@ plugin-profiles/<uuid>/history/<integer-revision>.toml
 activation/<module>.toml
 activation/history/<module>/<operation-uuid>.toml
 settings.toml
-.host-settings.lock
+locks/settings.lock
 locks/profiles.lock
 locks/<module>.lock
 ```
@@ -95,7 +95,7 @@ includes declared initial Engine defaults in its plan if they have not yet been
 accepted. Starting an empty engine can also accept these defaults without selecting plugins.
 
 Server startup settings share this file but retain separate revision checks.
-Both writers use `.host-settings.lock` and atomic replacement, changing only
+Both writers use `locks/settings.lock` and atomic replacement, changing only
 their own fields. A failed Engine application restores only `[engine]`, preserving
 Server saves. Engine review submits current values directly; only Server
 startup settings use the settings Save action. Engine settings have no separate
@@ -109,7 +109,7 @@ deleting an unreferenced Profile also removes its history.
 
 Bindings contain complete parameters, selected versions and schema versions.
 Editing a saved Profile cannot change an accepted binding. Module content hashes
-include owned host settings, slot identities, mapping, parameters and filter
+include owned module settings, slot identities, mapping, parameters and filter
 order; profile IDs and profile revision metadata are excluded. The combined
 runtime settings view is derived and has no global revision.
 

@@ -64,7 +64,7 @@ export function DecoderDeveloperGuide() {
       <ol>
         <li>{t("guide.keep")}<code>manifest.toml</code>{t("guide.packageRoot")}</li>
         <li>{t("guide.use")}<strong>{t("guide.installLocation")}</strong>{t("guide.enableInstalled")}</li>
-        <li>{t("guide.in")}<strong>{t("guide.setupLocation")}</strong>{t("guide.configureProfile")}</li>
+        <li>{t("guide.in")}<strong>{t("guide.setupLocation")}</strong>{t("guide.configureCurrent")}</li>
         <li>{t("guide.verifyInput")}</li>
       </ol>
       <p>{t("guide.installationChecks")}<code>package.host_version</code>{t("guide.and")}<code>[package.requires]</code>{t("guide.exactVersions")}</p>

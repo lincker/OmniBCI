@@ -56,7 +56,7 @@ display_name = "Example Trigger"
   references plugin-owned configuration data. The file must stay inside the
   package, cannot traverse symlinks, and is limited to 1 MiB. Its positive
   schema version is separate from the package and manifest versions.
-  Discovery validates the [supported Schema subset](plugin-configuration-schema.md)
+  Discovery validates the [supported Schema subset](../omnibci/application/plugin_schema.py)
   and defaults without importing Python or resolving external references.
   API 2 construction validates parameters and inserts declared defaults before
   executing the selected plugin. A missing schema means no editable profile
@@ -178,9 +178,7 @@ stream starts again or a new connection is established, preserving the first
 nonzero sample after that boundary. An already-running Start is idempotent and
 does not reset it. These resets also apply when a source restores a checkpoint;
 the host does not extend the source checkpoint format with preprocessing state.
-Discrete File Reader events are unaffected. See
-[shared trigger preprocessing](channel-mapping.md#shared-trigger-preprocessing)
-for the processing boundary and extension contract.
+Discrete File Reader events are unaffected.
 
 ### Signal-source resumption
 

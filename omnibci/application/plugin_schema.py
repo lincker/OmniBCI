@@ -1,7 +1,7 @@
 """Validate the documented, closed JSON Schema subset for plugin parameters.
 
 This module reads data only. It never resolves references, imports plugins or
-coerces parameter types. See docs/plugin-configuration-schema.md for the subset.
+coerces parameter types. Supported keywords and constraints are defined below.
 """
 from __future__ import annotations
 

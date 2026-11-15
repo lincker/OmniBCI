@@ -160,9 +160,9 @@ and arrays are rejected before conversion. `Classification` enforces nonnegative
 target ids and confidence in `[0, 1]` when supplied. Invalid outputs fail with the
 decoder class, event id, and configuration revision in the error context.
 
-Target ids must agree with the chosen paradigm and effector. A Decoder package
-does not supply an epoch boundary detector, filter or paradigm unless it declares those
-as additional contributions. Keep decoding independent of device connections,
+Target ids must agree with the chosen paradigm and effector. A Processing package
+can declare additional Decoder, Epoch Detector or Filter contributions.
+Keep decoding independent of device connections,
 GUI components and filesystem writes. Load model weights during construction
 rather than on every window, and test new-epoch isolation for stateful models.
 
@@ -176,8 +176,8 @@ to explain parameter semantics. `x-scope` describes portability and `x-apply`
 suggests a reconfiguration boundary; the host decides when a change can apply.
 
 Do not use `$schema`, `$ref` or arbitrary JSON Schema features: unsupported
-keywords are rejected. See the repository document
-`docs/plugin-configuration-schema.md` for the full supported subset.
+keywords are rejected. The supported subset is defined by
+[the schema validator](../omnibci/application/plugin_schema.py).
 
 ## Compatibility and packaging
 
@@ -207,13 +207,14 @@ an installed package/version is immutable. Schema version is separate.
 1. Open **Extensions → Install ZIP…**, select the archive, then enable that exact
    package version. Installation checks metadata and schemas without importing
    Python; successful installation alone does not prove the algorithm executes.
-2. In **Setup → Signal Processing → Decoder**, create a Profile for the contribution.
-   Review algorithm parameters and the initialized input selection.
-3. Select the Acquisition Profile, refresh source information and preview input.
+2. In **Setup → Signal Processing → Decoder**, select the contribution and edit its
+   current parameters and input selection. Saving a Profile is optional.
+3. Connect Acquisition using its current values, get source metadata and preview input.
    Check channel IDs, output names, order, units and types. Missing required channels,
    too few channels or the wrong signal type must prevent runtime preparation.
-4. Select and apply the Decoder Profile. Start with a known replay file and a
-   suitable epoch boundary detector; verify expected targets before using live data.
+4. Start Processing to apply its current values, then start reading from a known
+   replay file with a suitable epoch boundary detector. Verify expected targets
+   before using live data.
 5. Test reordered source/input channels, a missing required channel, short and
    non-finite windows, repeated epochs and supported OSes. Compare against known
    offline outputs from your real model.
@@ -229,6 +230,5 @@ python -m pytest tests/infrastructure/test_decoder_plugin_example.py
 The tutorial deliberately uses a mean-sign rule, not a validated classifier.
 Its files are a starting point for implementing and validating your own model.
 
-Related repository documents: `docs/plugin-manifest.md`,
-`docs/plugin-configuration-schema.md`, `docs/plugin-installation.md`, and
-`docs/plugin-profiles.md`.
+Related repository documents: `docs/plugin-manifest.md`, `docs/module-config.md`,
+and `docs/plugin-profiles.md`.
