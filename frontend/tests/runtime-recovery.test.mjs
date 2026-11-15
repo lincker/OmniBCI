@@ -54,217 +54,6 @@ test("a confirmed cleared quarantine permits Apply despite failed-operation hist
   finally { Object.assign(runtimeConfigApi, original); }
 });
 
-test("connecting a source waits for configuration to finish before returning success", async () => {
-  const status = { running: false, recovery: {}, operations: {} };
-  const render = hookRenderer(status);
-  const original = { ...runtimeConfigApi };
-  const calls = [];
-  runtimeConfigApi.plan = async (body) => { calls.push(body); return plan; };
-  runtimeConfigApi.apply = async () => ({ module: "acquisition", affected_modules: ["acquisition"], operation_id: "connect-operation", status: "queued" });
-  runtimeConfigApi.operation = async () => { calls.push("poll"); return { module: "acquisition", affected_modules: ["acquisition"], status: "succeeded" }; };
-  runtimeConfigApi.status = async () => status;
-  const request = { module: "acquisition", bindings: [], refresh_slots: ["acquisition.source"], expected_revision: null };
-  try {
-    assert.deepEqual(await render().applyCurrentSelection(request), { ...plan.expected_revisions, ...plan.target_revisions });
-    assert.deepEqual(calls[0], request);
-    assert.ok(calls.includes("poll"));
-  } finally { Object.assign(runtimeConfigApi, original); }
-});
-
-test("a rejected connection configuration cannot report success", async () => {
-  const status = { running: false, recovery: {}, operations: {} };
-  const render = hookRenderer(status);
-  const original = { ...runtimeConfigApi };
-  let submitted = false;
-  runtimeConfigApi.plan = async () => ({ ...plan, errors: ["Source unavailable"] });
-  runtimeConfigApi.apply = async () => { submitted = true; };
-  runtimeConfigApi.status = async () => status;
-  try {
-    assert.equal(await render().applyCurrentSelection({ module: "acquisition", bindings: [] }), null);
-    assert.equal(submitted, false);
-    assert.equal(render().requestError, "Source unavailable");
-  } finally { Object.assign(runtimeConfigApi, original); }
-});
-
-test("applying current parameters returns its own revision even when another client changes runtime status", async () => {
-  const status = { running: false, recovery: {}, accepted: { acquisition: "before", system: "sys" }, operations: {} };
-  const render = hookRenderer(status);
-  const original = { ...runtimeConfigApi };
-  const target = { ...plan, target_revisions: { acquisition: "current-parameters" } };
-  const request = { module: "acquisition", expected_revision: "before", bindings: [{
-    slot: "acquisition.source", selection: { package_id: "example.source", contribution_id: "main", version: "1.0.0" },
-    parameters: { port: 4000 },
-  }] };
-  let submitted = 0;
-  runtimeConfigApi.plan = async (body) => { assert.deepEqual(body, request); return target; };
-  runtimeConfigApi.apply = async (planId, operationId) => {
-    submitted += 1;
-    assert.equal(planId, target.plan_id);
-    return { module: "acquisition", affected_modules: ["acquisition"], operation_id: operationId, plan_id: planId, target_revisions: { acquisition: target.target_revisions.acquisition }, status: "succeeded" };
-  };
-  runtimeConfigApi.status = async () => ({ ...status, accepted: { acquisition: "another-client", system: "sys" } });
-  try {
-    assert.deepEqual(await render().applyCurrentSelection(request), { ...target.expected_revisions, ...target.target_revisions });
-    assert.equal(submitted, 1);
-    assert.equal(render().status.accepted.acquisition, "another-client");
-    assert.equal(render().completedOperation.target_revisions.acquisition, target.target_revisions.acquisition);
-  } finally { Object.assign(runtimeConfigApi, original); }
-});
-
-for (const result of ["failed", "recovery_required"]) test(`a ${result} application returns no current revision`, async () => {
-  const status = { running: false, recovery: {}, operations: {} };
-  const render = hookRenderer(status);
-  const original = { ...runtimeConfigApi };
-  runtimeConfigApi.plan = async () => ({ ...plan, target_revisions: { acquisition: "current-parameters" } });
-  runtimeConfigApi.apply = async (planId, operationId) => ({
-    module: "acquisition", affected_modules: ["acquisition"], operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "current-parameters" }, status: result,
-  });
-  runtimeConfigApi.status = async () => status;
-  try {
-    assert.equal(await render().applyCurrentSelection({ module: "acquisition", bindings: [] }), null);
-    assert.equal(render().completedOperation, null);
-    assert.equal(render().reviewing, false);
-  } finally { Object.assign(runtimeConfigApi, original); }
-});
-
-test("an invalid current configuration never submits an apply operation", async () => {
-  const render = hookRenderer({ running: false, recovery: {}, operations: {} });
-  const original = { ...runtimeConfigApi };
-  runtimeConfigApi.plan = async () => ({ ...plan, target_revisions: { acquisition: "invalid" }, errors: ["Invalid source address"] });
-  runtimeConfigApi.apply = async () => assert.fail("Invalid parameters must not be applied");
-  try {
-    assert.equal(await render().applyCurrentSelection({ module: "acquisition", bindings: [] }), null);
-    assert.equal(render().requestError, "Invalid source address");
-    assert.equal(render().reviewing, false);
-  } finally { Object.assign(runtimeConfigApi, original); }
-});
-
-test("an interrupted current application returns no revision while its result is uncertain", async () => {
-  const status = { running: false, recovery: {}, operations: {} };
-  const render = hookRenderer(status);
-  const original = { ...runtimeConfigApi };
-  runtimeConfigApi.plan = async () => ({ ...plan, target_revisions: { acquisition: "current-parameters" } });
-  runtimeConfigApi.apply = async () => { throw new Error("Connection interrupted"); };
-  runtimeConfigApi.operation = async () => { throw new ApiError(404, "NOT_FOUND", "Operation not visible yet"); };
-  runtimeConfigApi.status = async () => status;
-  try {
-    assert.equal(await render().applyCurrentSelection({ module: "acquisition", bindings: [] }), null);
-    assert.equal(render().uncertain, true);
-    assert.equal(render().completedOperation, null);
-  } finally { Object.assign(runtimeConfigApi, original); }
-});
-
-test("a stale runtime plan returns no revision and a fresh request can apply current parameters", async () => {
-  const status = { running: false, recovery: {}, accepted: { acquisition: "another-client", system: "sys" }, operations: {} };
-  const render = hookRenderer(status);
-  const original = { ...runtimeConfigApi };
-  const planned = [];
-  let submitted = 0;
-  runtimeConfigApi.plan = async (body) => {
-    planned.push(body);
-    return { ...plan, plan_id: `plan-${planned.length}`, target_revisions: { acquisition: `target-${planned.length}` } };
-  };
-  runtimeConfigApi.apply = async (planId, operationId) => {
-    submitted += 1;
-    if (submitted === 1) throw new ApiError(409, "REVISION_CONFLICT", "Runtime configuration changed");
-    return { module: "acquisition", affected_modules: ["acquisition"], operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "target-2" }, status: "succeeded" };
-  };
-  runtimeConfigApi.status = async () => status;
-  try {
-    assert.equal(await render().applyCurrentSelection({ module: "acquisition", bindings: [], expected_revision: "before" }), null);
-    assert.equal(render().uncertain, false);
-    assert.equal(render().plan, null);
-    assert.equal(render().completedOperation, null);
-    assert.match(render().requestError, /Runtime configuration changed/);
-    assert.deepEqual(await render().applyCurrentSelection({ module: "acquisition", bindings: [], expected_revision: status.accepted.acquisition }), { acquisition: "target-2", system: "sys" });
-    assert.deepEqual(planned.map((request) => request.expected_revision), ["before", "another-client"]);
-    assert.equal(submitted, 2);
-  } finally { Object.assign(runtimeConfigApi, original); }
-});
-
-test("same-render current configuration requests share one planning and application lock", async () => {
-  const status = { running: false, recovery: {}, operations: {} };
-  const render = hookRenderer(status);
-  const original = { ...runtimeConfigApi };
-  const calls = [];
-  let finishPlanning, finishApplying;
-  runtimeConfigApi.plan = async (body) => {
-    calls.push(["plan", body]);
-    await new Promise((resolve) => { finishPlanning = resolve; });
-    return { ...plan, target_revisions: { acquisition: "current-parameters" } };
-  };
-  runtimeConfigApi.apply = async (planId, operationId) => {
-    calls.push(["apply", planId]);
-    await new Promise((resolve) => { finishApplying = resolve; });
-    return { module: "acquisition", affected_modules: ["acquisition"], operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "current-parameters" }, status: "succeeded" };
-  };
-  runtimeConfigApi.status = async () => status;
-  const request = { module: "acquisition", bindings: [] };
-  try {
-    const hook = render();
-    const first = hook.applyCurrentSelection(request);
-    assert.equal(await hook.applyCurrentSelection(request), null);
-    assert.deepEqual(calls, [["plan", request]]);
-    finishPlanning();
-    for (let index = 0; index < 5; index += 1) await Promise.resolve();
-    assert.equal(await hook.applyCurrentSelection(request), null);
-    assert.deepEqual(calls, [["plan", request], ["apply", plan.plan_id]]);
-    finishApplying();
-    assert.deepEqual(await first, { acquisition: "current-parameters", system: "sys" });
-    assert.equal(render().reviewing, false);
-    assert.equal(render().submitting, false);
-  } finally { Object.assign(runtimeConfigApi, original); }
-});
-
-test("an outstanding review blocks automatic application and stale Apply callbacks", async () => {
-  const render = hookRenderer({ running: false, recovery: {}, operations: {} });
-  const original = { ...runtimeConfigApi };
-  let finishPlanning, planned = 0;
-  runtimeConfigApi.plan = async () => {
-    planned += 1;
-    await new Promise((resolve) => { finishPlanning = resolve; });
-    return { ...plan, target_revisions: { acquisition: "reviewed" } };
-  };
-  runtimeConfigApi.apply = async () => assert.fail("Do not apply a stale plan during review");
-  try {
-    const hook = render();
-    const review = hook.review({ module: "acquisition", bindings: [] });
-    assert.equal(await hook.applyCurrentSelection({ module: "acquisition", bindings: [] }), null);
-    assert.equal(await hook.apply(), false);
-    assert.equal(planned, 1);
-    finishPlanning();
-    assert.equal((await review).target_revisions.acquisition, "reviewed");
-  } finally { Object.assign(runtimeConfigApi, original); }
-});
-
-test("automatic planning blocks manual review and stale Apply callbacks", async () => {
-  const status = { running: false, recovery: {}, operations: {} };
-  const render = hookRenderer(status);
-  const original = { ...runtimeConfigApi };
-  let finishPlanning, planned = 0, submitted = 0;
-  runtimeConfigApi.plan = async () => {
-    planned += 1;
-    await new Promise((resolve) => { finishPlanning = resolve; });
-    return { ...plan, target_revisions: { acquisition: "current-parameters" } };
-  };
-  runtimeConfigApi.apply = async (planId, operationId) => {
-    submitted += 1;
-    return { module: "acquisition", affected_modules: ["acquisition"], operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "current-parameters" }, status: "succeeded" };
-  };
-  runtimeConfigApi.status = async () => status;
-  try {
-    const hook = render();
-    const applying = hook.applyCurrentSelection({ module: "acquisition", bindings: [] });
-    assert.equal(await hook.review({ module: "acquisition", bindings: [] }), null);
-    assert.equal(await hook.apply(), false);
-    assert.equal(planned, 1);
-    assert.equal(submitted, 0);
-    finishPlanning();
-    assert.deepEqual(await applying, { acquisition: "current-parameters", system: "sys" });
-    assert.equal(submitted, 1);
-  } finally { Object.assign(runtimeConfigApi, original); }
-});
-
 for (const [label, status] of [
   ["not ready but quarantined", { running: false, recovery: { system: "Unknown runtime" }, operations: { acquisition: history } }],
   ["missing status", null],
@@ -427,71 +216,6 @@ test("only the successful reviewed revert marks its module for current-value syn
   } finally { Object.assign(runtimeConfigApi, original); }
 });
 
-test("unrelated module applications retain independent operation IDs and completion records", async () => {
-  const original = { ...runtimeConfigApi };
-  const status = { running: true, accepted: {}, applied: {}, generation: "engine", operations: {}, recovery: {} };
-  const render = hookRenderer(status);
-  const pending = new Map(), operations = new Map();
-  runtimeConfigApi.status = async () => status;
-  runtimeConfigApi.plan = async ({ module }) => ({ ...plan, module, plan_id: module, target_revisions: { [module]: `${module}-new` } });
-  runtimeConfigApi.apply = async (module, operationId) => {
-    operations.set(module, { module, affected_modules: [module], operation_id: operationId, plan_id: module,
-      target_revisions: { [module]: `${module}-new` }, status: "succeeded" });
-    await new Promise((resolve) => pending.set(module, resolve));
-    return operations.get(module);
-  };
-  try {
-    const processing = render().applyCurrentSelection({ module: "processing", bindings: [] });
-    const stimulation = render().applyCurrentSelection({ module: "stimulation", bindings: [] });
-    for (let i = 0; i < 10; i++) await Promise.resolve();
-    assert.equal(pending.size, 2);
-    assert.equal(render().state("processing").submitting, true);
-    assert.equal(render().state("stimulation").submitting, true);
-    assert.equal(render().state("actuation").blocked, false);
-    assert.notEqual(operations.get("processing").operation_id, operations.get("stimulation").operation_id);
-    pending.get("stimulation")();
-    assert.deepEqual(await stimulation, { system: "sys", stimulation: "stimulation-new" });
-    assert.equal(render().state("processing").submitting, true);
-    pending.get("processing")();
-    assert.deepEqual(await processing, { system: "sys", processing: "processing-new" });
-    assert.equal(render().state("stimulation").completedOperation, operations.get("stimulation"));
-    assert.equal(render().state("processing").completedOperation, operations.get("processing"));
-  } finally { Object.assign(runtimeConfigApi, original); }
-});
-
-test("an uncertain module retries its own ID after another module has succeeded", async () => {
-  const original = { ...runtimeConfigApi };
-  const status = { running: true, accepted: {}, applied: {}, generation: "engine", operations: {}, recovery: {} };
-  const render = hookRenderer(status);
-  const submitted = [], completed = {};
-  let visible = false;
-  runtimeConfigApi.status = async () => status;
-  runtimeConfigApi.plan = async ({ module }) => ({ ...plan, module, plan_id: module, target_revisions: { [module]: "new" } });
-  runtimeConfigApi.apply = async (module, operationId) => {
-    submitted.push([module, operationId]);
-    completed[module] = { module, affected_modules: [module], operation_id: operationId, plan_id: module,
-      target_revisions: { [module]: "new" }, status: "succeeded" };
-    if (module === "processing") throw new Error("Response interrupted");
-    return completed[module];
-  };
-  runtimeConfigApi.operation = async (id) => {
-    assert.equal(id, completed.processing.operation_id);
-    if (!visible) throw new ApiError(404, "NOT_FOUND", "Not visible");
-    return completed.processing;
-  };
-  try {
-    assert.equal(await render().applyCurrentSelection({ module: "processing", bindings: [] }), null);
-    assert.equal(render().state("processing").uncertain, true);
-    assert.equal(render().state("stimulation").blocked, false);
-    assert.ok(await render().applyCurrentSelection({ module: "stimulation", bindings: [] }));
-    visible = true;
-    await render().retryUnconfirmed("processing");
-    assert.equal(submitted.length, 2, "Confirmation never resubmits a completed operation");
-    assert.equal(render().state("processing").completedOperation, completed.processing);
-    assert.equal(render().state("stimulation").completedOperation, completed.stimulation);
-  } finally { Object.assign(runtimeConfigApi, original); }
-});
-
 test("affected modules and system recovery bound the configuration gate", () => {
   const status = { running: true, operations: { processing: { module: "processing", affected_modules: ["acquisition", "processing"], status: "applying" } }, recovery: {} };
   const runtime = hookRenderer(status)();
@@ -505,4 +229,90 @@ test("affected modules and system recovery bound the configuration gate", () => 
   assert.equal(runtime.state("stimulation").blocked, false);
   status.recovery.system = "Unknown engine";
   assert.equal(runtime.state("stimulation").blocked, true);
+});
+
+const currentConfiguration = { expected_revision: "original", settings: { "ACQUISITION.buffer_size": 16 },
+  bindings: [{ slot: "acquisition.source", selection: { package_id: "source", contribution_id: "main", version: "1.0.0" }, parameters: { gain: 2 } }] };
+const completedAction = (body, module = "acquisition", overrides = {}) => ({ operation_id: body.operation_id, module,
+  affected_modules: [module], status: "succeeded", target_revisions: { [module]: "applied" },
+  result: { configuration_applied: true, action: "connected" }, ...overrides });
+
+test("a current module action sends exactly one request and acknowledges only its own accepted configuration", async () => {
+  const render = hookRenderer({ recovery: {}, operations: {} });
+  const original = { ...runtimeConfigApi };
+  const submitted = [], applied = [];
+  runtimeConfigApi.plan = async () => assert.fail("Module actions do not create a separate plan");
+  runtimeConfigApi.apply = async () => assert.fail("Module actions do not send a separate apply");
+  runtimeConfigApi.status = async () => assert.fail("Action admission does not use a check-then-act status read");
+  try {
+    const result = await render().execute("acquisition", currentConfiguration, async (body) => {
+      submitted.push(body); return completedAction(body);
+    }, (operation) => applied.push(operation));
+    assert.equal(submitted.length, 1);
+    assert.deepEqual(submitted[0].configuration, currentConfiguration);
+    assert.match(submitted[0].operation_id, /^[0-9a-f-]{36}$/);
+    assert.deepEqual(applied, [result]);
+    assert.equal(render().state("acquisition").uncertain, false);
+  } finally { Object.assign(runtimeConfigApi, original); }
+});
+
+test("same-render duplicate module actions are blocked while unrelated modules remain independent", async () => {
+  const render = hookRenderer({ recovery: {}, operations: {} });
+  const hook = render();
+  let finish;
+  const pending = new Promise((resolve) => { finish = resolve; });
+  const sent = [];
+  const first = hook.execute("acquisition", currentConfiguration, async (body) => { sent.push(body); await pending; return completedAction(body); });
+  await assert.rejects(hook.execute("acquisition", currentConfiguration, async () => assert.fail("Duplicate action")));
+  const other = await hook.execute("actuation", { expected_revision: null, settings: {}, bindings: [] }, async (body) => {
+    sent.push(body); return completedAction(body, "actuation");
+  });
+  assert.equal(other.status, "succeeded");
+  assert.notEqual(sent[0].operation_id, sent[1].operation_id);
+  finish(); await first;
+  assert.equal(render().state("acquisition").inProgress, false);
+});
+
+for (const accepted of [false, true]) test(`failed module startup acknowledges configuration only when accepted=${accepted}`, async () => {
+  const render = hookRenderer({ recovery: {}, operations: {} });
+  const applied = [];
+  const result = await render().execute("acquisition", currentConfiguration, async (body) => completedAction(body, "acquisition", {
+    status: "failed", error: "Connection rejected", result: { configuration_applied: accepted },
+  }), (operation) => applied.push(operation));
+  assert.equal(result.status, "failed");
+  assert.equal(applied.length, accepted ? 1 : 0);
+  assert.equal(render().state("acquisition").blocked, false);
+});
+
+test("an interrupted action confirms its original operation once without resending or borrowing another client's revision", async () => {
+  const status = { recovery: {}, operations: {} };
+  const render = hookRenderer(status);
+  const original = { ...runtimeConfigApi };
+  const applied = [], checked = [];
+  let own, sent = 0;
+  runtimeConfigApi.operation = async (id) => { checked.push(id); return own; };
+  runtimeConfigApi.status = async () => ({ ...status, operations: { acquisition: { ...own, operation_id: "other-client", target_revisions: { acquisition: "unrelated" } } } });
+  runtimeConfigApi.apply = async () => assert.fail("An action must not be repeated through Apply");
+  try {
+    await assert.rejects(render().execute("acquisition", currentConfiguration, async (body) => {
+      sent++; own = completedAction(body); throw new Error("HTTP reply lost");
+    }, (operation) => applied.push(operation)), /HTTP reply lost/);
+    assert.equal(render().state("acquisition").uncertain, true);
+    assert.deepEqual(applied, []);
+    await render().retryUnconfirmed("acquisition");
+    await render().refresh();
+    assert.equal(sent, 1);
+    assert.deepEqual(checked, [own.operation_id]);
+    assert.deepEqual(applied, [own]);
+    assert.equal(render().state("acquisition").uncertain, false);
+  } finally { Object.assign(runtimeConfigApi, original); }
+});
+
+test("a rejected action preserves the backend validation error without leaving an uncertain operation", async () => {
+  const render = hookRenderer({ recovery: {}, operations: {} });
+  await assert.rejects(render().execute("acquisition", currentConfiguration, async () => {
+    throw new ApiError(409, "CONFLICT", "Current configuration changed");
+  }, () => assert.fail("Rejected configuration cannot advance the baseline")), /Current configuration changed/);
+  assert.equal(render().state("acquisition").requestError, "Current configuration changed");
+  assert.equal(render().state("acquisition").uncertain, false);
 });

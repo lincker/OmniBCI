@@ -269,6 +269,23 @@ class ModuleActivation:
         settings = _object_data(settings, "settings")
         if settings.keys() - SECTION_SETTING_KEYS[module]:
             raise PluginProfileValidationError("Settings must belong to the configuration module")
+        for key, value in settings.items():
+            if key.endswith("auto_spawn"):
+                valid = type(value) is bool
+            elif key == "STIMULATION.renderer":
+                valid = isinstance(value, str) and value in ("pyopengl", "moderngl")
+            elif key == "ACTUATION.server_ip":
+                valid = isinstance(value, str) and bool(value.strip())
+            elif key == "ACTUATION.server_port":
+                valid = type(value) is int and 1 <= value <= 65535
+            else:
+                try:
+                    valid = (type(value) in (int, float) and math.isfinite(value)
+                             and (value > 0 if key == "ACTUATION.watchdog_timeout_s" else value >= 0))
+                except OverflowError:
+                    valid = False
+            if not valid:
+                raise PluginProfileValidationError(f"Invalid module setting: {key}")
         values = [item.to_dict() for item in bindings]
         semantic = [{key: value for key, value in item.items() if key not in {"profile_id", "profile_revision"}}
                     for item in values]

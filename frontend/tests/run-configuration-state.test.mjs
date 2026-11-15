@@ -1,6 +1,6 @@
 /** Real load effects distinguish a first-use configuration from failed requests. */
 import assert from "node:assert/strict";
-import { moduleConfiguration, revisionMap, runtimeController, currentController } from "./module-fixtures.mjs";
+import { moduleConfiguration, revisionMap, runtimeController } from "./module-fixtures.mjs";
 import { after, test } from "node:test";
 import React from "react";
 import { createServer } from "vite";
@@ -14,7 +14,7 @@ const { api } = await server.ssrLoadModule("/src/api/client.ts");
 const { pluginConfigApi } = await server.ssrLoadModule("/src/api/plugin-config.ts");
 const { signalConfigApi } = await server.ssrLoadModule("/src/api/signal-config.ts");
 const { runtimeConfigApi } = await server.ssrLoadModule("/src/api/runtime-config.ts");
-const { currentFromBinding, currentBindings } = await server.ssrLoadModule("/src/hooks/useCurrentConfiguration.ts");
+const { currentFromBinding } = await server.ssrLoadModule("/src/hooks/useCurrentConfiguration.ts");
 const { translate } = await server.ssrLoadModule("/src/i18n.tsx");
 const english = { language: "en", t: (key, params) => translate("en", key, params) };
 const noop = () => {};
@@ -131,7 +131,7 @@ function componentHarness(props) {
 
 async function withScenario({ activation = async () => null, acceptedRevision = null,
   profiles = async () => [], catalog = async () => [paradigm], running = false, appliedRevisions,
-  current, applyCurrentSelection, processingRunning = running, actuationRunning = false, actuationConnected = false,
+  current, processingRunning = running, actuationRunning = false, actuationConnected = false,
   sourceStatus = { connected: false, streaming: false },
   stimulationStatus = { active: false, process_alive: false, engine_connected: false, paradigm: null } } = {}, action) {
   const original = { api: { ...api }, plugin: { ...pluginConfigApi }, signal: { ...signalConfigApi },
@@ -148,18 +148,27 @@ async function withScenario({ activation = async () => null, acceptedRevision = 
   pluginConfigApi.catalog = catalog;
   runtimeConfigApi.status = async () => structuredClone(backendStatus);
   for (const name of ["engineStart", "engineStop", "acqConnect", "acqDisconnect", "acqStreamStart", "acqStreamStop", "stimStart", "stimStop", "trialStart", "moduleStart", "moduleStop", "modulePrepare"]) {
-    api[name] = async (...args) => { calls.push([name, ...args]); };
+    api[name] = async (...args) => {
+      calls.push([name, ...args]);
+      if (name !== "moduleStart" && name !== "stimStart") return;
+      const module = name === "stimStart" ? "stimulation" : args[0];
+      const body = args.at(-1);
+      const external = body.configuration.settings[`${module.toUpperCase()}.auto_spawn`] === false;
+      const connected = module === "stimulation" ? stimulationStatus.engine_connected : actuationConnected;
+      return { operation_id: body.operation_id, module, status: "succeeded", target_revisions: { [module]: acceptedRevision },
+        result: { configuration_applied: true, action: external && !connected ? "prepared" : "started" } };
+    };
   }
   const props = {
     engine: { data: { running, acquisition_alive: running, processor_alive: processingRunning, actuation_alive: actuationRunning, actuation_connected: actuationConnected }, error: null, refresh: async () => {} },
-    acquisition: { data: sourceStatus, error: null, pending: false, refresh: async () => { props.runtime.status = structuredClone(backendStatus); }, cancelPending: noop,
+    acquisition: { data: { connection_id: sourceStatus.connected ? "source-connection" : null, ...sourceStatus }, error: null, pending: false, refresh: async () => { props.runtime.status = structuredClone(backendStatus); },
       ...Object.fromEntries(["connect", "disconnect", "read", "stopRead"].map((name) => [name,
         { pending: false, error: null, run: async (...args) => { calls.push([name, ...args]); } }])) },
     runtime: { status: structuredClone(backendStatus), blocked: false, inProgress: false, refresh: async () => { props.runtime.status = structuredClone(backendStatus); },
-      applyCurrentSelection: async (request) => {
-        calls.push(["applyCurrentSelection", structuredClone(request)]);
-        assert.ok(applyCurrentSelection, "Unexpected current configuration application");
-        return applyCurrentSelection(request, backendStatus);
+      execute: async (module, configuration, send, onApplied) => {
+        const result = await send({ operation_id: crypto.randomUUID(), configuration });
+        if (result?.result?.configuration_applied) onApplied?.(result);
+        return result;
       } },
     current,
     feed: { generation: null, trials: [], acks: [] }, onBusyChange: noop,
@@ -382,9 +391,10 @@ function currentConfiguration(changes = {}, pending = Object.keys(changes), erro
     filterOrder: Object.values(changes).flat().filter((binding) => binding.slot.startsWith("processing.filter.")).map((binding) => binding.slot),
     hasChanges: (module, accepted) => pending.includes(module) && !accepted?.revision?.startsWith("applied-"),
     validationError: (module) => errors[module] ?? null,
-    request: (module, accepted) => {
+    request: (module) => {
+      const accepted = moduleConfiguration(complete).modules[module];
       if (errors[module]) throw new Error(errors[module]);
-      return { module, expected_revision: accepted?.revision ?? null,
+      return { settings: accepted?.settings ?? {}, expected_revision: accepted?.revision ?? null,
         bindings: structuredClone(changes[module] ?? accepted?.bindings ?? [])
           .map(({ slot, selection, parameters, processing_input }) => ({ slot, selection, parameters,
             ...(processing_input === undefined ? {} : { processing_input }) })),
@@ -393,13 +403,6 @@ function currentConfiguration(changes = {}, pending = Object.keys(changes), erro
   };
 }
 
-function appliedConfiguration(accepted, request, status) {
-  const revision = `applied-${request.module}`;
-  status.accepted = { ...status.accepted, [request.module]: revision, system: "system-revision" };
-  if (status.running) status.applied = { ...status.applied, [request.module]: revision, system: "system-revision" };
-  return { ...accepted, revisions: { ...status.accepted }, revision, bindings: [...(accepted?.bindings ?? []).filter((item) => !item.slot.startsWith(`${request.module}.`)),
-    ...request.bindings] };
-}
 
 test("a first unsaved current source can connect without an accepted activation or a saved profile", async () => {
   const current = currentConfiguration({ acquisition: [{ ...source, parameters: { host: "current-device" } }] });
@@ -408,7 +411,7 @@ test("a first unsaved current source can connect without an accepted activation 
     assert.equal(button(harness.tree, "Connect").props.disabled, false);
     assert.doesNotMatch(text(harness.tree), /No data source configured/);
     await button(harness.tree, "Connect").props.onClick();
-    assert.deepEqual(calls, [["connect", current.request("acquisition", null)]]);
+    assert.deepEqual(calls, [["connect", current.request("acquisition")]]);
   });
 });
 
@@ -420,56 +423,7 @@ test("a source edited after starting an empty engine can connect using its curre
     const connect = button(harness.tree, "Connect");
     assert.equal(connect.props.disabled, false);
     await connect.props.onClick();
-    assert.deepEqual(calls, [["connect", current.request("acquisition", null)]]);
-  });
-});
-
-test("Start engine starts the foundation without applying any current module values", async () => {
-  let accepted = null;
-  const current = currentConfiguration({ acquisition: [{ ...source, parameters: { host: "current-device" } }],
-    processing: [decoder, detector] });
-  await withScenario({ activation: async () => accepted, current,
-    applyCurrentSelection: async (request, status) => {
-      accepted = appliedConfiguration(accepted, request, status);
-      return { [request.module]: accepted.revisions[request.module], system: "system-revision" };
-    } }, async ({ harness, calls }) => {
-    await harness.settle();
-    assert.equal(button(harness.tree, "Start engine").props.disabled, false);
-    button(harness.tree, "Start engine").props.onClick();
-    await harness.settle();
-    assert.deepEqual(calls, [["engineStart"]]);
-  });
-});
-
-for (const actuationRunning of [false, true]) test(`Start reading leaves processing and ${actuationRunning ? "running" : "stopped"} actuation unchanged`, async () => {
-  let accepted = complete;
-  const current = currentConfiguration({
-    processing: [{ ...decoder, parameters: { window_duration: 2 } }, detector],
-    actuation: [{ slot: "actuation.effector", selection: selection("effector"), parameters: { destination: "new" } }],
-    stimulation: [{ slot: "stimulation.paradigm", selection: paradigm.selection, parameters: { frequency: 12 } }],
-  });
-  await withScenario({ activation: async () => accepted, acceptedRevision: accepted.revision, current, running: true, actuationRunning,
-    sourceStatus: { connected: true, streaming: false },
-    applyCurrentSelection: async (request, status) => {
-      accepted = appliedConfiguration(accepted, request, status);
-      return { [request.module]: accepted.revisions[request.module], system: "system-revision" };
-    } }, async ({ harness, calls }) => {
-    await harness.settle();
-    const read = button(harness.tree, "Start reading");
-    assert.equal(read.props.disabled, false);
-    await read.props.onClick();
-    await harness.settle();
-    assert.deepEqual(calls, [["read", { acquisition: complete.revision, system: "system-revision" }]]);
-  });
-});
-
-test("a rejected current processing configuration never starts processing with the old values", async () => {
-  const current = currentConfiguration({ processing: [{ ...decoder, parameters: { window_duration: -1 } }, detector] });
-  await withScenario({ activation: async () => complete, acceptedRevision: complete.revision, current, running: true, processingRunning: false,
-    sourceStatus: { connected: true, streaming: false }, applyCurrentSelection: async () => null }, async ({ harness, calls }) => {
-    await harness.settle();
-    await button(harness.tree, "Start processing").props.onClick();
-    assert.deepEqual(calls, [["applyCurrentSelection", current.request("processing", moduleConfiguration(complete).modules.processing)]]);
+    assert.deepEqual(calls, [["connect", current.request("acquisition")]]);
   });
 });
 
@@ -484,26 +438,6 @@ test("changing the current source while connected requires reconnecting before r
     await read.props.onClick();
     assert.deepEqual(calls, []);
     assert.equal(button(harness.tree, "Disconnect").props.disabled, false);
-  });
-});
-
-test("Launch stimulation applies only the current stimulation configuration", async () => {
-  let accepted = complete;
-  const current = currentConfiguration({
-    stimulation: [{ slot: "stimulation.paradigm", selection: paradigm.selection, parameters: { frequency: 12 } }],
-    processing: [{ ...decoder, parameters: { window_duration: 2 } }, detector],
-  });
-  await withScenario({ activation: async () => accepted, acceptedRevision: accepted.revision, current, running: true,
-    applyCurrentSelection: async (request, status) => {
-      accepted = appliedConfiguration(accepted, request, status);
-      return { [request.module]: accepted.revisions[request.module], system: "system-revision" };
-    } }, async ({ harness, calls }) => {
-    await harness.settle();
-    const launch = button(harness.tree, "Launch stimulation");
-    assert.equal(launch.props.disabled, false);
-    launch.props.onClick();
-    await harness.settle();
-    assert.deepEqual(calls, [["applyCurrentSelection", current.request("stimulation", moduleConfiguration(complete).modules.stimulation)], ["stimStart"]]);
   });
 });
 
@@ -570,157 +504,25 @@ for (const connected of [false, true]) test(`a pending legacy decoder mapping do
     if (connected) {
       assert.match(text(harness.tree), /Configure the decoder channel mapping/);
       await read.props.onClick();
-      assert.deepEqual(calls, [["read", { acquisition: complete.revision, system: "system-revision" }]]);
+      assert.deepEqual(calls, [["read", { expected_revision: complete.revision, generation: "generation-1", connection_id: "source-connection" }]]);
     } else {
       const connect = button(harness.tree, "Connect");
       assert.equal(connect.props.disabled, false);
       await connect.props.onClick();
-      assert.deepEqual(calls, [["connect", current.request("acquisition", moduleConfiguration(complete).modules.acquisition)]]);
+      assert.deepEqual(calls, [["connect", current.request("acquisition")]]);
     }
   });
 });
 
 
-test("a fresh external stimulation configuration is prepared before its node connects", async () => {
-  let accepted = { ...sourceOnly, settings: {} };
-  const current = currentConfiguration({ stimulation: [{ slot: "stimulation.paradigm", selection: paradigm.selection, parameters: { frequency: 12 } }] });
-  const peer = { active: false, process_alive: false, engine_connected: false, paradigm: null };
-  await withScenario({ activation: async () => accepted, acceptedRevision: accepted.revision, current, running: true, stimulationStatus: peer,
-    applyCurrentSelection: async (request, status) => {
-      accepted = { ...appliedConfiguration(accepted, request, status), settings: { "STIMULATION.auto_spawn": false } };
-      return { stimulation: accepted.revisions.stimulation, system: "system-revision" };
-    } }, async ({ harness, calls }) => {
-    await harness.settle();
-    await button(harness.tree, "Launch stimulation").props.onClick(); await harness.settle();
-    assert.equal(calls.filter(([name]) => name === "applyCurrentSelection").length, 1);
-    assert.equal(calls.some(([name]) => name === "stimStart" || name === "engineStart"), false);
-    assert.match(text(harness.tree), /configuration is prepared.*external stimulation node/);
-    assert.ok(calls[0][1].bindings.every((binding) => binding.slot.startsWith("stimulation.")));
-  });
-});
-
-test("connected external stimulation cannot launch after its current edits are rejected", async () => {
-  const accepted = { ...complete, settings: { "STIMULATION.auto_spawn": false } };
-  const current = currentConfiguration({ stimulation: [{ slot: "stimulation.paradigm", selection: paradigm.selection, parameters: { frequency: 12 } }] });
-  await withScenario({ activation: async () => accepted, acceptedRevision: accepted.revision, current, running: true,
-    stimulationStatus: { active: false, process_alive: false, engine_connected: true, paradigm: null },
-    applyCurrentSelection: async () => null }, async ({ harness, calls }) => {
-    await harness.settle();
-    await button(harness.tree, "Enable stimulation").props.onClick(); await harness.settle();
-    assert.deepEqual(calls.map(([name]) => name), ["applyCurrentSelection"]);
-    assert.doesNotMatch(text(harness.tree), /configuration is prepared/);
-  });
-});
-
-
-test("Start reading rechecks current source values against the fresh accepted module", async () => {
-  let accepted = complete;
-  const current = currentConfiguration({ acquisition: [source], processing: [decoder, detector] }, ["processing"]);
-  current.hasChanges = (module, value) => module === "acquisition"
-    ? !!value && value.revision !== complete.revision : module === "processing";
-  await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, current, running: true,
+test("Start reading sends the observed connection identity for atomic backend validation", async () => {
+  await withScenario({ activation: async () => complete, acceptedRevision: complete.revision, running: true,
     sourceStatus: { connected: true, streaming: false } }, async ({ harness, calls, backendStatus }) => {
     await harness.settle();
-    const read = button(harness.tree, "Start reading");
-    assert.equal(read.props.disabled, false);
-    accepted = { ...complete, revisions: { ...backendStatus.accepted, acquisition: "changed-source" },
-      bindings: complete.bindings.map((binding) => binding.slot === "acquisition.source" ? { ...binding, parameters: { host: "changed" } } : binding) };
-    backendStatus.accepted.acquisition = "changed-source"; backendStatus.applied.acquisition = "changed-source";
-    await read.props.onClick(); await harness.settle();
-    assert.deepEqual(calls, []);
-    assert.match(alerts(harness.tree), /reconnect/i);
-  });
-});
-
-test("a processing plan cannot adopt a changed shared system revision", async () => {
-  let accepted = complete;
-  const current = currentConfiguration({ processing: [{ ...decoder, parameters: { window_duration: 2 } }, detector] });
-  await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, current, running: true, processingRunning: false,
-    applyCurrentSelection: async (request, status) => {
-      accepted = appliedConfiguration(accepted, request, status);
-      status.accepted.system = "concurrent-change"; status.applied.system = "concurrent-change";
-      return { processing: "applied-processing", system: "concurrent-change" };
-    } }, async ({ harness, calls }) => {
-    await harness.settle(); await button(harness.tree, "Start processing").props.onClick(); await harness.settle();
-    assert.deepEqual(calls.map(([name]) => name), ["applyCurrentSelection"]);
-    assert.match(alerts(harness.tree), /configuration changed/i);
-  });
-});
-
-test("reading never starts actuation when its host setting changes", async () => {
-  let accepted = { ...complete, settings: { "ACTUATION.auto_spawn": false } };
-  const current = currentConfiguration({ processing: [decoder, detector], actuation: [{ slot: "actuation.effector", selection: selection("effector"), parameters: { destination: "current" } }] });
-  await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, current, running: true,
-    sourceStatus: { connected: true, streaming: false }, applyCurrentSelection: async (request, status) => {
-      accepted = appliedConfiguration(accepted, request, status);
-      return { [request.module]: accepted.revisions[request.module], system: "system-revision" };
-    } }, async ({ harness, calls }) => {
-    await harness.settle(); accepted = { ...accepted, settings: { "ACTUATION.auto_spawn": true } };
-    await button(harness.tree, "Start reading").props.onClick(); await harness.settle();
-    assert.deepEqual(calls.filter(([name]) => name === "applyCurrentSelection"), []);
-    assert.equal(calls.at(-1)[0], "read");
-    assert.equal(calls.at(-1)[1].actuation, undefined);
-  });
-});
-
-for (const running of [false, true]) test(`Start processing uses only its current values with engine running=${running}`, async () => {
-  let accepted = { ...complete, bindings: complete.bindings.filter((item) => !item.slot.startsWith("acquisition.")) };
-  const current = currentConfiguration({
-    processing: [{ ...decoder, parameters: { window_duration: 2 } }, detector],
-    actuation: [{ slot: "actuation.effector", selection: selection("effector"), parameters: { destination: "new" } }],
-  });
-  await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, current, running, processingRunning: false,
-    applyCurrentSelection: async (request, status) => {
-      accepted = appliedConfiguration(accepted, request, status);
-      return { processing: "applied-processing", system: "system-revision" };
-    } }, async ({ harness, calls }) => {
-    await harness.settle();
-    const start = button(harness.tree, "Start processing");
-    assert.equal(start.props.disabled, false, "Processing can wait for acquisition without requiring a source");
-    await start.props.onClick(); await harness.settle();
-    assert.deepEqual(calls.map(([name, module]) => name === "applyCurrentSelection" ? [name, module.module] : [name, module]),
-      [["applyCurrentSelection", "processing"], ...(running ? [] : [["engineStart", undefined]]), ["moduleStart", "processing"]]);
-    assert.equal(alerts(harness.tree), "");
-  });
-});
-
-test("Start actuation applies only its own current values while acquisition is reading", async () => {
-  let accepted = { ...complete, settings: { "ACTUATION.auto_spawn": true } };
-  const current = currentConfiguration({
-    actuation: [{ slot: "actuation.effector", selection: selection("effector"), parameters: { destination: "new" } }],
-    processing: [{ ...decoder, parameters: { window_duration: 2 } }, detector],
-  });
-  await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, current, running: true,
-    sourceStatus: { connected: true, streaming: true },
-    applyCurrentSelection: async (request, status) => {
-      accepted = appliedConfiguration(accepted, request, status);
-      return { actuation: "applied-actuation", system: "system-revision" };
-    } }, async ({ harness, calls }) => {
-    await harness.settle();
-    assert.equal(button(harness.tree, "Start actuation").props.disabled, false);
-    await button(harness.tree, "Start actuation").props.onClick(); await harness.settle();
-    assert.deepEqual(calls.map(([name, module]) => [name, name === "applyCurrentSelection" ? module.module : module]),
-      [["applyCurrentSelection", "actuation"], ["moduleStart", "actuation"]]);
-    assert.equal(alerts(harness.tree), "");
-  });
-});
-
-for (const connected of [false, true]) test(`external actuation ${connected ? "starts after connection" : "prepares before connection"} without acquisition`, async () => {
-  let accepted = { revision: complete.revision, settings: { "ACTUATION.auto_spawn": false },
-    bindings: [{ slot: "actuation.effector", selection: selection("effector"), parameters: {} }] };
-  const current = currentConfiguration({ actuation: [{ ...accepted.bindings[0], parameters: { destination: "new" } }] });
-  await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, current, running: true,
-    actuationConnected: connected, sourceStatus: { connected: false, streaming: false },
-    applyCurrentSelection: async (request, status) => {
-      accepted = appliedConfiguration(accepted, request, status);
-      return { actuation: "applied-actuation", system: "system-revision" };
-    } }, async ({ harness, calls }) => {
-    await harness.settle();
-    const start = button(harness.tree, connected ? "Start actuation" : "Prepare external actuation");
-    assert.equal(start.props.disabled, false);
-    await start.props.onClick(); await harness.settle();
-    assert.deepEqual(calls.map(([name]) => name), connected ? ["applyCurrentSelection", "moduleStart"] : ["applyCurrentSelection", "modulePrepare"]);
-    if (!connected) assert.match(text(harness.tree), /Actuation configuration is prepared/);
+    backendStatus.accepted.acquisition = "changed-source";
+    pluginConfigApi.module = async () => assert.fail("Reading must not perform a check-then-act configuration fetch");
+    await button(harness.tree, "Start reading").props.onClick();
+    assert.deepEqual(calls, [["read", { expected_revision: complete.revision, generation: "generation-1", connection_id: "source-connection" }]]);
   });
 });
 
@@ -733,46 +535,6 @@ for (const module of ["processing", "actuation"]) test(`Stop ${module} leaves th
     await harness.settle();
     await button(harness.tree, `Stop ${module}`).props.onClick(); await harness.settle();
     assert.deepEqual(calls, [["moduleStop", module]]);
-  });
-});
-
-test("stimulation can apply and start while acquisition is reading", async () => {
-  let accepted = complete;
-  const current = currentConfiguration({ stimulation: [{ slot: "stimulation.paradigm", selection: paradigm.selection, parameters: { frequency: 12 } }] });
-  await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, current, running: true,
-    sourceStatus: { connected: true, streaming: true }, applyCurrentSelection: async (request, status) => {
-      accepted = appliedConfiguration(accepted, request, status);
-      return { stimulation: "applied-stimulation", system: "system-revision" };
-    } }, async ({ harness, calls }) => {
-    await harness.settle();
-    assert.equal(button(harness.tree, "Launch stimulation").props.disabled, false);
-    await button(harness.tree, "Launch stimulation").props.onClick(); await harness.settle();
-    assert.deepEqual(calls.map(([name]) => name), ["applyCurrentSelection", "stimStart"]);
-  });
-});
-
-test("Stop processing cancels the pending start continuation without blocking stimulation", async () => {
-  let accepted = complete;
-  const finish = deferred();
-  const current = currentConfiguration({ processing: [decoder, detector], stimulation: [{ slot: "stimulation.paradigm", selection: paradigm.selection, parameters: { frequency: 12 } }] });
-  await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, current, running: true, processingRunning: false,
-    applyCurrentSelection: async (request, status) => {
-      if (request.module === "processing") await finish.promise;
-      accepted = appliedConfiguration(accepted, request, status);
-      return { [request.module]: status.accepted[request.module], system: status.accepted.system };
-    } }, async ({ harness, calls }) => {
-    await harness.settle();
-    const starting = button(harness.tree, "Start processing").props.onClick();
-    await harness.settle();
-    assert.equal(button(harness.tree, "Stop processing").props.disabled, false);
-    assert.equal(button(harness.tree, "Launch stimulation").props.disabled, false);
-    await button(harness.tree, "Launch stimulation").props.onClick();
-    await harness.settle();
-    await button(harness.tree, "Stop processing").props.onClick();
-    finish.resolve(); await starting; await harness.settle();
-    assert.ok(calls.some(([name]) => name === "stimStart"));
-    assert.ok(calls.some(([name, module]) => name === "moduleStop" && module === "processing"));
-    assert.equal(calls.some(([name, module]) => name === "moduleStart" && module === "processing"), false);
   });
 });
 
@@ -796,26 +558,24 @@ test("unrelated module revisions preserve edited trial controls", async () => {
   });
 });
 
-test("Stop reading prevents a pending read validation from restarting the stream", async () => {
+test("Stop reading remains available while the read request is pending", async () => {
   const pending = deferred();
-  let delay = false;
-  await withScenario({ activation: async () => { if (delay) await pending.promise; return complete; },
-    acceptedRevision: complete.revision, running: true, sourceStatus: { connected: true, streaming: false } },
-  async ({ harness, calls }) => {
-    await harness.settle(); delay = true;
-    const reading = button(harness.tree, "Start reading").props.onClick();
+  await withScenario({ activation: async () => complete, acceptedRevision: complete.revision, running: true,
+    sourceStatus: { connected: true, streaming: false } }, async ({ harness, calls, acquisitionController }) => {
     await harness.settle();
+    acquisitionController.read.run = async (body) => { calls.push(["read", body]); await pending.promise; };
+    const reading = button(harness.tree, "Start reading").props.onClick(); await harness.settle();
     const stop = button(harness.tree, "Stop reading");
     assert.equal(stop.props.disabled, false);
     await stop.props.onClick();
     pending.resolve(); await reading; await harness.settle();
-    assert.deepEqual(calls, [["stopRead"]]);
+    assert.deepEqual(calls.map(([name]) => name), ["read", "stopRead"]);
   });
 });
 
 for (const [label, command, module] of [["Start processing", "moduleStart", "processing"],
   ["Launch stimulation", "stimStart", "stimulation"], ["Start actuation", "moduleStart", "actuation"]]) {
-  test(`${label} prepares its saved configuration on a foundation with no prepared business modules`, async () => {
+  test(`${label} submits its current configuration in one request on an unprepared foundation`, async () => {
     const saved = { ...complete, bindings: complete.bindings.map((binding) => binding.slot === "processing.decoder"
       ? { ...binding, processing_input: { schema_version: 2, outputs: [] } } : binding) };
     await withScenario({ activation: async () => saved, acceptedRevision: saved.revision, running: true,
@@ -824,7 +584,14 @@ for (const [label, command, module] of [["Start processing", "moduleStart", "pro
       const start = button(harness.tree, label);
       assert.equal(start.props.disabled, false);
       await start.props.onClick(); await harness.settle();
-      assert.deepEqual(calls, command === "stimStart" ? [[command]] : [[command, module]]);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0][0], command);
+      if (command === "moduleStart") assert.equal(calls[0][1], module);
+      const body = calls[0].at(-1);
+      assert.match(body.operation_id, /^[0-9a-f-]{36}$/);
+      assert.equal(body.configuration.expected_revision, saved.revision);
+      assert.deepEqual(body.configuration.settings, moduleConfiguration(saved).modules[module].settings);
+      assert.ok(body.configuration.bindings.every((binding) => binding.slot.startsWith(`${module}.`)));
       assert.equal(button(harness.tree, "Trigger trial").props.disabled, true, "Trial requires the applied stimulation acknowledgement");
     });
   });
@@ -837,18 +604,19 @@ test("stimulation command completion does not wait for acquisition or processing
     acquisitionController.refresh = async () => assert.fail("Stimulation must not refresh acquisition");
     signalConfigApi.get = async () => assert.fail("Stimulation must not refresh processing");
     await button(harness.tree, "Launch stimulation").props.onClick(); await harness.settle();
-    assert.deepEqual(calls, [["stimStart"]]);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], "stimStart");
     assert.equal(alerts(harness.tree), "");
   });
 });
 
-for (const origin of ["engine", "processing"]) test(`Stop engine remains available while ${origin} is starting the foundation`, async () => {
+test("Stop engine remains available while the foundation is starting", async () => {
   const finish = deferred();
   await withScenario({ activation: async () => complete, acceptedRevision: complete.revision,
     current: currentConfiguration({}, []), running: false }, async ({ harness, calls }) => {
     api.engineStart = async () => { calls.push(["engineStart"]); await finish.promise; };
     await harness.settle();
-    const starting = button(harness.tree, origin === "engine" ? "Start engine" : "Start processing").props.onClick();
+    const starting = button(harness.tree, "Start engine").props.onClick();
     await harness.settle();
     assert.deepEqual(calls, [["engineStart"]]);
     const stop = button(harness.tree, "Stop engine");
@@ -859,30 +627,6 @@ for (const origin of ["engine", "processing"]) test(`Stop engine remains availab
     assert.equal(alerts(harness.tree), "");
   });
 });
-
-for (const [module, label] of [["processing", "Start processing"], ["stimulation", "Launch stimulation"], ["actuation", "Start actuation"]]) {
-  test(`Stop engine cancels ${module} application continuation before any start command`, async () => {
-    const finish = deferred();
-    let accepted = complete;
-    const current = currentConfiguration({ [module]: complete.bindings.filter((item) => item.slot.startsWith(`${module}.`)) });
-    await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, current,
-      running: module !== "processing", processingRunning: false,
-      applyCurrentSelection: async (request, status) => {
-        await finish.promise;
-        accepted = appliedConfiguration(accepted, request, status);
-        return { [module]: status.accepted[module], system: status.accepted.system };
-      } }, async ({ harness, calls }) => {
-      await harness.settle();
-      const starting = button(harness.tree, label).props.onClick(); await harness.settle();
-      assert.equal(calls[0][0], "applyCurrentSelection");
-      const stop = button(harness.tree, "Stop engine");
-      assert.equal(stop.props.disabled, false);
-      stop.props.onClick(); await harness.settle();
-      finish.resolve(); await starting; await harness.settle();
-      assert.deepEqual(calls.map(([name]) => name), ["applyCurrentSelection", "engineStop"]);
-    });
-  });
-}
 
 for (const [module, label, command] of [["acquisition", "Disconnect", "disconnect"], ["processing", "Stop processing", "moduleStop"],
   ["stimulation", "Stop stimulation", "stimStop"], ["actuation", "Stop actuation", "moduleStop"]]) {
@@ -903,18 +647,15 @@ for (const [module, label, command] of [["acquisition", "Disconnect", "disconnec
   });
 }
 
-test("Stop engine is available while acquisition is preparing an automatic startup", async () => {
+test("Stop engine is available while the acquisition request is pending", async () => {
   await withScenario({}, async ({ harness, calls, acquisitionController }) => {
-    let cancelled = 0;
     acquisitionController.pending = true;
     acquisitionController.connect.pending = true;
-    acquisitionController.cancelPending = () => { cancelled++; };
     harness.render(); await harness.settle();
     const stop = button(harness.tree, "Stop engine");
     assert.equal(stop.props.disabled, false);
     stop.props.onClick(); await harness.settle();
     assert.deepEqual(calls, [["engineStop"]]);
-    assert.equal(cancelled, 1);
   });
 });
 

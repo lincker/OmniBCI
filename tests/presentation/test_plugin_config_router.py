@@ -75,13 +75,34 @@ def apply_plan(http, plan):
 
 
 def accept(http, module, profiles, expected_revision=None, refresh_slots=None):
-    response = http.post(f"{PREFIX}/apply-plan", json={
+    response = http.post(f"{PREFIX}/apply-plan", json={"settings": {},
         "module": module, "bindings": [{"slot": slot, "profile_id": profile["profile_id"]} for slot, profile in profiles],
         "expected_revision": expected_revision, "refresh_slots": refresh_slots,
     })
     assert response.status_code == 200, response.text
     apply_plan(http, response.json()["data"])
     return http.get(f"{PREFIX}/modules/{module}").json()["data"]
+
+
+def test_absent_module_exposes_owned_defaults_without_creating_configuration(client):
+    http, service, state = client
+    state["settings"]["ALGORITHM.baseline_duration"] = 0.75
+    response = http.get(f"{PREFIX}/modules/processing")
+    assert response.status_code == 200
+    assert response.json()["data"] == {
+        "module": "processing", "revision": None, "bindings": [],
+        "settings": {"ALGORITHM.baseline_duration": 0.75},
+    }
+    assert service.repository.get_module("processing") is None
+
+
+def test_accepted_module_read_does_not_mix_in_changed_host_defaults(client):
+    http, _, state = client
+    selected = accept(http, "processing", [])
+    state["settings"]["ALGORITHM.baseline_duration"] = 9
+    response = http.get(f"{PREFIX}/modules/processing")
+    assert response.status_code == 200
+    assert response.json()["data"] == selected
 
 
 
@@ -94,7 +115,7 @@ def test_runtime_plan_accepts_source_draft_without_creating_profile(client):
     saved = service.repository.list_profiles()
     draft = {"slot": "acquisition.source", "selection": builtin_selection("acquisition", "neuroscan_curry8_reader").to_dict(),
              "parameters": {"DATA_PROVIDER_IP": "192.168.0.20", "DATA_PROVIDER_PORT": 4455}}
-    body = {"module": "acquisition", "bindings": [draft], "expected_revision": accepted["revision"],
+    body = {"settings": {}, "module": "acquisition", "bindings": [draft], "expected_revision": accepted["revision"],
             "refresh_slots": ["acquisition.source"]}
     response = http.post(f"{PREFIX}/apply-plan", json=body)
     assert response.status_code == 200, response.text
@@ -127,7 +148,7 @@ def test_runtime_plan_accepts_current_values_for_every_plugin_role(client, slot,
         current["processing_input"] = {"schema_version": 2, "outputs": [
             {"source_channel_index": 1, "name": "Oz", "signal_type": "eeg"},
         ]}
-    response = http.post(f"{PREFIX}/apply-plan", json={
+    response = http.post(f"{PREFIX}/apply-plan", json={"settings": {},
         "module": slot.split(".")[0], "bindings": [current],
     })
     assert response.status_code == 200, response.text
@@ -163,7 +184,7 @@ def test_runtime_plan_rejects_invalid_current_values_without_writes(client, chan
     definition = service.catalog.get("decoder", builtin_selection("decoder", "THUBCI_SSVEP_classic40CCA"))
     current = {"slot": "processing.decoder", "selection": definition.selection.to_dict(),
                "parameters": {}, "processing_input": {"schema_version": 2, "outputs": []}, **changes}
-    response = http.post(f"{PREFIX}/apply-plan", json={"module": "processing", "bindings": [current]})
+    response = http.post(f"{PREFIX}/apply-plan", json={"settings": {}, "module": "processing", "bindings": [current]})
     assert response.status_code == 422, response.text
     assert service.repository.list_profiles() == []
     assert all(value is None for value in service.repository.get_activation_set().modules.values())
@@ -172,7 +193,7 @@ def test_runtime_plan_rejects_invalid_current_values_without_writes(client, chan
 def test_runtime_plan_requires_explicit_current_decoder_mapping(client):
     http, service, _ = client
     definition = service.catalog.get("decoder", builtin_selection("decoder", "THUBCI_SSVEP_classic40CCA"))
-    response = http.post(f"{PREFIX}/apply-plan", json={"module": "processing", "bindings": [{
+    response = http.post(f"{PREFIX}/apply-plan", json={"settings": {}, "module": "processing", "bindings": [{
         "slot": "processing.decoder", "selection": definition.selection.to_dict(), "parameters": {},
     }]})
     assert response.status_code == 422, response.text
@@ -200,7 +221,7 @@ def test_acquisition_configuration_preserves_other_modules(client):
 def test_module_configuration_rejects_another_modules_binding(client):
     http, _, _ = client
     decoder = create(client, "decoder", "THUBCI_SSVEP_classic40CCA")
-    response = http.post(f"{PREFIX}/apply-plan", json={"module": "acquisition",
+    response = http.post(f"{PREFIX}/apply-plan", json={"settings": {}, "module": "acquisition",
         "bindings": [{"slot": "processing.decoder", "profile_id": decoder["profile_id"]}]})
     assert response.status_code == 422, response.text
 
@@ -360,7 +381,7 @@ def test_reviewed_candidate_is_applied_and_stale_plan_is_rejected(client):
     assert http.put(f"{PREFIX}/plugin-profiles/{profile['profile_id']}", json={
         "name": profile["name"], "parameters": {"sample_rate": 500}, "expected_revision": 1}).status_code == 200
     state["settings"]["NEUROENGINE.queue_size"] = 64
-    body = {"module": "acquisition", "bindings": [{"slot": "acquisition.source", "profile_id": profile["profile_id"]}],
+    body = {"settings": {}, "module": "acquisition", "bindings": [{"slot": "acquisition.source", "profile_id": profile["profile_id"]}],
             "expected_revision": before["revision"], "refresh_slots": ["acquisition.source"]}
     planned = http.post(f"{PREFIX}/apply-plan", json=body)
     assert planned.status_code == 200, planned.text
@@ -401,7 +422,7 @@ def test_filter_instances_have_stable_slots_and_order(client):
     reordered = accept(http, "processing", [(second, profile), (first, profile)], before["revision"], [])
     assert [item["slot"] for item in reordered["bindings"]] == [second, first]
     assert reordered["revision"] != before["revision"]
-    assert http.post(f"{PREFIX}/apply-plan", json={"module": "processing", "bindings": [
+    assert http.post(f"{PREFIX}/apply-plan", json={"settings": {}, "module": "processing", "bindings": [
         {"slot": first, "profile_id": profile["profile_id"]}, {"slot": first, "profile_id": profile["profile_id"]}],
         "expected_revision": reordered["revision"]}).status_code == 422
 
@@ -429,7 +450,7 @@ def test_missing_profile_and_unknown_fields_are_rejected(client):
     http, _, _ = client
     assert http.get(f"{PREFIX}/plugin-profiles/{uuid4()}").status_code == 404
     assert http.get(f"{PREFIX}/plugin-profiles/not-a-uuid").status_code == 422
-    response = http.post(f"{PREFIX}/apply-plan", json={"module": "acquisition", "bindings": [], "unexpected": True})
+    response = http.post(f"{PREFIX}/apply-plan", json={"settings": {}, "module": "acquisition", "bindings": [], "unexpected": True})
     assert response.status_code == 422
 
 

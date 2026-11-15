@@ -333,7 +333,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
             aria-describedby={connectReason ? "connection-action-reasons" : "connection-help"}
             onClick={() => { if (!connectReason) {
               try {
-                return connect.run(current.request("acquisition", activation("acquisition")));
+                return connect.run(current.request("acquisition"));
               } catch (cause) { setLoadError(cause instanceof Error ? cause.message : String(cause)); }
             } }}>{t("run.connect")}</button>
           <button disabled={!!disconnectReason}

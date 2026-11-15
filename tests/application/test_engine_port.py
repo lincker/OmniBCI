@@ -35,9 +35,6 @@ class FakeEnginePort(EnginePort):
     def dispatch(self, event: Event) -> None:
         self.dispatched.append(event)
 
-    def prepare_output_sync(self, module):
-        return {}
-
     def ensure_output_ready_sync(self, module, snapshot):
         pass
 
@@ -121,17 +118,17 @@ class TestAcquisitionUsesPort:
 # ---------------------------------------------------------------------------
 
 class TestStimulationUsesPort:
-    def test_start_stimulation_dispatches_via_port(self):
+    def test_start_stimulation_uses_prepared_configuration_without_an_empty_event(self):
         port = FakeEnginePort()
         svc = StimulationAppService(port)
-        svc.handle_start_stimulation(StartStimulationCommand(paradigm="classic40SSVEP"))
-        assert port.dispatched[0].type == EventType.StartStimulation
-        assert port.dispatched[0].data == "classic40SSVEP"
+        svc.handle_start_stimulation(StartStimulationCommand(), settings_snapshot={})
+        assert not port.dispatched
+        assert svc.is_active
 
     def test_start_trial_dispatches_spec(self):
         port = FakeEnginePort()
         svc = StimulationAppService(port)
-        svc.handle_start_stimulation(StartStimulationCommand())
+        svc.handle_start_stimulation(StartStimulationCommand(), settings_snapshot={})
         port.dispatched.clear()
         svc.handle_start_trial(StartStimTrialCommand(n_trials=1, trial_params=[7]))
         assert port.dispatched[0].type == EventType.StartStimTrial

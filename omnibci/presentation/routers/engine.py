@@ -6,6 +6,9 @@ from fastapi import APIRouter, Depends, status
 from typing import Literal
 
 from omnibci.presentation.dependencies import get_engine_service, get_acquisition_service
+from omnibci.presentation.routers.runtime_config import get_runtime_configuration
+from omnibci.presentation.routers.plugin_config import _configuration_errors
+from omnibci.presentation.schemas.runtime_config import ModuleActionRequest, RuntimeOperationResponse
 from omnibci.presentation.errors import ApiError, COMMAND_EXECUTION_RESPONSES, command_error_to_api_error
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.engine import EngineStatusResponse
@@ -46,21 +49,15 @@ async def stop_engine(
     return ApiResponse(message="NeuroEngine stopped")
 
 
-@router.post("/modules/{module}/start", response_model=ApiResponse,
+@router.post("/modules/{module}/start", response_model=ApiResponse[RuntimeOperationResponse],
              responses=COMMAND_EXECUTION_RESPONSES, summary="Start an independent engine module")
 async def start_module(
-    module: Literal["acquisition", "processing", "actuation"],
-    svc: NeuroEngineService = Depends(get_engine_service),
+    module: Literal["processing", "actuation"], body: ModuleActionRequest,
+    runtime=Depends(get_runtime_configuration),
 ):
-    try:
-        await svc.start_module(module)
-        return ApiResponse(message=f"{module.title()} started")
-    except (CommandDeliveryError, CommandRejectedError, CommandExecutionError, CommandTimeoutError) as exc:
-        raise command_error_to_api_error(exc)
-    except ProfileRevisionConflict:
-        raise
-    except RuntimeError as exc:
-        raise ApiError(status.HTTP_409_CONFLICT, ErrorCode.ENGINE_NOT_READY, str(exc))
+    with _configuration_errors():
+        result = await runtime.execute_current(module, "start", **body.model_dump())
+        return ApiResponse(data=result)
 
 
 @router.post("/modules/{module}/prepare", response_model=ApiResponse,

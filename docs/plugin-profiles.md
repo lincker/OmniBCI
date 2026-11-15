@@ -31,12 +31,19 @@ current values never requires saving a Profile first.
   A shared system rebuild also requires disconnecting external nodes.
 
 There is no global **Apply current configuration** or **Update saved profile**
-button. Settings changes are reviewed per owning section. Editing, loading and
-saving remain independent of runtime application. Browsing a different plugin
+button. Shared system settings retain explicit review; module settings, including
+Processing's pre-trigger duration, travel with that module's current values.
+Editing, loading and saving remain independent of runtime application. Browsing a different plugin
 or Profile does not silently change running parameters.
 
 Current edits survive page navigation. Refresh initializes current values from
 the backend's accepted modules; unapplied browser edits are not stored on disk.
+Connect and Start use one backend request. A failed request preserves current
+edits; confirmed application advances only that request's editor baseline.
+Concurrent edits from another client produce a revision conflict instead of
+being overwritten by an automatic refresh and retry.
+When a conflict exists, **Load accepted configuration** explicitly replaces that
+module's edits with the backend values and resets its editor baseline.
 Decoder current values and Profiles include the channel mapping described in
 [channel mapping](channel-mapping.md). An empty output list explicitly selects
 all source signal channels; live source metadata remains authoritative.

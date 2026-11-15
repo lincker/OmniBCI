@@ -24,35 +24,26 @@ def _running_engine(engine_service):
 
 
 class TestStimulationStart:
-    def test_start_dispatches_event(self, stimulation_service, mock_engine):
-        stimulation_service.handle_start_stimulation(StartStimulationCommand())
-        event = mock_engine.event_bus.put_event.call_args[0][0]
-        assert event.type == EventType.StartStimulation
+    def test_start_requires_no_unconsumed_event(self, stimulation_service, mock_engine):
+        stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
+        mock_engine.event_bus.put_event.assert_not_called()
+        assert stimulation_service.is_active
 
     def test_start_sets_active_flag(self, stimulation_service):
-        stimulation_service.handle_start_stimulation(StartStimulationCommand())
+        stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
         assert stimulation_service.is_active is True
 
-    def test_start_with_paradigm_name(self, stimulation_service, mock_engine):
-        stimulation_service.handle_start_stimulation(
-            StartStimulationCommand(paradigm="classic40SSVEP")
-        )
-        event = mock_engine.event_bus.put_event.call_args[0][0]
-        assert event.data == "classic40SSVEP"
-
-    def test_dispatch_failure_rolls_back_spawned_process(
+    def test_external_readiness_failure_clears_startup_ownership(
         self, stimulation_service, engine_service
     ):
-        manager = MagicMock()
+        manager = MagicMock(auto_spawn=False)
         stimulation_service._process_manager = manager
-        engine_service.dispatch = MagicMock(side_effect=RuntimeError("not running"))
+        engine_service.is_peer_connected = MagicMock(return_value=False)
 
-        with pytest.raises(RuntimeError, match="not running"):
-            stimulation_service.handle_start_stimulation(
-                StartStimulationCommand(paradigm="classic40SSVEP")
-            )
+        with pytest.raises(RuntimeError, match="not connected"):
+            stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
 
-        manager.start.assert_called_once_with(paradigm="classic40SSVEP", settings_snapshot={})
+        manager.start.assert_called_once_with(settings_snapshot={})
         manager.stop.assert_called_once_with()
         assert stimulation_service.is_active is False
 
@@ -63,7 +54,7 @@ class TestStimulationStart:
         stimulation_service._process_manager = manager
         engine_service._running = False
         with pytest.raises(RuntimeError, match="Start the engine"):
-            stimulation_service.handle_start_stimulation(StartStimulationCommand())
+            stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
         manager.start.assert_not_called()
         manager.stop.assert_not_called()
 
@@ -72,7 +63,7 @@ class TestStimulationStart:
     ):
         mock_engine.acquisition_worker.is_alive.return_value = False
         mock_engine.signal_processing_worker.is_alive.return_value = False
-        stimulation_service.handle_start_stimulation(StartStimulationCommand())
+        stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
         assert stimulation_service.is_active is True
 
     def test_child_startup_failure_never_dispatches_or_marks_active(
@@ -83,28 +74,10 @@ class TestStimulationStart:
         stimulation_service._process_manager = manager
 
         with pytest.raises(RuntimeError, match="renderer unavailable"):
-            stimulation_service.handle_start_stimulation(
-                StartStimulationCommand(paradigm="classic40SSVEP")
-            )
+            stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
 
         mock_engine.event_bus.put_event.assert_not_called()
         manager.stop.assert_not_called()
-        assert stimulation_service.is_active is False
-
-    def test_external_process_rejects_unfulfillable_paradigm_change(
-        self, stimulation_service, engine_service
-    ):
-        manager = MagicMock()
-        manager.auto_spawn = False
-        stimulation_service._process_manager = manager
-        engine_service.is_peer_connected = MagicMock(return_value=True)
-
-        with pytest.raises(RuntimeError, match="Cannot change paradigm"):
-            stimulation_service.handle_start_stimulation(
-                StartStimulationCommand(paradigm="classic40SSVEP")
-            )
-
-        manager.stop.assert_called_once_with()
         assert stimulation_service.is_active is False
 
     def test_external_stimulation_requires_enable_again_after_foundation_restart(
@@ -114,7 +87,7 @@ class TestStimulationStart:
         stimulation_service._process_manager = manager
         engine_service._applied_snapshot = {"CONFIG.generation": "first", "STIMULATION.auto_spawn": False}
         engine_service.is_peer_connected = MagicMock(return_value=True)
-        stimulation_service.handle_start_stimulation(StartStimulationCommand())
+        stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
         assert stimulation_service.is_active
         engine_service._running = False
         assert not stimulation_service.is_active
@@ -123,7 +96,7 @@ class TestStimulationStart:
         assert not stimulation_service.is_active
         with pytest.raises(RuntimeError, match="Start stimulation"):
             stimulation_service.handle_start_trial(StartStimTrialCommand())
-        stimulation_service.handle_start_stimulation(StartStimulationCommand())
+        stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
         assert stimulation_service.is_active
 
     def test_applied_external_mode_does_not_require_a_managed_process_to_be_alive(
@@ -141,7 +114,7 @@ class TestStimulationStart:
         engine_service.is_peer_connected = MagicMock(return_value=True)
         engine_service._applied_snapshot = {"CONFIG.generation": "foundation", "STIMULATION.auto_spawn": False,
                                             "CONFIG.module_revisions": {"stimulation": "first"}}
-        stimulation_service.handle_start_stimulation(StartStimulationCommand())
+        stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
         assert stimulation_service.is_active
         engine_service.is_peer_connected.return_value = False
         assert not stimulation_service.is_active
@@ -150,7 +123,7 @@ class TestStimulationStart:
         assert not stimulation_service.is_active
         with pytest.raises(RuntimeError, match="Start stimulation"):
             stimulation_service.handle_start_trial(StartStimTrialCommand())
-        stimulation_service.handle_start_stimulation(StartStimulationCommand())
+        stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
         assert stimulation_service.is_active
         engine_service._applied_snapshot["CONFIG.module_revisions"].update(acquisition="changed", processing="changed")
         assert stimulation_service.is_active
@@ -307,7 +280,7 @@ class TestStimulationStop:
 class TestStimulationTrial:
     @pytest.fixture(autouse=True)
     def enabled(self, stimulation_service):
-        stimulation_service.handle_start_stimulation(StartStimulationCommand())
+        stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
 
     def test_trial_dispatches_event(self, stimulation_service, mock_engine):
         stimulation_service.handle_start_trial(StartStimTrialCommand())

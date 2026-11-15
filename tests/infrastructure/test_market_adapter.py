@@ -178,7 +178,7 @@ def test_real_signed_http_to_disabled_install_enable_profile_and_runtime_plan(tm
         bindings = [{"slot": "actuation.effector", "profile_id": output.profile_id}]
         runtime = RuntimeConfigurationService(profiles, NeuroEngineService(
             lambda _: pytest.fail("Planning a downloaded module must not start an engine")))
-        plan = runtime.plan("actuation", bindings, expected_revision=None)
+        plan = runtime.plan("actuation", bindings, settings={}, expected_revision=None)
         assert not plan.errors and plan.strategy == "select_on_start"
         pinned = runtime.resolve_plan(plan.plan_id).candidates["actuation"]
         assert pinned.bindings[0].selection == selection

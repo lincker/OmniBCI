@@ -4,10 +4,10 @@ from copy import deepcopy
 from dataclasses import replace
 from uuid import uuid4
 
-from omnibci.application.activation_settings import MODULES, backend_startup_settings, section_settings
+from omnibci.application.activation_settings import MODULES, MODULE_SETTING_DEFAULTS, backend_startup_settings, section_settings
 from omnibci.application.plugin_profiles import (
     ActivationSet, ModuleActivation, SystemSettings, PluginProfile, PluginSelection, ProfileBinding,
-    MODULE_KINDS, PluginProfileNotFoundError, ProfileRevisionConflict, plugin_kind_for_slot,
+    MODULE_KINDS, PluginProfileNotFoundError, plugin_kind_for_slot,
 )
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfigurationCatalog
@@ -39,7 +39,7 @@ class PluginProfileService:
         self.repository = repository
         self.catalog = catalog
         self.settings_source = settings_source
-        self.change_guard = change_guard or (lambda requires_idle: nullcontext())
+        self.change_guard = change_guard or nullcontext
         self._startup_settings_resolver = startup_settings_resolver or backend_startup_settings
         loaded = settings_source() if loaded_startup_settings is None else loaded_startup_settings
         self._startup_settings = deepcopy(self._startup_settings_resolver(loaded))
@@ -56,7 +56,7 @@ class PluginProfileService:
     def create(self, kind: str, selection: PluginSelection, name: str, parameters: dict, *,
                processing_input=_UNSET):
         """Save an independent named profile with explicit decoder channel input."""
-        with self.change_guard(False):
+        with self.change_guard():
             definition, values = self._parameters(kind, selection, parameters)
             if processing_input is _UNSET or processing_input is None and kind == "decoder":
                 processing_input = ProcessingInput() if kind == "decoder" else None
@@ -69,7 +69,7 @@ class PluginProfileService:
 
     def update(self, profile_id: str, *, name: str, parameters: dict, expected_revision: int,
                processing_input=_UNSET):
-        with self.change_guard(False):
+        with self.change_guard():
             previous = self.repository.get_profile(profile_id)
             _, values = self._parameters(previous.kind, previous.selection, parameters,
                                          previous.configuration_version)
@@ -82,7 +82,7 @@ class PluginProfileService:
             )
 
     def delete(self, profile_id: str, *, expected_revision: int):
-        with self.change_guard(False):
+        with self.change_guard():
             self.repository.delete_profile(profile_id, expected_revision=expected_revision)
 
     def profile_history(self, profile_id: str):
@@ -90,13 +90,19 @@ class PluginProfileService:
 
     def revert_profile(self, profile_id: str, revision: int, *, expected_revision: int):
         """Restore stored values as a new named-profile revision without applying them."""
-        with self.change_guard(False):
+        with self.change_guard():
             entry = self.repository.get_profile_revision(profile_id, revision)
             if entry is None:
                 raise PluginProfileNotFoundError(f"{profile_id} revision {revision}")
             return self.repository.save_profile(entry.profile, expected_revision=expected_revision)
 
-    def propose(self, module: str, bindings: list[dict], *, refresh_slots: list[str] | None = None) -> ModuleActivation:
+    def default_module_settings(self, module: str) -> dict:
+        """Initialize an absent module's editor from deployment values once."""
+        values = {**MODULE_SETTING_DEFAULTS[module], **section_settings(self.settings_source(), module)}
+        return ModuleActivation(module, values, ()).settings
+
+    def propose(self, module: str, bindings: list[dict], *, settings: dict,
+                refresh_slots: list[str] | None = None) -> ModuleActivation:
         """Replace one module's selections while retaining explicitly pinned profile values."""
         if not isinstance(module, str) or module not in MODULES:
             raise PluginSchemaError("Unsupported configuration module")
@@ -150,7 +156,12 @@ class PluginProfileService:
                 configuration_version=profile.configuration_version, profile_revision=profile.revision,
                 processing_input=profile.processing_input,
             ))
-        return ModuleActivation(module, section_settings(self.settings_source(), module), tuple(selected))
+        candidate = ModuleActivation(module, settings, tuple(selected))
+        normalized = {key: float(value) for key, value in candidate.settings.items()
+                      if key in {"ALGORITHM.baseline_duration", "ACTUATION.watchdog_timeout_s",
+                                 "ACTUATION.max_command_age_s"} and type(value) is int}
+        return (ModuleActivation(module, {**candidate.settings, **normalized}, candidate.bindings)
+                if normalized else candidate)
 
     def propose_system(self) -> SystemSettings:
         settings = self.settings_source()
@@ -179,15 +190,6 @@ class PluginProfileService:
                 raise PluginSchemaError(f"{binding.slot}: snapshot must include resolved defaults")
             if binding.kind in available and not definition.available:
                 raise PluginSchemaError(f"{binding.slot}: unavailable on this platform")
-
-    def accept_module(self, candidate: ModuleActivation, *, expected_revision: str | None):
-        with self.change_guard(True):
-            self.validate_module(candidate)
-            return self.repository.save_module(candidate, expected_revision=expected_revision)
-
-    def accept_system(self, candidate: SystemSettings, *, expected_revision: str | None):
-        with self.change_guard(True):
-            return self.repository.save_system(candidate, expected_revision=expected_revision)
 
     def materialize(self, activation_set: ActivationSet, generation: str | None = None) -> dict:
         """Publish pinned sections; only Acquisition supplies shared source facts."""

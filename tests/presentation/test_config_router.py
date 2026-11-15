@@ -25,7 +25,6 @@ def test_get_saved_settings_shape(config_client):
     assert set(data) == {"entries", "revision"}
     assert len(data["revision"]) == 64
     assert {entry["key"]: entry["value"] for entry in data["entries"]} == {
-        "ALGORITHM.baseline_duration": 1.0,
         "NEUROENGINE.queue_size": 32,
     }
     assert all(set(entry) == {"key", "value", "type", "requires", "description"}
@@ -36,17 +35,16 @@ def test_patch_saves_host_settings(config_client, tmp_path):
     revision = config_client.get("/api/v1/config").json()["data"]["revision"]
     response = config_client.patch("/api/v1/config", json={"expected_revision": revision, "updates": {
         "NEUROENGINE.queue_size": 64,
-        "ALGORITHM.baseline_duration": 2.5,
     }})
     assert response.status_code == 200
     assert response.json()["data"] == {
         "revision": config_client.get("/api/v1/config").json()["data"]["revision"],
-        "saved": ["ALGORITHM.baseline_duration", "NEUROENGINE.queue_size"],
+        "saved": ["NEUROENGINE.queue_size"],
         "engine_restart_required": True,
     }
     fresh = OmniBCISettings(tmp_path / "settings.toml")
     assert fresh.get("NEUROENGINE.queue_size") == 64
-    assert fresh.get("ALGORITHM.baseline_duration") == 2.5
+    assert fresh.get("ALGORITHM.baseline_duration") == 1.0
 
 
 @pytest.mark.parametrize("key,value", [
@@ -54,6 +52,7 @@ def test_patch_saves_host_settings(config_client, tmp_path):
     ("ACQUISITION.parallel_port_address", "0x378"),
     ("ACQUISITION.file_reader_play_speed", 2.0),
     ("ALGORITHM.decoder", "other"),
+    ("ALGORITHM.baseline_duration", 2.5),
     ("ALGORITHM.filters", []),
     ("STIMULATION.paradigm", "other"),
     ("ACTUATION.effector", "logger"),
@@ -116,13 +115,13 @@ def test_stale_browser_save_returns_conflict_and_preserves_newer_values(config_c
     updated_revision = first.json()["data"]["revision"]
     assert updated_revision != revision
     stale = config_client.patch("/api/v1/config", json={
-        "expected_revision": revision, "updates": {"ALGORITHM.baseline_duration": 3.0}})
+        "expected_revision": revision, "updates": {"NEUROENGINE.queue_size": 128}})
     assert stale.status_code == 409
     assert stale.json()["code"] == "CONFLICT"
     data = config_client.get("/api/v1/config").json()["data"]
     assert data["revision"] == updated_revision
     assert {entry["key"]: entry["value"] for entry in data["entries"]} == {
-        "ALGORITHM.baseline_duration": 1.0, "NEUROENGINE.queue_size": 64}
+        "NEUROENGINE.queue_size": 64}
 
 
 @pytest.mark.parametrize("method", ["GET", "PATCH"])
@@ -142,7 +141,6 @@ def test_unavailable_storage_returns_service_error(config_client, monkeypatch, m
 
 @pytest.mark.parametrize("key,value", [
     ("NEUROENGINE.queue_size", 0), ("NEUROENGINE.queue_size", -10),
-    ("ALGORITHM.baseline_duration", -1),
 ])
 def test_invalid_numeric_ranges_are_rejected(config_client, key, value):
     revision = config_client.get("/api/v1/config").json()["data"]["revision"]

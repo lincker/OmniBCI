@@ -50,17 +50,17 @@ operations are:
 | --- | --- | --- |
 | POST | `/engine/start` | Start shared infrastructure without starting modules |
 | POST | `/engine/stop` | Stop all modules and the engine |
-| POST | `/engine/modules/{module}/start` | Start Acquisition, Processing, or Actuation independently |
+| POST | `/engine/modules/{module}/start` | Submit current Processing or Actuation and start/prepare it |
 | POST | `/engine/modules/{module}/stop` | Stop the specified module |
 | GET | `/engine/status` | Read foundation readiness, A/P workers, and output availability |
-| POST | `/acquisition/connect` | Start Acquisition if needed and connect its source |
+| POST | `/acquisition/connect` | Submit current Acquisition and connect in one owned operation |
 | POST | `/acquisition/disconnect` | Disconnect the source and stop Acquisition |
-| POST | `/acquisition/stream/start` | Prepare Processing only if running, then start reading |
+| POST | `/acquisition/stream/start` | Validate source revision, generation and connection ID before reading |
 | POST | `/acquisition/stream/stop` | Stop reading and drain Processing if running |
 | GET | `/acquisition/status` | Read connection and stream state |
 | GET | `/acquisition/metadata` | Read the current source descriptor |
 | POST | `/acquisition/metadata/refresh` | Refresh descriptor while stopped |
-| POST | `/stimulation/start` | Launch the selected native paradigm |
+| POST | `/stimulation/start` | Submit current Stimulation and launch it or prepare its external listener |
 | POST | `/stimulation/stop` | Stop stimulation |
 | POST | `/stimulation/trial/start` | Request trials using the selected paradigm controls |
 | GET | `/results` | Read current live decoded results |

@@ -61,7 +61,7 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
   const engine = usePoll(api.engineStatus);
   const runtime = useRuntimeConfiguration();
   const current = useCurrentConfiguration(runtime.status?.accepted, runtime.completedRestorations);
-  const acquisition = useAcquisition(runtime, engine.refresh);
+  const acquisition = useAcquisition(runtime, engine.refresh, current);
   const runtimeControls = useRuntimeControls(runtime, current, acquisition, engine.refresh);
   const engineRunning = engine.data?.running ?? false;
   const isSetup = setupPages.some(([page]) => page === view);

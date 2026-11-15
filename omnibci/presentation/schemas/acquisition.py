@@ -5,6 +5,13 @@ from pydantic_core import PydanticCustomError
 from omnibci.application.acquisition_preview import MAX_CHUNKS, MAX_ROWS, MAX_SAMPLES, PreviewSelection
 
 
+class StartReadingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_revision: str = Field(min_length=1)
+    generation: str = Field(min_length=1)
+    connection_id: str = Field(min_length=1)
+
+
 class ChannelDescriptorModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 

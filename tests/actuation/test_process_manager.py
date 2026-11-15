@@ -460,7 +460,10 @@ class TestEngineLifecycleHook:
         asyncio.run(svc.handle_start_engine(StartEngineCommand()))
         try:
             manager.start.assert_not_called()
-            asyncio.run(svc.start_module("actuation"))
+            async def start_actuation():
+                async with svc.runtime_transition("actuation"):
+                    await svc.start_module_for_configuration("actuation", svc.applied_snapshot)
+            asyncio.run(start_actuation())
             manager.start.assert_called_once()
             assert svc.is_module_running("actuation")
             assert not svc.is_module_running("acquisition")

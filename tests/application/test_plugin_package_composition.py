@@ -88,7 +88,8 @@ async def test_queued_current_configuration_pins_its_package_before_execution(tm
         assert profiles.repository.list_profiles() == []
         assert profiles.repository.get_module("actuation") is None
         plan = runtime.plan("actuation", [{"slot": "actuation.effector", "selection": selection.to_dict(),
-                                           "parameters": {"gain": 2.0}}], expected_revision=None)
+                                           "parameters": {"gain": 2.0}}],
+                            settings=profiles.default_module_settings("actuation"), expected_revision=None)
         operation = runtime.submit(plan.plan_id, str(uuid4()))
         assert operation["status"] == "queued"
         assert runtime.pending_package_snapshots
@@ -149,9 +150,10 @@ def test_real_lifespan_routes_install_enable_save_references_and_remove(tmp_path
         assert client.put(path + "/enabled", json={"enabled": False}).status_code == 409
         assert client.delete(path).status_code == 409
 
-        def apply(bindings, expected_revision):
+        def apply(bindings, settings, expected_revision):
             planned = client.post("/api/v1/config/apply-plan", json={
-                "module": "actuation", "bindings": bindings, "expected_revision": expected_revision})
+                "module": "actuation", "bindings": bindings, "settings": settings,
+                "expected_revision": expected_revision})
             assert planned.status_code == 200, planned.text
             plan = planned.json()["data"]
             assert plan["errors"] == []
@@ -171,12 +173,13 @@ def test_real_lifespan_routes_install_enable_save_references_and_remove(tmp_path
         before = client.get("/api/v1/config/modules/actuation").json()["data"]
         original_bindings = [{"slot": item["slot"], "profile_id": item["profile_id"]} for item in before["bindings"]]
         bindings = [item for item in original_bindings if item["slot"] != "actuation.effector"]
-        accepted = apply([*bindings, {"slot": "actuation.effector", "profile_id": profile["profile_id"]}], before["revision"])
+        accepted = apply([*bindings, {"slot": "actuation.effector", "profile_id": profile["profile_id"]}],
+                         before["settings"], before["revision"])
         inventory = client.get("/api/v1/plugin-packages").json()["data"][0]
         assert {ref["scope"] for ref in inventory["references"]} == {"profile", "accepted"}
         profile_path = f"/api/v1/config/plugin-profiles/{profile['profile_id']}?expected_revision=1"
         assert client.delete(profile_path).status_code == 409
-        apply(original_bindings, accepted["revision"])
+        apply(original_bindings, accepted["settings"], accepted["revision"])
         assert client.delete(profile_path).status_code == 200
         assert client.put(path + "/enabled", json={"enabled": False}).status_code == 200
         assert client.delete(path).status_code == 200

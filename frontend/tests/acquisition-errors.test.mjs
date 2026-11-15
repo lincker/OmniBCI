@@ -9,7 +9,6 @@ after(() => server.close());
 const { api, ApiError } = await server.ssrLoadModule("/src/api/client.ts");
 const { useAcquisition } = await server.ssrLoadModule("/src/hooks/useAcquisition.ts");
 const { translate } = await server.ssrLoadModule("/src/i18n.tsx");
-const revisions = (acquisition) => ({ acquisition, system: "system-revision" });
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
 const failure = (error_code) => ({ success: false, code: "COMMAND_EXECUTION_FAILED", message: "Command execution failed",
@@ -26,14 +25,13 @@ function sourceFixture(error) {
     if (path === "/api/v1/acquisition/connect") {
       if (state.error) return Response.json(state.error, { status: 500 });
       state.connected = true;
-      return Response.json({ success: true, message: "Data provider connected", data: null });
+      const request = JSON.parse(options.body);
+      return Response.json({ success: true, data: { operation_id: request.operation_id, module: "acquisition", status: "succeeded",
+        target_revisions: { acquisition: state.revision }, result: { configuration_applied: true, action: "connected" } } });
     }
     const data = path === "/api/v1/acquisition/status"
       ? { connected: state.connected, streaming: false, connection_id: state.connected ? "source-1" : null }
-      : path === "/api/v1/config/runtime"
-        ? { running: true, generation: "engine-1", accepted: revisions(state.revision), applied: revisions(state.revision), recovery: {}, operations: {} }
-        : path === "/api/v1/config/modules/acquisition"
-          ? { revision: state.revision, bindings: [{ slot: "acquisition.source" }] } : assert.fail(`Unexpected request: ${path}`);
+      : assert.fail(`Unexpected request: ${path}`);
     return Response.json({ success: true, message: "ok", data });
   };
   return state;
@@ -42,7 +40,11 @@ function sourceFixture(error) {
 function controllerHarness(runtimeActions = {}) {
   const values = [], refs = [];
   let language = "en";
-  const runtime = { refresh: async () => {}, applyCurrentSelection: async () => revisions("rev-1"), ...runtimeActions };
+  const runtime = { refresh: async () => {}, execute: async (module, configuration, send, onApplied) => {
+    const result = await send({ operation_id: crypto.randomUUID(), configuration });
+    if (result.result?.configuration_applied) onApplied?.(result);
+    return result;
+  }, ...runtimeActions };
   return {
     setLanguage(next) { language = next; },
     render() {
@@ -60,7 +62,7 @@ function controllerHarness(runtimeActions = {}) {
         useCallback: (callback) => callback,
         useEffect: () => {},
       };
-      try { return useAcquisition(runtime, async () => {}); }
+      try { return useAcquisition(runtime, async () => {}, { acknowledge() {} }); }
       finally { internals.current = previous; }
     },
   };
@@ -129,83 +131,10 @@ test("other control clients and existing three-argument ApiErrors keep their mes
   });
 });
 
-const currentSource = () => ({ module: "acquisition", expected_revision: "rev-1", bindings: [{
+const currentSource = () => ({ settings: {}, expected_revision: "rev-1", bindings: [{
   slot: "acquisition.source", selection: { package_id: "example.source", contribution_id: "main", version: "1.0.0" },
   parameters: { host: "192.168.0.20", port: 4000 },
 }] });
-
-test("Connect applies the displayed parameters without saving a profile before connecting", async () => {
-  const state = sourceFixture(null);
-  const request = currentSource();
-  const harness = controllerHarness({ applyCurrentSelection: async (body) => {
-    assert.deepEqual(body, request);
-    assert.equal(state.calls.some(([path]) => path.endsWith("/connect")), false);
-    state.revision = "current-revision";
-    return revisions(state.revision);
-  } });
-  await harness.render().connect.run(request);
-  assert.equal(state.connected, true);
-  assert.equal(harness.render().connect.error, null);
-  assert.equal(state.calls.filter(([path]) => path.endsWith("/connect")).length, 1);
-  assert.equal(state.calls.some(([path]) => path.includes("plugin-profiles")), false);
-});
-
-test("a failed or unconfirmed application never connects using the previous configuration", async () => {
-  const state = sourceFixture(null);
-  let applies = 0;
-  const harness = controllerHarness({ applyCurrentSelection: async () => { applies += 1; return null; } });
-  await harness.render().connect.run(currentSource());
-  assert.equal(applies, 1);
-  assert.equal(state.connected, false);
-  assert.equal(state.calls.some(([path]) => path.endsWith("/connect")), false);
-  assert.equal(harness.render().pending, false);
-});
-
-test("a configuration replaced after application aborts before connecting", async () => {
-  const state = sourceFixture(null);
-  let applies = 0;
-  const harness = controllerHarness({ applyCurrentSelection: async () => {
-    applies += 1;
-    state.revision = "another-client-revision";
-    return revisions("current-revision");
-  } });
-  await harness.render().connect.run(currentSource());
-  assert.equal(applies, 1);
-  assert.equal(state.connected, false);
-  assert.match(harness.render().connect.error, /configuration changed/i);
-});
-
-test("the acquisition command lock covers applying parameters as well as connecting", async () => {
-  const state = sourceFixture(null);
-  let complete, applies = 0;
-  const applied = new Promise((resolve) => { complete = resolve; });
-  const harness = controllerHarness({ applyCurrentSelection: async () => {
-    applies += 1;
-    await applied;
-    state.revision = "current-revision";
-    return revisions(state.revision);
-  } });
-  const controller = harness.render();
-  const first = controller.connect.run(currentSource());
-  const second = controller.connect.run(currentSource());
-  assert.equal(harness.render().pending, true);
-  complete();
-  await Promise.all([first, second]);
-  assert.equal(applies, 1);
-  assert.equal(state.calls.filter(([path]) => path.endsWith("/connect")).length, 1);
-  assert.equal(harness.render().pending, false);
-});
-
-test("Connect cannot apply another module or rebuild an existing source connection", async () => {
-  for (const connected of [false, true]) {
-    const state = sourceFixture(null);
-    state.connected = connected;
-    const harness = controllerHarness({ applyCurrentSelection: async () => assert.fail("Unexpected application") });
-    await harness.render().connect.run({ ...currentSource(), module: connected ? "acquisition" : "processing" });
-    assert.match(harness.render().connect.error, connected ? /disconnect/i : /acquisition/i);
-    assert.equal(state.calls.some(([path]) => path.endsWith("/connect")), false);
-  }
-});
 
 test("Disconnect sends scoped recovery even when the acquisition worker is already disconnected", async () => {
   const state = sourceFixture(null);

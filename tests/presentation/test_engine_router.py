@@ -66,7 +66,7 @@ class TestEngineStop:
 
 
 @pytest.mark.parametrize("module", ["acquisition", "processing", "actuation"])
-@pytest.mark.parametrize("action", ["start", "stop"])
+@pytest.mark.parametrize("action", ["stop"])
 def test_module_action_targets_only_requested_module(api_client, engine_service, module, action):
     with patch.object(engine_service, f"{action}_module", new_callable=AsyncMock) as operation:
         response = api_client.post(f"/api/v1/engine/modules/{module}/{action}")
@@ -79,15 +79,9 @@ def test_module_route_rejects_unsupported_modules(api_client, module):
     assert api_client.post(f"/api/v1/engine/modules/{module}/start").status_code == 422
 
 
-def test_module_start_reports_foundation_not_ready(api_client, engine_service):
-    with patch.object(engine_service, "start_module", new_callable=AsyncMock,
-                      side_effect=RuntimeError("Start the engine before starting a module")):
-        response = api_client.post("/api/v1/engine/modules/processing/start")
-    assert response.status_code == 409
-    assert response.json()["code"] == "ENGINE_NOT_READY"
 
 
-@pytest.mark.parametrize("action", ["start", "stop"])
+@pytest.mark.parametrize("action", ["stop"])
 @pytest.mark.parametrize("execution_unknown", [False, True])
 def test_output_delivery_failure_reports_uncertainty(api_client, engine_service, action, execution_unknown):
     from omnibci.application.services.command_result_service import CommandDeliveryError

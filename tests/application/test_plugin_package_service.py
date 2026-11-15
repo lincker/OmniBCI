@@ -1,4 +1,5 @@
 """References block destructive package lifecycle changes; version copies are explicit."""
+from omnibci.application.activation_settings import section_settings
 from contextlib import contextmanager
 from dataclasses import replace
 from types import SimpleNamespace
@@ -52,8 +53,8 @@ def test_saved_profile_and_accepted_binding_references_are_listed_and_block_disa
     profile = source_profile(svc)
     active = svc.profiles.propose("actuation", [
         {"slot": "actuation.effector", "profile_id": profile.profile_id},
-    ])
-    svc.profiles.accept_module(active, expected_revision=None)
+    ], settings=section_settings(svc.profiles.settings_source(), "actuation"))
+    svc.profiles.repository.save_module(active, expected_revision=None)
     references = svc.list()[0].references
     assert {item.scope for item in references} == {"profile", "accepted"}
     with pytest.raises(PluginPackageConflictError, match="profile:.*accepted:"):
@@ -99,8 +100,8 @@ def test_proposal_and_new_profile_do_not_mutate_accepted_or_source_profile(servi
     original = source_profile(svc)
     snapshot = svc.profiles.propose("actuation", [
         {"slot": "actuation.effector", "profile_id": original.profile_id},
-    ])
-    svc.profiles.accept_module(snapshot, expected_revision=None)
+    ], settings=section_settings(svc.profiles.settings_source(), "actuation"))
+    svc.profiles.repository.save_module(snapshot, expected_revision=None)
     proposal = svc.propose_profile(original.profile_id, "2.0.0", name="Output v2")
     assert proposal.parameters == {"gain": 2.0} and not proposal.target_enabled
     assert len(svc.profiles.repository.list_profiles()) == 1

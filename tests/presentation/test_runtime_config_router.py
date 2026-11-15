@@ -30,16 +30,16 @@ def test_status_and_review_plan_contract():
     app.state.container = SimpleNamespace(runtime_configuration=service)
     with TestClient(app) as client:
         assert client.get("/config/runtime").json()["data"] == status
-        response = client.post("/config/apply-plan", json={"module": "processing", "bindings": [], "expected_revision": "selected"})
+        response = client.post("/config/apply-plan", json={"module": "processing", "settings": {}, "bindings": [], "expected_revision": "selected"})
         assert response.status_code == 200
         assert response.json()["data"] == plan
         assert requests[-1] == {"bindings": [], "expected_revision": "selected",
-                                "refresh_slots": None, "module": "processing"}
+                                "refresh_slots": None, "module": "processing", "settings": {}}
         assert client.post("/config/apply-plan", json={
             "module": "system", "bindings": [], "expected_revision": "selected", "refresh_slots": [],
         }).status_code == 200
         assert requests[-1] == {"bindings": [], "expected_revision": "selected",
-                                "refresh_slots": [], "module": "system"}
+                                "refresh_slots": [], "module": "system", "settings": None}
         assert client.post("/config/apply-plan", json={
             "bindings": [], "expected_revision": "selected", "module": "acquisition",
         }).status_code == 200

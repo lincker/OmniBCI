@@ -62,14 +62,15 @@ async def test_graph_and_late_stimulation_ignore_saved_edits(thread_factory):
     returned["PLUGINS.bindings"][0]["parameters"]["window_duration"] = 12.0
     manager = Mock(auto_spawn=True)
     stimulation = StimulationAppService(service, manager)
-    stimulation.handle_start_stimulation(StartStimulationCommand())
+    stimulation.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=pinned)
     actuation.start.assert_not_called()
-    await service.start_module("actuation")
+    async with service.runtime_transition("actuation"):
+        await service.start_module_for_configuration("actuation", service.applied_snapshot)
 
     provider.assert_called_once_with()
     assert factory.call_args.args == (pinned,)
     actuation.start.assert_called_once_with(settings_snapshot=pinned)
-    manager.start.assert_called_once_with(paradigm=None, settings_snapshot=pinned)
+    manager.start.assert_called_once_with(settings_snapshot=pinned)
     assert service.applied_snapshot == pinned
     assert service.applied_revisions["acquisition"] == "revision-1"
     assert isinstance(service.generation, str) and service.generation

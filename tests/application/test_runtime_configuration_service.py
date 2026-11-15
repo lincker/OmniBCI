@@ -1,4 +1,5 @@
 """Configuration reviews pin candidates without mutating selected or running values."""
+from omnibci.application.activation_settings import section_settings
 import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
@@ -44,7 +45,7 @@ def runtime(tmp_path, monkeypatch):
     engine = SimpleNamespace(is_engine_ready=True, applied_revisions=snapshot.revisions(),
                              generation="generation-1", applied_snapshot=profiles.materialize(snapshot, "generation-1"),
                              is_peer_connected=lambda role: False, admission=RuntimeAdmission(),
-                             restart_blocked=False, runtime_package_snapshots=())
+                             restart_blocked=False, foundation_requires_cleanup=False, runtime_package_snapshots=())
     engine.is_module_running = lambda module: engine.is_engine_ready
     return RuntimeConfigurationService(profiles, engine), selections, snapshot
 
@@ -60,12 +61,12 @@ def request(runtime, module="processing", *, selections=None, **options):
     service, defaults, _ = runtime
     current = service.profiles.repository.get_module(module) if module != "system" else service.profiles.repository.get_system()
     bindings = [item for item in (defaults if selections is None else selections) if item["slot"].startswith(f"{module}.")]
-    return service.plan(module, bindings, expected_revision=current.revision if current else None, **options)
+    return service.plan(module, bindings, expected_revision=current.revision if current else None, **options, settings=None if module == "system" else section_settings(service.profiles.settings_source(), module))
 
 
 def install(service, candidate):
     current = service.profiles.repository.get_module(candidate.module)
-    service.profiles.accept_module(candidate, expected_revision=current.revision if current else None)
+    service.profiles.repository.save_module(candidate, expected_revision=current.revision if current else None)
     accepted = service.profiles.repository.get_activation_set()
     service.engine.applied_revisions = accepted.revisions()
     service.engine.applied_snapshot = service.profiles.materialize(accepted, service.engine.generation)
@@ -310,7 +311,7 @@ def test_unrelated_module_revision_does_not_expire_processing_plan(runtime):
 def test_plan_compare_and_swap_and_expiry(runtime):
     service, selections, _ = runtime
     with pytest.raises(ProfileRevisionConflict):
-        service.plan("processing", [item for item in selections if item["slot"].startswith("processing.")], expected_revision="stale")
+        service.plan("processing", [item for item in selections if item["slot"].startswith("processing.")], expected_revision="stale", settings=section_settings(service.profiles.settings_source(), "processing"))
     plan = request(runtime)
     service._plans[plan.plan_id] = replace(service._plans[plan.plan_id], created_at=-1000)
     with pytest.raises(ProfileRevisionConflict, match="expired"):
@@ -347,7 +348,7 @@ def test_filter_order_is_a_real_module_change(runtime):
     service, selections, _ = runtime
     profile = service.profiles.create("filter", builtin_selection("filter", "BASELINE_CORRECTION"), "Baseline", {})
     selections += [{"slot": f"processing.filter.{uuid4()}", "profile_id": profile.profile_id} for _ in range(2)]
-    candidate = service.profiles.propose("processing", [item for item in selections if item["slot"].startswith("processing.")])
+    candidate = service.profiles.propose("processing", [item for item in selections if item["slot"].startswith("processing.")], settings=section_settings(service.profiles.settings_source(), "processing"))
     install(service, candidate)
     plan = request(runtime, selections=selections[:-2] + list(reversed(selections[-2:])))
     assert plan.strategy == "module"

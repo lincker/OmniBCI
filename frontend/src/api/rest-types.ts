@@ -370,7 +370,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Start stimulation */
+        /** Apply current stimulation and prepare or start it */
         post: operations["start_stimulation_api_v1_stimulation_start_post"];
         delete?: never;
         options?: never;
@@ -1907,6 +1907,12 @@ export interface components {
                 string
             ][];
         };
+        /** ModuleActionRequest */
+        ModuleActionRequest: {
+            /** Operation Id */
+            operation_id: string;
+            configuration: components["schemas"]["ModuleConfigurationRequest"];
+        };
         /** ModuleActivationResponse */
         ModuleActivationResponse: {
             /**
@@ -1922,6 +1928,17 @@ export interface components {
             };
             /** Bindings */
             bindings: components["schemas"]["ProfileBindingResponse"][];
+        };
+        /** ModuleConfigurationRequest */
+        ModuleConfigurationRequest: {
+            /** Expected Revision */
+            expected_revision: string | null;
+            /** Settings */
+            settings: {
+                [key: string]: unknown;
+            };
+            /** Bindings */
+            bindings: components["schemas"]["DraftPluginBindingRequest"][];
         };
         /** ModuleHistoryResponse */
         ModuleHistoryResponse: {
@@ -2399,6 +2416,10 @@ export interface components {
             refresh_slots?: string[] | null;
             /** Bindings */
             bindings: (components["schemas"]["SelectProfileBindingRequest"] | components["schemas"]["DraftPluginBindingRequest"])[];
+            /** Settings */
+            settings?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** RuntimePlanResponse */
         RuntimePlanResponse: {
@@ -2555,10 +2576,14 @@ export interface components {
              */
             continuous: boolean;
         };
-        /** StartStimulationRequest */
-        StartStimulationRequest: {
-            /** Paradigm */
-            paradigm?: string | null;
+        /** StartReadingRequest */
+        StartReadingRequest: {
+            /** Expected Revision */
+            expected_revision: string;
+            /** Generation */
+            generation: string;
+            /** Connection Id */
+            connection_id: string;
         };
         /**
          * StartTrialRequest
@@ -2581,7 +2606,7 @@ export interface components {
          * StimulationStatusResponse
          * @description Live status of the Stimulation subsystem.
          *
-         *     active          — the application service has issued a StartStimulation command.
+         *     active          — the application service has started stimulation.
          *     process_alive   — the Stimulation subprocess is currently running (auto_spawn only).
          *     engine_connected — the Stimulation process has an active IPC connection to the engine.
          */
@@ -3008,11 +3033,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                module: "acquisition" | "processing" | "actuation";
+                module: "processing" | "actuation";
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModuleActionRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -3020,7 +3049,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse"];
+                    "application/json": components["schemas"]["ApiResponse_RuntimeOperationResponse_"];
                 };
             };
             /** @description Bad request */
@@ -3366,7 +3395,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModuleActionRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -3374,7 +3407,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse"];
+                    "application/json": components["schemas"]["ApiResponse_RuntimeOperationResponse_"];
                 };
             };
             /** @description Bad request */
@@ -3550,7 +3583,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartReadingRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -4551,9 +4588,9 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
-                "application/json": components["schemas"]["StartStimulationRequest"];
+                "application/json": components["schemas"]["ModuleActionRequest"];
             };
         };
         responses: {
@@ -4563,7 +4600,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse"];
+                    "application/json": components["schemas"]["ApiResponse_RuntimeOperationResponse_"];
                 };
             };
             /** @description Bad request */

@@ -1,4 +1,5 @@
 """Narrow updates preserve workers and reconcile uncertain receipts."""
+from omnibci.application.activation_settings import section_settings
 from dataclasses import replace
 
 import pytest
@@ -92,7 +93,7 @@ def narrow(rebuild_harness):
                                         "Replacement decoder", {})
             bindings[0] = {"slot": "processing.decoder", "profile_id": decoder.profile_id}
         h.plan = h.runtime.plan(h.module, bindings, expected_revision=h.previous.modules[h.module].revision,
-                               refresh_slots=["processing.decoder"])
+                               refresh_slots=["processing.decoder"], settings=None if h.module == "system" else section_settings(h.runtime.profiles.settings_source(), h.module))
         assert not h.plan.errors
         assert h.plan.strategy == strategy
         return h
@@ -465,7 +466,7 @@ async def test_explicit_different_source_can_start_fresh_after_live_source(rebui
     selected = h.profiles.create("acquisition", builtin_selection("acquisition", "neuroscan_scan45_reader"), "Different source", {})
     bindings = [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in h.previous.modules[h.module].bindings]
     bindings[0] = {"slot": "acquisition.source", "profile_id": selected.profile_id}
-    h.plan = h.runtime.plan(h.module, bindings, expected_revision=h.previous.modules[h.module].revision)
+    h.plan = h.runtime.plan(h.module, bindings, expected_revision=h.previous.modules[h.module].revision, settings=None if h.module == "system" else section_settings(h.runtime.profiles.settings_source(), h.module))
     assert h.plan.strategy == "rebuild" and not h.plan.errors
     request = h.commands.request
     inspected = []
@@ -528,8 +529,8 @@ def with_unavailable_windows_trigger(h, monkeypatch):
     current = h.previous.modules["stimulation"]
     bindings = [{"slot": item.slot, "profile_id": item.profile_id} for item in current.bindings]
     bindings.append({"slot": "stimulation.trigger", "profile_id": trigger.profile_id})
-    selected = h.profiles.propose("stimulation", bindings, refresh_slots=[])
-    h.profiles.accept_module(selected, expected_revision=current.revision)
+    selected = h.profiles.propose("stimulation", bindings, refresh_slots=[], settings=section_settings(h.profiles.settings_source(), "stimulation"))
+    h.profiles.repository.save_module(selected, expected_revision=current.revision)
     h.previous = h.profiles.repository.get_activation_set()
     h.engine.applied_snapshot = {**h.profiles.materialize(h.previous), "CONFIG.generation": h.engine.generation}
     h.commands.processing_revision = h.previous.modules["processing"].revision
@@ -542,7 +543,7 @@ async def test_inactive_windows_trigger_does_not_block_decoder_apply(narrow, mon
     h = narrow("trial_boundary")
     bindings = with_unavailable_windows_trigger(h, monkeypatch)
     h.plan = h.runtime.plan(h.module, bindings, expected_revision=h.previous.modules[h.module].revision,
-                            refresh_slots=["processing.decoder"])
+                            refresh_slots=["processing.decoder"], settings=None if h.module == "system" else section_settings(h.runtime.profiles.settings_source(), h.module))
     assert not h.plan.errors
     operation = await apply(h)
     assert operation["status"] == "succeeded"
@@ -557,7 +558,7 @@ def test_other_module_platform_validation_does_not_block_processing(narrow, monk
     stimulation = h.runtime.executor.stimulation
     stimulation.process_alive = active_during_plan
     plan = h.runtime.plan(h.module, bindings, expected_revision=h.previous.modules[h.module].revision,
-                          refresh_slots=["processing.decoder"])
+                          refresh_slots=["processing.decoder"], settings=None if h.module == "system" else section_settings(h.runtime.profiles.settings_source(), h.module))
     assert not plan.errors
     stimulation.process_alive = True
     h.runtime.resolve_plan(plan.plan_id)
@@ -619,7 +620,7 @@ schema_version=1
     host.update({"ACTUATION.auto_spawn": True,
                  "ACTUATION.server_port": unused_tcp_port})
     profiles.settings_source = lambda: host
-    profiles.accept_module(profiles.propose("actuation", [bindings[-1]]), expected_revision=None)
+    profiles.repository.save_module(profiles.propose("actuation", [bindings[-1]], settings=section_settings(profiles.settings_source(), "actuation")), expected_revision=None)
     manager = ActuationProcessManager()
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
                                 actuation_process_manager=manager, snapshot_provider=lambda: profiles.materialize(profiles.repository.get_activation_set()))
@@ -635,17 +636,20 @@ schema_version=1
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
     try:
         await engine.handle_start_engine(StartEngineCommand())
-        await engine.start_module("acquisition")
-        await engine.start_module("processing")
+        async with engine.runtime_transition("acquisition"):
+            await engine.start_module_for_configuration("acquisition", engine.applied_snapshot)
+        async with engine.runtime_transition("processing"):
+            await engine.start_module_for_configuration("processing", engine.applied_snapshot)
         await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
         await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
-        await engine.start_module("actuation")
+        async with engine.runtime_transition("actuation"):
+            await engine.start_module_for_configuration("actuation", engine.applied_snapshot)
         await asyncio.sleep(.08)
         old_workers = (engine._engine.acquisition_worker.pid, engine._engine.signal_processing_worker.pid)
         old_actuation = manager._process.pid
         generation = engine.generation
         bindings[-1] = {"slot": "actuation.effector", "profile_id": alternate.profile_id}
-        plan = runtime.plan("actuation", [bindings[-1]], expected_revision=engine.applied_revisions["actuation"])
+        plan = runtime.plan("actuation", [bindings[-1]], expected_revision=engine.applied_revisions["actuation"], settings=section_settings(runtime.profiles.settings_source(), "actuation"))
         assert not plan.errors and plan.strategy == "module"
         operation = runtime.submit(plan.plan_id, str(uuid4()))
         await runtime.wait_for_idle()
@@ -722,7 +726,7 @@ def output_update(rebuild_harness):
     h.engine.start_module_for_configuration = start_output
     h.profiles.settings_source = lambda: {**h.previous.settings(), "ACTUATION.watchdog_timeout_s": 3.0}
     bindings = [{"slot": item.slot, "profile_id": item.profile_id} for item in h.previous.modules["actuation"].bindings]
-    h.plan = h.runtime.plan("actuation", bindings, expected_revision=h.previous.modules["actuation"].revision)
+    h.plan = h.runtime.plan("actuation", bindings, expected_revision=h.previous.modules["actuation"].revision, settings=section_settings(h.runtime.profiles.settings_source(), "actuation"))
     assert h.plan.strategy == "module" and not h.plan.errors
     return h
 

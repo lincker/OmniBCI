@@ -7,6 +7,9 @@ export type RuntimeStatus = S["RuntimeConfigurationResponse"];
 export type RuntimePlan = S["RuntimePlanResponse"];
 export type RuntimeOperation = S["RuntimeOperationResponse"];
 export type RuntimePlanRequest = S["RuntimePlanRequest"];
+export type ModuleConfigurationRequest = S["ModuleConfigurationRequest"];
+export type ModuleActionRequest = S["ModuleActionRequest"];
+export type StartReadingRequest = S["StartReadingRequest"];
 
 export const runtimeConfigApi = {
   status: () => configRequest<RuntimeStatus>("/runtime"),

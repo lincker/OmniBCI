@@ -4,10 +4,6 @@ from pydantic import BaseModel, Field, computed_field
 from omnibci.application.queries.plugin_queries import PluginInfo
 
 
-class StartStimulationRequest(BaseModel):
-    paradigm: Optional[str] = None
-
-
 class StartTrialRequest(BaseModel):
     """Trigger one or more stimulation trials.
 
@@ -81,7 +77,7 @@ class ParadigmsResponse(BaseModel):
 class StimulationStatusResponse(BaseModel):
     """Live status of the Stimulation subsystem.
 
-    active          — the application service has issued a StartStimulation command.
+    active          — the application service has started stimulation.
     process_alive   — the Stimulation subprocess is currently running (auto_spawn only).
     engine_connected — the Stimulation process has an active IPC connection to the engine.
     """

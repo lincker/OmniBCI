@@ -1,4 +1,5 @@
 """Configuration writes and engine lifecycle transitions share an exclusion gate."""
+from omnibci.application.activation_settings import section_settings
 import asyncio
 import threading
 from unittest.mock import MagicMock, patch
@@ -35,12 +36,12 @@ def test_host_settings_can_be_saved_while_running_without_applying(application_c
     engine._applied_snapshot = application_config._settings.snapshot()
 
     saved, restart, _ = application_config.save(
-        {"ALGORITHM.baseline_duration": 2.0}, expected_revision=application_config.read()[1])
+        {"NEUROENGINE.queue_size": 64}, expected_revision=application_config.read()[1])
 
-    assert saved == ["ALGORITHM.baseline_duration"]
+    assert saved == ["NEUROENGINE.queue_size"]
     assert restart is True
-    assert application_config._settings.get("ALGORITHM.baseline_duration") == 2.0
-    assert engine.applied_snapshot["ALGORITHM.baseline_duration"] == 1.0
+    assert application_config._settings.get("NEUROENGINE.queue_size") == 64
+    assert engine.applied_snapshot["NEUROENGINE.queue_size"] == 32
     builder.assert_not_called()
 
 
@@ -127,11 +128,11 @@ async def test_bootstrap_shares_pinned_plugin_selection_between_status_and_engin
         ):
             selected = profiles.create(kind, builtin_selection(kind, alias), alias, {})
             bindings.append({"slot": slot, "profile_id": selected.profile_id})
-        profiles.accept_system(profiles.propose_system(), expected_revision=None)
+        profiles.repository.save_system(profiles.propose_system(), expected_revision=None)
         for module in ("acquisition", "processing", "stimulation"):
-            profiles.accept_module(profiles.propose(module, [
+            profiles.repository.save_module(profiles.propose(module, [
                 binding for binding in bindings if binding["slot"].startswith(f"{module}.")
-            ]), expected_revision=None)
+            ], settings=section_settings(profiles.settings_source(), module)), expected_revision=None)
         assert container.acquisition_service._device_metadata() == ("neuroscan_scan45_reader", None, None)
         with patch("omnibci.application.services.engine_service.Thread"):
             await container.engine_service.handle_start_engine(StartEngineCommand())

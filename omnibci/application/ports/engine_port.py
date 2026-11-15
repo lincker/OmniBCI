@@ -76,16 +76,8 @@ class EnginePort(ABC):
         """Whether the requested business module is running on the engine."""
         return False
 
-    async def start_module(self, module: str) -> None:
-        """Start one module without restarting the engine or other modules."""
-        raise NotImplementedError
-
     async def stop_module(self, module: str) -> None:
         """Stop one module while keeping the engine available."""
-        raise NotImplementedError
-
-    def prepare_output_sync(self, module: str) -> dict:
-        """Prepare the selected output configuration before a synchronous start."""
         raise NotImplementedError
 
     def ensure_output_ready_sync(self, module: str, snapshot: dict) -> None:

@@ -97,12 +97,13 @@ class AcquisitionAppService:
     # Command handlers
     # ------------------------------------------------------------------
 
-    def handle_connect(self, cmd: ConnectDataProviderCommand) -> None:
+    def handle_connect(self, cmd: ConnectDataProviderCommand, *, prepare_processing=True) -> None:
         with self._admission.command("acquisition") if self._admission is not None else nullcontext():
             with self.lifecycle_lock:
                 self._command_executor.request(EventType.ConnectDataProvider, None)
         self._capture_descriptor()
-        self._try_prepare_processing()
+        if prepare_processing:
+            self.prepare_processing()
         logger.info("ConnectDataProvider event dispatched")
 
     def handle_disconnect(self, cmd: DisconnectDataProviderCommand) -> None:
@@ -112,12 +113,13 @@ class AcquisitionAppService:
                 self._command_executor.request(EventType.DisconnectDataProvider, None)
         logger.info("DisconnectDataProvider event dispatched")
 
-    def handle_start_stream(self, cmd: StartStreamCommand) -> None:
+    def handle_start_stream(self, cmd: StartStreamCommand, *, prepare_processing=True) -> None:
         self._capture_descriptor()
         with self._admission.command("acquisition") if self._admission is not None else nullcontext():
             with self.lifecycle_lock:
                 self._command_executor.request(EventType.StartStream, None)
-        self._try_prepare_processing()
+        if prepare_processing:
+            self.prepare_processing()
         logger.info("StartStream event dispatched")
 
     def _capture_descriptor(self):
@@ -127,7 +129,7 @@ class AcquisitionAppService:
             except Exception as exc:
                 logger.warning("Source metadata is unavailable: %s", exc)
 
-    def _try_prepare_processing(self):
+    def prepare_processing(self):
         if self._prepare_signal is not None:
             try:
                 self._prepare_signal()

@@ -279,7 +279,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     sourceOperation.current = true;
     metadataGeneration.current += 1; setSourceMetadata(null);
     setBusy(true); setError(""); setNotice(null);
-    try { await acquisition.connect.run(current.request("acquisition", await api.module("acquisition"))); }
+    try { await acquisition.connect.run(current.request("acquisition")); }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { sourceOperation.current = false; setBusy(false); }
   };
@@ -418,7 +418,25 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
         {selectedProfile && selectedProfile.revision > selectedBinding.profile_revision && <span>{t("profiles.profileChanged")}</span>}
         <button disabled={busy} onClick={() => changeEditor(() => resetEditor(currentFromBinding(selectedBinding)))}>{t("profiles.restoreApplied")}</button>
       </div>}
+      {currentState.conflicted && <div className="inline-message" role="status">
+        <p id="accepted-configuration-help">{t("profiles.acceptedChanged")}</p>
+        <button disabled={busy || runtimeState.inProgress} aria-describedby="accepted-configuration-help" onClick={async () => {
+          setBusy(true);
+          try {
+            const accepted = await current.loadAccepted(module);
+            if (accepted) setActivation(accepted);
+          } finally { setBusy(false); }
+        }}>{t("profiles.loadAccepted")}</button>
+      </div>}
       {moduleValidation && <p className="inline-message error" role="alert">{moduleValidation}</p>}
+      {module === "processing" && <section className="setting-group">
+        <label className="setting-row" htmlFor="processing-pre-trigger-duration"><span className="setting-label">{t("settings.baselineDuration")}</span>
+          <input id="processing-pre-trigger-duration" type="number" min="0" step="any" disabled={busy || !currentState.ready}
+            value={String(current.settings.processing?.["ALGORITHM.baseline_duration"] ?? 0)}
+            onChange={(event) => current.setSetting("processing", "ALGORITHM.baseline_duration", event.target.value === "" ? "" : Number(event.target.value))} />
+        </label>
+        <p className="setting-description">{t("settings.preTriggerDescription")}</p>
+      </section>}
       <ConfigurationHistory module={module} profile={profiles.find((profile) => profile.profile_id === editor.profile?.profile_id) ?? null}
         runtime={runtime} onProfileRestored={(profile) => setProfiles((previous) => previous.map((item) => item.profile_id === profile.profile_id ? profile : item))} />
       <p className="setting-description">{t(current.hasChanges(module, currentState.activation) ? "profiles.pendingCurrent" : "profiles.currentApplied")}</p>

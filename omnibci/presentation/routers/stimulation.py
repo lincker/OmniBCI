@@ -5,6 +5,9 @@ from omnibci.application.plugin_profiles import ProfileRevisionConflict
 from fastapi import APIRouter, Depends, Request, status
 
 from omnibci.presentation.dependencies import get_stimulation_service
+from omnibci.presentation.routers.runtime_config import get_runtime_configuration
+from omnibci.presentation.routers.plugin_config import _configuration_errors
+from omnibci.presentation.schemas.runtime_config import ModuleActionRequest, RuntimeOperationResponse
 from omnibci.presentation.errors import (
     ApiError,
     COMMAND_EXECUTION_RESPONSES,
@@ -14,12 +17,10 @@ from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.stimulation import (
     ParadigmsResponse,
     ParadigmInfo,
-    StartStimulationRequest,
     StartTrialRequest,
     StimulationStatusResponse,
 )
 from omnibci.application.commands.stimulation_commands import (
-    StartStimulationCommand,
     StopStimulationCommand,
     StartStimTrialCommand,
 )
@@ -65,18 +66,14 @@ def list_paradigms():
     return ApiResponse(data=ParadigmsResponse(paradigms=paradigms))
 
 
-@router.post("/start", response_model=ApiResponse, summary="Start stimulation")
-def start_stimulation(
-    body: StartStimulationRequest = StartStimulationRequest(),
-    svc: StimulationAppService = Depends(get_stimulation_service),
+@router.post("/start", response_model=ApiResponse[RuntimeOperationResponse], summary="Apply current stimulation and prepare or start it")
+async def start_stimulation(
+    body: ModuleActionRequest,
+    runtime=Depends(get_runtime_configuration),
 ):
-    try:
-        svc.handle_start_stimulation(StartStimulationCommand(paradigm=body.paradigm))
-        return ApiResponse(message="Stimulation started")
-    except ProfileRevisionConflict:
-        raise
-    except (RuntimeError, TimeoutError) as e:
-        raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
+    with _configuration_errors():
+        result = await runtime.execute_current("stimulation", "start", **body.model_dump())
+        return ApiResponse(data=result)
 
 
 @router.post(

@@ -9,7 +9,8 @@ export function moduleConfiguration({ revision, bindings = [], settings = {}, re
     modules: Object.fromEntries(moduleNames.map((module) => [module, {
       module, revision: revisions[module],
       bindings: bindings.filter((binding) => binding.slot.startsWith(`${module}.`)),
-      settings: Object.fromEntries(Object.entries(settings).filter(([key]) => key.startsWith(`${module.toUpperCase()}.`))),
+      settings: Object.fromEntries(Object.entries(settings).filter(([key]) => key.startsWith(`${module.toUpperCase()}.`)
+        || module === "processing" && key === "ALGORITHM.baseline_duration")),
     }])),
     system: { revision: revisions.system, settings: {} },
   };
@@ -17,7 +18,13 @@ export function moduleConfiguration({ revision, bindings = [], settings = {}, re
 
 /** Scoped controller stubs for presentation tests. Real command tests use the hooks. */
 export function runtimeController(value = {}) {
-  return { status: { operations: {}, recovery: {}, accepted: {}, applied: null }, ...value,
+  return { status: { operations: {}, recovery: {}, accepted: {}, applied: null },
+    async execute(module, configuration, send, onApplied) {
+      const operation = await send({ operation_id: crypto.randomUUID(), configuration });
+      if (operation?.result?.configuration_applied) onApplied?.(operation);
+      return operation;
+    },
+    ...value,
     state(module) {
       const operation = this.status?.operations?.[module] ?? this.operation ?? null;
       const scoped = this.scopes?.[module] ?? {};
@@ -31,7 +38,10 @@ export function runtimeController(value = {}) {
 
 export function currentController(activation, value = {}) {
   const selected = activation?.modules ? activation : moduleConfiguration(activation ?? {});
-  return { entries: {}, filterOrder: [], hasChanges: () => false, validationError: () => null,
+  return { entries: {}, filterOrder: [], settings: {}, acknowledge: () => {}, setSetting: () => {},
+    hasChanges: () => false, validationError: () => null,
+    request: (module) => ({ expected_revision: selected.modules[module].revision,
+      settings: selected.modules[module].settings, bindings: selected.modules[module].bindings }),
     ...value, modules: Object.fromEntries(moduleNames.map((module) => [module, {
       activation: selected.modules[module], ready: value.ready ?? true, error: value.error ?? null,
       ...value.modules?.[module],

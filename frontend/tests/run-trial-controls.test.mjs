@@ -17,7 +17,7 @@ const { currentBindings } = await server.ssrLoadModule("/src/hooks/useCurrentCon
 const { translate } = await server.ssrLoadModule("/src/i18n.tsx");
 const english = { language: "en", t: (key, params) => translate("en", key, params) };
 const noop = () => {};
-const currentRequest = (module, selected) => ({ module, expected_revision: selected?.revision ?? null,
+const currentRequest = (module, selected) => ({ settings: selected?.settings ?? {}, expected_revision: selected?.revision ?? null,
   bindings: currentBindings(module, {}, [], selected) });
 const revision = "accepted-stimulation";
 const paradigm = { selection: { package_id: "example.visual", contribution_id: "main", version: "1.0.0" },
@@ -89,12 +89,12 @@ function render({ stimulation = ready, stimulationError = null, selectedParadigm
   };
   try {
     const engineState = { data: engine, error: engineError, refresh };
-    const source = { data: acquisition, error: acquisitionError, refresh, pending: acquisitionPending, cancelPending: noop,
+    const source = { data: { connection_id: acquisition.connected ? "source-1" : null, ...acquisition }, error: acquisitionError, refresh, pending: acquisitionPending,
       ...Object.fromEntries(["connect", "disconnect", "read", "stopRead"].map((name) => [name,
         { run: acquisitionActions[name] ?? noop, pending: acquisitionPending && name === "connect", error: actionErrors[name] ?? null }])) };
-    const controller = runtimeController({ status: { accepted: revisionMap(revision), applied: revisionMap(revision), recovery: {}, operations: {}, errors: {} }, refresh, ...runtime });
+    const controller = runtimeController({ status: { generation: "engine-1", accepted: revisionMap(revision), applied: revisionMap(revision), recovery: {}, operations: {}, errors: {} }, refresh, ...runtime });
     const editable = currentController(selectedModules, { ready: !!selectedModules, error: typeof loadError === "string" ? loadError : null,
-      filterOrder: selection?.bindings?.filter((item) => item.kind === "filter").map((item) => item.slot) ?? [], request: currentRequest });
+      filterOrder: selection?.bindings?.filter((item) => item.kind === "filter").map((item) => item.slot) ?? [], request: (module) => currentRequest(module, selectedModules?.modules[module]) });
     const runtimeControls = useRuntimeControls(controller, editable, source, engineState.refresh);
     return RunConsole({ engine: engineState, acquisition: source, feed: { generation: null, trials: [], acks: [] },
       runtime: controller, current: editable, runtimeControls, onEditSetup: noop, onEditProcessing, onResults: noop });
@@ -354,7 +354,7 @@ test("Run routes each explicit source action to the shared controller without co
     await actionButton(reading, "Disconnect").props.onClick();
     await actionButton(reading, "Start reading").props.onClick();
     await actionButton(reading, "Stop reading").props.onClick();
-    assert.deepEqual(calls, [["connect", currentRequest("acquisition", moduleConfiguration(sourceActivation).modules.acquisition)], ["read", { acquisition: revision, system: "system-revision" }], ["disconnect"], ["stopRead"]]);
+    assert.deepEqual(calls, [["connect", currentRequest("acquisition", moduleConfiguration(sourceActivation).modules.acquisition)], ["read", { expected_revision: revision, generation: "engine-1", connection_id: "source-1" }], ["disconnect"], ["stopRead"]]);
   } finally { signalConfigApi.get = originalSignal; runtimeConfigApi.status = originalStatus; pluginConfigApi.modules = originalActivation; }
 });
 

@@ -78,8 +78,10 @@ def test_snapshot_transport_and_revision_restart(monkeypatch, module, manager_cl
     manager.start(settings_snapshot=deepcopy(saved))
     assert factory.call_count == 1
     spawned = factory.call_args.kwargs
-    expected = "STIMULATION_THUBCI_SSVEP_classic40" if component == "Stimulation" else "selected-plugin"
-    assert spawned["args"][0] == expected
+    if component == "Stimulation":
+        assert manager.current_paradigm == "STIMULATION_THUBCI_SSVEP_classic40"
+    else:
+        assert spawned["args"][0] == "selected-plugin"
     assert pickle.loads(pickle.dumps(spawned["kwargs"])) == {"settings_snapshot": original}
 
     saved["CONFIG.module_revisions"][component.lower()] = "revision-2"
@@ -126,15 +128,12 @@ def test_output_child_restarts_for_own_identity_changes(monkeypatch, module, man
     manager.stop()
 
 
-@pytest.mark.parametrize(("module", "manager_class", "component", "key"), MANAGERS)
-def test_snapshot_rejects_conflicting_legacy_override_before_spawn(
-    monkeypatch, module, manager_class, component, key,
-):
-    factory = _mock_spawning(monkeypatch, module, component)
-    manager = manager_class()
+def test_actuation_snapshot_rejects_conflicting_legacy_override_before_spawn(monkeypatch):
+    factory = _mock_spawning(monkeypatch, actuation, "Actuation")
+    manager = actuation.ActuationProcessManager()
 
     with pytest.raises(RuntimeError, match="Apply the .* configuration"):
-        manager.start("other-plugin", settings_snapshot=_snapshot(key))
+        manager.start("other-plugin", settings_snapshot=_snapshot("ACTUATION.effector"))
 
     factory.assert_not_called()
 
@@ -205,7 +204,8 @@ def _report_plugin_directory(connection):
         connection.send(os.environ.get("OMNIBCI_PLUGIN_DIR"))
 
 
-def _ready_with_current_plugin_directory(selected, stop_event, connection, *, settings_snapshot):
+def _ready_with_current_plugin_directory(*args, settings_snapshot):
+    stop_event, connection = args[-2:]
     reporter = StartupReporter(
         connection, component=settings_snapshot["TEST.component"],
         module_revisions={settings_snapshot["TEST.component"].lower(): settings_snapshot["CONFIG.module_revisions"][settings_snapshot["TEST.component"].lower()]},

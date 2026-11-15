@@ -11,6 +11,8 @@ from omnibci.application.services.command_result_service import (
     CommandTimeoutError,
 )
 
+READ_IDENTITY = {"expected_revision": "source-revision", "generation": "engine-generation", "connection_id": "connection"}
+
 
 def _rejected(command: str = "StartStream") -> CommandRejectedError:
     return CommandRejectedError(CommandResult(
@@ -31,34 +33,14 @@ def _running_engine(engine_service):
 
 
 class TestAcquisitionConnect:
-    def test_connect_returns_confirmed_success(self, api_client, mock_engine):
-        resp = api_client.post("/api/v1/acquisition/connect")
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        assert resp.json()["message"] == "Data provider connected"
 
-    def test_connect_dispatches_event(self, api_client, mock_engine):
-        api_client.post("/api/v1/acquisition/connect")
-        mock_engine.event_bus.put_event.assert_called()
 
     def test_disconnect_returns_confirmed_success(self, api_client, mock_engine):
         resp = api_client.post("/api/v1/acquisition/disconnect")
         assert resp.status_code == 200
         assert resp.json()["message"] == "Data provider disconnected"
 
-    def test_connect_without_engine_returns_503(self, api_client, engine_service):
-        engine_service._engine = None
-        resp = api_client.post("/api/v1/acquisition/connect")
-        assert resp.status_code == 503
 
-    def test_connect_starts_only_acquisition_before_sending_connect(
-        self, api_client, engine_service, acquisition_service,
-    ):
-        calls = []
-        engine_service.start_module = AsyncMock(side_effect=lambda module: calls.append(module))
-        acquisition_service.handle_connect = MagicMock(side_effect=lambda cmd: calls.append("connect"))
-        assert api_client.post("/api/v1/acquisition/connect").status_code == 200
-        assert calls == ["acquisition", "connect"]
 
     def test_disconnect_stops_only_acquisition_and_clears_its_projection(
         self, api_client, mock_engine, acquisition_service,
@@ -95,8 +77,18 @@ class TestAcquisitionConnect:
 
 
 class TestAcquisitionStream:
+    @pytest.fixture(autouse=True)
+    def connected_source(self, engine_service, acquisition_service):
+        engine_service._acquisition = acquisition_service
+        engine_service._applied_snapshot = {
+            "CONFIG.generation": READ_IDENTITY["generation"],
+            "CONFIG.module_revisions": {"acquisition": READ_IDENTITY["expected_revision"]},
+        }
+        acquisition_service._connected = True
+        acquisition_service._connection_id = READ_IDENTITY["connection_id"]
+
     def test_start_stream_returns_confirmed_success(self, api_client, mock_engine):
-        resp = api_client.post("/api/v1/acquisition/stream/start")
+        resp = api_client.post("/api/v1/acquisition/stream/start", json=READ_IDENTITY)
         assert resp.status_code == 200
         assert resp.json()["success"] is True
         assert resp.json()["message"] == "Stream started"
@@ -108,7 +100,7 @@ class TestAcquisitionStream:
 
     def test_start_stream_without_engine_returns_503(self, api_client, engine_service):
         engine_service._engine = None
-        resp = api_client.post("/api/v1/acquisition/stream/start")
+        resp = api_client.post("/api/v1/acquisition/stream/start", json=READ_IDENTITY)
         assert resp.status_code == 503
 
     def test_worker_rejection_returns_409_with_command_detail(
@@ -118,7 +110,7 @@ class TestAcquisitionStream:
             side_effect=_rejected()
         )
 
-        resp = api_client.post("/api/v1/acquisition/stream/start")
+        resp = api_client.post("/api/v1/acquisition/stream/start", json=READ_IDENTITY)
 
         assert resp.status_code == 409
         assert resp.json()["code"] == "COMMAND_REJECTED"
@@ -150,7 +142,7 @@ class TestAcquisitionStream:
         prepare = MagicMock()
         acquisition_service.set_signal_preparer(prepare)
 
-        response = api_client.post("/api/v1/acquisition/stream/start")
+        response = api_client.post("/api/v1/acquisition/stream/start", json=READ_IDENTITY)
 
         assert response.status_code == 409
         assert response.json()["code"] == "COMMAND_REJECTED"
@@ -172,7 +164,7 @@ class TestAcquisitionStream:
             CommandTimeoutError("cmd-timeout", "StartStream", 0.25)
         )
 
-        resp = api_client.post("/api/v1/acquisition/stream/start")
+        resp = api_client.post("/api/v1/acquisition/stream/start", json=READ_IDENTITY)
 
         assert resp.status_code == 504
         assert resp.json()["code"] == "COMMAND_TIMEOUT"
@@ -192,7 +184,7 @@ class TestAcquisitionStream:
             ))
         )
 
-        resp = api_client.post("/api/v1/acquisition/stream/start")
+        resp = api_client.post("/api/v1/acquisition/stream/start", json=READ_IDENTITY)
 
         assert resp.status_code == 500
         assert resp.json()["code"] == "COMMAND_EXECUTION_FAILED"
@@ -207,19 +199,11 @@ class TestAcquisitionStatus:
         assert data["connected"] is False
         assert data["streaming"] is False
 
-    def test_connect_alone_does_not_flip_status(self, api_client, acquisition_service, mock_engine):
-        # Projection semantics (option A): the command only dispatches intent;
-        # status flips when the worker reports back via AcquisitionState.
-        api_client.post("/api/v1/acquisition/connect")
-        resp = api_client.get("/api/v1/acquisition/status")
-        assert resp.json()["data"]["connected"] is False
 
     def test_status_reflects_worker_snapshot(self, api_client, acquisition_service, mock_engine):
         from omnibci.application.events import AcquisitionSnapshot
         from omnibci.shared.events import Event, EventType
 
-        api_client.post("/api/v1/acquisition/connect")
-        api_client.post("/api/v1/acquisition/stream/start")
         acquisition_service.on_acquisition_state(
             Event(EventType.AcquisitionState,
                   AcquisitionSnapshot(connected=True, streaming=True)))

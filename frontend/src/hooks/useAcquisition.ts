@@ -1,11 +1,10 @@
 import { useCallback, useRef, useState } from "react";
 import { api, ApiError } from "../api/client";
 import { useI18n, type Translate } from "../i18n";
-import { connectSource, startReading } from "../source-lifecycle";
 import { usePoll } from "./usePoll";
 import type { RuntimeConfiguration } from "./useRuntimeConfiguration";
-import type { RevisionMap } from "../api/plugin-config";
-import type { RuntimePlanRequest } from "../api/runtime-config";
+import type { ModuleConfigurationRequest, StartReadingRequest } from "../api/runtime-config";
+import type { CurrentConfigurationController } from "./useCurrentConfiguration";
 
 type Operation = "connect" | "disconnect" | "read" | "stopRead";
 
@@ -24,25 +23,21 @@ function acquisitionError(cause: unknown, t: Translate): string | null {
 }
 
 /** One connection state and command lock shared by Setup and Run. */
-export function useAcquisition(runtime: RuntimeConfiguration, refreshEngine: () => Promise<void>) {
+export function useAcquisition(runtime: RuntimeConfiguration, refreshEngine: () => Promise<void>, current: CurrentConfigurationController) {
   const { t } = useI18n();
   const status = usePoll(api.acquisitionStatus);
   const [operations, setOperations] = useState<Partial<Record<Operation, boolean>>>({});
   const [errors, setErrors] = useState<Partial<Record<Operation, unknown>>>({});
   const pending = useRef<Partial<Record<Operation, boolean>>>({});
-  const intent = useRef(0);
-  const cancelPending = () => { intent.current += 1; };
   const refresh = useCallback(async () => {
     await Promise.all([status.refresh(), refreshEngine(), runtime.refresh()]);
   }, [status.refresh, refreshEngine, runtime.refresh]);
 
-  const run = async (name: Operation, action: (valid: () => boolean) => Promise<unknown>) => {
+  const run = async (name: Operation, action: () => Promise<unknown>) => {
     if (pending.current[name] || name !== "stopRead" && Object.values(pending.current).some(Boolean)) return;
-    if (name === "stopRead") cancelPending();
-    const token = intent.current;
     pending.current = { ...pending.current, [name]: true }; setOperations(pending.current);
     setErrors((current) => ({ ...current, [name]: undefined }));
-    try { await action(() => token === intent.current); }
+    try { await action(); }
     catch (cause) {
       setErrors((current) => ({ ...current, [name]: cause }));
     } finally {
@@ -51,16 +46,12 @@ export function useAcquisition(runtime: RuntimeConfiguration, refreshEngine: () 
     }
   };
   return {
-    ...status, refresh, cancelPending, pending: Object.values(operations).some(Boolean),
+    ...status, refresh, pending: Object.values(operations).some(Boolean),
     connect: { pending: !!operations.connect, error: acquisitionError(errors.connect, t),
-      run: (configuration: RuntimePlanRequest) => run("connect", async (valid) => {
-        if (configuration.module !== "acquisition") throw new Error("Connect requires the current acquisition configuration.");
-        const current = await api.acquisitionStatus();
-        if (!current) throw new Error("Source status is unavailable. Refresh before retrying.");
-        if (current.connected || current.streaming) throw new Error("Stop reading and disconnect before changing the source connection.");
-        if (!valid()) return;
-        const revision = await runtime.applyCurrentSelection(configuration);
-        if (revision && valid()) return connectSource(revision, valid);
+      run: (configuration: ModuleConfigurationRequest) => run("connect", async () => {
+        const result = await runtime.execute("acquisition", configuration, api.acqConnect,
+          (operation) => current.acknowledge("acquisition", configuration, operation.target_revisions.acquisition));
+        if (result.status !== "succeeded") throw new Error(result.error ?? "Acquisition connection failed.");
       }) },
     disconnect: { pending: !!operations.disconnect, error: acquisitionError(errors.disconnect, t),
       run: () => run("disconnect", async () => {
@@ -74,7 +65,7 @@ export function useAcquisition(runtime: RuntimeConfiguration, refreshEngine: () 
         if (current.connected || recovery) await api.acqDisconnect();
       }) },
     read: { pending: !!operations.read, error: acquisitionError(errors.read, t),
-      run: (revision: RevisionMap) => run("read", (valid) => startReading(revision, valid)) },
+      run: (identity: StartReadingRequest) => run("read", () => api.acqStreamStart(identity)) },
     stopRead: { pending: !!operations.stopRead, error: acquisitionError(errors.stopRead, t),
       run: () => run("stopRead", api.acqStreamStop) },
   };

@@ -384,7 +384,6 @@
             "required": true,
             "schema": {
               "enum": [
-                "acquisition",
                 "processing",
                 "actuation"
               ],
@@ -393,13 +392,23 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModuleActionRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
+                  "$ref": "#/components/schemas/ApiResponse_RuntimeOperationResponse_"
                 }
               }
             }
@@ -808,13 +817,23 @@
         ],
         "summary": "Connect data source and wait for execution",
         "operationId": "connect_api_v1_acquisition_connect_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModuleActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
+                  "$ref": "#/components/schemas/ApiResponse_RuntimeOperationResponse_"
                 }
               }
             }
@@ -1010,6 +1029,16 @@
         ],
         "summary": "Start EEG data stream and wait for execution",
         "operationId": "start_stream_api_v1_acquisition_stream_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartReadingRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -2174,17 +2203,17 @@
         "tags": [
           "Stimulation"
         ],
-        "summary": "Start stimulation",
+        "summary": "Apply current stimulation and prepare or start it",
         "operationId": "start_stimulation_api_v1_stimulation_start_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/StartStimulationRequest",
-                "default": {}
+                "$ref": "#/components/schemas/ModuleActionRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -2192,7 +2221,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
+                  "$ref": "#/components/schemas/ApiResponse_RuntimeOperationResponse_"
                 }
               }
             }
@@ -8362,6 +8391,24 @@
         ],
         "title": "MarketPackageResponse"
       },
+      "ModuleActionRequest": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/ModuleConfigurationRequest"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "operation_id",
+          "configuration"
+        ],
+        "title": "ModuleActionRequest"
+      },
       "ModuleActivationResponse": {
         "properties": {
           "module": {
@@ -8406,6 +8453,41 @@
           "bindings"
         ],
         "title": "ModuleActivationResponse"
+      },
+      "ModuleConfigurationRequest": {
+        "properties": {
+          "expected_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Settings"
+          },
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/DraftPluginBindingRequest"
+            },
+            "type": "array",
+            "title": "Bindings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "settings",
+          "bindings"
+        ],
+        "title": "ModuleConfigurationRequest"
       },
       "ModuleHistoryResponse": {
         "properties": {
@@ -9728,6 +9810,18 @@
             },
             "type": "array",
             "title": "Bindings"
+          },
+          "settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settings"
           }
         },
         "additionalProperties": false,
@@ -10244,22 +10338,32 @@
         ],
         "title": "StartAcquisitionPreviewRequest"
       },
-      "StartStimulationRequest": {
+      "StartReadingRequest": {
         "properties": {
-          "paradigm": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Paradigm"
+          "expected_revision": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Expected Revision"
+          },
+          "generation": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Generation"
+          },
+          "connection_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Connection Id"
           }
         },
+        "additionalProperties": false,
         "type": "object",
-        "title": "StartStimulationRequest"
+        "required": [
+          "expected_revision",
+          "generation",
+          "connection_id"
+        ],
+        "title": "StartReadingRequest"
       },
       "StartTrialRequest": {
         "properties": {
@@ -10320,7 +10424,7 @@
           "engine_connected"
         ],
         "title": "StimulationStatusResponse",
-        "description": "Live status of the Stimulation subsystem.\n\nactive          — the application service has issued a StartStimulation command.\nprocess_alive   — the Stimulation subprocess is currently running (auto_spawn only).\nengine_connected — the Stimulation process has an active IPC connection to the engine."
+        "description": "Live status of the Stimulation subsystem.\n\nactive          — the application service has started stimulation.\nprocess_alive   — the Stimulation subprocess is currently running (auto_spawn only).\nengine_connected — the Stimulation process has an active IPC connection to the engine."
       },
       "StopAcquisitionPreviewRequest": {
         "properties": {

@@ -1,5 +1,5 @@
 """Explicit profile selections for tests that exercise configured backends."""
-from omnibci.application.activation_settings import MODULES
+from omnibci.application.activation_settings import MODULES, section_settings
 
 
 def builtin_selection(kind, alias):
@@ -16,10 +16,10 @@ def accept_profiles(service, selections):
         profile = service.create(kind, definition.selection, plugin_type, parameters)
         by_module.setdefault(slot.split(".", 1)[0], []).append({"slot": slot, "profile_id": profile.profile_id})
     if service.repository.get_system() is None:
-        service.accept_system(service.propose_system(), expected_revision=None)
+        service.repository.save_system(service.propose_system(), expected_revision=None)
     for module in MODULES:
         if module in by_module:
             current = service.repository.get_module(module)
-            service.accept_module(service.propose(module, by_module[module]),
+            service.repository.save_module(service.propose(module, by_module[module], settings=section_settings(service.settings_source(), module)),
                                   expected_revision=current.revision if current else None)
     return service.repository.get_activation_set()

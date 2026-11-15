@@ -1,4 +1,5 @@
 """Real publication and TCP admission reject an old run after an engine restart."""
+from omnibci.application.activation_settings import section_settings
 import asyncio
 import json
 from threading import Event as ThreadEvent
@@ -121,11 +122,11 @@ def test_restarted_engine_rejects_cached_node_configuration_and_accepts_fresh_fe
     saved = {kind: profiles.create(kind, definition.selection, kind, {},
              **({"processing_input": ProcessingInput()} if kind == "decoder" else {}))
              for kind, definition in backend_catalog.definitions.items()}
-    profiles.accept_system(profiles.propose_system(), expected_revision=None)
+    profiles.repository.save_system(profiles.propose_system(), expected_revision=None)
     for module in ("acquisition", "processing", "stimulation", "actuation"):
         selected = [{"slot": _SLOTS[kind], "profile_id": profile.profile_id}
                     for kind, profile in saved.items() if _SLOTS[kind].startswith(module + ".")]
-        profiles.accept_module(profiles.propose(module, selected), expected_revision=None)
+        profiles.repository.save_module(profiles.propose(module, selected, settings=section_settings(profiles.settings_source(), module)), expected_revision=None)
     node_catalog = MetadataCatalog(kinds)
 
     async def scenario():

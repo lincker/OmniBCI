@@ -26,6 +26,20 @@ class RuntimePlanRequest(BaseModel):
     expected_revision: str | None = None
     refresh_slots: list[str] | None = None
     bindings: list[SelectProfileBindingRequest | DraftPluginBindingRequest]
+    settings: dict[str, Any] | None = None
+
+
+class ModuleConfigurationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_revision: str | None
+    settings: dict[str, Any]
+    bindings: list[DraftPluginBindingRequest]
+
+
+class ModuleActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    operation_id: str
+    configuration: ModuleConfigurationRequest
 
 
 class RuntimePlanResponse(BaseModel):

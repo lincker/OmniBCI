@@ -1,7 +1,6 @@
 """Composition root for application services and infrastructure adapters."""
 
 import logging
-from contextlib import contextmanager
 from threading import RLock
 from dataclasses import dataclass
 from typing import Callable, Iterable, Tuple
@@ -176,15 +175,6 @@ async def _build_container_services(host_settings, allow_process_termination):
     )
     package_references_lock = RLock()
 
-    @contextmanager
-    def profile_change(requires_idle):
-        with package_references_lock:
-            if requires_idle:
-                with engine_service.configuration_change(True):
-                    yield
-            else:
-                yield
-
     config_service = ConfigService(
         settings,
         change_guard=engine_service.configuration_change,
@@ -192,7 +182,7 @@ async def _build_container_services(host_settings, allow_process_termination):
     plugin_profiles = PluginProfileService(
         TomlPluginProfileRepository(), CatalogConfigurationAdapter(),
         settings_source=settings.saved_snapshot,
-        change_guard=profile_change,
+        change_guard=lambda: package_references_lock,
         startup_settings_resolver=_effective_backend_startup_settings,
         loaded_startup_settings=host_settings,
     )

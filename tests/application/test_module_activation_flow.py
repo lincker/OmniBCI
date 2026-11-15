@@ -1,4 +1,5 @@
 """Module application records successful operations without coupling other sections."""
+from omnibci.application.activation_settings import section_settings
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -38,7 +39,7 @@ async def execute(flow, plan, operation_id=None):
 
 def source_plan(flow):
     current = flow.profiles.repository.get_module("acquisition")
-    return flow.runtime.plan("acquisition", flow.bindings,
+    return flow.runtime.plan("acquisition", flow.bindings, settings={},
                              expected_revision=current.revision if current else None)
 
 
@@ -90,7 +91,7 @@ async def test_unrelated_module_write_does_not_expire_a_plan(flow):
     assert (await execute(flow, source_plan(flow)))["status"] == "succeeded"
     flow.bindings[0]["parameters"]["file_reader_chunk_size"] = 200
     plan = source_plan(flow)
-    flow.profiles.accept_module(flow.profiles.propose("stimulation", []), expected_revision=None)
+    flow.profiles.repository.save_module(flow.profiles.propose("stimulation", [], settings=section_settings(flow.profiles.settings_source(), "stimulation")), expected_revision=None)
     assert flow.runtime.resolve_plan(plan.plan_id).plan == plan
     assert (await execute(flow, plan))["status"] == "succeeded"
     assert flow.profiles.repository.get_module("stimulation") is not None
@@ -136,6 +137,6 @@ async def test_changed_system_rejects_pending_module_plan(flow):
     plan = source_plan(flow)
     previous = flow.profiles.repository.get_system()
     flow.host["debug"] = True
-    flow.profiles.accept_system(flow.profiles.propose_system(), expected_revision=previous.revision)
+    flow.profiles.repository.save_system(flow.profiles.propose_system(), expected_revision=previous.revision)
     with pytest.raises(ProfileRevisionConflict):
         flow.runtime.resolve_plan(plan.plan_id)

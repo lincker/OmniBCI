@@ -1,4 +1,5 @@
 """Each configuration page owns only its module's selections and validation."""
+from omnibci.application.activation_settings import section_settings
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -46,14 +47,14 @@ def stopped_runtime(profiles):
 def accept_plan(profiles, runtime, plan):
     stored = runtime.resolve_plan(plan.plan_id)
     if stored.system:
-        profiles.accept_system(stored.system, expected_revision=plan.expected_revisions["system"])
+        profiles.repository.save_system(stored.system, expected_revision=plan.expected_revisions["system"])
     for module, candidate in stored.candidates.items():
-        profiles.accept_module(candidate, expected_revision=plan.expected_revisions[module])
+        profiles.repository.save_module(candidate, expected_revision=plan.expected_revisions[module])
 
 
 def test_acquisition_can_be_selected_and_started_without_other_modules(profiles):
     runtime = stopped_runtime(profiles)
-    plan = runtime.plan("acquisition", [source_request(profiles)], expected_revision=None)
+    plan = runtime.plan("acquisition", [source_request(profiles)], expected_revision=None, settings={})
     assert not plan.errors
     assert plan.signal_summary is None
     assert set(plan.target_revisions) == {"acquisition", "system"}
@@ -71,7 +72,7 @@ async def test_first_acquisition_apply_executes_without_preparing_an_experiment(
         runtime.engine, profiles, acquisition,
         SimpleNamespace(is_active=False, process_alive=False), commands,
     )
-    plan = runtime.plan("acquisition", [source_request(profiles)], expected_revision=None)
+    plan = runtime.plan("acquisition", [source_request(profiles)], expected_revision=None, settings={})
     operation = runtime.submit(plan.plan_id, str(uuid4()))
     await runtime.wait_for_idle()
     assert runtime.operation(operation["operation_id"])["status"] == "succeeded"
@@ -99,7 +100,7 @@ def test_acquisition_does_not_inspect_or_modify_dormant_decoder(profiles, monkey
 
     monkeypatch.setattr(profiles.catalog, "get", only_acquisition)
     runtime = stopped_runtime(profiles)
-    plan = runtime.plan("acquisition", [source_request(profiles)], expected_revision=None)
+    plan = runtime.plan("acquisition", [source_request(profiles)], expected_revision=None, settings={})
     assert not plan.errors
     assert plan.changed_slots == ("acquisition.source",)
     accept_plan(profiles, runtime, plan)
@@ -118,7 +119,7 @@ def test_each_module_can_be_configured_first(profiles, module, slot, kind, alias
     plugin = definition(profiles, kind, alias)
     profile = profiles.create(kind, plugin.selection, alias, {})
     runtime = stopped_runtime(profiles)
-    plan = runtime.plan(module, [{"slot": slot, "profile_id": profile.profile_id}], expected_revision=None)
+    plan = runtime.plan(module, [{"slot": slot, "profile_id": profile.profile_id}], expected_revision=None, settings={})
     assert not plan.errors
     accept_plan(profiles, runtime, plan)
     assert [b.slot for b in profiles.repository.get_module(module).bindings] == [slot]
@@ -127,28 +128,28 @@ def test_each_module_can_be_configured_first(profiles, module, slot, kind, alias
 
 def test_module_request_cannot_change_another_modules_slots(profiles):
     with pytest.raises(PluginSchemaError, match="module"):
-        profiles.propose("processing", [source_request(profiles)])
+        profiles.propose("processing", [source_request(profiles)], settings=section_settings(profiles.settings_source(), "processing"))
 
 
 def test_acquisition_still_validates_its_own_parameters(profiles):
     request = source_request(profiles)
     request["parameters"]["DATA_PROVIDER_PORT"] = "invalid"
     with pytest.raises(PluginSchemaError):
-        stopped_runtime(profiles).plan("acquisition", [request], expected_revision=None)
+        stopped_runtime(profiles).plan("acquisition", [request], expected_revision=None, settings={})
 
 
 def test_unrelated_module_write_does_not_expire_reviewed_plan(profiles):
-    profiles.accept_system(profiles.propose_system(), expected_revision=None)
+    profiles.repository.save_system(profiles.propose_system(), expected_revision=None)
     runtime = stopped_runtime(profiles)
-    plan = runtime.plan("acquisition", [source_request(profiles)], expected_revision=None)
-    profiles.accept_module(profiles.propose("stimulation", []), expected_revision=None)
+    plan = runtime.plan("acquisition", [source_request(profiles)], expected_revision=None, settings={})
+    profiles.repository.save_module(profiles.propose("stimulation", [], settings=section_settings(profiles.settings_source(), "stimulation")), expected_revision=None)
     assert runtime.resolve_plan(plan.plan_id).candidates["acquisition"].bindings
     with pytest.raises(ProfileRevisionConflict):
-        runtime.plan("stimulation", [], expected_revision=None)
+        runtime.plan("stimulation", [], expected_revision=None, settings={})
 
 
 def test_existing_system_keeps_single_module_target_scoped(profiles):
-    profiles.accept_system(profiles.propose_system(), expected_revision=None)
+    profiles.repository.save_system(profiles.propose_system(), expected_revision=None)
     runtime = stopped_runtime(profiles)
-    plan = runtime.plan("stimulation", [], expected_revision=None)
+    plan = runtime.plan("stimulation", [], expected_revision=None, settings={})
     assert set(plan.target_revisions) == {"stimulation"}

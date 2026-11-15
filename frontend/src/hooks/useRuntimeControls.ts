@@ -1,9 +1,7 @@
 /** Own command continuations and feedback independently of the visible page. */
 import { useRef, useState } from "react";
 import { api, ApiError } from "../api/client";
-import { pluginConfigApi, type ModuleActivation, type RevisionMap } from "../api/plugin-config";
 import { signalConfigApi } from "../api/signal-config";
-import { assertConfigurationRevision } from "../source-lifecycle";
 import { useI18n, type TranslationKey } from "../i18n";
 import { usePoll } from "./usePoll";
 import type { AcquisitionController } from "./useAcquisition";
@@ -24,7 +22,6 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
   const signal = usePoll(signalConfigApi.get);
   const [actions, setActions] = useState<Partial<Record<ActionName, ActionState>>>({});
   const values = useRef(actions);
-  const intent = useRef<Partial<Record<ConfigurationSection, number>>>({});
   const [notices, setNotices] = useState<Partial<Record<ConfigurationModule, TranslationKey>>>({});
   const update = (name: ActionName, value: ActionState) => {
     values.current = { ...values.current, [name]: value }; setActions(values.current);
@@ -32,19 +29,11 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
   const pending = (module: ConfigurationSection) => Object.entries(values.current).some(([name, state]) =>
     state.pending && (module === "system" || actionModules[name as ActionName] === module))
     || ((module === "system" || module === "acquisition") && acquisition.pending);
-  const run = async (name: ActionName, action: (valid: () => boolean) => Promise<unknown>, stop = false) => {
+  const run = async (name: ActionName, action: () => Promise<unknown>, stop = false) => {
     const module = actionModules[name];
     if (values.current[name]?.pending || !stop && (pending(module) || values.current.start?.pending || values.current.stop?.pending)) return;
-    if (stop) {
-      if (module === "system") {
-        for (const section of ["system", "acquisition", "processing", "stimulation", "actuation"] as const) intent.current[section] = (intent.current[section] ?? 0) + 1;
-        acquisition.cancelPending();
-      } else intent.current[module] = (intent.current[module] ?? 0) + 1;
-    }
-    const token = intent.current[module] ?? 0;
-    const valid = () => (intent.current[module] ?? 0) === token;
     update(name, { pending: true, error: null });
-    try { await action(valid); }
+    try { await action(); }
     catch (cause) { update(name, { pending: true, error: cause instanceof ApiError ? `[${cause.code}] ${cause.message}` : String(cause) }); }
     finally {
       if (module === "system") await Promise.all([acquisition.refresh(), stimulation.refresh(), signal.refresh()]);
@@ -54,77 +43,47 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
       update(name, { pending: false, error: values.current[name]?.error ?? null });
     }
   };
-  const runCurrent = async (module: ConfigurationModule, applyCurrent: boolean, valid: () => boolean,
-    action: (revisions: RevisionMap, accepted: ModuleActivation) => Promise<unknown>) => {
-    if (!current.modules[module].ready) throw new Error(current.modules[module].error ?? t("run.reason.configurationLoading"));
-    let accepted = await pluginConfigApi.module(module);
-    if (!valid()) return;
-    let expected: RevisionMap = { [module]: accepted.revision, system: runtime.status?.accepted.system ?? null };
-    if (current.hasChanges(module, accepted)) {
-      if (!applyCurrent) throw new Error(t("run.reason.reconnectCurrentSource"));
-      const revisions = await runtime.applyCurrentSelection(current.request(module, accepted));
-      if (!revisions || !valid()) return;
-      if (expected.system && revisions.system !== expected.system) throw new Error(t("run.reason.selectionChanged"));
-      expected = { [module]: revisions[module], system: revisions.system };
-      accepted = await pluginConfigApi.module(module);
+  const startModule = async (module: ConfigurationModule) => {
+    if (module === "acquisition") throw new Error("Use Connect to start acquisition.");
+    const configuration = current.request(module);
+    const result = await runtime.execute(module, configuration,
+      module === "stimulation" ? api.stimStart : (body) => api.moduleStart(module, body),
+      (operation) => current.acknowledge(module, configuration, operation.target_revisions[module]));
+    if (result.status !== "succeeded") throw new Error(result.error ?? "Module startup failed.");
+    if (result.result?.action === "prepared" && module !== "processing") {
+      setNotices((previous) => ({ ...previous, [module]: module === "stimulation" ? "run.externalPrepared" : "run.externalActuationPrepared" }));
     }
-    if (!valid()) return;
-    await assertConfigurationRevision(expected, undefined, !applyCurrent);
-    if (valid()) await action(expected, accepted);
   };
-  const action = <A extends unknown[],>(name: ActionName, fn: (valid: () => boolean, ...args: A) => Promise<unknown>, stop = false) => ({
-    ...(actions[name] ?? { pending: false, error: null }), run: (...args: A) => run(name, (valid) => fn(valid, ...args), stop),
+  const action = <A extends unknown[],>(name: ActionName, fn: (...args: A) => Promise<unknown>, stop = false) => ({
+    ...(actions[name] ?? { pending: false, error: null }), run: (...args: A) => run(name, () => fn(...args), stop),
   });
   return { stimulation, signal, notices, pending,
     busy: Object.values(actions).some((state) => state.pending) || acquisition.pending,
     enginePending: !!actions.start?.pending || !!actions.stop?.pending,
     start: action("start", async () => api.engineStart()),
     stop: action("stop", async () => api.engineStop(), true),
-    launch: action("launch", async (valid) => {
+    launch: action("launch", async () => {
       setNotices((previous) => ({ ...previous, stimulation: undefined }));
       if (runtime.status?.recovery.stimulation) return api.modulePrepare("stimulation");
-      await runCurrent("stimulation", true, valid, async (_revisions, accepted) => {
-        if (accepted.settings["STIMULATION.auto_spawn"] === false) {
-          const peer = await api.stimulationStatus();
-          if (!valid()) return;
-          if (!peer) throw new Error(t("run.reason.stimulationUnavailable"));
-          if (!peer.engine_connected) {
-            await api.modulePrepare("stimulation");
-            if (valid()) setNotices((previous) => ({ ...previous, stimulation: "run.externalPrepared" }));
-            return;
-          }
-        }
-        if (valid()) await api.stimStart();
-      });
+      await startModule("stimulation");
     }),
     stopStim: action("stopStim", async () => api.stimStop(), true),
-    trigger: action("trigger", async (_valid, count: number, parameters?: number[]) => api.trialStart(count, parameters)),
-    readCurrent: action("readCurrent", (valid) => runCurrent("acquisition", false, valid, (revisions) => acquisition.read.run(revisions))),
+    trigger: action("trigger", async (count: number, parameters?: number[]) => api.trialStart(count, parameters)),
+    readCurrent: action("readCurrent", async () => {
+      const accepted = current.modules.acquisition.activation;
+      if (!accepted?.revision || current.hasChanges("acquisition", accepted)) throw new Error(t("run.reason.reconnectCurrentSource"));
+      const generation = runtime.status?.generation;
+      const connectionId = acquisition.data?.connection_id;
+      if (!generation || !connectionId) throw new Error(t("run.reason.notConnected"));
+      await acquisition.read.run({ expected_revision: accepted.revision, generation, connection_id: connectionId });
+    }),
     stopRead: action("stopRead", async () => acquisition.stopRead.run(), true),
-    startProcessing: action("startProcessing", (valid) => runCurrent("processing", true, valid, async () => {
-      const status = await api.engineStatus();
-      if (!valid()) return;
-      if (!status) throw new Error(t("run.reason.engineUnavailable"));
-      if (!status.running) await api.engineStart();
-      if (valid()) await api.moduleStart("processing");
-    })),
+    startProcessing: action("startProcessing", () => startModule("processing")),
     stopProcessing: action("stopProcessing", async () => api.moduleStop("processing"), true),
-    startActuation: action("startActuation", async (valid) => {
+    startActuation: action("startActuation", async () => {
       setNotices((previous) => ({ ...previous, actuation: undefined }));
       if (runtime.status?.recovery.actuation) return api.modulePrepare("actuation");
-      await runCurrent("actuation", true, valid, async (_revisions, accepted) => {
-        if (accepted.settings["ACTUATION.auto_spawn"] === false) {
-          const status = await api.engineStatus();
-          if (!valid()) return;
-          if (!status) throw new Error(t("run.reason.engineUnavailable"));
-          if (!status.actuation_connected) {
-            await api.modulePrepare("actuation");
-            if (valid()) setNotices((previous) => ({ ...previous, actuation: "run.externalActuationPrepared" }));
-            return;
-          }
-        }
-        if (valid()) await api.moduleStart("actuation");
-      });
+      await startModule("actuation");
     }),
     stopActuation: action("stopActuation", async () => api.moduleStop("actuation"), true),
   };

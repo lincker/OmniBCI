@@ -1,4 +1,5 @@
 """Attach real CNT processing independently of source reading across workers."""
+from omnibci.application.activation_settings import section_settings
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
@@ -62,9 +63,9 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
                                 processing_input=ProcessingInput(outputs=(ChannelBinding("Pz", "channel-0"), ChannelBinding("O2", "channel-8"))))
     missing_decoder = profiles.create("decoder", decoder_a.selection, "Missing channel", {},
                                       processing_input=ProcessingInput(outputs=(ChannelBinding("NotPresent", "not-present"),)))
-    profiles.accept_system(profiles.propose_system(), expected_revision=None)
+    profiles.repository.save_system(profiles.propose_system(), expected_revision=None)
     for module in ("acquisition", "processing", "stimulation"):
-        profiles.accept_module(profiles.propose(module, [item for item in selections if item["slot"].startswith(f"{module}.")]),
+        profiles.repository.save_module(profiles.propose(module, [item for item in selections if item["slot"].startswith(f"{module}.")], settings=section_settings(profiles.settings_source(), module)),
                                expected_revision=None)
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
                                 snapshot_provider=lambda: accepted_runtime_settings(profiles=profiles))
@@ -83,16 +84,22 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
                                           container.command_results, signal_preparer=signal.prepare,
                                           signal_detacher=signal.detach)
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
+    async def start_worker(module):
+        async with engine.runtime_transition(module):
+            snapshot = engine.selected_module_snapshot(module)
+            await engine.start_module_for_configuration(module, snapshot)
+            engine.acknowledge_configuration(snapshot, modules=(module,))
+
     try:
         await engine.handle_start_engine(StartEngineCommand())
-        await engine.start_module("processing")
+        await start_worker("processing")
         processor = engine._engine.signal_processing_worker
         # Processing can precede acquisition, including a new source selection.
         previous_source = profiles.repository.get_module("acquisition")
         selections[0]["parameters"]["file_reader_chunk_size"] = 200
-        profiles.accept_module(profiles.propose("acquisition", selections[:1]),
+        profiles.repository.save_module(profiles.propose("acquisition", selections[:1], settings=section_settings(profiles.settings_source(), "acquisition")),
                                expected_revision=previous_source.revision)
-        await engine.start_module("acquisition")
+        await start_worker("acquisition")
         assert engine._engine.signal_processing_worker is processor
         assert engine.is_engine_ready
         assert "SIGNAL.setup" not in engine.applied_snapshot
@@ -132,7 +139,7 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
         })
         assert profiles.repository.get_module("acquisition").bindings[0].profile_id is None
         selections[0] = {"slot": "acquisition.source", "profile_id": saved_source.profile_id}
-        reviewed = runtime.plan("acquisition", selections[:1], expected_revision=profiles.repository.get_module("acquisition").revision,
+        reviewed = runtime.plan("acquisition", selections[:1], settings={}, expected_revision=profiles.repository.get_module("acquisition").revision,
                                 refresh_slots=["acquisition.source"])
         operation = runtime.submit(reviewed.plan_id, str(uuid4()))
         await runtime.wait_for_idle()
@@ -188,11 +195,11 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
             assert profiles.repository.get_profile(decoder.profile_id).processing_input == decoder.processing_input
             selections[1] = {"slot": "processing.decoder", "profile_id": decoder.profile_id}
             previous = profiles.repository.get_module("processing")
-            profiles.accept_module(profiles.propose("processing", [item for item in selections if item["slot"].startswith("processing.")]),
+            profiles.repository.save_module(profiles.propose("processing", [item for item in selections if item["slot"].startswith("processing.")], settings=section_settings(profiles.settings_source(), "processing")),
                                    expected_revision=previous.revision)
             await engine.handle_start_engine(StartEngineCommand())
-            await engine.start_module("acquisition")
-            await engine.start_module("processing")
+            await start_worker("acquisition")
+            await start_worker("processing")
             await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
             await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
             current_plan = signal._plan.to_dict()
@@ -205,11 +212,11 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
         await engine.handle_stop_engine(StopEngineCommand())
         selections[1] = {"slot": "processing.decoder", "profile_id": missing_decoder.profile_id}
         previous = profiles.repository.get_module("processing")
-        profiles.accept_module(profiles.propose("processing", [item for item in selections if item["slot"].startswith("processing.")]),
+        profiles.repository.save_module(profiles.propose("processing", [item for item in selections if item["slot"].startswith("processing.")], settings=section_settings(profiles.settings_source(), "processing")),
                                    expected_revision=previous.revision)
         await engine.handle_start_engine(StartEngineCommand())
-        await engine.start_module("acquisition")
-        await engine.start_module("processing")
+        await start_worker("acquisition")
+        await start_worker("processing")
         await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
         await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
         assert container.acquisition_service.is_streaming is True

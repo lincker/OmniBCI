@@ -39,7 +39,6 @@ class EventType(IntEnum):
     StartStimTrial = 311
     StimulationAck = 312   # stim → engine: ack/result of a stimulation command
     MessageFromStimulation = 9
-    StartStimulation = 301
     StopStimulation = 302
     PauseStimulation = 303  # correlated renderer stop and trigger clear
     # actuation (external-device control; the actuation subsystem loads
@@ -61,7 +60,6 @@ class Event:
 
       TrialCompleted   application.events.TrialOutcome
       EpochProcessed   application.events.EpochProcessed
-      StartStimulation str|None (paradigm)
       StartStimTrial   dict {"n_trials": int, "trial_params": list|None}
       AcquisitionState application.events.AcquisitionSnapshot
       CommandResult    application.events.CommandResult

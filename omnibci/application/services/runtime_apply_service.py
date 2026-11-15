@@ -70,6 +70,41 @@ class RuntimeApplyCoordinator:
         return (getattr(self.engine, "actuation_process_alive", False) is True
                 or self.engine.is_peer_connected("actuation"))
 
+    async def execute_current_action(self, stored, action):
+        """Finish the user action while its configuration reservation is held."""
+        module = stored.plan.module
+        system = self.profiles.repository.get_system()
+        if not self.engine.is_engine_ready:
+            foundation = self.profiles.materialize(ActivationSet({}, system))
+            async with self.engine.runtime_transition("system"):
+                await self.engine.start_for_configuration(foundation)
+        selected = self.profiles.materialize(ActivationSet(stored.candidates, system), self.engine.generation)
+        snapshot = merge_module_settings(self.engine.applied_snapshot or {}, selected, (module,))
+        if module in ("acquisition", "processing"):
+            if not self.engine.is_module_running(module):
+                await self.engine.start_module_for_configuration(module, snapshot)
+            self.engine.acknowledge_configuration(snapshot, modules=(module,))
+            if action == "connect":
+                await asyncio.to_thread(self.acquisition.handle_connect, ConnectDataProviderCommand(),
+                                        prepare_processing=False)
+                return "connected"
+            return "started"
+        await self.engine.ensure_output_ready(module, snapshot)
+        self.engine.acknowledge_configuration(snapshot, modules=(module,))
+        if not snapshot.get(f"{module.upper()}.auto_spawn", True) and not self.engine.is_peer_connected(module):
+            return "prepared"
+        if module == "stimulation":
+            if not self.stimulation.is_active:
+                await asyncio.to_thread(self.stimulation.handle_start_stimulation, StartStimulationCommand(),
+                                        settings_snapshot=snapshot)
+        elif not self.engine.is_module_running(module):
+            await self.engine.start_module_for_configuration(module, snapshot)
+        return "started"
+
+    async def prepare_processing(self):
+        """Optional input attachment has its own scope after source ownership settles."""
+        await asyncio.to_thread(self.acquisition.prepare_processing)
+
     async def execute(self, stored, progress, *, operation_id):
         plan = stored.plan
         async with self.engine.runtime_transition(operation_scopes(stored)):
@@ -81,7 +116,7 @@ class RuntimeApplyCoordinator:
                     or (plan.running and (self.engine.generation != plan.generation
                         or any(applied.get(k) != v for k, v in plan.applied_revisions.items())))):
                 raise ProfileRevisionConflict("Runtime changed before configuration application")
-            if not plan.running and (self.engine.restart_blocked or self.engine.runtime_package_snapshots):
+            if not plan.running and self.engine.foundation_requires_cleanup:
                 raise ProfileRevisionConflict("The previous engine still owns resources; stop it before selecting configuration")
             combined = stored.activation_set(previous)
             validate_external_peers(self.engine, combined, stored.candidates, plan.strategy)
@@ -431,7 +466,8 @@ class RuntimeApplyCoordinator:
         if state.actuation:
             await self.engine.start_module_for_configuration("actuation", running)
         if state.stimulation:
-            await asyncio.to_thread(self.stimulation.handle_start_stimulation, StartStimulationCommand())
+            await asyncio.to_thread(self.stimulation.handle_start_stimulation, StartStimulationCommand(),
+                                    settings_snapshot=running)
         return resumed_checkpoint
 
     async def _restore_source(self, running, state, checkpoint, *, require_live_resume=False):

@@ -1,4 +1,5 @@
 """Failure boundaries use real profile storage and observable fake workers."""
+from omnibci.application.activation_settings import section_settings
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
@@ -66,6 +67,10 @@ class Engine:
     @property
     def generation(self):
         return self.applied_snapshot["CONFIG.generation"]
+
+    @property
+    def foundation_requires_cleanup(self):
+        return self.is_engine_ready or self.owned_unready or self.restart_blocked
 
     @property
     def runtime_package_snapshots(self):
@@ -202,7 +207,7 @@ def harness(tmp_path, monkeypatch):
         profiles.update(source.profile_id, name=source.name,
                         parameters={**source.parameters, "file_reader_chunk_size": 50},
                         expected_revision=source.revision)
-        plan = runtime.plan("acquisition", bindings, expected_revision=previous.modules["acquisition"].revision)
+        plan = runtime.plan("acquisition", bindings, expected_revision=previous.modules["acquisition"].revision, settings=section_settings(runtime.profiles.settings_source(), "acquisition"))
         assert not plan.errors
         assert plan.strategy == "rebuild"
         return SimpleNamespace(engine=engine, profiles=profiles, previous=previous, plan=plan,
@@ -226,7 +231,7 @@ async def test_idle_owned_resources_reject_review_or_resolve_before_submission(h
     h.engine.is_engine_ready = False
     bindings = [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in h.previous.modules[h.module].bindings]
     setattr(h.engine, ownership, before_review)
-    plan = h.runtime.plan(h.module, bindings, expected_revision=h.previous.modules[h.module].revision)
+    plan = h.runtime.plan(h.module, bindings, expected_revision=h.previous.modules[h.module].revision, settings=None if h.module == "system" else section_settings(h.runtime.profiles.settings_source(), h.module))
     if before_review:
         assert any("still owns resources" in error for error in plan.errors)
     else:
@@ -250,7 +255,7 @@ async def test_idle_selection_rechecks_unreleased_resources_before_persistence(h
     h = harness()
     h.engine.is_engine_ready = False
     bindings = [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in h.previous.modules[h.module].bindings]
-    h.plan = h.runtime.plan(h.module, bindings, expected_revision=h.previous.modules[h.module].revision)
+    h.plan = h.runtime.plan(h.module, bindings, expected_revision=h.previous.modules[h.module].revision, settings=None if h.module == "system" else section_settings(h.runtime.profiles.settings_source(), h.module))
     assert h.plan.strategy == "select_on_start" and not h.plan.errors
     stored = h.runtime.resolve_plan(h.plan.plan_id)
     setattr(h.engine, ownership, True)
@@ -281,7 +286,7 @@ async def test_idle_effector_validation_uses_owned_resources_not_history(harness
 
     monkeypatch.setattr(h.profiles.catalog, "get", unavailable_effector)
     h.plan = h.runtime.plan(h.module, bindings, expected_revision=h.previous.modules[h.module].revision,
-                            refresh_slots=[])
+                            refresh_slots=[], settings=None if h.module == "system" else section_settings(h.runtime.profiles.settings_source(), h.module))
     candidate = h.runtime._plans[h.plan.plan_id].activation_set(h.previous)
     assert ("effector" in h.runtime.executor.active_kinds(candidate)) is owned_unready
 
@@ -309,7 +314,7 @@ async def test_same_values_can_update_profile_reference_without_runtime_work(har
                  "profile_id": clone.profile_id if binding.slot == previous.slot else binding.profile_id}
                 for binding in h.previous.modules[h.module].bindings]
     h.plan = h.runtime.plan(h.module, bindings, expected_revision=h.previous.modules[h.module].revision,
-                            refresh_slots=[previous.slot])
+                            refresh_slots=[previous.slot], settings=None if h.module == "system" else section_settings(h.runtime.profiles.settings_source(), h.module))
     assert h.plan.strategy == "no_change"
     assert h.plan.target_revisions[h.module] == h.previous.modules[h.module].revision
 
@@ -338,7 +343,7 @@ async def test_stopped_module_configuration_is_selected_without_starting_it(harn
         h.profiles.update(decoder.profile_id, name=decoder.name,
                           parameters={**decoder.parameters, "window_duration": 2.5},
                           expected_revision=decoder.revision)
-    h.plan = h.runtime.plan(module, bindings, expected_revision=previous.revision)
+    h.plan = h.runtime.plan(module, bindings, expected_revision=previous.revision, settings=None if module == "system" else section_settings(h.runtime.profiles.settings_source(), module))
     assert h.plan.strategy == "select_on_start" and not h.plan.errors
     operation = await apply(h)
     assert operation["status"] == "succeeded"
@@ -356,7 +361,7 @@ async def test_inactive_selection_acknowledgement_failure_restores_or_quarantine
     h.engine.modules["acquisition"] = False
     bindings = [{"slot": item.slot, "profile_id": item.profile_id}
                 for item in h.previous.modules["acquisition"].bindings]
-    h.plan = h.runtime.plan("acquisition", bindings, expected_revision=h.previous.modules["acquisition"].revision)
+    h.plan = h.runtime.plan("acquisition", bindings, expected_revision=h.previous.modules["acquisition"].revision, settings=section_settings(h.runtime.profiles.settings_source(), "acquisition"))
     assert h.plan.strategy == "select_on_start"
     before = deepcopy(h.engine.applied_snapshot)
 

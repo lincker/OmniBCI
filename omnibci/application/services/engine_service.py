@@ -19,6 +19,8 @@ from omnibci.application.plugin_profiles import ProfileRevisionConflict
 from omnibci.application.services.command_result_service import command_scopes
 from omnibci.application.services.actuation_service import ActuationAppService
 from omnibci.application.commands.stimulation_commands import StopStimulationCommand
+from omnibci.application.commands.acquisition_commands import StartStreamCommand
+from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 
 from omnibci.shared.events import EventType, Event
 from omnibci.application.config_errors import ConfigProfileConflictError
@@ -253,25 +255,26 @@ class NeuroEngineService(EnginePort):
             snapshot = merge_module_settings(snapshot, selected, (module,))
         return snapshot
 
-    async def start_module(self, module: str) -> None:
-        if module not in ("acquisition", "processing", "actuation"):
-            raise ValueError(f"Unknown module: {module}")
-
+    async def start_reading(self, *, expected_revision, generation, connection_id):
+        """Validate the connection inside the same ownership interval as Start."""
+        pending = self._lifecycle_tasks.get(("read", "acquisition"))
+        if pending is not None and not pending.done():
+            raise ProfileRevisionConflict("A reading request is already in progress")
         async def start():
-            if self._admission.requires_recovery(module):
-                raise ProfileRevisionConflict(f"Stop {module} before starting it again")
-            if not self.is_engine_ready:
-                raise RuntimeError("Start the engine before starting a module")
-            if self.is_module_running(module):
-                return
-            snapshot = self.selected_module_snapshot(module)
-            await self.start_module_for_configuration(module, snapshot)
-            self.acknowledge_configuration(snapshot, modules=(module,))
-            if module == "processing" and self._signal_setup is not None:
-                await asyncio.to_thread(self._signal_setup.try_prepare)
-        await self._owned_lifecycle("start", module, start)
+            if not self.is_engine_ready or self._acquisition is None:
+                raise RuntimeError("Start the engine and connect the source before reading")
+            snapshot = self.applied_snapshot or {}
+            source = self._acquisition.handle_get_status(GetAcquisitionStatusQuery())
+            if (snapshot.get("CONFIG.generation") != generation
+                    or snapshot.get("CONFIG.module_revisions", {}).get("acquisition") != expected_revision
+                    or not source.connected or source.connection_id != connection_id):
+                raise ProfileRevisionConflict("Source connection changed; refresh before reading")
+            await asyncio.to_thread(self._acquisition.handle_start_stream, StartStreamCommand(),
+                                    prepare_processing=False)
+        await self._owned_lifecycle("read", "acquisition", start,
+                                    after_transition=lambda: asyncio.to_thread(self._acquisition.prepare_processing))
 
-    async def _owned_lifecycle(self, operation, scope, action):
+    async def _owned_lifecycle(self, operation, scope, action, *, after_transition=None):
         key = operation, scope
         task = self._lifecycle_tasks.get(key)
         if task is None or task.done():
@@ -297,6 +300,8 @@ class NeuroEngineService(EnginePort):
                 else:
                     async with self.runtime_transition(scope, reservation=reservation):
                         await action()
+                if after_transition is not None:
+                    await after_transition()
 
             try:
                 task = asyncio.create_task(run())
@@ -384,12 +389,9 @@ class NeuroEngineService(EnginePort):
                 self._transitioning = False
 
     @contextmanager
-    def configuration_change(self, requires_idle: bool):
-        """Keep an effective configuration write atomic with engine admission."""
+    def configuration_change(self):
+        """Keep saved system setting writes atomic with engine admission."""
         with self._admission.command(), self._configuration_lock:
-            if requires_idle and (self._transitioning or self._running or self._restart_blocked):
-                raise ConfigProfileConflictError(
-                    "Stop the engine before changing the effective acquisition configuration")
             yield
 
     def node_configuration_snapshot(self, selected_snapshot: Callable[[], dict], *, module=None) -> tuple[str, dict]:
@@ -613,17 +615,6 @@ class NeuroEngineService(EnginePort):
             raise RuntimeError("Start the engine before starting a module")
         self._engine.ensure_output_ready_sync(module, deepcopy(snapshot))
 
-    def prepare_output_sync(self, module):
-        with self._admission.transition(module, recovery=True):
-            if not self.is_engine_ready:
-                raise RuntimeError("Start the engine before preparing a module")
-            snapshot = self._output_snapshot(module)
-            self.ensure_output_ready_sync(module, snapshot)
-            self.acknowledge_configuration(snapshot, modules=(module,))
-            if module == "actuation" and self._admission.requires_recovery(module):
-                self._actuation.reconnect(snapshot)
-            return snapshot
-
     async def ensure_output_ready(self, module, snapshot):
         if not self.is_engine_ready:
             raise RuntimeError("Start the engine before preparing a module")
@@ -673,13 +664,19 @@ class NeuroEngineService(EnginePort):
             return deepcopy(self._applied_snapshot)
 
     @property
+    def foundation_requires_cleanup(self) -> bool:
+        """Retained external recovery references do not own the foundation."""
+        with self._configuration_lock:
+            thread = self._engine_thread
+            return bool(self._running or self._restart_blocked or thread is not None and thread.is_alive())
+
+    @property
     def runtime_package_snapshots(self) -> tuple[dict, ...]:
         """Retain both acknowledged and attempted graph packages until ownership ends."""
         with self._configuration_lock:
-            thread = self._engine_thread
             snapshots = [snapshot for module, snapshot in self._recovery_snapshots.items()
                          if module in self._admission.recovery_status]
-            if self._running or self._restart_blocked or thread is not None and thread.is_alive():
+            if self.foundation_requires_cleanup:
                 snapshots.extend(snapshot for snapshot in (self._applied_snapshot, self._graph_snapshot)
                                  if snapshot is not None)
             return tuple(deepcopy(snapshot) for snapshot in snapshots)

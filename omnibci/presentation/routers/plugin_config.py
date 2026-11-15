@@ -99,9 +99,9 @@ def delete_profile(profile_id: str, expected_revision: int = Query(ge=1),
         return ApiResponse(message="Profile deleted")
 
 
-def _module_response(module, activation):
+def _module_response(module, activation, svc):
     return activation.to_dict() if activation is not None else {
-        "module": module, "revision": None, "settings": {}, "bindings": [],
+        "module": module, "revision": None, "settings": svc.default_module_settings(module), "bindings": [],
     }
 
 
@@ -114,7 +114,7 @@ def get_modules(svc: PluginProfileService = Depends(get_plugin_profile_service))
     modules, errors = {}, {}
     for module in MODULES:
         try:
-            modules[module] = _module_response(module, svc.repository.get_module(module))
+            modules[module] = _module_response(module, svc.repository.get_module(module), svc)
         except (ValueError, KeyError, RuntimeError, OSError) as exc:
             errors[module] = str(exc)
     try:
@@ -128,7 +128,7 @@ def get_modules(svc: PluginProfileService = Depends(get_plugin_profile_service))
 @router.get("/modules/{module}", response_model=ApiResponse[ModuleActivationResponse])
 def get_module(module: ConfigurationModule, svc: PluginProfileService = Depends(get_plugin_profile_service)):
     with _configuration_errors():
-        return ApiResponse(data=_module_response(module, svc.repository.get_module(module)))
+        return ApiResponse(data=_module_response(module, svc.repository.get_module(module), svc))
 
 
 @router.get("/modules/{module}/history", response_model=ApiResponse[list[ModuleHistoryResponse]])

@@ -1,4 +1,5 @@
 """Configuration remains repairable through the real application lifespan."""
+from omnibci.application.activation_settings import section_settings
 import logging
 from dataclasses import replace
 from copy import deepcopy
@@ -158,7 +159,7 @@ def test_fresh_lifespan_leaves_module_configuration_unselected(startup_environme
 
 
 def test_invalid_initial_settings_can_be_repaired_without_restarting_backend(
-    startup_environment,
+    startup_environment, monkeypatch,
 ):
     environment = startup_environment
     environment.settings.set("ACQUISITION.sample_rate", "invalid")
@@ -195,7 +196,7 @@ def test_invalid_initial_settings_can_be_repaired_without_restarting_backend(
             })
             assert response.status_code == 201, response.text
             bindings.append({"slot": slot, "profile_id": response.json()["data"]["profile_id"]})
-        response = client.post("/api/v1/config/apply-plan", json={
+        response = client.post("/api/v1/config/apply-plan", json={"settings": {},
             "module": "acquisition", "bindings": [bindings[0]], "expected_revision": None,
         })
         assert response.status_code == 200, response.text
@@ -219,8 +220,10 @@ def test_invalid_initial_settings_can_be_repaired_without_restarting_backend(
         assert accepted["revision"] == plan["target_revisions"]["acquisition"]
         environment.builder.assert_called_once()
 
-        response = client.post("/api/v1/engine/modules/acquisition/start")
+        monkeypatch.setattr(client.app.state.container.acquisition_service, "handle_connect", Mock())
+        response = _connect_current(client)
         assert response.status_code == 200, response.text
+        assert response.json()["data"]["status"] == "succeeded", response.text
         environment.builder.assert_called_once()
         snapshot = client.app.state.engine_service._engine.module_snapshots["acquisition"]
         assert snapshot["CONFIG.module_revisions"]["acquisition"] == accepted["revision"]
@@ -237,6 +240,19 @@ def test_invalid_initial_settings_can_be_repaired_without_restarting_backend(
 
 def _references(snapshot):
     return [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in snapshot.bindings]
+
+
+def _connect_current(client):
+    selected = _data(client, "/config/modules/acquisition")
+    return client.post("/api/v1/acquisition/connect", json={
+        "operation_id": str(uuid4()),
+        "configuration": {
+            "expected_revision": selected["revision"], "settings": selected["settings"],
+            "bindings": [{key: binding[key] for key in (
+                "slot", "selection", "parameters", "configuration_version", "processing_input",
+            ) if key in binding} for binding in selected["bindings"]],
+        },
+    })
 
 
 def _apply_plan(client, plan):
@@ -258,7 +274,7 @@ def _assert_invalid_activation(client, environment, snapshot, operation, *, plan
     previous = repository.get_module("acquisition")
     path = environment.root / "activation" / "acquisition.toml"
     original = path.read_bytes()
-    request = {"module": "acquisition", "bindings": _references(snapshot), "expected_revision": previous.revision}
+    request = {"settings": {}, "module": "acquisition", "bindings": _references(snapshot), "expected_revision": previous.revision}
     plan = client.post("/api/v1/config/apply-plan", json=request)
     assert plan.status_code == plan_status, plan.text
     if plan_status == 200:
@@ -274,9 +290,9 @@ def _assert_invalid_activation(client, environment, snapshot, operation, *, plan
         repository.save_module(snapshot, expected_revision=previous.revision)
         response = client.post("/api/v1/engine/start")
         assert response.status_code == 200, response.text
-        response = client.post("/api/v1/engine/modules/acquisition/start")
-        assert response.status_code == 409, response.text
-        assert response.json()["code"] == "ENGINE_NOT_READY"
+        response = _connect_current(client)
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["status"] == "failed", response.text
         assert _data(client, "/engine/status")["running"] is True
         assert _data(client, "/engine/status")["acquisition_alive"] is False
     if operation == "accept":
@@ -299,12 +315,12 @@ def test_engine_start_does_not_require_any_module_selection(startup_environment,
                 continue
             references = [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in activation.bindings
                           if missing_slot is not None and binding.slot != missing_slot]
-            response = client.post("/api/v1/config/apply-plan", json={
+            response = client.post("/api/v1/config/apply-plan", json={"settings": {},
                 "module": module, "bindings": references, "expected_revision": activation.revision})
             assert response.status_code == 200, response.text
             _apply_plan(client, response.json()["data"])
         if missing_slot == "actuation.effector":
-            service.accept_module(service.propose("actuation", []), expected_revision=None)
+            service.repository.save_module(service.propose("actuation", [], settings=section_settings(service.settings_source(), "actuation")), expected_revision=None)
         started = client.post("/api/v1/engine/start")
         assert started.status_code == 200, started.text
         environment.builder.assert_called_once()
@@ -312,9 +328,10 @@ def test_engine_start_does_not_require_any_module_selection(startup_environment,
         assert status["running"] is True
         assert status["acquisition_alive"] is status["processor_alive"] is status["actuation_alive"] is False
         if missing_slot in (None, "acquisition.source"):
-            response = client.post("/api/v1/engine/modules/acquisition/start")
-            assert response.status_code == 409, response.text
-            assert "acquisition.source" in response.json()["message"]
+            response = _connect_current(client)
+            assert response.status_code == 200, response.text
+            assert response.json()["data"]["status"] == "failed", response.text
+            assert "acquisition.source" in response.json()["data"]["error"]
         assert client.post("/api/v1/engine/stop").status_code == 200
 
 
@@ -348,7 +365,7 @@ def test_unavailable_source_profiles_can_be_selected_but_not_started(startup_env
                          if binding.kind == "acquisition" else binding for binding in previous.bindings)
         snapshot = ModuleActivation("acquisition", previous.settings, bindings)
         if operation == "accept":
-            response = client.post("/api/v1/config/apply-plan", json={
+            response = client.post("/api/v1/config/apply-plan", json={"settings": {},
                 "module": "acquisition", "bindings": _references(snapshot), "expected_revision": previous.revision,
             })
             assert response.status_code == 200, response.text
@@ -357,9 +374,10 @@ def test_unavailable_source_profiles_can_be_selected_but_not_started(startup_env
         else:
             service.repository.save_module(snapshot, expected_revision=previous.revision)
         assert client.post("/api/v1/engine/start").status_code == 200
-        response = client.post("/api/v1/engine/modules/acquisition/start")
-        assert response.status_code == 409, response.text
-        assert "unavailable" in response.json()["message"]
+        response = _connect_current(client)
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["status"] == "failed", response.text
+        assert "unavailable" in response.json()["data"]["error"]
         status = _data(client, "/engine/status")
         assert status["running"] is True and status["acquisition_alive"] is False
 
@@ -402,7 +420,7 @@ def test_inactive_output_plugins_can_retain_portable_selections(startup_environm
             previous = service.repository.get_module(module)
             references = _references(previous) if previous else []
             references.append({"slot": slot, "profile_id": response.json()["data"]["profile_id"]})
-            plan = client.post("/api/v1/config/apply-plan", json={
+            plan = client.post("/api/v1/config/apply-plan", json={"settings": {},
                 "module": module, "bindings": references, "expected_revision": previous.revision if previous else None})
             assert plan.status_code == 200, plan.text
             assert plan.json()["data"]["errors"] == []

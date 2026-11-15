@@ -270,7 +270,7 @@ test("closing a dialog restores focus only while the original control still exis
   } finally { globalThis.document = originalDocument; }
 });
 
-const currentRequest = () => ({ module: "acquisition", expected_revision: "rev-1", bindings: [{
+const currentRequest = () => ({ settings: {}, expected_revision: "rev-1", bindings: [{
   slot: "acquisition.source", selection: currentSource.selection, parameters: {},
 }] });
 
@@ -288,14 +288,16 @@ async function withSharedAcquisition(action) {
       pluginConfigApi.modules = async () => moduleConfiguration({ revision: "rev-1", bindings: [{ slot: "acquisition.source",
         kind: "acquisition", selection: currentSource.selection, parameters: {} }] });
       pluginConfigApi.module = async (module) => (await pluginConfigApi.modules()).modules[module];
-      runtimeConfigApi.plan = async () => ({ plan_id: "source-plan", module: "acquisition", expected_revision: "rev-1", expected_revisions: { acquisition: "rev-1", system: "system-revision" }, target_revisions: { acquisition: "rev-1" },
-        applied_revisions: { acquisition: "rev-1", system: "system-revision" }, generation: "engine-1", running: true, strategy: "no_change", errors: [], changed_slots: [], changed_settings: [] });
-      runtimeConfigApi.apply = async (planId, operationId) => {
-        state.operations.acquisition = { module: "acquisition", affected_modules: ["acquisition"], operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "rev-1" }, status: "succeeded", stage: "complete" };
+      runtimeConfigApi.operation = async () => {
+        if (!state.operations.acquisition) throw new Error("Operation is not yet visible");
         return state.operations.acquisition;
       };
-      runtimeConfigApi.operation = async () => state.operations.acquisition;
-      api.acqConnect = async () => { calls.push("connect"); Object.assign(source, { connected: true, connection_id: "source-1" }); };
+      api.acqConnect = async ({ operation_id }) => {
+        calls.push("connect"); Object.assign(source, { connected: true, connection_id: "source-1" });
+        state.operations.acquisition = { operation_id, module: "acquisition", affected_modules: ["acquisition"],
+          status: "succeeded", target_revisions: { acquisition: "rev-1" }, result: { configuration_applied: true, action: "connected" } };
+        return state.operations.acquisition;
+      };
       api.acqDisconnect = async () => { calls.push("disconnect"); Object.assign(source, { connected: false, connection_id: null }); };
       api.acqMetadata = async () => assert.fail("Connect must not inspect metadata");
       api.acqStreamStart = async () => { calls.push("read"); source.streaming = true; };
@@ -315,7 +317,7 @@ test("Setup and Run share connection state through connect, reading, stop and di
     component(h, "PluginProfiles").props.onRun(); await h.settle();
     assert.ok(component(h, "RunConsole"));
     assert.equal(controller().data.connected, true);
-    await controller().read.run({ acquisition: "rev-1", system: "system-revision" }); await h.settle();
+    await controller().read.run({ expected_revision: "rev-1", generation: "engine-1", connection_id: "source-1" }); await h.settle();
     assert.equal(controller().data.streaming, true);
     await controller().stopRead.run(); await h.settle();
     assert.equal(controller().data.connected, true);
@@ -332,7 +334,7 @@ test("a pending shared connection survives navigation and blocks duplicate comma
   await withSharedAcquisition(async ({ h, calls, controller }) => {
     let finish;
     const connect = api.acqConnect;
-    api.acqConnect = async () => { await new Promise((resolve) => { finish = resolve; }); await connect(); };
+    api.acqConnect = async (body) => { await new Promise((resolve) => { finish = resolve; }); return connect(body); };
     const connecting = controller().connect.run(currentRequest());
     await h.settle();
     assert.equal(controller().pending, true);
@@ -413,46 +415,28 @@ test("module stop ownership survives navigation and rejects duplicate Stop", asy
   } finally { signalConfigApi.get = originalSignal; }
 });
 
-for (const stage of ["apply", "engine"]) test(`Engine Stop cancels acquisition ${stage} continuation across navigation`, async () => {
+test("Engine Stop and its pending state survive navigation during a connection request", async () => {
   const { signalConfigApi } = await server.ssrLoadModule("/src/api/signal-config.ts");
   const originalSignal = signalConfigApi.get;
-  try {
-    signalConfigApi.get = async () => null;
-    await withSharedAcquisition(async ({ h, controller, calls, state }) => {
-      Object.assign(state, { running: false, applied: null, generation: null });
-      api.stimulationStatus = async () => ({ active: false, process_alive: false, engine_connected: false, paradigm: null });
-      let finishStart, finishStop;
-      const delay = new Promise((resolve) => { finishStart = resolve; });
-      const apply = runtimeConfigApi.apply;
-      runtimeConfigApi.apply = async (...args) => { if (stage === "apply") await delay; return apply(...args); };
-      api.engineStart = async () => {
-        calls.push("engineStart");
-        await delay;
-        Object.assign(state, { running: true, applied: revisionMap("rev-1"), generation: "engine-2" });
-      };
-      api.engineStop = async () => {
-        calls.push("engineStop");
-        await new Promise((resolve) => { finishStop = resolve; });
-        Object.assign(state, { running: false, applied: null, generation: null });
-      };
-      await controller().refresh(); await h.settle();
-      const starting = controller().connect.run(currentRequest()); await h.settle();
-      assert.equal(controller().connect.pending, true);
-      assert.deepEqual(calls, stage === "engine" ? ["engineStart"] : []);
-      navigation(h, "Run").props.onClick(); await h.settle();
-      const controls = () => component(h, "RunConsole").props.runtimeControls;
-      const stopping = controls().stop.run(); await h.settle();
-      component(h, "RunConsole").props.onEditSetup(); await h.settle();
-      navigation(h, "Run").props.onClick(); await h.settle();
-      assert.equal(controls().stop.pending, true);
-      await controls().stop.run();
-      assert.equal(calls.filter((name) => name === "engineStop").length, 1);
-      finishStart(); await starting;
-      finishStop(); await stopping; await h.settle();
-      assert.deepEqual(calls, stage === "engine" ? ["engineStart", "engineStop"] : ["engineStop"]);
-      assert.equal(controller().connect.error, null);
-      assert.equal(controller().connect.pending, false);
-      assert.equal(controls().stop.pending, false);
-    });
-  } finally { signalConfigApi.get = originalSignal; }
+  signalConfigApi.get = async () => null;
+  try { await withSharedAcquisition(async ({ h, controller, calls }) => {
+    api.stimulationStatus = async () => null;
+    let finishConnect, finishStop;
+    const connect = api.acqConnect;
+    api.acqConnect = async (body) => { await new Promise((resolve) => { finishConnect = resolve; }); return connect(body); };
+    api.engineStop = async () => { calls.push("engineStop"); await new Promise((resolve) => { finishStop = resolve; }); };
+    const connecting = controller().connect.run(currentRequest()); await h.settle();
+    navigation(h, "Run").props.onClick(); await h.settle();
+    const controls = () => component(h, "RunConsole").props.runtimeControls;
+    const stopping = controls().stop.run(); await h.settle();
+    component(h, "RunConsole").props.onEditSetup(); await h.settle();
+    navigation(h, "Run").props.onClick(); await h.settle();
+    assert.equal(controls().stop.pending, true);
+    await controls().stop.run();
+    assert.deepEqual(calls, ["engineStop"]);
+    finishConnect(); await connecting; finishStop(); await stopping; await h.settle();
+    assert.deepEqual(calls, ["engineStop", "connect"]);
+    assert.equal(controller().pending, false);
+    assert.equal(controls().stop.pending, false);
+  }); } finally { signalConfigApi.get = originalSignal; }
 });

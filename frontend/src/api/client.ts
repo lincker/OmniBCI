@@ -7,6 +7,7 @@
  */
 import type { components } from "./rest-types";
 import { requestJson } from "./transport";
+import type { ModuleActionRequest, RuntimeOperation, StartReadingRequest } from "./runtime-config";
 
 type S = components["schemas"];
 export type EngineStatus = S["EngineStatusResponse"];
@@ -85,11 +86,11 @@ export const api = {
   // ---- control actions (stage 2, lock-free) ------------------------------
   engineStart: () => post("/api/v1/engine/start"),
   engineStop: () => post("/api/v1/engine/stop"),
-  moduleStart: (module: "acquisition" | "processing" | "actuation") => post(`/api/v1/engine/modules/${module}/start`),
+  moduleStart: (module: "processing" | "actuation", body: ModuleActionRequest) => post<RuntimeOperation>(`/api/v1/engine/modules/${module}/start`, body),
   modulePrepare: (module: "stimulation" | "actuation") => post(`/api/v1/engine/modules/${module}/prepare`),
   moduleStop: (module: "acquisition" | "processing" | "actuation") => post(`/api/v1/engine/modules/${module}/stop`),
 
-  acqConnect: () => post("/api/v1/acquisition/connect"),
+  acqConnect: (body: ModuleActionRequest) => post<RuntimeOperation>("/api/v1/acquisition/connect", body),
   acqDisconnect: () => post("/api/v1/acquisition/disconnect"),
   acqMetadata: () => post<DataSourceMetadata>("/api/v1/acquisition/metadata/refresh"),
   acqPreviewStart: (body: S["StartAcquisitionPreviewRequest"]) =>
@@ -101,13 +102,12 @@ export const api = {
   acqPreviewChunk: (generation: string, captureId: string, sequenceId: number) =>
     get<AcquisitionPreviewChunk>(`/api/v1/acquisition/preview/chunks/${sequenceId}?${new URLSearchParams({ generation, capture_id: captureId })}`),
 
-  stimStart: (paradigm?: string) =>
-    post("/api/v1/stimulation/start", paradigm ? { paradigm } : {}),
+  stimStart: (body: ModuleActionRequest) => post<RuntimeOperation>("/api/v1/stimulation/start", body),
   stimStop: () => post("/api/v1/stimulation/stop"),
   trialStart: (n_trials = 1, trial_params?: number[]) =>
     post("/api/v1/stimulation/trial/start", { n_trials, trial_params }),
 
-  acqStreamStart: () => post("/api/v1/acquisition/stream/start"),
+  acqStreamStart: (body: StartReadingRequest) => post("/api/v1/acquisition/stream/start", body),
   acqStreamStop: () => post("/api/v1/acquisition/stream/stop"),
 
   // ---- plugin discovery ----------------------------------------------------

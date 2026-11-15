@@ -32,7 +32,7 @@ def draft(runtime, slot, kind, alias, **extra):
 
 async def apply_current(runtime, bindings, module):
     previous = runtime.profiles.repository.get_module(module)
-    plan = runtime.plan(module, bindings, expected_revision=previous.revision if previous else None)
+    plan = runtime.plan(module, bindings, settings={}, expected_revision=previous.revision if previous else None)
     assert not plan.errors
     operation = runtime.submit(plan.plan_id, str(uuid4()))
     await runtime.wait_for_idle()
@@ -75,7 +75,7 @@ async def test_processing_current_values_pin_mapping_and_filter_order_without_ch
     decoder = draft(runtime, "processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA",
                     processing_input=mapping)
     filters = [draft(runtime, f"processing.filter.{uuid4()}", "filter", "BASELINE_CORRECTION") for _ in range(2)]
-    plan = runtime.plan("processing", [decoder, *filters], expected_revision=None)
+    plan = runtime.plan("processing", [decoder, *filters], settings={}, expected_revision=None)
     decoder["parameters"]["window_duration"] = 8
     mapping["outputs"].reverse()
     candidate = runtime.resolve_plan(plan.plan_id).candidates["processing"]
@@ -111,7 +111,7 @@ async def test_processing_current_values_pin_mapping_and_filter_order_without_ch
 def test_invalid_current_binding_cannot_change_configuration(runtime, changes):
     decoder = draft(runtime, "processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA")
     with pytest.raises((ValueError, KeyError)):
-        runtime.plan("processing", [{**decoder, **changes}], expected_revision=None)
+        runtime.plan("processing", [{**decoder, **changes}], settings={}, expected_revision=None)
     assert all(item is None for item in runtime.profiles.repository.get_activation_set().revisions().values())
     assert runtime.profiles.repository.list_profiles() == []
 
@@ -120,7 +120,7 @@ def test_current_decoder_requires_an_explicit_mapping(runtime):
     decoder = draft(runtime, "processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA")
     decoder.pop("processing_input")
     with pytest.raises(ValueError, match="processing_input"):
-        runtime.plan("processing", [decoder], expected_revision=None)
+        runtime.plan("processing", [decoder], settings={}, expected_revision=None)
     assert all(item is None for item in runtime.profiles.repository.get_activation_set().revisions().values())
 
 
@@ -128,4 +128,4 @@ def test_non_decoder_current_binding_rejects_processing_input(runtime):
     source = draft(runtime, "acquisition.source", "acquisition", "file_reader",
                    processing_input={"schema_version": 2, "outputs": []})
     with pytest.raises(ValueError, match="processing_input"):
-        runtime.plan("acquisition", [source], expected_revision=None)
+        runtime.plan("acquisition", [source], settings={}, expected_revision=None)

@@ -480,11 +480,13 @@ To do:
   - `currentBindings(module, ...)` reads `modules[module].bindings`.
   - `request()` sends `expected_revision: modules[module].revision`; drop `include_host_settings`.
   - `hasChanges` and `dirty` work per module.
-- `ConfigCard.tsx` (`reviewHostSettings`, about lines 104–120): stop rebuilding all bindings. "Review" makes one plan per section whose host settings differ from the accepted section settings. The simplest form is one plan for `system` and one for each changed module, reviewed one at a time with the existing `runtime.review`.
-- `source-lifecycle.ts`:
-  - `checkRuntimeRevision` and `assertConfigurationRevision` compare the **acquisition** revision and the **system** revision, for both accepted and applied.
-  - `connectSource` reads the acquisition module (`pluginConfigApi.module("acquisition")`) to check that `acquisition.source` exists.
-  - Callers pass the acquisition revision instead of a global revision.
+- `ConfigCard.tsx`: review shared system settings only. Processing's pre-trigger
+  duration belongs to its current module editor and is submitted with its plugins.
+- Module actions submit complete current configuration directly to their existing
+  Connect/Start endpoints. The backend owns application and the subsequent action.
+  `source-lifecycle.ts`, frontend apply-before-start polling, and repeated revision
+  checks are removed. Start reading sends its source revision, generation, and
+  connection ID for validation inside the backend operation.
 - `RunConsole.tsx` (about lines 100–432), `RuntimeConfiguration.tsx` (about lines 56–76), `App.tsx` (about line 62), `hooks/useRuntimeConfiguration.ts` (about line 118), `AcquisitionPreview.tsx` (about line 333): replace the global `accepted_revision` / `applied_revision` / `activation.revision` uses with per-module values. The preview uses the acquisition revision.
 - `PluginProfiles.tsx` (about lines 146–515):
   - Add a **History** panel for the selected module: a list of revisions with time and binding summary, a "View", and a "Revert…" that calls `moduleRevertPlan` and opens the existing plan review flow.
@@ -536,19 +538,19 @@ Verify:
 File: `omnibci/application/services/plugin_profile_service.py`.
 
 - Fix the broken imports: use `SECTION_SETTING_KEYS`, `section_settings`, `MODULES`.
-- `propose(module, bindings, refresh_slots)` returns a `ModuleActivation` candidate. It is built from the current module plus the draft bindings, and settings come from `section_settings(host_settings, module)`. Keep both binding forms (`{slot, profile_id}` and the draft form).
+- `propose(module, bindings, settings, refresh_slots)` returns a `ModuleActivation` candidate from the submitted bindings and explicit module settings. Host values initialize an absent module's editor; applying current configuration does not merge them implicitly. Keep both binding forms (`{slot, profile_id}` and the draft form).
 - `propose_system()` returns a `SystemSettings` candidate from host settings.
 - `validate_module(candidate, active_kinds)`:
   - Do the existing schema/default/availability checks, scoped to one module.
   - Check that package pins are installed and enabled, and retain the separate Python-library installation check (§3.8.3).
   - For acquisition, keep `_validate_source_parameters`: sample_rate and channel_count must be positive ints.
-- `accept_module(candidate, expected_revision)` and `accept_system(...)`.
+- The runtime coordinator persists successfully applied candidates through the repository. Remove unused profile-service acceptance wrappers.
 - `materialize(activation_set, generation)` produces the runtime dict with `CONFIG.module_revisions`, `CONFIG.system_revision`, `CONFIG.generation`, `PLUGINS.bindings`, `ACQUISITION.signal_source`, `ACQUISITION.<params>`, plus all section settings.
 - `delete` is blocked if any module binds the profile.
 - Add `profile_history(id)` and `revert_profile(id, revision, expected_revision)`.
 - Delete `include_host_settings` and `_validate_host_changes`. Its checks against the startup defaults (`startup_settings_resolver` / `loaded_startup_settings`) stay where they are relevant to the system section: a mismatch in `BACKEND_STARTUP_DEFAULTS` still requires a process restart, as today.
 
-Verify: rewrite `tests/application/test_plugin_profile_service.py` and update `tests/plugin_configuration_helpers.py`. Its `accept_profiles` helper must use `get_module` / `propose` / `accept_module` per module.
+Verify: rewrite `tests/application/test_plugin_profile_service.py` and update `tests/plugin_configuration_helpers.py`. Its `accept_profiles` helper proposes each module with explicit settings and saves fixture values through the repository.
 
 ### Step 4 — `RuntimeConfigurationService`
 

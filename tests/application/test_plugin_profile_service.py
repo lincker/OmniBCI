@@ -1,5 +1,5 @@
 """Saving, selecting, and resolving configuration have distinct effects."""
-from contextlib import contextmanager
+from omnibci.application.activation_settings import section_settings
 from dataclasses import replace
 from uuid import uuid4
 
@@ -38,7 +38,7 @@ def create_source(service, name="Replay", **parameters):
 def select(service, profile, slot):
     module = slot.split(".", 1)[0]
     current = service.repository.get_module(module)
-    return service.accept_module(service.propose(module, [{"slot": slot, "profile_id": profile.profile_id}]),
+    return service.repository.save_module(service.propose(module, [{"slot": slot, "profile_id": profile.profile_id}], settings=section_settings(service.settings_source(), module)),
                                  expected_revision=current.revision if current else None)
 
 
@@ -102,9 +102,9 @@ def test_profile_reference_refresh_is_explicit(service):
     selected = select(service, profile, "acquisition.source")
     service.update(profile.profile_id, name="New", parameters={"file_reader_chunk_size": 200}, expected_revision=1)
     request = [{"slot": "acquisition.source", "profile_id": profile.profile_id}]
-    retained = service.propose("acquisition", request, refresh_slots=[])
+    retained = service.propose("acquisition", request, refresh_slots=[], settings=section_settings(service.settings_source(), "acquisition"))
     assert retained.bindings == selected.bindings
-    refreshed = service.propose("acquisition", request, refresh_slots=["acquisition.source"])
+    refreshed = service.propose("acquisition", request, refresh_slots=["acquisition.source"], settings=section_settings(service.settings_source(), "acquisition"))
     assert refreshed.bindings[0].profile_revision == 2
     assert refreshed.bindings[0].parameters["file_reader_chunk_size"] == 200
     assert service.repository.get_module("acquisition") == selected
@@ -114,9 +114,9 @@ def test_filter_instances_keep_order_and_unique_slots(service):
     plugin = definition(service, "filter", "BASELINE_CORRECTION")
     profile = service.create("filter", plugin.selection, "Baseline", {})
     selections = [{"slot": f"processing.filter.{uuid4()}", "profile_id": profile.profile_id} for _ in range(2)]
-    candidate = service.propose("processing", selections)
-    service.accept_module(candidate, expected_revision=None)
-    reordered = service.propose("processing", list(reversed(selections)))
+    candidate = service.propose("processing", selections, settings=section_settings(service.settings_source(), "processing"))
+    service.repository.save_module(candidate, expected_revision=None)
+    reordered = service.propose("processing", list(reversed(selections)), settings=section_settings(service.settings_source(), "processing"))
     assert reordered.revision != candidate.revision
     assert [item.slot for item in reordered.bindings] == [item["slot"] for item in reversed(selections)]
 
@@ -135,13 +135,13 @@ def test_each_section_copies_only_its_owned_host_settings(service):
         "actuation": {"ACTUATION.auto_spawn": False},
     }
     for module, settings in expected.items():
-        candidate = service.propose(module, [])
+        candidate = service.propose(module, [], settings=section_settings(service.settings_source(), module))
         assert candidate.settings == settings
-        service.accept_module(candidate, expected_revision=None)
+        service.repository.save_module(candidate, expected_revision=None)
     assert service.repository.get_system() is None
     system = service.propose_system()
     assert system.settings == {"NEUROENGINE.queue_size": 64, "NEUROENGINE.message_server_port": 5000, "debug": True}
-    service.accept_system(system, expected_revision=None)
+    service.repository.save_system(system, expected_revision=None)
     values = runtime(service)
     assert values["CONFIG.system_revision"] == system.revision
     assert set(values["CONFIG.module_revisions"]) == set(expected)
@@ -149,12 +149,12 @@ def test_each_section_copies_only_its_owned_host_settings(service):
 
 
 def test_module_acceptance_preserves_other_modules_and_never_initializes_system(service):
-    processing = service.accept_module(service.propose("processing", []), expected_revision=None)
+    processing = service.repository.save_module(service.propose("processing", [], settings=section_settings(service.settings_source(), "processing")), expected_revision=None)
     source = select(service, create_source(service), "acquisition.source")
     service.settings_source = lambda: {"NEUROENGINE.queue_size": 250, "ALGORITHM.baseline_duration": 9.0}
     candidate = service.propose("acquisition", [{"slot": source.bindings[0].slot,
-                                               "profile_id": source.bindings[0].profile_id}])
-    service.accept_module(candidate, expected_revision=source.revision)
+                                               "profile_id": source.bindings[0].profile_id}], settings=section_settings(service.settings_source(), "acquisition"))
+    service.repository.save_module(candidate, expected_revision=source.revision)
     assert candidate.settings == {}
     assert candidate.revision == source.revision
     assert service.repository.get_module("processing") == processing
@@ -168,7 +168,7 @@ def test_backend_startup_edits_require_backend_restart_for_system(service, key, 
     service.settings_source = lambda: {key: value}
     with pytest.raises(PluginSchemaError, match="Backend restart required"):
         service.propose_system()
-    assert service.propose("processing", []).settings == {}
+    assert service.propose("processing", [], settings=section_settings(service.settings_source(), "processing")).settings == {}
 
 
 def test_materialized_runtime_uses_pinned_source_values_and_generation(service):
@@ -193,7 +193,7 @@ def test_idle_missing_source_package_does_not_block_foundation_or_outputs(servic
         replace(source.bindings[0], selection=PluginSelection("missing.source", "reader", "1.0.0")),
     ))
     service.repository.save_module(missing, expected_revision=source.revision)
-    service.accept_system(service.propose_system(), expected_revision=None)
+    service.repository.save_system(service.propose_system(), expected_revision=None)
     plugin = definition(service, kind, alias)
     output = select(service, service.create(kind, plugin.selection, "Output", {}), slot)
     original_get = service.catalog.get
@@ -231,9 +231,7 @@ def external_source_profile(service, monkeypatch, parameters):
 @pytest.mark.parametrize("value", [True, 0, -1, 1.5])
 def test_declared_source_expectations_must_be_positive_integers(service, monkeypatch, key, value):
     profile = external_source_profile(service, monkeypatch, {key: value})
-    candidate = service.propose("acquisition", [{"slot": "acquisition.source", "profile_id": profile.profile_id}])
-    with pytest.raises(PluginSchemaError, match="positive integer"):
-        service.accept_module(candidate, expected_revision=None)
+    candidate = service.propose("acquisition", [{"slot": "acquisition.source", "profile_id": profile.profile_id}], settings=section_settings(service.settings_source(), "acquisition"))
     with pytest.raises(PluginSchemaError, match="positive integer"):
         service.validate_module(candidate, active_kinds={"acquisition"})
     assert service.materialize(ActivationSet({"acquisition": candidate}, None))[f"ACQUISITION.{key}"] == value
@@ -282,26 +280,12 @@ def test_scan45_profile_rejects_invalid_channel_count(service, channels):
         service.create("acquisition", plugin.selection, "Invalid", {"channel_count": channels})
 
 
-def test_running_guard_blocks_accept_but_allows_profile_save(service):
-    @contextmanager
-    def guard(requires_idle):
-        if requires_idle:
-            raise ProfileRevisionConflict("Engine is running")
-        yield
-    service.change_guard = guard
-    profile = create_source(service)
-    with pytest.raises(ProfileRevisionConflict, match="running"):
-        select(service, profile, "acquisition.source")
-    service.update(profile.profile_id, name="Edited while running", parameters={}, expected_revision=1)
-    assert service.repository.get_module("acquisition") is None
-
-
 def test_delete_requires_replacing_selected_binding(service):
     profile = create_source(service)
     selected = select(service, profile, "acquisition.source")
     with pytest.raises(ProfileRevisionConflict, match="selected"):
         service.delete(profile.profile_id, expected_revision=1)
-    service.accept_module(ModuleActivation("acquisition", selected.settings, ()), expected_revision=selected.revision)
+    service.repository.save_module(ModuleActivation("acquisition", selected.settings, ()), expected_revision=selected.revision)
     service.delete(profile.profile_id, expected_revision=1)
     assert service.repository.list_profiles() == []
 
@@ -332,13 +316,13 @@ def test_backend_startup_resolver_respects_environment_overrides(service):
     inputs = {"PLUGINS.user_dir": "/ignored-before"}
     overridden = PluginProfileService(service.repository, service.catalog, settings_source=lambda: inputs,
         startup_settings_resolver=lambda settings: {"PLUGINS.user_dir": "/environment-plugins"})
-    previous = overridden.accept_system(overridden.propose_system(), expected_revision=None)
+    previous = overridden.repository.save_system(overridden.propose_system(), expected_revision=None)
     inputs["PLUGINS.user_dir"] = "/ignored-after"
     assert overridden.propose_system() == previous
 
 
 def test_backend_restart_uses_loaded_settings_without_adding_them_to_runtime(service):
-    previous = service.accept_system(service.propose_system(), expected_revision=None)
+    previous = service.repository.save_system(service.propose_system(), expected_revision=None)
     restarted = PluginProfileService(service.repository, service.catalog,
         settings_source=lambda: {"NEUROENGINE.queue_size": 100, "debug": False, "NEUROENGINE.command_timeout_s": 20.0})
     assert restarted.propose_system() == previous

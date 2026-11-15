@@ -21,15 +21,29 @@ it does not introduce another saved object or global revision.
 
 ## Apply flow
 
-1. The client submits the current bindings for one module and its expected
-   accepted revision. A separate system request has no plugin bindings.
-2. Planning validates exact selections and owned settings, identifies affected
-   runtime resources, and returns the strategy and dependency revision map.
-3. The module action submits the plan with a unique operation UUID. The coordinator
-   rechecks the dependency revisions and runtime generation before applying.
-4. Workers acknowledge their new configuration. Only successfully applied
-   sections are persisted. A successful change appends module history using
-   the operation UUID; repeat submissions are idempotent.
+Connect and module Start each submit one request containing `operation_id` and
+`configuration: {expected_revision, settings, bindings}`. The expected revision
+belongs to the editor's actual baseline, not a newer value fetched just before
+submission. Settings replace the module's submitted settings; they are not a
+patch and are not read implicitly from the host settings file.
+
+The backend owns validation, configuration application, and the requested action
+until its core transition finishes. It uses the existing application boundaries
+and returns the completed operation. A retry with the same operation UUID and
+content observes that operation; different content with the same UUID conflicts.
+HTTP cancellation does not abandon owned work. Stop waits for the affected
+module's in-flight core transition.
+
+An operation reports `result.configuration_applied` as soon as application is
+confirmed. If connection or startup subsequently fails, accepted values remain
+available for correction, and the operation reports failure without claiming a
+rollback. The browser acknowledges its own accepted baseline while retaining
+edits made during the request. Other clients' updates never silently rebase a
+dirty editor. Successful changes record module history once per operation.
+
+System settings and module-history restoration retain explicit plan review and
+Apply. The backend rechecks their dependency revisions and generation before
+execution. These review plans are not a prerequisite for ordinary module actions.
 
 Unrelated module edits do not invalidate a narrow plan. Processing also depends
 on Acquisition; every module depends on system. A system rebuild depends on all
@@ -154,9 +168,12 @@ All routes use the normal `/api/v1` prefix and response envelope.
 | --- | --- |
 | `POST /engine/start` | Start shared infrastructure only |
 | `POST /engine/stop` | Stop every module and shared infrastructure |
-| `POST /engine/modules/{module}/start` | Start Acquisition, Processing, or Actuation |
+| `POST /engine/modules/{module}/start` | Apply current Processing or Actuation and start/prepare that module |
 | `POST /engine/modules/{module}/stop` | Stop the specified module |
-| `POST /engine/modules/{module}/prepare` | Ensure Stimulation or Actuation's external listener |
+| `POST /engine/modules/{module}/prepare` | Prepare retained Stimulation or Actuation configuration for recovery; no draft |
+| `POST /acquisition/connect` | Apply current Acquisition, start its worker, and connect in one operation |
+| `POST /acquisition/stream/start` | Validate source revision, engine generation and connection ID, then start reading |
+| `POST /stimulation/start` | Apply current Stimulation and start it, or prepare its external listener |
 | `GET /config/modules` | Accepted modules plus system, with errors reported per section |
 | `GET /config/modules/{module}` | One module; revision is null when absent |
 | `POST /config/apply-plan` | Plan current values for the required module |

@@ -28,13 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class StimulationAppService:
-    """Application service for the Stimulation bounded context.
-
-    *process_manager* is optional so that existing unit tests that construct
-    this service without it continue to work unchanged.  When provided,
-    ``start`` spawns (or skips, depending on *auto_spawn*) the Stimulation
-    subprocess before dispatching the domain event.
-    """
+    """Own stimulation startup readiness and explicit output shutdown."""
 
     def __init__(
         self,
@@ -50,57 +44,41 @@ class StimulationAppService:
         self._active_identity = None
         self._stop_managed = None
 
-    def handle_start_stimulation(self, cmd: StartStimulationCommand, *, settings_snapshot=None) -> None:
+    def handle_start_stimulation(self, cmd: StartStimulationCommand, *, settings_snapshot: dict) -> None:
         with self._admission.transition("stimulation") if self._admission is not None else nullcontext():
-            if settings_snapshot is None:
-                settings_snapshot = self._engine.prepare_output_sync("stimulation")
-            self._start_stimulation(cmd, settings_snapshot=settings_snapshot)
+            self._start_stimulation(settings_snapshot=settings_snapshot)
 
-    def _start_stimulation(self, cmd: StartStimulationCommand, *, settings_snapshot=None) -> None:
+    def _start_stimulation(self, *, settings_snapshot: dict) -> None:
         if not self._engine.is_engine_ready:
             raise RuntimeError("Start the engine before starting stimulation")
         process_ready = False
         self._active_identity = None
-        snapshot = self._engine.applied_snapshot if settings_snapshot is None else settings_snapshot
+        snapshot = settings_snapshot
         try:
             self._engine.ensure_output_ready_sync("stimulation", snapshot)
             if self._process_manager is not None:
                 # Managed mode blocks here until IPC + renderer/paradigm setup
                 # has reported READY.  External mode remains an immediate no-op.
-                if isinstance(snapshot, dict):
-                    self._process_manager.start(
-                        paradigm=cmd.paradigm, settings_snapshot=snapshot,
-                    )
-                else:
-                    self._process_manager.start(paradigm=cmd.paradigm)
+                self._process_manager.start(settings_snapshot=snapshot)
                 process_ready = True
                 if not self._process_manager.auto_spawn:
-                    if cmd.paradigm is not None:
-                        raise RuntimeError(
-                            "Cannot change paradigm of an externally managed "
-                            "stimulation process"
-                        )
                     if not self._engine.is_peer_connected(STIMULATION_PEER):
                         raise RuntimeError(
                             "External stimulation process is not connected"
                         )
-            self._put_event(EventType.StartStimulation, data=cmd.paradigm)
         except BaseException:
-            # Process spawn and engine dispatch form one application-level
-            # transaction.  If the engine rejects the command, do not leave an
-            # orphan renderer behind.  Cleanup failure is secondary: preserve
-            # the dispatch exception that explains why start failed.
+            # Keep a failed readiness check from leaving a locally owned renderer.
             if self._process_manager is not None and process_ready:
                 try:
                     self._process_manager.stop()
                 except BaseException:
                     logger.exception(
-                        "Failed to roll back Stimulation process after dispatch error"
+                        "Failed to roll back Stimulation process after startup error"
                     )
             self._active_identity = None
             raise
         self._active_identity = self._identity(snapshot)
-        logger.info("StartStimulation event dispatched (paradigm=%s)", cmd.paradigm)
+        logger.info("Stimulation startup confirmed")
 
     def handle_stop_stimulation(self, cmd: StopStimulationCommand) -> None:
         with self._admission.stop_transition_sync("stimulation") if self._admission is not None else nullcontext():

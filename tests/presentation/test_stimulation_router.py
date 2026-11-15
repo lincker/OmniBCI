@@ -58,42 +58,6 @@ class TestParadigms:
         assert "STIMULATION_THUBCI_SSVEP_classic40" in plugin_types
 
 
-class TestStimulationStart:
-    def test_start_returns_200(self, api_client, mock_engine):
-        resp = api_client.post("/api/v1/stimulation/start")
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-
-    def test_start_with_paradigm_body(self, api_client, mock_engine):
-        resp = api_client.post(
-            "/api/v1/stimulation/start",
-            json={"paradigm": "classic40SSVEP"},
-        )
-        assert resp.status_code == 200
-
-    def test_start_dispatches_event(self, api_client, mock_engine):
-        api_client.post("/api/v1/stimulation/start")
-        mock_engine.event_bus.put_event.assert_called()
-
-    def test_start_without_engine_returns_503(self, api_client, engine_service):
-        engine_service._engine = None
-        resp = api_client.post("/api/v1/stimulation/start")
-        assert resp.status_code == 503
-
-    def test_startup_timeout_returns_engine_not_ready(
-        self, api_client, stimulation_service
-    ):
-        stimulation_service.handle_start_stimulation = MagicMock(
-            side_effect=TimeoutError(
-                "Stimulation subprocess did not become ready within 30s"
-            )
-        )
-
-        resp = api_client.post("/api/v1/stimulation/start")
-
-        assert resp.status_code == 503
-        assert resp.json()["code"] == "ENGINE_NOT_READY"
-        assert "within 30s" in resp.json()["message"]
 
 
 class TestStimulationStop:
@@ -126,8 +90,8 @@ class TestStimulationStop:
 
 class TestStimulationTrial:
     @pytest.fixture(autouse=True)
-    def enabled(self, api_client):
-        assert api_client.post("/api/v1/stimulation/start").status_code == 200
+    def enabled(self, stimulation_service, engine_service):
+        stimulation_service._active_identity = stimulation_service._identity(engine_service.applied_snapshot)
 
     def test_trial_start_returns_200(self, api_client, mock_engine):
         resp = api_client.post("/api/v1/stimulation/trial/start")

@@ -1,10 +1,10 @@
 /** Configuration operations remain owned by the application across navigation. */
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { RevisionMap, ConfigurationModule } from "../api/plugin-config";
+import type { ConfigurationModule } from "../api/plugin-config";
 import { ApiError } from "../api/client";
 import { useI18n, type TranslationKey, type TranslationParams } from "../i18n";
 import { runtimeConfigApi as api, type RuntimePlanRequest, type RuntimePlan,
-  type RuntimeStatus, type RuntimeOperation } from "../api/runtime-config";
+  type RuntimeStatus, type RuntimeOperation, type ModuleConfigurationRequest, type ModuleActionRequest } from "../api/runtime-config";
 import type { ModuleRestoration } from "./useCurrentConfiguration";
 
 export type ConfigurationSection = RuntimePlanRequest["module"];
@@ -14,9 +14,10 @@ const message = (cause: unknown) => cause instanceof Error ? cause.message : Str
 type RequestError = string | { key: TranslationKey; params?: TranslationParams } | null;
 type Attempt = {
   reviewing?: boolean; submitting?: boolean; uncertain?: boolean; requestError?: RequestError;
-  submission?: { planId: string; operationId: string }; tracked?: string | null;
+  submission?: { planId?: string; operationId: string }; tracked?: string | null;
   operation?: RuntimeOperation; completed?: RuntimeOperation;
   restoration?: { planId: string; module: ConfigurationModule };
+  onApplied?: (operation: RuntimeOperation) => void;
 };
 
 export function operationAffects(operation: RuntimeOperation, module: ConfigurationSection) {
@@ -40,6 +41,11 @@ export function useRuntimeConfiguration() {
     setAttempts(values.current);
   }, []);
   const recordCompletion = useCallback((result: RuntimeOperation) => {
+    const attempt = values.current[result.module];
+    if (result.result?.configuration_applied === true && attempt?.submission?.operationId === result.operation_id && attempt.onApplied) {
+      attempt.onApplied(result);
+      update(result.module, { onApplied: undefined });
+    }
     if (result.status !== "succeeded") return;
     update(result.module, { completed: result });
     const restoration = values.current[result.module]?.restoration;
@@ -113,7 +119,7 @@ export function useRuntimeConfiguration() {
     catch (cause) { update(module, { requestError: message(cause) }); await refresh(); return null; }
     finally { update(module, { reviewing: false }); }
   };
-  const apply = async (target = plan, waitForCompletion = false): Promise<boolean> => {
+  const apply = async (target = plan): Promise<boolean> => {
     if (!target || target.errors.length || values.current[target.module]?.reviewing || state(target.module).blocked) return false;
     const module = target.module;
     const previous = values.current[module]?.submission;
@@ -121,15 +127,9 @@ export function useRuntimeConfiguration() {
       : { planId: target.plan_id, operationId: crypto.randomUUID() };
     update(module, { submitting: true, requestError: null, submission, tracked: submission.operationId, uncertain: true });
     try {
-      let result = await api.apply(submission.planId, submission.operationId);
+      const result = await api.apply(target.plan_id, submission.operationId);
       update(module, { operation: result, uncertain: false });
       setPlan((current) => current?.plan_id === target.plan_id ? null : current);
-      const deadline = Date.now() + 30_000;
-      while (waitForCompletion && operationActive(result) && alive.current && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        result = await api.operation(submission.operationId);
-        if (alive.current) update(module, { operation: result });
-      }
       recordCompletion(result);
       if (!operationActive(result)) update(module, { tracked: null });
       await refresh(); return result.status === "succeeded";
@@ -141,18 +141,27 @@ export function useRuntimeConfiguration() {
       await refresh(); return false;
     } finally { update(module, { submitting: false }); }
   };
-  const applyCurrentSelection = async (body: RuntimePlanRequest): Promise<RevisionMap | null> => {
-    const module = body.module;
-    if (values.current[module]?.reviewing || state(module).blocked) return null;
-    update(module, { reviewing: true, requestError: null, submission: undefined, restoration: undefined });
-    setPlan((current) => current?.module === module ? null : current);
+  const execute = async (module: ConfigurationModule, configuration: ModuleConfigurationRequest,
+    send: (body: ModuleActionRequest) => Promise<RuntimeOperation | null>,
+    onApplied?: (operation: RuntimeOperation) => void): Promise<RuntimeOperation> => {
+    if (state(module).blocked || values.current[module]?.reviewing) throw new Error(t("feedback.runtimeUnavailable"));
+    const operationId = crypto.randomUUID();
+    update(module, { submitting: true, uncertain: true, tracked: operationId,
+      submission: { operationId }, restoration: undefined, requestError: null, onApplied });
     try {
-      const target = await api.plan(body);
-      if (target.errors.length) { update(module, { requestError: target.errors.join("; ") }); return null; }
-      update(module, { reviewing: false });
-      return await apply(target, true) ? { ...target.expected_revisions, ...target.target_revisions } : null;
-    } catch (cause) { update(module, { requestError: message(cause) }); await refresh(); return null; }
-    finally { update(module, { reviewing: false }); }
+      const result = await send({ operation_id: operationId, configuration });
+      if (!result || result.operation_id !== operationId || result.module !== module || operationActive(result)) {
+        throw new Error(t("runtime.applyInterrupted"));
+      }
+      update(module, { operation: result, uncertain: false, tracked: null });
+      recordCompletion(result);
+      return result;
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status >= 400 && cause.status < 500) {
+        update(module, { tracked: null, uncertain: false, requestError: message(cause) });
+      } else update(module, { requestError: { key: "runtime.applyInterrupted" } });
+      throw cause;
+    } finally { update(module, { submitting: false }); }
   };
   const retryUnconfirmed = async (module: ConfigurationSection) => {
     const entry = values.current[module];
@@ -164,6 +173,7 @@ export function useRuntimeConfiguration() {
       try { result = await api.operation(pending.operationId); }
       catch (cause) {
         if (!(cause instanceof ApiError) || cause.status !== 404) throw cause;
+        if (!pending.planId) throw cause;
         result = await api.apply(pending.planId, pending.operationId);
       }
       update(module, { operation: result, uncertain: false, requestError: null, tracked: operationActive(result) ? result.operation_id : null });
@@ -176,7 +186,7 @@ export function useRuntimeConfiguration() {
     } finally { update(module, { submitting: false }); }
   };
   return { status, plan, error, state, completedRestorations, inProgress: state("system").inProgress,
-    blocked: state("system").blocked, review, apply, applyCurrentSelection, refresh, retryUnconfirmed,
+    blocked: state("system").blocked, review, apply, execute, refresh, retryUnconfirmed,
     reviewPlan: (target: RuntimePlan, restoreModule?: ConfigurationModule) => {
       if (state(target.module).blocked || values.current[target.module]?.reviewing) return;
       update(target.module, { restoration: restoreModule ? { planId: target.plan_id, module: restoreModule } : undefined,

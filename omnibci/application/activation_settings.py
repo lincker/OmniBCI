@@ -7,14 +7,19 @@ MODULES = ("acquisition", "processing", "stimulation", "actuation")
 SYSTEM_SECTION = "system"
 SECTIONS = (*MODULES, SYSTEM_SECTION)
 
+MODULE_SETTING_DEFAULTS = {
+    "acquisition": {},
+    "processing": {"ALGORITHM.baseline_duration": 0.0},
+    "stimulation": {"STIMULATION.renderer": "moderngl", "STIMULATION.auto_spawn": True},
+    "actuation": {
+        "ACTUATION.server_ip": "127.0.0.1", "ACTUATION.server_port": 8001,
+        "ACTUATION.watchdog_timeout_s": 1.0, "ACTUATION.max_command_age_s": 0.0,
+        "ACTUATION.auto_spawn": True,
+    },
+}
+
 SECTION_SETTING_KEYS = {
-    "acquisition": frozenset(),
-    "processing": frozenset({"ALGORITHM.baseline_duration"}),
-    "stimulation": frozenset({"STIMULATION.renderer", "STIMULATION.auto_spawn"}),
-    "actuation": frozenset({
-        "ACTUATION.server_ip", "ACTUATION.server_port",
-        "ACTUATION.watchdog_timeout_s", "ACTUATION.max_command_age_s", "ACTUATION.auto_spawn",
-    }),
+    **{module: frozenset(settings) for module, settings in MODULE_SETTING_DEFAULTS.items()},
     "system": frozenset({
         "NEUROENGINE.message_server_ip", "NEUROENGINE.message_server_port",
         "NEUROENGINE.startup_timeout_s", "debug",
