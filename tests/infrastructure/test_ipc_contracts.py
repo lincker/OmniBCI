@@ -55,7 +55,7 @@ class TestWireShape:
         assert restored.data["trial_number"] == 7
         assert restored.data["target_id"] == 3
         assert restored.data["event_id"] == 9
-        assert restored.data["config_revision"] == "revision"
+        assert restored.data["processing_revision"] == "revision"
 
     def test_event_to_body_shape(self):
         body = event_to_body(Event(EventType.TrialCompleted, data={"x": 1}))

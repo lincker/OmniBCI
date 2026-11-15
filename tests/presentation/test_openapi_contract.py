@@ -32,6 +32,8 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/engine/start", "post"),
     ("/api/v1/engine/stop", "post"),
     ("/api/v1/engine/status", "get"),
+    ("/api/v1/engine/modules/{module}/start", "post"),
+    ("/api/v1/engine/modules/{module}/stop", "post"),
     # acquisition
     ("/api/v1/acquisition/connect", "post"),
     ("/api/v1/acquisition/disconnect", "post"),
@@ -67,8 +69,14 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/config/plugin-profiles/{profile_id}", "get"),
     ("/api/v1/config/plugin-profiles/{profile_id}", "put"),
     ("/api/v1/config/plugin-profiles/{profile_id}", "delete"),
-    ("/api/v1/config/activation", "get"),
-    ("/api/v1/config/activation", "put"),
+    ("/api/v1/config/modules", "get"),
+    ("/api/v1/config/modules/{module}", "get"),
+    ("/api/v1/config/modules/{module}/history", "get"),
+    ("/api/v1/config/modules/{module}/history/{entry_id}", "get"),
+    ("/api/v1/config/modules/{module}/revert-plan", "post"),
+    ("/api/v1/config/system", "get"),
+    ("/api/v1/config/plugin-profiles/{profile_id}/history", "get"),
+    ("/api/v1/config/plugin-profiles/{profile_id}/revert", "post"),
     ("/api/v1/config/runtime", "get"),
     ("/api/v1/config/nodes/{role}", "get"),
     ("/api/v1/config/apply-plan", "post"),
@@ -168,12 +176,13 @@ class TestResponseDtos:
         props = _schema(spec, "TrialResponse")["properties"]
         assert set(props) == {
             "generation", "trial_number", "target_id", "event_id", "confidence", "forced", "produced_at",
-            "config_revision",
+            "processing_revision", "acquisition_revision",
         }
 
     def test_engine_status_fields(self, spec):
         props = _schema(spec, "EngineStatusResponse")["properties"]
-        assert set(props) == {"running", "acquisition_alive", "processor_alive", "stimulation_connected"}
+        assert set(props) == {"running", "acquisition_alive", "processor_alive", "stimulation_connected",
+                              "actuation_alive", "actuation_connected"}
 
     def test_acquisition_status_fields(self, spec):
         props = _schema(spec, "AcquisitionStatusResponse")["properties"]

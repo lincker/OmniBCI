@@ -39,11 +39,13 @@ class EpochProcessor:
         decoder: Decoder,
         sample_rate: int = 1000,
         filters: Optional[List[Filter]] = None,
-        config_revision: str | None = None,
+        processing_revision: str | None = None,
+        acquisition_revision: str | None = None,
     ) -> None:
         self.decoder = decoder
         self.sample_rate = sample_rate
-        self.config_revision = config_revision
+        self.processing_revision = processing_revision
+        self.acquisition_revision = acquisition_revision
         # Ordered preprocessing followed by the terminal decoder.
         self.pipeline = ProcessingPipeline(
             decoder=decoder, filters=filters, sample_rate=sample_rate
@@ -252,7 +254,7 @@ class EpochProcessor:
             decoder_type = type(self.decoder)
             raise type(exc)(
                 f"Invalid Prediction from {decoder_type.__module__}.{decoder_type.__qualname__} "
-                f"(event_id={self._event_id}, config_revision={self.config_revision!r}): {exc}"
+                f"(event_id={self._event_id}, processing_revision={self.processing_revision!r}): {exc}"
             ) from exc
         logger.info("Decoder produced: %s (forced=%s)", classification, forced)
         return True, classification

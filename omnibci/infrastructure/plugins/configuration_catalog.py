@@ -15,7 +15,7 @@ class CatalogConfigurationAdapter:
     @staticmethod
     def _adapt(descriptor) -> PluginConfiguration:
         return PluginConfiguration(
-            selection=descriptor.selection, kind=descriptor.category,
+            selection=descriptor.selection, kind=descriptor.category, domain=descriptor.package.domain,
             plugin_type=descriptor.plugin_type, label=descriptor.display_name,
             description=descriptor.description,
             schema=deepcopy(descriptor.configuration_schema),
@@ -31,11 +31,5 @@ class CatalogConfigurationAdapter:
     def get(self, kind: str, selection: PluginSelection) -> PluginConfiguration:
         try:
             return self._adapt(self.catalog.resolve_selection(kind, selection))
-        except PluginResolutionError as exc:
-            raise PluginSchemaError(str(exc)) from exc
-
-    def legacy(self, kind: str, alias: str) -> PluginConfiguration:
-        try:
-            return self._adapt(self.catalog.resolve_legacy(kind, alias))
         except PluginResolutionError as exc:
             raise PluginSchemaError(str(exc)) from exc

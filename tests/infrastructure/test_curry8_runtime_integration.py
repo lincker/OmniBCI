@@ -1,4 +1,5 @@
 """Simulated CURRY TCP data reaches the real CCA pipeline without a session."""
+from tests.plugin_configuration_helpers import builtin_selection
 
 import asyncio
 import json
@@ -103,17 +104,17 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
         ChannelBinding("Oz", "channel-2", "eeg"),
     ))
     snapshot = {
-        "CONFIG.revision": "curry-revision",
+        "CONFIG.module_revisions": {"acquisition": "curry-revision", "processing": "curry-revision", "stimulation": "curry-revision", "actuation": "curry-revision"}, "CONFIG.system_revision": "system",
         "ACQUISITION.signal_source": "neuroscan_curry8_reader",
         "PLUGINS.bindings": [
             ProfileBinding("acquisition.source", "acquisition", None,
-                           catalog.resolve("acquisition", "neuroscan_curry8_reader").selection,
+                           builtin_selection("acquisition", "neuroscan_curry8_reader"),
                            parameters).to_dict(),
             ProfileBinding("processing.decoder", "decoder", None,
-                           catalog.resolve("decoder", "THUBCI_SSVEP_classic40CCA").selection,
+                           builtin_selection("decoder", "THUBCI_SSVEP_classic40CCA"),
                            {"window_duration": 1.0, "offset_time": 0}, processing_input=inputs).to_dict(),
             ProfileBinding("processing.epoch_detector", "epoch_detector", None,
-                           catalog.resolve("epoch_detector", "DEFAULT_EPOCH_DETECTOR").selection,
+                           builtin_selection("epoch_detector", "DEFAULT_EPOCH_DETECTOR"),
                            {}).to_dict(),
         ],
     }
@@ -131,11 +132,11 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
     monkeypatch.setattr(data, "put_data", capture)
     acquisition = AcquisitionRuntime(
         source, Queue(), data, bus, source_id=source.plugin_type, preparation_required=True,
-        generation="curry-generation", config_revision="curry-revision",
+        generation="curry-generation", acquisition_revision="curry-revision", system_revision="system",
     )
     processor = make_processor(
         None, None, Queue(), data, bus,
-        generation="curry-generation", config_revision="curry-revision", settings_snapshot=snapshot,
+        generation="curry-generation", processing_revision="curry-revision", acquisition_revision="curry-revision", system_revision="system", settings_snapshot=snapshot,
     )
 
     def result(command_id):
@@ -162,9 +163,9 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
         assert all(channel.signal_type == "unknown" for channel in descriptor.channels)
         assert json.loads(metadata["metadata"])["channel_labels"] == list(labels)
         assert "channel_types" not in json.loads(metadata["metadata"])
-        plan = compile_processing_plan(descriptor, inputs, config_revision="curry-revision")
+        plan = compile_processing_plan(descriptor, inputs, acquisition_revision="curry-revision")
         receipt = {
-            "generation": "curry-generation", "config_revision": "curry-revision",
+            "generation": "curry-generation", "acquisition_revision": "curry-revision", "processing_revision": "curry-revision", "system_revision": "system",
             "connection_id": descriptor.connection_id,
             "source_fingerprint": descriptor.fingerprint, "plan_fingerprint": plan.fingerprint,
         }

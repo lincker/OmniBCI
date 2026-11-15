@@ -35,10 +35,9 @@ class PluginPackageService(PluginInstallationService):
     def references(self) -> tuple[PackageReference, ...]:
         references = [PackageReference("profile", item.profile_id, item.selection)
                       for item in self.profiles.repository.list_profiles()]
-        accepted = self.profiles.repository.get_activation()
-        if accepted is not None:
-            references.extend(PackageReference("accepted", item.slot, item.selection)
-                              for item in accepted.bindings)
+        accepted = self.profiles.repository.get_activation_set()
+        references.extend(PackageReference("accepted", item.slot, item.selection)
+                          for item in accepted.bindings())
         references.extend(self.runtime_references())
         if any(not isinstance(item, PackageReference) for item in references):
             raise PluginPackageError("Runtime references must be explicit PackageReference values")
@@ -46,9 +45,8 @@ class PluginPackageService(PluginInstallationService):
 
     @staticmethod
     def _matching(references, package_id, version):
-        # An unversioned reference cannot establish that a managed version is unused.
         return tuple(item for item in references if item.selection.package_id == package_id
-                     and item.selection.version in {None, version})
+                     and item.selection.version == version)
 
     def list(self):
         references = self.references()
@@ -76,8 +74,6 @@ class PluginPackageService(PluginInstallationService):
                         name: str | None = None, parameters: dict | None = None):
         """Validate a copy against the target schema; preserve all old values by default."""
         source = self.profiles.repository.get_profile(source_profile_id)
-        if source.processing_input_requires_review:
-            raise PluginSchemaError("Configure a channel mapping before copying this legacy decoder profile")
         selection = replace(source.selection, version=target_version)
         if selection == source.selection:
             raise PluginPackageError("Choose a different exact package version")

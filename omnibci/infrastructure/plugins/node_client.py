@@ -133,8 +133,8 @@ def run_configured_node(role: str, application_factory, *, backend_url: str) -> 
         from omnibci.conf import settings
         settings.use_snapshot(snapshot)
         logger.info(
-            "Starting %s for revision %s, generation %s",
-            role, configuration.revision, configuration.generation,
+            "Starting %s for modules %s, system %s, generation %s",
+            role, configuration.module_revisions, configuration.system_revision, configuration.generation,
         )
         application = application_factory(settings_snapshot=snapshot)
         if application.run() is not True:

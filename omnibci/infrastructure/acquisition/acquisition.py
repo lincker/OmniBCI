@@ -12,6 +12,7 @@ from omnibci.application.events import (
     CommandRequest,
     CommandResult,
     StreamBarrier,
+    StreamDrainReceipt,
 )
 from omnibci.domain.signal_info import SignalInfo
 from omnibci.domain.ports.acquisition import SignalSource
@@ -48,7 +49,6 @@ class AcquisitionCommand(Enum):
     disconnect        = 'disconnect'
     get_checkpoint    = 'get checkpoint'
     restore_checkpoint = 'restore checkpoint'
-    update_revision   = 'update revision'
     start_preview     = 'start preview'
     stop_preview      = 'stop preview'
     get_preview       = 'get preview'
@@ -70,7 +70,6 @@ _COMMAND_RESULT_NAMES = {
     AcquisitionCommand.stop_and_drain: EventType.StopAndDrain.name,
     AcquisitionCommand.get_checkpoint: EventType.GetSourceCheckpoint.name,
     AcquisitionCommand.restore_checkpoint: EventType.RestoreSourceCheckpoint.name,
-    AcquisitionCommand.update_revision: EventType.UpdateAcquisitionRevision.name,
     AcquisitionCommand.get_metadata: EventType.GetSourceMetadata.name,
     AcquisitionCommand.start_preview: EventType.StartAcquisitionPreview.name,
     AcquisitionCommand.stop_preview: EventType.StopAcquisitionPreview.name,
@@ -96,8 +95,11 @@ class AcquisitionRuntime:
         source_id: str,
         preparation_required: bool,
         generation: str | None = None,
-        config_revision: str | None = None,
+        acquisition_revision: str | None = None,
+        system_revision: str | None = None,
         preview_queue=None,
+        processing_active=None,
+        runtime_counters=None,
     ) -> None:
         self.data_source = data_source
         self._preprocessors: tuple[ChunkPreprocessor, ...] = (
@@ -110,9 +112,12 @@ class AcquisitionRuntime:
         self.should_exit = False
         self.source_id = source_id
         self.preparation_required = preparation_required
+        self.processing_active = processing_active
         self.generation = generation
-        self.config_revision = config_revision
-        self._last_sequence = -1
+        self.acquisition_revision = acquisition_revision
+        self.system_revision = system_revision
+        self._runtime_counters = runtime_counters
+        self._last_sequence = runtime_counters[2] if runtime_counters is not None else -1
         self.stream_chunk_count = 0
         self.stream_sample_count = 0
         self._fetch_failure: str | None = None
@@ -154,8 +159,7 @@ class AcquisitionRuntime:
             command, raw_request = item, None
         request = CommandRequest.from_value(raw_request)
         logger.debug('Acquisition command: %s', command)
-        if command in (AcquisitionCommand.get_checkpoint, AcquisitionCommand.restore_checkpoint,
-                       AcquisitionCommand.update_revision):
+        if command in (AcquisitionCommand.get_checkpoint, AcquisitionCommand.restore_checkpoint):
             self._configuration_command(command, request)
             return
         handler = {
@@ -197,9 +201,17 @@ class AcquisitionRuntime:
                 await handler()
             if command is AcquisitionCommand.stop_and_drain:
                 self._require_healthy_stream()
+                if self.processing_active is not None and not self.processing_active.is_set():
+                    data = StreamDrainReceipt(
+                        generation=self.generation, acquisition_revision=self.acquisition_revision,
+                        system_revision=self.system_revision, last_sequence=self._last_sequence,
+                        completed_trials=0, interrupted_epoch=False,
+                    ).to_dict()
+                    self._emit_command_result(request, command, ok=True, data=data)
+                    return
                 self.data_manager.put_data(StreamBarrier(
-                    request.command_id, self.generation, self.config_revision,
-                    self._last_sequence,
+                    request.command_id, self.generation, self.acquisition_revision,
+                    self._last_sequence, system_revision=self.system_revision,
                 ))
                 # The processor alone can confirm consumption of prior data.
                 return
@@ -243,7 +255,8 @@ class AcquisitionRuntime:
             self._emit_command_result(request, command, ok=True, data=data)
 
     def _preview_identity(self) -> dict:
-        return {"generation": self.generation, "config_revision": self.config_revision,
+        return {"generation": self.generation, "acquisition_revision": self.acquisition_revision,
+                "system_revision": self.system_revision,
                 "source_id": self.source_id, "connection_id": self.connection_id}
 
     def _preview_command(self, command, request) -> dict:
@@ -252,7 +265,7 @@ class AcquisitionRuntime:
             raise AcquisitionCommandRejected("PREVIEW_IDENTITY_MISMATCH", "Preview requires the current runtime generation")
         try:
             if command is AcquisitionCommand.start_preview:
-                if (payload.get("expected_revision") != self.config_revision
+                if (payload.get("expected_revision") != self.acquisition_revision
                         or payload.get("connection_id") != self.connection_id):
                     raise ValueError("Preview belongs to a different source connection or revision")
                 if not self.data_source.is_connected or not self.data_source.is_streaming:
@@ -279,33 +292,26 @@ class AcquisitionRuntime:
         try:
             payload = request.payload
             if (not isinstance(payload, dict) or payload.get("generation") != self.generation
-                    or payload.get("expected_revision") != self.config_revision):
+                    or payload.get("expected_revision") != self.acquisition_revision
+                    or payload.get("system_revision") != self.system_revision):
                 raise ValueError("Acquisition command belongs to a different runtime generation or revision")
-            if command is AcquisitionCommand.update_revision:
-                revision = payload.get("target_revision")
-                if not isinstance(revision, str) or len(revision) != 64:
-                    raise ValueError("A pinned target revision is required")
-                if revision != self.config_revision:
-                    self.preview.finish("context_changed")
-                self.config_revision = revision
-                data = {}
+            self._require_healthy_stream()
+            if self.data_source.is_streaming or self.fetch_task is not None:
+                raise ValueError("Stop and join acquisition before accessing a source checkpoint")
+            if command is AcquisitionCommand.get_checkpoint:
+                supported = self.data_source.supports_checkpoint
+                data = {"supported": supported,
+                        "checkpoint": self.data_source.checkpoint() if supported else None,
+                        "resume_without_checkpoint_safe": getattr(
+                            self.data_source, "resume_without_checkpoint_safe", False,
+                        ) is True}
             else:
-                self._require_healthy_stream()
-                if self.data_source.is_streaming or self.fetch_task is not None:
-                    raise ValueError("Stop and join acquisition before accessing a source checkpoint")
-                if command is AcquisitionCommand.get_checkpoint:
-                    supported = self.data_source.supports_checkpoint
-                    data = {"supported": supported,
-                            "checkpoint": self.data_source.checkpoint() if supported else None,
-                            "resume_without_checkpoint_safe": getattr(
-                                self.data_source, "resume_without_checkpoint_safe", False,
-                            ) is True}
-                else:
-                    if not self.data_source.supports_checkpoint:
-                        raise ValueError("The source does not support replay checkpoints")
-                    self.data_source.restore_checkpoint(payload.get("checkpoint"))
-                    data = {"restored": True}
-            data.update(generation=self.generation, config_revision=self.config_revision)
+                if not self.data_source.supports_checkpoint:
+                    raise ValueError("The source does not support replay checkpoints")
+                self.data_source.restore_checkpoint(payload.get("checkpoint"))
+                data = {"restored": True}
+            data.update(generation=self.generation, acquisition_revision=self.acquisition_revision,
+                        system_revision=self.system_revision)
             self._emit_command_result(request, command, ok=True, data=data)
         except Exception as exc:
             self._emit_command_result(request, command, ok=False, message=str(exc),
@@ -362,7 +368,9 @@ class AcquisitionRuntime:
                 "DATA_SOURCE_NOT_CONNECTED",
                 "Cannot start stream before the data source is connected",
             )
-        if self.preparation_required:
+        preparation_required = (self.processing_active.is_set()
+                                if self.processing_active is not None else self.preparation_required)
+        if preparation_required:
             self._validate_signal_receipt(receipt)
         if self.data_source.is_streaming:
             self._emit_state()
@@ -505,8 +513,8 @@ class AcquisitionRuntime:
 
     def _validate_signal_receipt(self, receipt) -> None:
         expected = {
-            "generation": self.generation, "config_revision": self.config_revision,
-            "connection_id": self.connection_id,
+            "generation": self.generation, "acquisition_revision": self.acquisition_revision,
+            "system_revision": self.system_revision, "connection_id": self.connection_id,
             "source_fingerprint": self._descriptor.fingerprint if self._descriptor else None,
         }
         if (not isinstance(receipt, dict) or self._descriptor is None
@@ -536,6 +544,8 @@ class AcquisitionRuntime:
                 for preprocessor in self._preprocessors:
                     chunk = preprocessor.process(chunk)
                 # TODO: Consider validating data matrices against the acquisition descriptor in the future.
+                if self._runtime_counters is not None:
+                    self._runtime_counters[2] = chunk.sequence_id
                 self.data_manager.put_data(chunk)
                 self._last_sequence = chunk.sequence_id
                 self.stream_chunk_count += 1

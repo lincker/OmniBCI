@@ -2,7 +2,7 @@
 import pytest
 
 from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
-from omnibci.application.processing_source import materialize_processing_binding, processing_input
+from omnibci.application.processing_source import processing_input
 from omnibci.presentation.schemas.signal_setup import ProcessingInputModel
 
 
@@ -48,9 +48,6 @@ def test_retired_global_setup_does_not_configure_processing():
 def test_legacy_profile_input_cannot_be_replaced_with_an_identity_mapping():
     value = {"schema_version": 1, "outputs": ["O1"]}
     binding = ProfileBinding("processing.decoder", "decoder", None,
-                             PluginSelection("test.decoder", "default", "1"), {},
-                             legacy={"processing_input": value})
-    projected = materialize_processing_binding(binding)
-    assert projected["processing_input"] == value
+                             PluginSelection("test.decoder", "default", "1"), {})
     with pytest.raises(ValueError):
-        processing_input({"PLUGINS.bindings": [projected]})
+        ProfileBinding.from_dict({**binding.to_dict(), "processing_input": value})

@@ -106,6 +106,7 @@ async def test_host_save_excludes_runtime_apply_until_persisted(application_conf
 async def test_bootstrap_shares_pinned_plugin_selection_between_status_and_engine(application_config, monkeypatch, tmp_path):
     import omnibci.conf as conf
     from omnibci import bootstrap
+    from tests.plugin_configuration_helpers import builtin_selection
 
     monkeypatch.setattr(conf, "settings", application_config._settings)
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
@@ -113,8 +114,8 @@ async def test_bootstrap_shares_pinned_plugin_selection_between_status_and_engin
         container = await bootstrap.build_container()
         builder.assert_not_called()
         profiles = container.plugin_profile_service
-        selected = profiles.create("acquisition", profiles.catalog.legacy(
-            "acquisition", "neuroscan_scan45_reader").selection, "Lab", {
+        selected = profiles.create("acquisition", builtin_selection(
+            "acquisition", "neuroscan_scan45_reader"), "Lab", {
                 "DATA_PROVIDER_IP": "192.168.0.3", "DATA_PROVIDER_PORT": 4000,
                 "sample_rate": 500, "channel_count": 10,
             })
@@ -124,10 +125,13 @@ async def test_bootstrap_shares_pinned_plugin_selection_between_status_and_engin
             ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR"),
             ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40"),
         ):
-            selected = profiles.create(kind, profiles.catalog.legacy(kind, alias).selection, alias, {})
+            selected = profiles.create(kind, builtin_selection(kind, alias), alias, {})
             bindings.append({"slot": slot, "profile_id": selected.profile_id})
-        accepted = profiles.repository.get_activation()
-        profiles.accept(profiles.propose(bindings), expected_revision=accepted.revision if accepted else None)
+        profiles.accept_system(profiles.propose_system(), expected_revision=None)
+        for module in ("acquisition", "processing", "stimulation"):
+            profiles.accept_module(profiles.propose(module, [
+                binding for binding in bindings if binding["slot"].startswith(f"{module}.")
+            ]), expected_revision=None)
         assert container.acquisition_service._device_metadata() == ("neuroscan_scan45_reader", None, None)
         with patch("omnibci.application.services.engine_service.Thread"):
             await container.engine_service.handle_start_engine(StartEngineCommand())

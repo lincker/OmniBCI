@@ -103,7 +103,7 @@ def test_retired_signal_setup_remains_readable_without_accepting_new_writes(host
 
 
 def test_retired_channel_names_are_ignored_without_rewriting_saved_settings(host_files):
-    from omnibci.application.activation_settings import activation_host_settings
+    from omnibci.application.activation_settings import SECTIONS, section_settings
     from omnibci.infrastructure.plugins.runtime_configuration import plugin_context
 
     defaults, user_file = host_files
@@ -113,8 +113,8 @@ def test_retired_channel_names_are_ignored_without_rewriting_saved_settings(host
     settings = OmniBCISettings(defaults_file=defaults)
     saved, revision = settings.read_saved()
 
-    assert "ACQUISITION.channel_names" not in activation_host_settings(saved)
-    assert plugin_context(saved).channel_names == ()
+    assert all("ACQUISITION.channel_names" not in section_settings(saved, section) for section in SECTIONS)
+    assert plugin_context(saved, "acquisition").channel_names == ()
     with pytest.raises(ConfigProfileValidationError, match="ACQUISITION.channel_names"):
         settings.update({"ACQUISITION.channel_names": ["O1", "O2"]}, expected_revision=revision)
     assert settings.read_saved() == (saved, revision)

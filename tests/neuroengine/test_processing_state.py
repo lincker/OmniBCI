@@ -65,12 +65,12 @@ def _processor():
     processor = make_processor(
         detector=MagicMock(), decoder=MagicMock(), command_queue=MagicMock(),
         data_manager=MagicMock(), event_bus=MagicMock(),
-        generation="run", config_revision="processor-revision",
+        generation="run", processing_revision="processor-revision",
     )
     processor.detector.detect_start.side_effect = lambda item: _first_marker(item, starts=True)
     processor.detector.detect_end.side_effect = lambda item: _first_marker(item, starts=False)
     processor.current_epoch = MagicMock(
-        build_epoch=MagicMock(return_value=_epoch()), config_revision="epoch-revision",
+        build_epoch=MagicMock(return_value=_epoch()), processing_revision="epoch-revision",
     )
     processor.transition_to_assembling()
     return processor
@@ -285,7 +285,7 @@ class TestCompleteTrial:
         assert completion is event.data
         assert completion.generation == "run"
         assert completion.trial_number == 1
-        assert completion.config_revision == "epoch-revision"
+        assert completion.processing_revision == "epoch-revision"
         processor.current_epoch.build_epoch.assert_not_called()
 
     def test_trial_numbers_increase_without_retaining_trial_history(self):

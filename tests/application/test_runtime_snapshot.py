@@ -1,7 +1,7 @@
 """A running graph and children started later share one pinned configuration."""
 
 from copy import deepcopy
-from unittest.mock import MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
@@ -26,11 +26,12 @@ def thread_factory(monkeypatch):
 
 def _snapshot(revision="revision-1"):
     return {
-        "CONFIG.revision": revision,
+        "CONFIG.module_revisions": {"acquisition": revision, "processing": revision,
+                                    "stimulation": revision, "actuation": revision},
+        "CONFIG.system_revision": "system-1",
         "ACQUISITION.sample_rate": 250,
         "STIMULATION.paradigm": "selected-paradigm",
         "ACTUATION.effector": "selected-effector",
-        "ACTUATION.enabled": True,
         "PLUGINS.bindings": [{"parameters": {"window_duration": 3.0}}],
     }
 
@@ -40,6 +41,7 @@ async def test_graph_and_late_stimulation_ignore_saved_edits(thread_factory):
     saved = _snapshot()
     provider = Mock(return_value=saved)
     graph = MagicMock(shutdown_complete=True)
+    graph.set_actuation_active = AsyncMock()
     factory = Mock(return_value=graph)
     actuation = Mock()
     service = NeuroEngineService(factory, actuation, snapshot_provider=provider)
@@ -47,7 +49,7 @@ async def test_graph_and_late_stimulation_ignore_saved_edits(thread_factory):
     await service.handle_start_engine(StartEngineCommand())
     pinned = service.applied_snapshot
 
-    saved["CONFIG.revision"] = "saved-later"
+    saved["CONFIG.module_revisions"]["acquisition"] = "saved-later"
     saved["PLUGINS.bindings"][0]["parameters"]["window_duration"] = 9.0
     returned = service.applied_snapshot
     returned["PLUGINS.bindings"][0]["parameters"]["window_duration"] = 12.0
@@ -55,14 +57,14 @@ async def test_graph_and_late_stimulation_ignore_saved_edits(thread_factory):
     stimulation = StimulationAppService(service, manager)
     stimulation.handle_start_stimulation(StartStimulationCommand())
     actuation.start.assert_not_called()
-    service.prepare_actuation()
+    await service.start_module("actuation")
 
     provider.assert_called_once_with()
     assert factory.call_args.args == (pinned,)
     actuation.start.assert_called_once_with(settings_snapshot=pinned)
     manager.start.assert_called_once_with(paradigm=None, settings_snapshot=pinned)
     assert service.applied_snapshot == pinned
-    assert service.applied_revision == "revision-1"
+    assert service.applied_revisions["acquisition"] == "revision-1"
     assert isinstance(service.generation, str) and service.generation
     assert "CONFIG.generation" not in saved
 
@@ -94,15 +96,15 @@ async def test_restart_resolves_once_and_explicit_rollback_does_not_resolve(thre
     await service.handle_start_engine(StartEngineCommand())
     second_generation = service.generation
 
-    assert service.applied_revision == "second"
+    assert service.applied_revisions["acquisition"] == "second"
     assert second_generation != original["CONFIG.generation"]
     await service.handle_stop_engine(StopEngineCommand())
     await service._start_engine_locked(StartEngineCommand(), settings_snapshot=original)
 
     assert provider.call_count == 2
-    assert service.applied_revision == "first"
+    assert service.applied_revisions["acquisition"] == "first"
     assert service.generation not in (original["CONFIG.generation"], second_generation)
-    assert factory.call_args.args[0]["CONFIG.revision"] == "first"
+    assert factory.call_args.args[0]["CONFIG.module_revisions"]["acquisition"] == "first"
 
 
 @pytest.mark.asyncio

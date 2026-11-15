@@ -16,7 +16,7 @@ export type SignalConfiguration = Omit<S["SignalSetupResponse"], "processing_inp
 };
 export type SignalPreview = Omit<S["SignalPreviewResponse"], "plan"> & {
   plan: { source: SignalInfo; source_indices: number[]; output_channels: ChannelDescriptor[];
-    processing_input: ProcessingInput; config_revision: string; fingerprint: string };
+    processing_input: ProcessingInput; acquisition_revision: string; fingerprint: string };
 };
 
 export const signalConfigApi = {

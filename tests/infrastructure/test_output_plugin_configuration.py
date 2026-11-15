@@ -1,4 +1,5 @@
 """Stimulation and Actuation use exact, copied plugin inputs."""
+from tests.plugin_configuration_helpers import builtin_selection
 import sys
 from unittest.mock import Mock
 
@@ -14,7 +15,7 @@ from omnibci.infrastructure.stimulation.stimulator import Stimulator
 
 
 def binding(slot, kind, alias):
-    descriptor = PluginCatalog().resolve(kind, alias)
+    descriptor = PluginCatalog().resolve_selection(kind, builtin_selection(kind, alias))
     return ProfileBinding(slot, kind, None, descriptor.selection, {}).to_dict()
 
 
@@ -85,11 +86,26 @@ def test_selected_trigger_loading_errors_are_not_replaced_by_empty_output(monkey
 
 def test_selected_effector_keeps_revision_and_ignores_legacy_alias(monkeypatch):
     snapshot = {"PLUGINS.bindings": [binding("actuation.effector", "effector", "logger")],
-                "CONFIG.revision": "selected-revision", "ACTUATION.effector": "wrong-alias"}
+                "CONFIG.module_revisions": {"actuation": "selected-revision"}, "ACTUATION.effector": "wrong-alias"}
     actuator = Actuator(settings_snapshot=snapshot)
     monkeypatch.setattr(settings, "get", Mock(side_effect=AssertionError("global settings read")))
     actuator.setup()
-    assert actuator.effector.config_revision == "selected-revision"
+    assert actuator.effector.module_revision == "selected-revision"
     actuator.execute({"target_id": 1})
     actuator.teardown()
     assert actuator.effector is None
+
+
+def test_trigger_context_uses_consuming_stimulation_revision():
+    from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
+
+    selected = binding("stimulation.trigger", "trigger", "neuroscan_scan45_trigger")
+    descriptor = PluginCatalog().resolve_selection("trigger", builtin_selection("trigger", "neuroscan_scan45_trigger"))
+    assert descriptor.package.domain == "acquisition"
+    catalog = Mock()
+    catalog.resolve_selection.return_value = descriptor
+    loader = Mock()
+    load_configured_plugin({"PLUGINS.bindings": [selected], "CONFIG.module_revisions": {
+        "acquisition": "source-revision", "stimulation": "stimulation-revision",
+    }}, "stimulation.trigger", "trigger", TriggerEmitter, catalog=catalog, loader=loader)
+    assert loader.instantiate.call_args.kwargs["context"].module_revision == "stimulation-revision"

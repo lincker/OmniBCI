@@ -2,7 +2,7 @@
 import { useI18n, type TranslationKey, type TranslationParams } from "./i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "./api/client";
-import { pluginConfigApi, type PluginProfile } from "./api/plugin-config";
+import { pluginConfigApi, configurationModules, type ConfigurationModule, type PluginProfile } from "./api/plugin-config";
 import { pluginMarketApi as api, type InstalledPackage, type MarketPackage,
   type ProfileVersionProposal, type ProfileVersionRequest } from "./api/plugin-market";
 import { ConfigDialog } from "./ConfigDialog";
@@ -23,6 +23,7 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
 }) {
   const { t } = useI18n();
   const [tab, setTab] = useState<"installed" | "repository" | "guide">("installed");
+  const [domain, setDomain] = useState<ConfigurationModule | "all">("all");
   const [queries, setQueries] = useState({ installed: "", repository: "" });
   const searchTab = tab === "repository" ? "repository" : "installed";
   const query = queries[searchTab];
@@ -127,8 +128,8 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
   const matches = (text: string) => text.toLowerCase().includes(query.trim().toLowerCase());
   const capabilities = (item: InstalledPackage | MarketPackage) => item.contributions
     .map((part) => `${part.kind} ${kindLabel(part.kind)} ${part.selection.contribution_id}`).join(" ");
-  const displayedInstalled = installed.filter((item) => matches(`${item.package_id} ${item.label} ${item.version} ${item.description ?? ""} ${capabilities(item)}`));
-  const displayedCatalog = catalog.filter((item) => matches(`${item.package_id} ${item.display_name} ${item.version} ${item.description ?? ""} ${capabilities(item)}`));
+  const displayedInstalled = installed.filter((item) => (domain === "all" || item.domain === domain) && matches(`${item.package_id} ${item.label} ${item.version} ${item.description ?? ""} ${capabilities(item)}`));
+  const displayedCatalog = catalog.filter((item) => (domain === "all" || item.domain === domain) && matches(`${item.package_id} ${item.display_name} ${item.version} ${item.description ?? ""} ${capabilities(item)}`));
 
   return <div className="settings-workspace plugin-market">
     <aside className="explorer">
@@ -159,6 +160,10 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
       </header>
       <div className="market-body">
         {tab === "guide" ? <DecoderDeveloperGuide /> : <>
+        <nav className="actions" aria-label={t("profiles.packageDomain")}>
+          <button aria-pressed={domain === "all"} onClick={() => setDomain("all")}>{t("profiles.allDomains")}</button>
+          {configurationModules.map((module) => <button key={module} aria-pressed={domain === module} onClick={() => setDomain(module)}>{t(`profiles.module.${module}`)}</button>)}
+        </nav>
         <div className="market-toolbar"><label className="market-search"><Icon name="search" /><input type="search" aria-label={t("market.searchLabel")}
           placeholder={t("market.searchPlaceholder")} value={query} onChange={(event) => setQuery(event.target.value)} /></label>
           {query && <button onClick={() => setQuery("")}>{t("market.clearSearch")}</button>}
@@ -177,7 +182,7 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
           <div className="market-section-heading"><div><h2 id="version-profile-title">{t("market.createFor", { version: draft.target.version })}</h2><span className="meta">{draft.target.package_id} · {t("market.separateProfile")}</span></div>
             <button className="icon-button" aria-label={t("market.closeEditor")} disabled={locked} onClick={() => setDraft(null)}><Icon name="close" /></button></div>
           <label>{t("market.sourceProfile")}<select value={draft.sourceId} disabled={locked} onChange={(event) => openVersion(draft.target, profiles.find((item) => item.profile_id === event.target.value))}>
-            {sourcesFor(draft.target).map((item) => <option key={item.profile_id} value={item.profile_id}>{item.name} · {item.selection.version ?? t("market.legacy")}</option>)}</select></label>
+            {sourcesFor(draft.target).map((item) => <option key={item.profile_id} value={item.profile_id}>{item.name} · {item.selection.version}</option>)}</select></label>
           <label>{t("market.newProfileName")}<input value={draft.name} maxLength={64} disabled={locked} onChange={(event) => updateDraft({ name: event.target.value })} /></label>
           <label className="market-checkbox"><input type="checkbox" checked={draft.custom} disabled={locked} onChange={(event) => updateDraft({ custom: event.target.checked })} />{t("market.editParameters")}</label>
           {draft.custom && <label>{t("market.parameters")}<textarea rows={7} value={draft.parameters} spellCheck={false} disabled={locked}

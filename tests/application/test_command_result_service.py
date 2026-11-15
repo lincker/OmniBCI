@@ -25,6 +25,9 @@ from omnibci.shared.events import Event, EventType
 class _Engine:
     is_engine_ready = True
 
+    def is_command_ready(self, event_type):
+        return self.is_engine_ready
+
     def __init__(self) -> None:
         self.dispatched: list[Event] = []
         self.on_dispatch = None

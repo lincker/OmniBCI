@@ -13,7 +13,6 @@ class EventType(IntEnum):
     DisconnectDataProvider = 102
     GetSourceCheckpoint = 105
     RestoreSourceCheckpoint = 106
-    UpdateAcquisitionRevision = 107
     GetSourceMetadata = 108
     StartStream = 111
     StopStream = 112
@@ -23,7 +22,6 @@ class EventType(IntEnum):
     GetAcquisitionPreview = 116
     StageProcessingConfiguration = 211  # stage a pipeline until the next epoch boundary
     CancelProcessingConfiguration = 212  # reconcile or cancel a staged pipeline
-    UpdateProcessingContext = 213  # acknowledge output metadata after an ordered drain
     PrepareSignalProcessing = 214
     AcquisitionState = 121  # worker -> API: authoritative device-state snapshot
                             # payload: application.events.AcquisitionSnapshot
@@ -46,6 +44,7 @@ class EventType(IntEnum):
     ActuationState = 403    # actuation → engine: device state / sensor feedback
     ActuationFault = 404    # actuation → engine: device fault (triggers safety)
     SettleActuation = 405   # correlated mailbox cancellation and device quiescence
+    ResumeActuation = 406   # enable new commands after a confirmed stop
     TrialCompleted = 501   # payload: TrialOutcome (generation + trial_number + Classification)
     EpochProcessed = 502   # local inspection only; never forwarded to output peers
 

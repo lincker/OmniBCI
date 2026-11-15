@@ -24,7 +24,7 @@ def test_first_decoded_trial_is_available_without_starting_a_session():
     assert snapshot["generation"] == "engine-1"
     assert [(item["trial_number"], item["event_id"], item["target_id"])
             for item in snapshot["trials"]] == [(1, 8, 3)]
-    assert snapshot["trials"][0]["config_revision"] == "revision"
+    assert snapshot["trials"][0]["processing_revision"] == "revision"
 
 
 def test_duplicate_delivery_and_configuration_changes_do_not_reset_trials():
@@ -33,7 +33,7 @@ def test_duplicate_delivery_and_configuration_changes_do_not_reset_trials():
     publish(service, "engine-1", 1)
     publish(service, "engine-1", 2, revision="next-revision")
 
-    assert [(item["trial_number"], item["config_revision"])
+    assert [(item["trial_number"], item["processing_revision"])
             for item in service.snapshot()["trials"]] == [(1, "revision"), (2, "next-revision")]
 
 
@@ -83,7 +83,7 @@ def publish_epoch(service, number, *, generation="run", status="no_result", reas
     classified = status == "decoded"
     record = EpochProcessed(
         generation=generation, epoch_number=number, event_id=8,
-        config_revision="revision", sample_rate=1000, channel_count=9,
+        processing_revision="revision", sample_rate=1000, channel_count=9,
         sample_count=3000, pre_trigger_samples=200,
         started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         completed_at=datetime(2026, 1, 1, 0, 0, 3, tzinfo=timezone.utc),

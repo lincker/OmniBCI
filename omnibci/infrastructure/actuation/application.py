@@ -16,9 +16,9 @@ loaded Effector plugin. Differences from stimulation:
     the engine's link watchdog treats inbound silence past the timeout as
     LINK_LOST, so a dialled-in peer must keep talking;
   - one failed command → ActuationFault + keep serving; only a failed
-    setup() exits the process (with a Fault as its last word). Stopping is
-    process-level (ActuationProcessManager stop event / Ctrl-C) — there is no
-    StopActuation wire value in v1.
+    setup() exits the process (with a Fault as its last word). SettleActuation
+    pauses commands and confirms device quiescence; ResumeActuation accepts
+    new commands. A managed stop also releases the subprocess.
 """
 
 import asyncio
@@ -79,7 +79,8 @@ class Actuation:
         self._reconnect_requested = False
         identity = None
         if self._external_node:
-            identity = PeerIdentity("actuation", source["CONFIG.revision"], source["CONFIG.generation"])
+            identity = PeerIdentity("actuation", source["CONFIG.module_revisions"]["actuation"],
+                                    source["CONFIG.system_revision"], source["CONFIG.generation"])
         self.peer_channel = PeerChannel(engine_peer_config(
             host, port, identity=identity, reconnect=not self._external_node,
             on_disconnect=self._connection_lost if self._external_node else None,
@@ -196,6 +197,8 @@ class Actuation:
             event_type=EventType.ActuationCommand, handler=self._enqueue_command)
         self.event_bus.register_event_listener(
             event_type=EventType.SettleActuation, handler=self._request_settlement)
+        self.event_bus.register_event_listener(
+            event_type=EventType.ResumeActuation, handler=self._request_resume)
         await self.event_bus.start()
         if getattr(self, "_external_node", False):
             # The engine must not recognize this node until its device is ready.
@@ -369,6 +372,7 @@ class Actuation:
             cancelled += 1
         try:
             async with self._settlement_lock:
+                self._paused = True
                 execution = getattr(self, "_execution_task", None)
                 if execution is not None:
                     await asyncio.shield(execution)
@@ -382,7 +386,8 @@ class Actuation:
                     "paused": True, "pending_cancelled": cancelled,
                     "execution_complete": True, "outputs_settled": True,
                     "generation": snapshot.get("CONFIG.generation"),
-                    "config_revision": snapshot.get("CONFIG.revision"),
+                    "module_revision": snapshot.get("CONFIG.module_revisions", {}).get("actuation"),
+                    "system_revision": snapshot.get("CONFIG.system_revision"),
                 },
             )
         except Exception as exc:
@@ -391,6 +396,35 @@ class Actuation:
                 error_code="ACTUATION_SETTLE_FAILED", message=str(exc),
                 failure_kind=CommandFailureKind.EXECUTION_FAILED,
             )
+        self.event_bus.put_event(Event(EventType.CommandResult, result))
+
+    def _request_resume(self, event: Event) -> None:
+        if CommandRequest.from_value(event.data) is None:
+            return
+        task = asyncio.create_task(self._resume_actuation(event))
+        self._settlement_tasks.add(task)
+        task.add_done_callback(self._settlement_tasks.discard)
+
+    async def _resume_actuation(self, event: Event) -> None:
+        request = CommandRequest.from_value(event.data)
+        if request is None:
+            return
+        async with self._settlement_lock:
+            if self._stop_requested():
+                result = CommandResult(
+                    request.command_id, EventType.ResumeActuation.name, ok=False,
+                    error_code="ACTUATION_STOPPING", message="Actuation is shutting down",
+                    failure_kind=CommandFailureKind.REJECTED,
+                )
+            else:
+                self._paused = False
+                snapshot = self._runtime_snapshot
+                result = CommandResult(
+                    request.command_id, EventType.ResumeActuation.name, ok=True,
+                    data={"resumed": True, "paused": False, "generation": snapshot.get("CONFIG.generation"),
+                          "module_revision": snapshot.get("CONFIG.module_revisions", {}).get("actuation"),
+                          "system_revision": snapshot.get("CONFIG.system_revision")},
+                )
         self.event_bus.put_event(Event(EventType.CommandResult, result))
 
     def _stop_requested(self) -> bool:

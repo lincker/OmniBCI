@@ -10,6 +10,7 @@ class MarketContributionResponse(BaseModel):
 
 
 class MarketPackageResponse(BaseModel):
+    domain: str
     repository_id: str
     package_id: str
     version: str

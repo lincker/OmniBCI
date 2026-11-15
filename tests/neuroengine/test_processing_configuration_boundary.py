@@ -60,23 +60,23 @@ def _chunk(markers, sequence=1):
 @pytest.fixture
 def configured(monkeypatch):
     events = []
-    current = {"CONFIG.revision": "old", "CONFIG.generation": "run"}
+    current = {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "old"}, "CONFIG.system_revision": "system", "CONFIG.generation": "run"}
     processor = make_processor(
         detector=Markers(), decoder=ValueDecoder(), filters=[Add(1)],
         command_queue=Queue(), data_manager=DataManager(buffer=Queue()),
         event_bus=SimpleNamespace(put_event=events.append),
-        sample_rate=250, generation="run", config_revision="old", settings_snapshot=current,
+        sample_rate=250, generation="run", processing_revision="old", settings_snapshot=current,
     )
     replacement = ConfiguredPipeline(ValueDecoder(), (Add(2), Multiply(3)),
-                                      {"CONFIG.revision": "new", "CONFIG.generation": "run"})
+                                      {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "new"}, "CONFIG.system_revision": "system", "CONFIG.generation": "run"})
     builder = MagicMock(return_value=replacement)
     monkeypatch.setattr(transactions_module, "build_pipeline_update", builder)
     return processor, events, replacement, builder
 
 
 def _stage(processor, command_id="update", **overrides):
-    payload = {"settings_snapshot": {"CONFIG.revision": "new", "CONFIG.generation": "run"},
-               "expected_revision": "old", "generation": "run"}
+    payload = {"settings_snapshot": {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "new"}, "CONFIG.system_revision": "system", "CONFIG.generation": "run"},
+               "expected_revision": "old", "generation": "run", "system_revision": "system", "boundary": "trial"}
     payload.update(overrides)
     processor._execute((module.SignalProcessorCommand.stage_configuration,
                         CommandRequest(command_id, payload)))
@@ -84,7 +84,7 @@ def _stage(processor, command_id="update", **overrides):
 
 def _cancel(processor, target="update", generation="run"):
     processor._execute((module.SignalProcessorCommand.cancel_configuration,
-                        CommandRequest("cancel", {"command_id": target, "generation": generation})))
+                        CommandRequest("cancel", {"command_id": target, "generation": generation, "system_revision": "system"})))
 
 
 def _results(events, command=None):
@@ -102,12 +102,12 @@ def test_idle_update_acknowledges_only_after_objects_and_revision_are_installed(
     _stage(processor)
     assert processor._decoder is replacement.decoder
     assert processor._filters == list(replacement.filters)
-    assert processor.config_revision == "new"
-    assert processor.new_epoch_processor().config_revision == "new"
+    assert processor.processing_revision == "new"
+    assert processor.new_epoch_processor().processing_revision == "new"
     result, = _results(events)
     assert result.ok
     assert result.data == {"status": "applied", "command_id": "update",
-                           "applied_revision": "new", "generation": "run"}
+                           "applied_revision": "new", "generation": "run", "system_revision": "system"}
     builder.assert_called_once()
 
 
@@ -119,7 +119,7 @@ async def test_active_epoch_keeps_objects_and_revision_until_natural_boundary(co
     old_epoch = processor.current_epoch
     old_decoder = processor._decoder
     _stage(processor)
-    assert processor.config_revision == "old"
+    assert processor.processing_revision == "old"
     assert processor._decoder is old_decoder
     assert old_epoch.pipeline.filters[0].value == 1
     assert not _results(events)
@@ -133,17 +133,17 @@ async def test_active_epoch_keeps_objects_and_revision_until_natural_boundary(co
         await _feed(processor, [9, 0, 0], 3)
     assert processor.current_epoch is not old_epoch
     assert processor.current_epoch.decoder is replacement.decoder
-    assert processor.current_epoch.config_revision == "new"
-    assert old_epoch.config_revision == "old"
-    assert processor.config_revision == "new"
+    assert processor.current_epoch.processing_revision == "new"
+    assert old_epoch.processing_revision == "old"
+    assert processor.processing_revision == "new"
     trial_events = [event for event in events if event.type is EventType.TrialCompleted]
-    assert trial_events[0].data.config_revision == "old"
+    assert trial_events[0].data.processing_revision == "old"
     assert trial_events[0].data.classification.target_id == 2
     receipt_event = next(event for event in events if event.type is EventType.CommandResult)
     assert events.index(trial_events[0]) < events.index(receipt_event)
     await _feed(processor, [0, 255, 0], 4)
     trials = [event.data for event in events if event.type is EventType.TrialCompleted]
-    assert [(trial.config_revision, trial.classification.target_id) for trial in trials] == [("old", 2), ("new", 9)]
+    assert [(trial.processing_revision, trial.classification.target_id) for trial in trials] == [("old", 2), ("new", 9)]
 
 
 def test_preparation_failure_retains_previous_objects_and_revision(configured):
@@ -152,7 +152,7 @@ def test_preparation_failure_retains_previous_objects_and_revision(configured):
     builder.side_effect = ValueError("invalid replacement")
     _stage(processor)
     assert processor._decoder is old_decoder
-    assert processor.config_revision == "old"
+    assert processor.processing_revision == "old"
     assert processor._configuration_transactions.pending is None
     assert not _results(events)[0].ok
 
@@ -163,7 +163,7 @@ def test_stale_command_is_rejected_before_plugin_construction(configured, overri
     _stage(processor, **overrides)
     builder.assert_not_called()
     assert not _results(events)[0].ok
-    assert processor.config_revision == "old"
+    assert processor.processing_revision == "old"
 
 
 @pytest.mark.asyncio
@@ -188,7 +188,7 @@ async def test_conflicting_duplicate_preserves_pending_update_until_boundary(con
     processor, events, replacement, builder = configured
     await _feed(processor, [7, 0, 0])
     _stage(processor)
-    _stage(processor, settings_snapshot={"CONFIG.revision": "different"})
+    _stage(processor, settings_snapshot={"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "different"}, "CONFIG.system_revision": "system"})
     conflict, = _results(events)
     assert not conflict.ok
     assert conflict.error_code == "PROCESSING_CONFIGURATION_CONFLICT"
@@ -197,8 +197,8 @@ async def test_conflicting_duplicate_preserves_pending_update_until_boundary(con
     _stage(processor)
     assert _results(events) == [conflict]
     await _feed(processor, [0, 255, 9, 0], 2)
-    assert processor.config_revision == "new"
-    assert processor.current_epoch.config_revision == "new"
+    assert processor.processing_revision == "new"
+    assert processor.current_epoch.processing_revision == "new"
     assert processor.current_epoch.decoder is replacement.decoder
     assert _results(events)[-1].data["status"] == "applied"
     builder.assert_called_once()
@@ -220,7 +220,7 @@ async def test_conflicting_duplicate_preserves_terminal_receipt_and_original_ret
     original, = [result for result in _results(events, EventType.StageProcessingConfiguration.name)
                  if result.command_id == "update"]
     calls = builder.call_count
-    _stage(processor, settings_snapshot={"CONFIG.revision": "different"})
+    _stage(processor, settings_snapshot={"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "different"}, "CONFIG.system_revision": "system"})
     conflict = _results(events)[-1]
     assert not conflict.ok
     assert conflict.error_code == "PROCESSING_CONFIGURATION_CONFLICT"
@@ -230,7 +230,7 @@ async def test_conflicting_duplicate_preserves_terminal_receipt_and_original_ret
     assert builder.call_count == calls
     if outcome == "busy":
         await _feed(processor, [0, 255, 9, 0], 2)
-        assert processor.config_revision == "new"
+        assert processor.processing_revision == "new"
         assert _results(events)[-1].command_id == "waiting"
         _stage(processor)
         assert _results(events)[-1] == original
@@ -241,8 +241,8 @@ def test_retry_ignores_dictionary_key_order(configured):
     _stage(processor)
     original, = _results(events)
     processor._execute((module.SignalProcessorCommand.stage_configuration, CommandRequest("update", {
-        "generation": "run", "expected_revision": "old",
-        "settings_snapshot": {"CONFIG.generation": "run", "CONFIG.revision": "new"},
+        "generation": "run", "expected_revision": "old", "system_revision": "system", "boundary": "trial",
+        "settings_snapshot": {"CONFIG.generation": "run", "CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "new"}, "CONFIG.system_revision": "system"},
     })))
     assert _results(events) == [original, original]
     builder.assert_called_once()
@@ -256,7 +256,7 @@ def test_unfingerprintable_request_does_not_reserve_command_id(configured, inval
     assert rejected.error_code == "PROCESSING_CONFIGURATION_REJECTED"
     _stage(processor)
     assert _results(events)[-1].ok
-    assert processor.config_revision == "new"
+    assert processor.processing_revision == "new"
     builder.assert_called_once()
 
 
@@ -274,7 +274,7 @@ async def test_unfingerprintable_duplicate_preserves_original_command(configured
     original = next(result for result in _results(events) if result.ok)
     _stage(processor)
     assert _results(events)[-1] == original
-    assert processor.config_revision == "new"
+    assert processor.processing_revision == "new"
     builder.assert_called_once()
 
 
@@ -288,7 +288,7 @@ async def test_timeout_cancel_before_boundary_keeps_old_configuration(configured
     assert not stage.ok and stage.data["status"] == "cancelled"
     assert cancellation.ok and cancellation.data["applied_revision"] == "old"
     await _feed(processor, [0, 255, 9, 0], 2)
-    assert processor.config_revision == "old"
+    assert processor.processing_revision == "old"
 
 
 def test_timeout_cancel_after_install_reports_applied_and_never_rolls_back(configured):
@@ -299,12 +299,12 @@ def test_timeout_cancel_after_install_reports_applied_and_never_rolls_back(confi
     assert cancellation.ok
     assert cancellation.data["status"] == "applied"
     assert cancellation.data["applied_revision"] == "new"
-    assert processor.config_revision == "new"
+    assert processor.processing_revision == "new"
 
 
 @pytest.mark.parametrize("snapshot", [
-    {"CONFIG.revision": "new", "CONFIG.generation": "run"},
-    {"CONFIG.revision": "different"},
+    {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "new"}, "CONFIG.system_revision": "system", "CONFIG.generation": "run"},
+    {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "different"}, "CONFIG.system_revision": "system"},
     {"invalid": float("nan")},
 ])
 def test_cancel_tombstone_blocks_a_later_stage_with_same_id(configured, snapshot):
@@ -312,7 +312,7 @@ def test_cancel_tombstone_blocks_a_later_stage_with_same_id(configured, snapshot
     _cancel(processor)
     cancelled = _results(events)[0]
     _stage(processor, settings_snapshot=snapshot)
-    assert processor.config_revision == "old"
+    assert processor.processing_revision == "old"
     assert _results(events)[-1] == cancelled
     builder.assert_not_called()
 
@@ -328,7 +328,7 @@ async def test_early_cancellation_preserves_another_pending_update(configured):
     assert cancelled.data["status"] == "cancelled"
     assert acknowledgement.ok
     await _feed(processor, [0, 255, 9, 0], 2)
-    assert processor.config_revision == "new"
+    assert processor.processing_revision == "new"
     assert _results(events)[-1].command_id == "update"
     assert _results(events)[-1].data["status"] == "applied"
     _stage(processor, "delayed")
@@ -346,14 +346,14 @@ async def test_stop_returns_cancelled_receipt_for_pending_update(configured):
     assert not result.ok
     assert result.data["status"] == "cancelled"
     assert processor._configuration_transactions.pending is None
-    assert processor.config_revision == "old"
+    assert processor.processing_revision == "old"
 
 
 def test_restart_generation_rejects_old_commands_and_pins_new_epochs(configured):
     processor, events, _, builder = configured
     processor.generation = "restarted"
-    processor.config_revision = "restart-revision"
+    processor.processing_revision = "restart-revision"
     _stage(processor)
     assert not _results(events)[0].ok
     builder.assert_not_called()
-    assert processor.new_epoch_processor().config_revision == "restart-revision"
+    assert processor.new_epoch_processor().processing_revision == "restart-revision"

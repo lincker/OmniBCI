@@ -237,6 +237,7 @@ async def test_engine_starts_log_consumer_before_workers_and_stops_it_after_them
     engine.acquisition_worker.start.side_effect = lambda: calls.append("worker-start")
     engine.acquisition_worker.join.side_effect = lambda **kwargs: calls.append("worker-join")
     await engine._start()
+    await engine.start_module("acquisition", {})
     engine.acquisition_worker.is_alive.return_value = False
     engine.signal_processing_worker.is_alive.return_value = False
     await engine._stop()
@@ -246,12 +247,21 @@ async def test_engine_starts_log_consumer_before_workers_and_stops_it_after_them
 
 
 @pytest.mark.asyncio
-async def test_engine_startup_failure_still_stops_the_log_consumer():
+@pytest.mark.parametrize("failed_owner", ["engine", "acquisition"])
+async def test_startup_failure_keeps_log_consumer_until_its_engine_stops(failed_owner):
     from tests.neuroengine.test_neuro_engine import _make_engine
 
     listener = AcquisitionLogListener(Queue())
     engine = _make_engine(acquisition_logs=listener)
-    engine.acquisition_worker.start.side_effect = RuntimeError("start failed")
-    with pytest.raises(RuntimeError, match="start failed"):
+    if failed_owner == "engine":
+        engine.peer_gateway.start.side_effect = RuntimeError("start failed")
+        with pytest.raises(RuntimeError, match="start failed"):
+            await engine._start()
+    else:
         await engine._start()
+        engine.acquisition_worker.start.side_effect = RuntimeError("start failed")
+        with pytest.raises(RuntimeError, match="start failed"):
+            await engine.start_module("acquisition", {})
+        assert not listener.stopped and engine._started
+        await engine._stop()
     assert listener.stopped and engine.shutdown_complete

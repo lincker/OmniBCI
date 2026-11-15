@@ -8,6 +8,8 @@
 .startup-filters { margin: 0; padding-inline-start: 1.25rem; font-size: 0.75rem; }
 .startup-filters li + li { margin-top: 0.75rem; }
 
+.runtime-grid .summary-items { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 16px; }
+
 @media (max-width: 580px) {
   .runtime-content .summary-items { grid-template-columns: 1fr; }
 }

@@ -19,6 +19,7 @@ from omnibci.infrastructure.stimulation.process_manager import (
     StimulationProcessManager,
     _run_stimulation,
 )
+from omnibci.application.commands.stimulation_commands import StartStimulationCommand
 
 
 def _paradigm_snapshot():
@@ -115,20 +116,24 @@ def test_same_paradigm_start_is_idempotent(
 @patch("omnibci.infrastructure.stimulation.process_manager.mp.Event")
 @patch("omnibci.infrastructure.stimulation.process_manager.mp.Process")
 def test_ready_status_reports_paradigm_from_pinned_binding(
-    mock_process_cls, mock_event_cls, legacy_alias, api_client, stimulation_service,
+    mock_process_cls, mock_event_cls, legacy_alias, api_client, stimulation_service, engine_service, startup_pipe,
 ):
     process, _ = _mock_process(exits_after_join=1)
     mock_process_cls.return_value = process
     manager = StimulationProcessManager()
     snapshot = _paradigm_snapshot()
+    snapshot.update({"CONFIG.module_revisions": {"stimulation": "revision"}, "CONFIG.system_revision": "system", "CONFIG.generation": "run"})
+    startup_pipe.receiver.recv.return_value = StartupReport.ready("Stimulation", module_revisions={"stimulation": "revision"}, system_revision="system", generation="run")
     if legacy_alias is not None:
         snapshot["STIMULATION.paradigm"] = legacy_alias
     # A dormant processing profile must not participate in stimulation startup.
     snapshot["PLUGINS.bindings"].append({"slot": "processing.decoder", "processing_input": "invalid"})
     stimulation_service._process_manager = manager
-    stimulation_service._active = True
-
-    manager.start(settings_snapshot=snapshot)
+    engine_service._running = engine_service._accepting_commands = True
+    engine_service._engine_thread = MagicMock()
+    engine_service._engine_thread.is_alive.return_value = True
+    engine_service._applied_snapshot = snapshot
+    stimulation_service.handle_start_stimulation(StartStimulationCommand())
 
     paradigm = "STIMULATION_THUBCI_SSVEP_classic40"
     assert manager.current_paradigm == paradigm

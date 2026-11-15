@@ -14,7 +14,7 @@ from omnibci.infrastructure.ipc.protocol import Frame
 from omnibci.shared.events import Event, EventType
 
 
-IDENTITY = PeerIdentity("actuation", "a" * 64, "generation-1")
+IDENTITY = PeerIdentity("actuation", "a" * 64, "c" * 64, "generation-1")
 
 
 async def wait_for(predicate):
@@ -53,9 +53,10 @@ def test_unverified_socket_cannot_receive_commands_or_claim_liveness():
 
 
 @pytest.mark.parametrize("identity", [
-    PeerIdentity("stimulation", "a" * 64, "generation-1"),
-    PeerIdentity("actuation", "b" * 64, "generation-1"),
-    PeerIdentity("actuation", "a" * 64, "generation-2"),
+    PeerIdentity("stimulation", "a" * 64, "c" * 64, "generation-1"),
+    PeerIdentity("actuation", "b" * 64, "c" * 64, "generation-1"),
+    PeerIdentity("actuation", "a" * 64, "c" * 64, "generation-2"),
+    PeerIdentity("actuation", "a" * 64, "d" * 64, "generation-1"),
 ])
 def test_wrong_identity_is_rejected(identity):
     async def scenario():
@@ -359,4 +360,4 @@ def test_failed_handshake_cleanup_blocks_restart_until_socket_release(monkeypatc
 ])
 def test_identity_requires_role_revision_and_generation(role, revision, generation):
     with pytest.raises(ValueError):
-        PeerIdentity(role, revision, generation)
+        PeerIdentity(role, revision, "c" * 64, generation)

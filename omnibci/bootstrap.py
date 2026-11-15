@@ -145,12 +145,7 @@ async def _build_container_services(host_settings, allow_process_termination):
     from omnibci.conf import settings
 
     auto_spawn = bool(host_settings.get("STIMULATION.auto_spawn", True))
-    # Actuation subprocess management: disabled subsystem → auto_spawn=False,
-    # making every lifecycle hook a no-op (multi-machine runs the script).
-    actuation_auto_spawn = (
-        bool(host_settings.get("ACTUATION.enabled", False))
-        and bool(host_settings.get("ACTUATION.auto_spawn", True))
-    )
+    actuation_auto_spawn = bool(host_settings.get("ACTUATION.auto_spawn", True))
     actuation_manager = ActuationProcessManager(
         auto_spawn=actuation_auto_spawn, allow_process_termination=allow_process_termination,
     )
@@ -160,7 +155,13 @@ async def _build_container_services(host_settings, allow_process_termination):
 
     # Processes are single-use, so every restart requires a fresh engine graph.
     def startup_snapshot():
-        return accepted_runtime_settings(profiles=plugin_profiles)
+        try:
+            accepted = plugin_profiles.repository.get_activation_set()
+        except (ValueError, KeyError, RuntimeError, OSError) as exc:
+            raise RuntimeError(f"Plugin configuration is invalid: {exc}") from exc
+        if accepted.system is None:
+            plugin_profiles.repository.save_system(plugin_profiles.propose_system(), expected_revision=None)
+        return accepted_runtime_settings(profiles=plugin_profiles, active_kinds=set())
 
     engine_service = NeuroEngineService(
         engine_factory=lambda snapshot: NeuroEngineBuilder(
@@ -196,12 +197,12 @@ async def _build_container_services(host_settings, allow_process_termination):
         settings, plugin_profiles, engine_service, container.acquisition_service,
         container.command_results,
     )
-    def prepare_processing():
-        receipt = container.signal_setup_service.prepare()
-        engine_service.prepare_actuation()
-        return receipt
-
-    container.acquisition_service.set_signal_preparer(prepare_processing)
+    container.acquisition_service.set_signal_preparer(container.signal_setup_service.prepare)
+    from omnibci.application.plugin_profiles import MODULE_KINDS
+    engine_service.configure_modules(
+        container.acquisition_service, container.command_results, container.signal_setup_service,
+        lambda module: accepted_runtime_settings(profiles=plugin_profiles, active_kinds=MODULE_KINDS[module]),
+    )
     container.node_configuration = NodeConfigurationService(engine_service, plugin_profiles)
     container.runtime_configuration = RuntimeConfigurationService(
         plugin_profiles, engine_service,
@@ -244,9 +245,7 @@ class _RuntimeSettings:
         snapshot = self.engine.applied_snapshot
         if snapshot is None or not self.engine.is_engine_ready:
             try:
-                accepted = self.profiles.repository.get_activation()
-                if accepted is None:
-                    return default
+                accepted = self.profiles.repository.get_activation_set()
                 snapshot = self.profiles.materialize(accepted)
             except (ValueError, KeyError, RuntimeError, OSError):
                 # Optional status metadata must not block configuration repair.

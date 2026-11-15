@@ -56,7 +56,7 @@ def runtime(source=None, *, projected=True):
     acquisition = AcquisitionRuntime(
         source or Source(), queue.Queue(), Sink(), Bus() if projected else None,
         source_id="test-source", preparation_required=False,
-        generation="generation", config_revision="revision",
+        generation="generation", acquisition_revision="revision", system_revision="system",
     )
     acquisition._raw_metadata = "metadata from the previous connection"
     acquisition._descriptor = object()

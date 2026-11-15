@@ -89,12 +89,12 @@ def _processor(*, decoder=None, bus=None, data=None):
     return make_processor(
         _Detector(), decoder or _Decoder(), queue.Queue(), data or DataManager(queue.Queue()),
         bus or _Bus(), sample_rate=10, baseline_duration=0.2,
-        generation="generation-1", config_revision="revision-1",
+        generation="generation-1", processing_revision="processing-2", acquisition_revision="revision-1", system_revision="system",
     )
 
 
 def _barrier(sequence=-1, **overrides):
-    return replace(StreamBarrier("drain-1", "generation-1", "revision-1", sequence), **overrides)
+    return replace(StreamBarrier("drain-1", "generation-1", "revision-1", sequence, system_revision="system"), **overrides)
 
 
 @pytest.mark.asyncio
@@ -104,7 +104,7 @@ async def test_acquisition_joins_producer_before_in_band_marker_and_defers_succe
     acquisition = AcquisitionRuntime(
         _Source(), queue.Queue(), data, bus,
         source_id="test-source", preparation_required=False,
-        generation="generation-1", config_revision="revision-1",
+        generation="generation-1", acquisition_revision="revision-1", system_revision="system",
     )
     started = asyncio.Event()
 
@@ -203,6 +203,9 @@ async def test_barrier_finishes_first_chunk_when_ready_without_forcing_partial_d
     ]
     assert events[0].data.classification.forced is False
     receipt = StreamDrainReceipt.from_value(events[-1].data.data)
+    assert receipt.acquisition_revision == "revision-1"
+    assert receipt.processing_revision == "processing-2"
+    assert receipt.system_revision == "system"
     assert receipt.completed_trials == 1
     assert receipt.interrupted_epoch is False
     assert receipt.outputs_settled is False
@@ -298,7 +301,7 @@ async def test_barrier_does_not_feed_an_incremental_decoder_the_same_latest_samp
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("overrides", [
-    {"generation": "stale"}, {"config_revision": "stale"},
+    {"generation": "stale"}, {"system_revision": "stale"},
     {"last_sequence": 9},
 ])
 async def test_stale_or_inconsistent_barriers_fail_without_claiming_drained(overrides):
@@ -311,6 +314,23 @@ async def test_stale_or_inconsistent_barriers_fail_without_claiming_drained(over
     assert not result.ok
     assert result.error_code == "STREAM_DRAIN_FAILED"
     assert result.data is None
+
+
+@pytest.mark.asyncio
+async def test_new_source_revision_barrier_drains_old_pipeline_before_source_repreparation():
+    processor = _processor()
+    for item in (_chunk(0, start=True), _chunk(1),
+                 _barrier(1, acquisition_revision="new-source")):
+        processor.data_manager.put_data(item)
+        await processor._current_state.run()
+    result = processor.event_bus.events[-1].data
+    assert result.ok
+    receipt = StreamDrainReceipt.from_value(result.data)
+    assert receipt.acquisition_revision == "new-source"
+    assert receipt.last_sequence == 1
+    assert processor.acquisition_revision == "revision-1"
+    outcomes = [event.data for event in processor.event_bus.events if event.type is EventType.TrialCompleted]
+    assert len(outcomes) == 1 and outcomes[0].acquisition_revision == "revision-1"
 
 
 @pytest.mark.asyncio
@@ -388,12 +408,14 @@ async def test_stop_waits_for_slow_backlog_and_publishes_trial_before_receipt():
     acquisition = AcquisitionRuntime(
         _Source(), queue.Queue(), data, event_bus,
         source_id="test-source", preparation_required=False,
-        generation="generation-1", config_revision="revision-1",
+        generation="generation-1", acquisition_revision="revision-1", system_revision="system",
     )
     acquisition._last_sequence = 1
     data.put_data(_chunk(0, start=True))
     data.put_data(_chunk(1))
-    broker = CommandResultBroker(SimpleNamespace(dispatch=event_bus.put_event, is_engine_ready=True), timeout_s=3)
+    broker = CommandResultBroker(SimpleNamespace(
+        dispatch=event_bus.put_event, is_engine_ready=True, is_command_ready=lambda _: True,
+    ), timeout_s=3)
     service = AcquisitionAppService(broker)
     event_bus.register_event_listener(EventType.CommandResult, broker.on_result)
     outcomes = []

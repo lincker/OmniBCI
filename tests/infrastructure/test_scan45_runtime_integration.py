@@ -1,4 +1,5 @@
 """Scan45 events survive numeric input aliases and reach direct web results."""
+from tests.plugin_configuration_helpers import builtin_selection
 
 import asyncio
 from queue import Queue
@@ -38,29 +39,29 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         ChannelBinding(str(index + 1), channel.channel_id, "eeg")
         for index, channel in enumerate(source.channels)
     ))
-    plan = compile_processing_plan(source, inputs, config_revision=revision)
+    plan = compile_processing_plan(source, inputs, acquisition_revision=revision)
     assert [channel.name for channel in plan.output_channels] == [str(index) for index in range(1, 10)]
     assert all(channel.signal_type == "eeg" for channel in plan.output_channels)
 
     catalog = PluginCatalog()
     snapshot = {
-        "CONFIG.generation": generation, "CONFIG.revision": revision,
+        "CONFIG.generation": generation, "CONFIG.module_revisions": {"acquisition": revision, "processing": revision, "stimulation": revision, "actuation": revision}, "CONFIG.system_revision": "system",
         "ACQUISITION.signal_source": reader.plugin_type,
         "ACQUISITION.sample_rate": sample_rate, "ACQUISITION.channel_count": 10,
         "PLUGINS.bindings": [
             ProfileBinding(
                 "processing.decoder", "decoder", None,
-                catalog.resolve("decoder", "THUBCI_SSVEP_classic40CCA").selection,
+                builtin_selection("decoder", "THUBCI_SSVEP_classic40CCA"),
                 {"window_duration": 1.0, "offset_time": 0}, processing_input=inputs,
             ).to_dict(),
             ProfileBinding(
                 "processing.epoch_detector", "epoch_detector", None,
-                catalog.resolve("epoch_detector", "DEFAULT_EPOCH_DETECTOR").selection, {},
+                builtin_selection("epoch_detector", "DEFAULT_EPOCH_DETECTOR"), {},
             ).to_dict(),
         ],
     }
     receipt = {
-        "generation": generation, "config_revision": revision,
+        "generation": generation, "acquisition_revision": revision, "processing_revision": revision, "system_revision": "system",
         "connection_id": source.connection_id,
         "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint,
     }
@@ -93,7 +94,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
     bus.register_event_listener(EventType.TrialCompleted, on_trial)
     processor = SignalProcessor(
         None, None, Queue(), data, bus, generation=generation,
-        config_revision=revision, settings_snapshot=snapshot,
+        processing_revision=revision, acquisition_revision=revision, system_revision="system", settings_snapshot=snapshot,
     )
     await bus.start()
     try:
@@ -134,7 +135,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         monkeypatch.setattr(reader, "stop_stream", AsyncMock())
         acquisition = AcquisitionRuntime(
             reader, Queue(), data, bus, source_id=reader.plugin_type,
-            preparation_required=False, generation=generation, config_revision=revision,
+            preparation_required=False, generation=generation, acquisition_revision=revision, system_revision="system",
         )
         await acquisition.fetch()
         assert acquisition._fetch_failure is None
@@ -155,7 +156,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         outcome = outcomes[0]
         assert isinstance(outcome, TrialOutcome)
         assert outcome.generation == generation and outcome.trial_number == 1
-        assert outcome.config_revision == revision
+        assert outcome.acquisition_revision == revision
         assert outcome.classification.event_id == outcome.classification.target_id == 1
         assert outcome.classification.forced is False
         assert processor.current_epoch is None
@@ -169,6 +170,6 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         message = messages[0]
         assert message.generation == generation and message.trial_number == 1
         assert message.event_id == message.target_id == 1
-        assert message.config_revision == revision
+        assert message.acquisition_revision == revision
     finally:
         await bus.stop()

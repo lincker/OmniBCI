@@ -16,6 +16,7 @@ class PluginConfiguration:
     schema: dict | None
     configuration_version: int | None
     available: bool
+    domain: str
     controls: dict = field(default_factory=dict)
     channel_requirements: DecoderChannelRequirements | None = None
 
@@ -23,4 +24,3 @@ class PluginConfiguration:
 class PluginConfigurationCatalog(Protocol):
     def list(self, kind: str) -> list[PluginConfiguration]: ...
     def get(self, kind: str, selection: PluginSelection) -> PluginConfiguration: ...
-    def legacy(self, kind: str, alias: str) -> PluginConfiguration: ...

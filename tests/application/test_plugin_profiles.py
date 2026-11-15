@@ -6,106 +6,16 @@ from uuid import uuid4
 import pytest
 
 from omnibci.application.plugin_profiles import (
-    ActivationSnapshot, PluginProfile, PluginProfileValidationError,
-    PluginSelection, ProfileBinding,
+    ActivationSet, ModuleActivation, ModuleActivationRevision, PluginProfile,
+    PluginProfileValidationError, PluginSelection, ProfileBinding, ProfileRevision,
+    SystemSettings, module_for_slot,
 )
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 
 
-def _legacy_montage():
-    return {"source_id": "test-source", "sample_rate": 250, "trigger_row_index": 1,
-            "channels": [{"index": 0, "name": "O1", "signal_type": "eeg", "unit": "V",
-                          "position": [0.0, 0.01, 0.02], "coordinate_frame": "head",
-                          "position_provenance": "file-reported"}], "provenance": "file-reported"}
-
-
-def test_historical_acquisition_fields_round_trip_as_inert_raw_data():
-    observed = _legacy_montage()
-    profile = PluginProfile(str(uuid4()), "Source", "acquisition",
-                            PluginSelection("acme.source", "main", "1.0.0"), {},
-                            legacy={"acquisition_montage": observed, "manual_montage": observed})
-    exported = profile.to_dict()
-    assert exported["acquisition_montage"] == observed
-    assert exported["manual_montage"] == observed
-    assert not hasattr(profile, "acquisition_montage")
-    assert not hasattr(profile, "manual_montage")
-    assert PluginProfile.from_dict(exported) == profile
-    observed["channels"][0]["name"] = "Input changed"
-    exported["manual_montage"]["channels"][0]["name"] = "Export changed"
-    assert profile.legacy["manual_montage"]["channels"][0]["name"] == "O1"
-
-
-def test_historical_acquisition_fields_are_not_accepted_on_other_kinds():
-    profile = PluginProfile(str(uuid4()), "Decoder", "decoder",
-                            PluginSelection("acme.decoder", "main", None), {})
-    assert "acquisition_montage" not in profile.to_dict()
-    assert "manual_montage" not in profile.to_dict()
-    assert PluginProfile.from_dict(profile.to_dict()) == profile
-    for field in ("acquisition_montage", "manual_montage"):
-        with pytest.raises(PluginProfileValidationError, match="legacy"):
-            replace(profile, legacy={field: _legacy_montage()})
-    with pytest.raises(PluginProfileValidationError, match="legacy"):
-        replace(_binding(), legacy={"manual_montage": _legacy_montage()})
-
-
-def test_historical_fields_preserve_activation_revision_without_live_domain_objects():
-    binding = _binding("acquisition.source", "acquisition", legacy={"manual_montage": _legacy_montage()})
-    selected = ActivationSnapshot({}, (binding,))
-    document = selected.to_dict()
-    restored = ActivationSnapshot.from_dict(document)
-    assert restored == selected
-    assert restored.revision == document["revision"]
-    assert restored.bindings[0].to_dict()["manual_montage"] == _legacy_montage()
-    document["bindings"][0]["manual_montage"]["channels"][0]["name"] = "Changed"
-    assert selected.bindings[0].legacy["manual_montage"]["channels"][0]["name"] == "O1"
-    with pytest.raises(PluginProfileValidationError, match="revision"):
-        ActivationSnapshot.from_dict(document)
-
-
-def test_v1_processing_input_is_inert_and_requires_explicit_replacement():
-    legacy_input = {"schema_version": 1, "outputs": ["O1"],
-                    "reference": {"mode": "single", "channels": ["M1"]}, "excluded_channels": []}
-    profile = PluginProfile(str(uuid4()), "Decoder", "decoder",
-                            PluginSelection("acme.decoder", "main", None), {})
-    profile = PluginProfile.from_dict({**profile.to_dict(), "processing_input": legacy_input})
-    binding = ProfileBinding.from_dict({**_binding().to_dict(), "processing_input": legacy_input})
-    assert profile.processing_input is binding.processing_input is None
-    assert profile.processing_input_requires_review and binding.processing_input_requires_review
-    assert profile.to_dict()["processing_input"] == binding.to_dict()["processing_input"] == legacy_input
-    accepted = ActivationSnapshot({}, (binding,))
-    assert ActivationSnapshot.from_dict(accepted.to_dict()) == accepted
-    old_revision = accepted.revision
-    exported = accepted.to_dict()
-    exported["bindings"][0]["processing_input"]["outputs"].append("O2")
-    assert accepted.revision == old_revision
-    assert accepted.bindings[0].legacy["processing_input"]["outputs"] == ["O1"]
-    replacement = replace(profile, legacy={}, processing_input=ProcessingInput())
-    assert not replacement.processing_input_requires_review
-    assert replacement.to_dict()["processing_input"] == {"schema_version": 2, "outputs": []}
-
-
-def test_processing_input_is_decoder_only_and_frozen_in_activation():
-    channel_input = ProcessingInput(outputs=(ChannelBinding("O2", "channel-2", "eeg"), ChannelBinding("O1", "channel-0", "eeg")))
-    profile = PluginProfile(str(uuid4()), "Decoder", "decoder",
-                            PluginSelection("acme.decoder", "main", None), {},
-                            processing_input=channel_input)
-    assert PluginProfile.from_dict(profile.to_dict()) == profile
-    legacy = ActivationSnapshot({}, (_binding(),))
-    assert "processing_input" not in legacy.bindings[0].to_dict()
-    selected = ActivationSnapshot({}, (replace(_binding(), processing_input=channel_input),))
-    assert ActivationSnapshot.from_dict(selected.to_dict()) == selected
-    assert selected.revision != legacy.revision
-    exported = selected.to_dict()
-    exported["bindings"][0]["processing_input"]["outputs"].reverse()
-    assert selected.bindings[0].processing_input == channel_input
-    assert not selected.bindings[0].processing_input_requires_review
-    with pytest.raises(PluginProfileValidationError, match="decoder"):
-        replace(profile, kind="filter")
-    with pytest.raises(PluginProfileValidationError, match="decoder"):
-        replace(_binding("acquisition.source", "acquisition"), processing_input=channel_input)
-
-
 def _binding(slot="processing.decoder", kind="decoder", **fields):
+    if kind == "decoder":
+        fields.setdefault("processing_input", ProcessingInput())
     return ProfileBinding(slot, kind, None, PluginSelection("acme.test", "main", "1.0.0"),
                           {"bands": [8, 12]}, **fields)
 
@@ -113,60 +23,66 @@ def _binding(slot="processing.decoder", kind="decoder", **fields):
 def test_profile_and_binding_copy_parameters_and_round_trip():
     parameters = {"bands": [8, 12]}
     profile = PluginProfile(str(uuid4()), " Example ", "decoder",
-                            PluginSelection("acme.test", "main", None), parameters)
+                            PluginSelection("acme.test", "main", "1.0.0"), parameters,
+                            processing_input=ProcessingInput())
     binding = _binding()
     parameters["bands"].append(16)
-    exported = profile.to_dict()
-    exported["parameters"]["bands"].append(24)
-
+    profile.to_dict()["parameters"]["bands"].append(24)
     assert profile.name == "Example"
     assert profile.parameters == {"bands": [8, 12]}
     assert PluginProfile.from_dict(profile.to_dict()) == profile
     assert ProfileBinding.from_dict(binding.to_dict()) == binding
-    assert "version" not in profile.selection.to_dict()
     assert "profile_id" not in binding.to_dict()
 
 
 def test_snapshot_cannot_be_changed_by_mutating_inputs_or_getter_values():
-    settings = {"extra": {"modes": ["test"]}}
+    settings = {"ALGORITHM.baseline_duration": 1.0}
     binding = _binding()
-    snapshot = ActivationSnapshot(settings, [binding])
+    snapshot = ModuleActivation("processing", settings, [binding])
     revision = snapshot.revision
-    settings["extra"]["modes"].append("input change")
+    settings["ALGORITHM.baseline_duration"] = 5.0
     binding.parameters["bands"].append(16)
-    snapshot.settings["extra"]["modes"].append("getter change")
+    snapshot.settings["ALGORITHM.baseline_duration"] = 6.0
     snapshot.bindings[0].parameters["bands"].append(24)
-    document = snapshot.to_dict()
-    document["bindings"][0]["parameters"]["bands"].append(32)
-
-    assert snapshot.settings == {"extra": {"modes": ["test"]}}
+    snapshot.to_dict()["bindings"][0]["parameters"]["bands"].append(32)
+    assert snapshot.settings == {"ALGORITHM.baseline_duration": 1.0}
     assert snapshot.bindings[0].parameters == {"bands": [8, 12]}
     assert snapshot.revision == revision
-    assert ActivationSnapshot.from_dict(snapshot.to_dict()) == snapshot
+    assert ModuleActivation.from_dict(snapshot.to_dict()) == snapshot
     assert pickle.loads(pickle.dumps(snapshot)) == snapshot
 
 
-def test_semantic_revision_ignores_profile_metadata_and_mapping_order():
-    binding = _binding()
-    original = ActivationSnapshot({"a": 1, "b": 2}, (binding,))
-    equivalent = ActivationSnapshot({"b": 2, "a": 1}, (
-        replace(binding, profile_id=str(uuid4()), profile_revision=8),
+def test_semantic_revision_ignores_profile_provenance_and_parameter_key_order():
+    binding = replace(_binding(), parameters={"a": 1, "b": 2})
+    original = ModuleActivation("processing", {}, (binding,))
+    equivalent = ModuleActivation("processing", {}, (
+        replace(binding, parameters={"b": 2, "a": 1}, profile_id=str(uuid4()), profile_revision=8),
     ))
     assert original.revision == equivalent.revision
-    changed = ActivationSnapshot(original.settings, (replace(binding, parameters={"bands": [8, 16]}),))
-    assert original.revision != changed.revision
+    assert original.revision != ModuleActivation("processing", {}, (
+        replace(binding, parameters={"a": 1, "b": 3}),)).revision
+    assert ModuleActivation("acquisition", {}, ()).revision != ModuleActivation("processing", {}, ()).revision
 
 
 def test_filter_instance_order_is_preserved_and_affects_revision():
     first = _binding(f"processing.filter.{uuid4()}", "filter")
     second = _binding(f"processing.filter.{uuid4()}", "filter")
-    original = ActivationSnapshot({}, (first, second))
-    reordered = ActivationSnapshot({}, (second, first))
-
+    original = ModuleActivation("processing", {}, (first, second))
     assert original.bindings == (first, second)
-    assert original.revision != reordered.revision
+    assert original.revision != ModuleActivation("processing", {}, (second, first)).revision
     with pytest.raises(PluginProfileValidationError, match="Duplicate"):
-        ActivationSnapshot({}, (first, first))
+        ModuleActivation("processing", {}, (first, first))
+
+
+def test_processing_input_is_decoder_only_and_frozen_in_activation():
+    channel_input = ProcessingInput(outputs=(ChannelBinding("O2", "channel-2", "eeg"),))
+    binding = replace(_binding(), processing_input=channel_input)
+    selected = ModuleActivation("processing", {}, (binding,))
+    selected.to_dict()["bindings"][0]["processing_input"]["outputs"].clear()
+    assert selected.bindings[0].processing_input == channel_input
+    assert ModuleActivation.from_dict(selected.to_dict()) == selected
+    with pytest.raises(PluginProfileValidationError, match="decoder"):
+        replace(_binding("acquisition.source", "acquisition"), processing_input=channel_input)
 
 
 @pytest.mark.parametrize(("slot", "kind"), [
@@ -176,6 +92,26 @@ def test_filter_instance_order_is_preserved_and_affects_revision():
 def test_slot_identity_and_kind_are_checked(slot, kind):
     with pytest.raises(PluginProfileValidationError):
         _binding(slot, kind)
+
+
+def test_module_and_setting_ownership_are_checked():
+    assert module_for_slot(f"processing.filter.{uuid4()}") == "processing"
+    for module, settings, bindings in (
+        ("unknown", {}, ()), ("acquisition", {}, (_binding(),)),
+        ("acquisition", {"NEUROENGINE.queue_size": 20}, ()),
+        ("processing", {"NEUROENGINE.queue_size": 20}, ()),
+        ("actuation", {"ACTUATION.enabled": True}, ()),
+    ):
+        with pytest.raises(PluginProfileValidationError):
+            ModuleActivation(module, settings, bindings)
+    with pytest.raises(PluginProfileValidationError):
+        SystemSettings({"ACTUATION.auto_spawn": True})
+
+
+@pytest.mark.parametrize("version", [None, "", "*", ">=1", "1.0.*", " 1.0.0", "1.0.0."])
+def test_selections_require_exact_versions(version):
+    with pytest.raises(PluginProfileValidationError):
+        PluginSelection("acme.test", "main", version)
 
 
 @pytest.mark.parametrize("fields", [
@@ -190,9 +126,47 @@ def test_invalid_profile_data_is_rejected(fields):
         PluginProfile(**{**values, **fields})
 
 
-def test_stored_snapshot_revision_and_format_are_verified():
-    document = ActivationSnapshot({}, (_binding(),)).to_dict()
-    for changed in ({**document, "revision": "0" * 64}, {**document, "format_version": 3},
+def test_stored_revisions_and_removed_fields_are_verified():
+    document = ModuleActivation("processing", {}, (_binding(),)).to_dict()
+    for changed in ({**document, "revision": "0" * 64}, {**document, "format_version": 1},
                     {**document, "unexpected": True}):
         with pytest.raises(PluginProfileValidationError):
-            ActivationSnapshot.from_dict(changed)
+            ModuleActivation.from_dict(changed)
+    with pytest.raises(PluginProfileValidationError, match="revision"):
+        SystemSettings.from_dict({"settings": {"debug": True}, "revision": "0" * 64})
+    profile = PluginProfile(str(uuid4()), "Source", "acquisition", _binding().selection, {})
+    with pytest.raises(PluginProfileValidationError):
+        PluginProfile.from_dict({**profile.to_dict(), "manual_montage": {}})
+    with pytest.raises(PluginProfileValidationError):
+        ProfileBinding.from_dict({**_binding().to_dict(), "processing_input": {"schema_version": 1, "outputs": []}})
+
+
+def test_activation_set_keeps_absence_explicit_and_copies_mapping():
+    acquisition = ModuleActivation("acquisition", {}, ())
+    modules = {"acquisition": acquisition}
+    selected = ActivationSet(modules, SystemSettings({"NEUROENGINE.queue_size": 20, "debug": False}))
+    modules.clear()
+    assert selected.modules["acquisition"] == acquisition
+    assert selected.modules["processing"] is None
+    assert selected.revisions()["processing"] is None
+    assert selected.revisions()["system"] == selected.system.revision
+    assert selected.settings() == {"NEUROENGINE.queue_size": 20, "debug": False}
+    with pytest.raises(TypeError):
+        selected.modules["processing"] = None
+
+
+def test_history_entries_preserve_values_and_validate_identity():
+    profile = PluginProfile(str(uuid4()), "Source", "acquisition", _binding().selection, {"values": [1]}, revision=1)
+    timestamp = "2026-11-15T00:00:00+00:00"
+    history = ProfileRevision(profile.profile_id, 1, timestamp, profile)
+    profile.parameters["values"].append(2)
+    history.profile.parameters["values"].append(3)
+    assert history.profile.parameters == {"values": [1]}
+    assert ProfileRevision.from_dict(history.to_dict()) == history
+    activation = ModuleActivation("processing", {}, (_binding(),))
+    entry = ModuleActivationRevision("processing", str(uuid4()), timestamp, activation)
+    assert ModuleActivationRevision.from_dict(entry.to_dict()) == entry
+    with pytest.raises(PluginProfileValidationError):
+        replace(entry, module="acquisition")
+    with pytest.raises(PluginProfileValidationError):
+        replace(entry, saved_at="2026-11-15")

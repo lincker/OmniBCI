@@ -207,11 +207,15 @@ npm run dev
 
 Open <http://localhost:5173> and perform these steps:
 
-1. Select source/decoder plugins and Profiles in Setup, then review and apply.
-2. Start the engine.
-3. Connect the data source.
+1. Edit current source and processing parameters in Setup. Saving Profiles is optional.
+2. Start the engine. This starts shared infrastructure only.
+3. Connect the source and start Processing using their independent controls.
 4. Start reading. Triggered epochs are decoded and published directly to Run.
 5. Stop reading to drain queued samples, or let file playback reach its end.
+
+Stimulation and Actuation have independent start/stop controls and do not require
+Acquisition or Processing to run. Source-only reading works with Processing
+stopped. Stopping the engine stops all modules.
 
 Run shows the latest 200 decoded trials for the current engine generation.
 Restarting the engine clears this view. There is no experiment Session,
@@ -236,16 +240,17 @@ To run stimulation on another machine, save `STIMULATION.auto_spawn = false`
 and the engine's reachable `NEUROENGINE.message_server_ip` / `message_server_port`
 in the host settings file. Review and apply these host settings while the engine
 is stopped. Install the pinned Paradigm and Trigger packages on the stimulation
-node, then run (replace the example address with your backend):
+node. Start the engine and use **Prepare external stimulation** in Run, then run
+(replace the example address with your backend):
 
 ```bash
 python scripts/run_stimulation.py --backend http://192.168.1.10:8000
 ```
 
-For Actuation, save `ACTUATION.enabled = true`, `ACTUATION.auto_spawn = false`,
-and its `server_ip` / `server_port` in host settings. Select the Effector Profile
-in Setup, review and apply the configuration, and install the pinned Effector
-package before running the following command on the device machine:
+For Actuation, save `ACTUATION.auto_spawn = false` and its `server_ip` /
+`server_port` in host settings. Configure the current Effector values in Setup,
+start the engine, and use **Prepare external actuation** in Run. Install the pinned
+Effector package before running the following command on the device machine:
 
 ```bash
 python scripts/run_actuation.py --backend http://192.168.1.10:8000
@@ -263,13 +268,15 @@ across machines: `127.0.0.1` is local-only, and `0.0.0.0` is a listener address,
 not a remote destination. Allow the configured HTTP and TCP ports.
 
 After plugin initialization, a socket handshake verifies the node's role,
-Activation revision, and engine generation before accepting business events.
+own-module revision, shared system revision, and engine generation before
+accepting business events. After the node connects, enable Stimulation or start
+Actuation in Run. No Acquisition source or A/P worker is required.
 On disconnection the node tears down, fetches configuration again, and starts a
 fresh instance only after cleanup succeeds. Stimulation clears its trigger;
 Actuation requires the Effector to confirm that physical outputs have stopped.
 Hardware/setup, output-settlement, or cleanup errors stop the script for inspection.
-Saving a Profile does not change a running
-node. To change configuration with external nodes, stop the engine, apply, then
-start the engine; waiting node scripts synchronize automatically. Coordinated
-live updates of external nodes remain a separate phase.
+Saving a Profile does not change a running node. To change its configuration,
+stop/disconnect that external node, prepare the new current values, then restart
+and reconnect the node. Shared system changes also require disconnecting external
+nodes and restarting the engine.
 See [configuration ownership](docs/configuration-ownership.md) for the boundaries.

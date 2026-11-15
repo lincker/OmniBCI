@@ -22,7 +22,7 @@ def binding(slot, kind, parameters=None):
 @pytest.fixture
 def node_api():
     snapshot = {
-        "CONFIG.revision": "a" * 64,
+        "CONFIG.module_revisions": {'acquisition': "a" * 64, 'processing': "a" * 64, 'stimulation': "a" * 64, 'actuation': "a" * 64}, "CONFIG.system_revision": "c" * 64,
         "STIMULATION.auto_spawn": False, "ACTUATION.auto_spawn": False, "ACTUATION.enabled": True,
         "NEUROENGINE.message_server_ip": "127.0.0.1", "NEUROENGINE.message_server_port": 9000,
         "ACTUATION.server_ip": "127.0.0.1", "ACTUATION.server_port": 9001,
@@ -34,7 +34,7 @@ def node_api():
         ],
     }
     engine = NeuroEngineService(engine_factory=Mock())
-    profiles = SimpleNamespace(resolve_settings=lambda: snapshot)
+    profiles = SimpleNamespace(materialize=lambda _: snapshot, repository=SimpleNamespace(get_activation_set=lambda: object()))
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(router, prefix="/api/v1")
@@ -57,11 +57,12 @@ def test_node_api_selected_then_running_uses_applied_inputs(node_api, role, kind
     engine._running = engine._accepting_commands = True
     engine._engine_thread = SimpleNamespace(is_alive=lambda: True)
     engine._applied_snapshot = {**saved, "CONFIG.generation": "run-1"}
-    profiles.resolve_settings = Mock(side_effect=AssertionError("running publication read saved data"))
+    profiles.materialize = Mock(side_effect=AssertionError("running publication read saved data"))
     data = client.get(f"/api/v1/config/nodes/{role}").json()["data"]
     assert data["state"] == "running"
     assert data["configuration"]["generation"] == "run-1"
-    assert data["configuration"]["revision"] == "a" * 64
+    assert data["configuration"]["module_revisions"] == {role: "a" * 64}
+    assert data["configuration"]["system_revision"] == "c" * 64
 
 
 def test_transition_recovery_and_managed_modes_reject_node_publication(node_api):
@@ -78,3 +79,21 @@ def test_transition_recovery_and_managed_modes_reject_node_publication(node_api)
     assert client.get("/api/v1/config/nodes/engine").status_code == 422
     client.app.state.container.node_configuration = None
     assert client.get(url).status_code == 503
+
+
+@pytest.mark.parametrize("role", ["stimulation", "actuation"])
+def test_output_node_configuration_is_available_with_no_acquisition_or_processing(node_api, role):
+    client, engine, saved, _ = node_api
+    saved.pop("ACTUATION.enabled")
+    saved["PLUGINS.bindings"] = [binding for binding in saved["PLUGINS.bindings"]
+                                 if binding["slot"].startswith(f"{role}.")]
+    engine._engine = Mock()
+    engine._running = engine._accepting_commands = True
+    engine._engine_thread = SimpleNamespace(is_alive=lambda: True)
+    engine._applied_snapshot = {**saved, "CONFIG.generation": "foundation"}
+    response = client.get(f"/api/v1/config/nodes/{role}")
+    assert response.status_code == 200
+    configuration = response.json()["data"]["configuration"]
+    assert configuration["generation"] == "foundation"
+    assert all(binding["slot"].startswith(f"{role}.") for binding in configuration["bindings"])
+    assert not any(key.startswith("ACQUISITION.") for key in configuration["settings"])

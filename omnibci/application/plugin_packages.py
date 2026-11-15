@@ -46,6 +46,7 @@ class PackageVersion:
     description: str | None
     sha256: str | None
     contributions: tuple[PackageContribution, ...]
+    domain: str | None
     enabled: bool = False
     available: bool = True
     error: str | None = None

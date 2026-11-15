@@ -5,12 +5,12 @@ from unittest.mock import Mock
 
 import pytest
 
-from omnibci.application.plugin_profiles import ActivationSnapshot, ProfileBinding
+from omnibci.application.plugin_profiles import ModuleActivation, ProfileBinding
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
-from tests.plugin_configuration_helpers import accept_profiles
+from tests.plugin_configuration_helpers import accept_profiles, builtin_selection
 
 
 @pytest.fixture
@@ -22,7 +22,7 @@ def profiles(tmp_path, monkeypatch):
         "ALGORITHM.decoder": "THUBCI_SSVEP_classic40CCA",
         "ALGORITHM.epoch_detector": "DEFAULT_EPOCH_DETECTOR", "ALGORITHM.filters": [],
         "STIMULATION.paradigm": "STIMULATION_THUBCI_SSVEP_classic40",
-        "ACTUATION.effector": "logger", "ACTUATION.enabled": True,
+        "ACTUATION.effector": "logger",
         "ACTUATION.server_ip": "192.0.2.3", "ACTUATION.server_port": 9010,
     }
     service = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
@@ -38,8 +38,8 @@ def profiles(tmp_path, monkeypatch):
 
 
 def test_standalone_and_managed_projection_match_after_saved_profile_edit(profiles):
-    accepted = profiles.repository.get_activation()
-    source = next(binding for binding in accepted.bindings if binding.kind == "acquisition")
+    accepted = profiles.repository.get_activation_set()
+    source = next(binding for binding in accepted.bindings() if binding.kind == "acquisition")
     profile = profiles.repository.get_profile(source.profile_id)
     profiles.update(profile.profile_id, name=profile.name,
                     parameters={**profile.parameters, "sample_rate": 250},
@@ -50,7 +50,7 @@ def test_standalone_and_managed_projection_match_after_saved_profile_edit(profil
 
     assert standalone == profiles.materialize(accepted)
     assert standalone["ACQUISITION.sample_rate"] == 500
-    assert standalone["CONFIG.revision"] == accepted.revision
+    assert standalone["CONFIG.module_revisions"]["acquisition"] == accepted.modules["acquisition"].revision
     assert standalone["ACTUATION.server_ip"] == "192.0.2.3"
     assert {path: path.read_bytes() for path in profiles.repository.root.rglob("*.toml")} == before
 
@@ -60,13 +60,11 @@ def test_missing_activation_does_not_initialize_storage(tmp_path):
     service = PluginProfileService(TomlPluginProfileRepository(root), Mock(), settings_source=lambda: {})
     with pytest.raises(RuntimeError, match="not selected"):
         accepted_runtime_settings(profiles=service)
-    with pytest.raises(ValueError, match="not selected"):
-        service.resolve_settings()
     assert not root.exists()
 
 
 def test_corrupt_activation_is_not_replaced(profiles):
-    path = profiles.repository.root / "activation.toml"
+    path = profiles.repository.root / "activation" / "acquisition.toml"
     path.write_text('revision = "unterminated', encoding="utf-8")
     before = path.read_bytes()
     with pytest.raises(RuntimeError, match="invalid"):
@@ -74,46 +72,45 @@ def test_corrupt_activation_is_not_replaced(profiles):
     assert path.read_bytes() == before
 
 
-def test_disabled_actuation_does_not_start(profiles):
-    accepted = profiles.repository.get_activation()
-    disabled = ActivationSnapshot(bindings=accepted.bindings,
-                                  settings={**accepted.settings, "ACTUATION.enabled": False})
-    profiles.repository.save_activation(disabled, expected_revision=accepted.revision)
-    with pytest.raises(RuntimeError, match="disabled"):
+def test_actuation_requires_its_own_effector_selection(profiles):
+    accepted = profiles.repository.get_activation_set()
+    current = accepted.modules["actuation"]
+    unselected = ModuleActivation("actuation", current.settings, ())
+    profiles.repository.save_module(unselected, expected_revision=current.revision)
+    with pytest.raises(RuntimeError, match="Missing required selections: actuation.effector"):
         accepted_runtime_settings(profiles=profiles, active_kinds={"effector"})
 
 
 def test_stimulation_accepts_an_explicit_configuration_without_trigger(profiles):
-    accepted = profiles.repository.get_activation()
+    accepted = profiles.repository.get_activation_set()
     snapshot = accepted_runtime_settings(profiles=profiles, active_kinds={"paradigm", "trigger"})
     assert snapshot == profiles.materialize(accepted)
     assert not any(binding["slot"] == "stimulation.trigger" for binding in snapshot["PLUGINS.bindings"])
-    assert profiles.repository.get_activation() == accepted
+    assert profiles.repository.get_activation_set() == accepted
 
 
 def test_missing_selected_version_cannot_use_legacy_alias(profiles):
-    accepted = profiles.repository.get_activation()
-    source, *others = accepted.bindings
-    invalid = replace(source, selection=replace(source.selection, version="missing"))
-    profiles.repository.save_activation(
-        ActivationSnapshot(bindings=(invalid, *others), settings=accepted.settings),
-        expected_revision=accepted.revision,
-    )
+    accepted = profiles.repository.get_activation_set()
+    current = accepted.modules["acquisition"]
+    source, = current.bindings
+    invalid = replace(source, selection=replace(source.selection, version="99.0.0"))
+    profiles.repository.save_module(ModuleActivation("acquisition", current.settings, (invalid,)),
+                                    expected_revision=current.revision)
     with pytest.raises(RuntimeError, match="invalid"):
         accepted_runtime_settings(profiles=profiles)
 
 
 @pytest.mark.parametrize("kind", ["effector", "paradigm", "trigger"])
 def test_unavailable_active_output_is_rejected_before_launch(profiles, monkeypatch, kind):
-    accepted = profiles.repository.get_activation()
+    accepted = profiles.repository.get_activation_set()
     if kind == "trigger":
-        definition = profiles.catalog.legacy("trigger", "neuroscan_scan45_trigger")
-        binding = ProfileBinding("stimulation.trigger", "trigger", None, definition.selection,
+        selection = builtin_selection("trigger", "neuroscan_scan45_trigger")
+        binding = ProfileBinding("stimulation.trigger", "trigger", None, selection,
                                  {"parallel_port_address": "0x3100"})
-        accepted = profiles.repository.save_activation(
-            ActivationSnapshot(bindings=(*accepted.bindings, binding), settings=accepted.settings),
-            expected_revision=accepted.revision,
-        )
+        current = accepted.modules["stimulation"]
+        profiles.repository.save_module(ModuleActivation("stimulation", current.settings, (*current.bindings, binding)),
+                                       expected_revision=current.revision)
+        accepted = profiles.repository.get_activation_set()
     get = profiles.catalog.get
 
     def unavailable(active_kind, selection):
@@ -123,7 +120,7 @@ def test_unavailable_active_output_is_rejected_before_launch(profiles, monkeypat
     monkeypatch.setattr(profiles.catalog, "get", unavailable)
     with pytest.raises(RuntimeError, match="unavailable on this platform"):
         accepted_runtime_settings(profiles=profiles, active_kinds={kind})
-    assert profiles.repository.get_activation() == accepted
+    assert profiles.repository.get_activation_set() == accepted
 
 
 @pytest.mark.parametrize("role,class_name", [

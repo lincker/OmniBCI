@@ -1,4 +1,5 @@
 """Decoder requirements are checked against prepared input before plugin code runs."""
+from tests.plugin_configuration_helpers import builtin_selection
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -72,7 +73,7 @@ def test_declared_requirements_cannot_run_without_verified_channel_metadata():
     loader.instantiate.assert_not_called()
 
 
-def test_undeclared_legacy_plugin_keeps_its_existing_construction_path():
+def test_plugin_without_channel_requirements_accepts_prepared_context():
     snapshot, _, catalog = configured(None)
     catalog.resolve_selection.return_value.signal_input_contract = 1
     loader = Mock()
@@ -91,7 +92,7 @@ async def test_curry_unknown_types_require_processing_declaration_before_builtin
     assert "channel_types" not in raw_metadata
     assert all(channel.signal_type == "unknown" for channel in source.channels)
     catalog = PluginCatalog()
-    definition = catalog.resolve("decoder", "THUBCI_SSVEP_classic40CCA")
+    definition = catalog.resolve_selection("decoder", builtin_selection("decoder", "THUBCI_SSVEP_classic40CCA"))
     undeclared = ProcessingInput()
     binding = ProfileBinding("processing.decoder", "decoder", None, definition.selection,
                              {"window_duration": 1.0, "offset_time": 0}, processing_input=undeclared)

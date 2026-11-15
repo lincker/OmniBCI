@@ -119,21 +119,21 @@ async def test_staged_configuration_applies_between_multiple_epochs_in_one_chunk
     processor = make_processor(
         detector=Markers(), decoder=RecordingDecoder(original_instances), command_queue=Queue(),
         data_manager=DataManager(buffer=Queue()), event_bus=SimpleNamespace(put_event=events.append),
-        sample_rate=1000, generation="run", config_revision="old", settings_snapshot={"CONFIG.revision": "old"},
+        sample_rate=1000, generation="run", processing_revision="old", settings_snapshot={"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "old"}, "CONFIG.system_revision": "system"},
     )
     processor.data_manager.put_data(SignalChunk(1.0, 0, np.array([[1, 2], [7, 0]])))
     await processor._current_state.run()
-    candidate = ConfiguredPipeline(RecordingDecoder(replacement_instances), (), {"CONFIG.revision": "new"})
+    candidate = ConfiguredPipeline(RecordingDecoder(replacement_instances), (), {"CONFIG.module_revisions": {"acquisition": "source-revision", "processing": "new"}, "CONFIG.system_revision": "system"})
     build = MagicMock(return_value=candidate)
     monkeypatch.setattr(transactions_module, "build_pipeline_update", build)
     processor._execute((SignalProcessorCommand.stage_configuration, CommandRequest("update", {
-        "settings_snapshot": candidate.settings_snapshot, "expected_revision": "old", "generation": "run",
+        "settings_snapshot": candidate.settings_snapshot, "expected_revision": "old", "generation": "run", "system_revision": "system", "boundary": "trial",
     })))
     processor.data_manager.put_data(SignalChunk(2.0, 1, np.array([[3, 4, 5, 6, 7], [255, 9, 255, 10, 255]])))
     await processor._current_state.run()
 
     assert [trial.classification.event_id for trial in [event.data for event in events if event.type is EventType.TrialCompleted]] == [7, 9, 10]
-    assert [trial.config_revision for trial in [event.data for event in events if event.type is EventType.TrialCompleted]] == ["old", "new", "new"]
+    assert [trial.processing_revision for trial in [event.data for event in events if event.type is EventType.TrialCompleted]] == ["old", "new", "new"]
     ordered = [event for event in events if event.type in (EventType.TrialCompleted, EventType.CommandResult)]
     assert [event.type for event in ordered] == [EventType.TrialCompleted, EventType.CommandResult,
                                                 EventType.TrialCompleted, EventType.TrialCompleted]

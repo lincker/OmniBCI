@@ -1,5 +1,6 @@
-/** Unsaved editors survive navigation attempts until the user explicitly discards them. */
+/** Current plugin values survive navigation; transient settings retain discard protection. */
 import assert from "node:assert/strict";
+import { moduleConfiguration, revisionMap } from "./module-fixtures.mjs";
 import { after, test } from "node:test";
 import React from "react";
 import { createServer } from "vite";
@@ -74,10 +75,12 @@ const navigation = (h, label) => elements(h.tree).find((item) => item.type === "
 async function withApp(action, { desktopMode = false, applying = false } = {}) {
   const original = Object.fromEntries(["window", "document", "location", "localStorage", "WebSocket", "fetch"].map((key) => [key, globalThis[key]]));
   const originalStatus = runtimeConfigApi.status;
+  const originalActivation = pluginConfigApi.modules;
+  pluginConfigApi.modules = async () => moduleConfiguration();
   const listeners = new Map(), editorStates = [];
   const location = { hash: "#acquisition", protocol: "http:", host: "localhost" };
   const localStorage = { getItem: () => null, setItem: () => {} };
-  const state = { running: false, accepted_revision: null, applied_revision: null, generation: null, recovery_required: false,
+  const state = { running: false, accepted: revisionMap(null), applied: null, generation: null, recovery_required: false,
     operation: applying ? { operation_id: "operation-1", status: "applying", stage: "rebuilding" } : null };
   globalThis.window = { location, localStorage, history: { replaceState: (_state, _title, hash) => { location.hash = hash; } },
     addEventListener: (event, listener) => listeners.set(event, listener),
@@ -96,37 +99,48 @@ async function withApp(action, { desktopMode = false, applying = false } = {}) {
   const content = { querySelector: () => heading, focus: () => focusEvents.push("main") };
   const h = harness(App, {}, (tree) => { elements(tree).find((item) => item.type === "main").ref.current = content; });
   try { await h.settle(); await action({ h, listeners, editorStates, state, focusEvents, heading }); }
-  finally { h.dispose(); runtimeConfigApi.status = originalStatus; Object.assign(globalThis, original); }
+  finally { h.dispose(); runtimeConfigApi.status = originalStatus; pluginConfigApi.modules = originalActivation; Object.assign(globalThis, original); }
 }
 
+const currentSource = {
+  profile: null, selection: { package_id: "example.source", contribution_id: "main", version: "1.0.0" },
+  plugin: '["example.source","main","1.0.0"]', name: "", parameters: { address: "new-device" }, processingInput: null,
+};
+
 for (const trigger of ["workspace", "hash", "shortcut"]) {
-  test(`${trigger} navigation preserves the editor until an explicit discard`, async () => {
+  test(`${trigger} navigation preserves current values without requiring a profile save`, async () => {
     await withApp(async ({ h, listeners }) => {
-      component(h, "PluginProfiles").props.onDirtyChange(true); await h.settle();
-      const navigate = () => {
-        if (trigger === "workspace") navigation(h, "Run").props.onClick();
-        else if (trigger === "hash") { window.location.hash = "#run"; listeners.get("hashchange")(); }
-        else h.tree.props.onKeyDown({ ctrlKey: true, key: ",", target: {}, preventDefault() {} });
-      };
-      navigate(); await h.settle();
-      assert.equal(component(h, "PluginProfiles").props.module, "acquisition");
-      assert.equal(window.location.hash, "#acquisition");
-      assert.equal(component(h, "ConfigDialog").props.cancelLabel, "Keep editing");
-      component(h, "ConfigDialog").props.onCancel(); await h.settle();
+      component(h, "PluginProfiles").props.current.set("acquisition.source", currentSource);
+      await h.settle();
+      if (trigger === "workspace") navigation(h, "Run").props.onClick();
+      else if (trigger === "hash") { window.location.hash = "#run"; listeners.get("hashchange")(); }
+      else h.tree.props.onKeyDown({ ctrlKey: true, key: ",", target: {}, preventDefault() {} });
+      await h.settle();
       assert.equal(component(h, "ConfigDialog"), undefined);
-      assert.ok(listeners.has("beforeunload"));
-      navigate(); await h.settle();
-      component(h, "ConfigDialog").props.onConfirm(); await h.settle();
-      assert.equal(component(h, "PluginProfiles"), undefined);
       assert.equal(window.location.hash, trigger === "shortcut" ? "#general" : "#run");
-      assert.equal(listeners.has("beforeunload"), false);
+      assert.ok(listeners.has("beforeunload"), "Leaving the app still protects unapplied values");
+      window.location.hash = "#acquisition"; listeners.get("hashchange")(); await h.settle();
+      assert.deepEqual(component(h, "PluginProfiles").props.current.entries["acquisition.source"], currentSource);
     });
   });
 }
 
+test("host settings still require an explicit discard before navigation", async () => {
+  await withApp(async ({ h }) => {
+    h.tree.props.onKeyDown({ ctrlKey: true, key: ",", target: {}, preventDefault() {} }); await h.settle();
+    component(h, "ConfigCard").props.onDirtyChange(true); await h.settle();
+    navigation(h, "Run").props.onClick(); await h.settle();
+    assert.equal(window.location.hash, "#general");
+    component(h, "ConfigDialog").props.onCancel(); await h.settle();
+    assert.ok(component(h, "ConfigCard"));
+    navigation(h, "Run").props.onClick(); await h.settle();
+    component(h, "ConfigDialog").props.onConfirm(); await h.settle();
+    assert.equal(window.location.hash, "#run");
+  });
+});
+
 test("a busy editor rejects hash navigation without discarding or opening another dialog", async () => {
   await withApp(async ({ h, listeners }) => {
-    component(h, "PluginProfiles").props.onDirtyChange(true);
     component(h, "PluginProfiles").props.onBusyChange(true); await h.settle();
     window.location.hash = "#run"; listeners.get("hashchange")(); await h.settle();
     assert.equal(window.location.hash, "#acquisition");
@@ -138,7 +152,7 @@ test("a busy editor rejects hash navigation without discarding or opening anothe
 test("Skip to editor focuses the page heading without changing the hash route or draft", async () => {
   await withApp(async ({ h, focusEvents, heading }) => {
     assert.deepEqual(focusEvents, [], "Initial loading does not steal focus");
-    component(h, "PluginProfiles").props.onDirtyChange(true); await h.settle();
+    component(h, "PluginProfiles").props.current.set("acquisition.source", currentSource); await h.settle();
     const skip = elements(h.tree).find((item) => item.type === "a" && item.props.className === "skip-link");
     let prevented = false;
     skip.props.onClick({ preventDefault() { prevented = true; } });
@@ -150,15 +164,13 @@ test("Skip to editor focuses the page heading without changing the hash route or
   });
 });
 
-test("navigation moves focus to new content only after a discard is confirmed", async () => {
+test("navigation focuses the new page while preserving current configuration", async () => {
   await withApp(async ({ h, focusEvents }) => {
-    component(h, "PluginProfiles").props.onDirtyChange(true); await h.settle();
+    component(h, "PluginProfiles").props.current.set("acquisition.source", currentSource);
+    await h.settle();
     navigation(h, "Run").props.onClick(); await h.settle();
-    component(h, "ConfigDialog").props.onCancel(); await h.settle();
-    assert.deepEqual(focusEvents, []);
-    navigation(h, "Run").props.onClick(); await h.settle();
-    component(h, "ConfigDialog").props.onConfirm(); await h.settle();
     assert.deepEqual(focusEvents, ["#run"]);
+    assert.deepEqual(component(h, "RunConsole").props.current.entries["acquisition.source"], currentSource);
     await component(h, "RuntimeConfigurationReview").props.runtime.refresh(); await h.settle();
     assert.deepEqual(focusEvents, ["#run"], "Background status polling does not move focus");
   });
@@ -175,17 +187,18 @@ test("settings shortcuts ignore handled events and keys inside dialogs", async (
   });
 });
 
-test("Open Run preserves draft protection and Change setup returns to Acquisition", async () => {
+test("Open Run retains current values and Change setup returns to Acquisition", async () => {
   await withApp(async ({ h, listeners }) => {
-    component(h, "PluginProfiles").props.onDirtyChange(true); await h.settle();
+    component(h, "PluginProfiles").props.current.set("acquisition.source", currentSource);
+    await h.settle();
     component(h, "PluginProfiles").props.onRun(); await h.settle();
-    assert.equal(window.location.hash, "#acquisition");
-    component(h, "ConfigDialog").props.onCancel(); await h.settle();
-    component(h, "PluginProfiles").props.onDirtyChange(false); await h.settle();
+    assert.equal(window.location.hash, "#run");
+    assert.deepEqual(component(h, "RunConsole").props.current.entries["acquisition.source"], currentSource);
     window.location.hash = "#processing"; listeners.get("hashchange")(); await h.settle();
     navigation(h, "Run").props.onClick(); await h.settle();
     component(h, "RunConsole").props.onEditSetup(); await h.settle();
     assert.equal(window.location.hash, "#acquisition", "Source setup must not depend on the last visited setup tab");
+    assert.deepEqual(component(h, "PluginProfiles").props.current.entries["acquisition.source"], currentSource);
   });
 });
 
@@ -220,7 +233,7 @@ test("browser refresh stays protected until an in-flight runtime application set
 
 test("desktop delegates dirty and in-flight protection to its existing native connection and close guard", async () => {
   await withApp(async ({ h, listeners, editorStates }) => {
-    component(h, "PluginProfiles").props.onDirtyChange(true); await h.settle();
+    component(h, "PluginProfiles").props.current.set("acquisition.source", currentSource); await h.settle();
     assert.deepEqual(editorStates.at(-1), { dirty: true, busy: true });
     assert.equal(listeners.has("beforeunload"), false);
   }, { desktopMode: true, applying: true });
@@ -242,29 +255,6 @@ test("discard dialogs describe the consequence and focus Keep editing; Escape pr
   h.dispose();
 });
 
-test("save-required dialogs show one focused Continue editing action and retain their details", async () => {
-  let continued = 0, cancelled = 0;
-  const details = React.createElement("p", null, "Gain: 2 → 3");
-  const h = harness(ConfigDialog, { title: "Unsaved changes", message: "Save this profile before applying it.",
-    details, confirmLabel: "Continue editing", cancelLabel: null,
-    onConfirm: () => { continued += 1; }, onCancel: () => { cancelled += 1; } });
-  try {
-    await h.settle();
-    const buttons = elements(h.tree).filter((item) => item.type === "button");
-    assert.equal(buttons.length, 1);
-    assert.equal(buttons[0].props.children, "Continue editing");
-    assert.equal(buttons[0].props.autoFocus, true);
-    assert.ok(elements(h.tree).includes(details));
-    assert.ok(elements(h.tree).some((item) => item.type === "p" && item.props.children === "Save this profile before applying it."));
-    elements(h.tree).find((item) => item.type === "form").props.onSubmit({ preventDefault() {} });
-    assert.equal(continued, 1);
-    assert.equal(cancelled, 0);
-    h.tree.props.onCancel({ preventDefault() {} });
-    assert.equal(cancelled, 1);
-    assert.equal(continued, 1);
-  } finally { h.dispose(); }
-});
-
 test("closing a dialog restores focus only while the original control still exists", async () => {
   const originalDocument = globalThis.document;
   try {
@@ -283,8 +273,12 @@ test("closing a dialog restores focus only while the original control still exis
   } finally { globalThis.document = originalDocument; }
 });
 
+const currentRequest = () => ({ module: "acquisition", expected_revision: "rev-1", bindings: [{
+  slot: "acquisition.source", selection: currentSource.selection, parameters: {},
+}] });
+
 async function withSharedAcquisition(action) {
-  const original = { ...api }, originalActivation = pluginConfigApi.activation;
+  const original = { ...api }, originalActivation = pluginConfigApi.modules, originalRuntime = { ...runtimeConfigApi };
   const source = { connected: false, streaming: false, connection_id: null }, calls = [];
   const backend = { status: async () => ({ ...source }) };
   let engineState;
@@ -293,8 +287,17 @@ async function withSharedAcquisition(action) {
   try {
     await withApp(async ({ h, state }) => {
       engineState = state;
-      Object.assign(state, { running: true, generation: "engine-1", accepted_revision: "rev-1", applied_revision: "rev-1" });
-      pluginConfigApi.activation = async () => ({ revision: "rev-1", bindings: [{ slot: "acquisition.source" }] });
+      Object.assign(state, { running: true, generation: "engine-1", accepted: revisionMap("rev-1"), applied: revisionMap("rev-1") });
+      pluginConfigApi.modules = async () => moduleConfiguration({ revision: "rev-1", bindings: [{ slot: "acquisition.source",
+        kind: "acquisition", selection: currentSource.selection, parameters: {} }] });
+      pluginConfigApi.module = async (module) => (await pluginConfigApi.modules()).modules[module];
+      runtimeConfigApi.plan = async () => ({ plan_id: "source-plan", module: "acquisition", expected_revision: "rev-1", expected_revisions: { acquisition: "rev-1", system: "system-revision" }, target_revisions: { acquisition: "rev-1" },
+        applied_revisions: { acquisition: "rev-1", system: "system-revision" }, generation: "engine-1", running: true, strategy: "no_change", errors: [], changed_slots: [], changed_settings: [] });
+      runtimeConfigApi.apply = async (planId, operationId) => {
+        state.operation = { operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "rev-1" }, status: "succeeded", stage: "complete" };
+        return state.operation;
+      };
+      runtimeConfigApi.operation = async () => state.operation;
       api.acqConnect = async () => { calls.push("connect"); Object.assign(source, { connected: true, connection_id: "source-1" }); };
       api.acqDisconnect = async () => { calls.push("disconnect"); Object.assign(source, { connected: false, connection_id: null }); };
       api.acqMetadata = async () => assert.fail("Connect must not inspect metadata");
@@ -304,18 +307,18 @@ async function withSharedAcquisition(action) {
       await controller().refresh(); await h.settle();
       await action({ h, source, calls, controller, backend });
     });
-  } finally { Object.assign(api, original); pluginConfigApi.activation = originalActivation; }
+  } finally { Object.assign(api, original); pluginConfigApi.modules = originalActivation; Object.assign(runtimeConfigApi, originalRuntime); }
 }
 
 test("Setup and Run share connection state through connect, reading, stop and disconnect", async () => {
   await withSharedAcquisition(async ({ h, calls, controller }) => {
-    await controller().connect.run("rev-1"); await h.settle();
+    await controller().connect.run(currentRequest()); await h.settle();
     assert.equal(controller().data.connected, true);
     assert.deepEqual(calls, ["connect"]);
     component(h, "PluginProfiles").props.onRun(); await h.settle();
     assert.ok(component(h, "RunConsole"));
     assert.equal(controller().data.connected, true);
-    await controller().read.run("rev-1"); await h.settle();
+    await controller().read.run({ acquisition: "rev-1", system: "system-revision" }); await h.settle();
     assert.equal(controller().data.streaming, true);
     await controller().stopRead.run(); await h.settle();
     assert.equal(controller().data.connected, true);
@@ -333,12 +336,12 @@ test("a pending shared connection blocks navigation and duplicate commands", asy
     let finish;
     const connect = api.acqConnect;
     api.acqConnect = async () => { await new Promise((resolve) => { finish = resolve; }); await connect(); };
-    const connecting = controller().connect.run("rev-1");
+    const connecting = controller().connect.run(currentRequest());
     await h.settle();
     assert.equal(controller().pending, true);
     component(h, "PluginProfiles").props.onRun(); await h.settle();
     assert.ok(component(h, "PluginProfiles"));
-    await controller().connect.run("rev-1");
+    await controller().connect.run(currentRequest());
     finish(); await connecting; await h.settle();
     assert.equal(controller().pending, false);
     assert.deepEqual(calls, ["connect"]);
@@ -348,7 +351,7 @@ test("a pending shared connection blocks navigation and duplicate commands", asy
 test("a failed connection refreshes actual status and keeps its error when switching pages", async () => {
   await withSharedAcquisition(async ({ h, source, controller, backend }) => {
     api.acqConnect = async () => { Object.assign(source, { connected: true, connection_id: "source-1" }); throw new Error("Reply timed out"); };
-    await controller().connect.run("rev-1"); await h.settle();
+    await controller().connect.run(currentRequest()); await h.settle();
     assert.equal(controller().data.connected, true);
     assert.match(controller().connect.error, /Reply timed out/);
     component(h, "PluginProfiles").props.onRun(); await h.settle();
@@ -379,7 +382,7 @@ for (const staleFailure of [false, true]) test(`older acquisition status cannot 
 
 for (const unavailable of [false, true]) test(`Disconnect rejects a changed or unavailable source (unavailable=${unavailable})`, async () => {
   await withSharedAcquisition(async ({ h, source, calls, controller, backend }) => {
-    await controller().connect.run("rev-1"); await h.settle();
+    await controller().connect.run(currentRequest()); await h.settle();
     if (unavailable) backend.status = async () => null;
     else source.connection_id = "replacement";
     await controller().disconnect.run(); await h.settle();

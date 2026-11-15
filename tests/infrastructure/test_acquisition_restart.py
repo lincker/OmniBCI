@@ -46,7 +46,7 @@ async def test_restart_after_eof_drains_old_samples_before_preparing(reconnect, 
     bus = SimpleNamespace(put_event=publish)
     acquisition = AcquisitionRuntime(source, Queue(), data, bus, source_id="file_reader",
                                      preparation_required=False, generation="generation-1",
-                                     config_revision="revision-1")
+                                     acquisition_revision="revision-1", system_revision="system")
     decoder = _Decoder(samples=10)
     processor = _processor(decoder=decoder, bus=bus, data=data)
     loop = asyncio.get_running_loop()

@@ -9,13 +9,14 @@ after(() => server.close());
 const { api, ApiError } = await server.ssrLoadModule("/src/api/client.ts");
 const { useAcquisition } = await server.ssrLoadModule("/src/hooks/useAcquisition.ts");
 const { translate } = await server.ssrLoadModule("/src/i18n.tsx");
+const revisions = (acquisition) => ({ acquisition, system: "system-revision" });
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
 const failure = (error_code) => ({ success: false, code: "COMMAND_EXECUTION_FAILED", message: "Command execution failed",
   detail: { command_id: "connect-failed", command: "ConnectDataProvider", error_code } });
 
 function sourceFixture(error) {
-  const state = { error, connected: false, calls: [] };
+  const state = { error, connected: false, revision: "rev-1", calls: [] };
   globalThis.fetch = async (path, options = {}) => {
     state.calls.push([path, options.method ?? "GET"]);
     if (path === "/api/v1/acquisition/connect") {
@@ -26,18 +27,18 @@ function sourceFixture(error) {
     const data = path === "/api/v1/acquisition/status"
       ? { connected: state.connected, streaming: false, connection_id: state.connected ? "source-1" : null }
       : path === "/api/v1/config/runtime"
-        ? { running: true, generation: "engine-1", accepted_revision: "rev-1", applied_revision: "rev-1", recovery_required: false, operation: null }
-        : path === "/api/v1/config/activation"
-          ? { revision: "rev-1", bindings: [{ slot: "acquisition.source" }] } : assert.fail(`Unexpected request: ${path}`);
+        ? { running: true, generation: "engine-1", accepted: revisions(state.revision), applied: revisions(state.revision), recovery_required: false, operation: null }
+        : path === "/api/v1/config/modules/acquisition"
+          ? { revision: state.revision, bindings: [{ slot: "acquisition.source" }] } : assert.fail(`Unexpected request: ${path}`);
     return Response.json({ success: true, message: "ok", data });
   };
   return state;
 }
 
-function controllerHarness() {
+function controllerHarness(runtimeActions = {}) {
   const values = [], refs = [];
   let language = "en";
-  const runtime = { refresh: async () => {} };
+  const runtime = { refresh: async () => {}, applyCurrentSelection: async () => revisions("rev-1"), ...runtimeActions };
   return {
     setLanguage(next) { language = next; },
     render() {
@@ -78,7 +79,7 @@ for (const [code, key] of [["ConnectionRefusedError", "acquisition.error.connect
   test(`${code} displays a specific acquisition hint and still refreshes failed connection state`, async () => {
     const state = sourceFixture(failure(code));
     const harness = controllerHarness();
-    await harness.render().connect.run("rev-1");
+    await harness.render().connect.run(currentSource());
     const result = harness.render();
     assert.equal(result.connect.error, `[COMMAND_EXECUTION_FAILED] ${translate("en", key)}`);
     assert.equal(result.data.connected, false);
@@ -89,7 +90,7 @@ for (const [code, key] of [["ConnectionRefusedError", "acquisition.error.connect
     assert.match(harness.render().connect.error, code === "ConnectionRefusedError" ? /拒绝连接/ : /未及时响应/);
     assert.equal(harness.render().connect.error, `[COMMAND_EXECUTION_FAILED] ${translate("zh", key)}`);
     state.error = null;
-    await harness.render().connect.run("rev-1");
+    await harness.render().connect.run(currentSource());
     assert.equal(harness.render().connect.error, null);
     assert.equal(harness.render().data.connected, true);
   });
@@ -100,7 +101,7 @@ test("unknown, missing or malformed details preserve the original acquisition er
     { error_code: "OSError" }, { error_code: { name: "TimeoutError" } }]) {
     sourceFixture({ success: false, code: "COMMAND_EXECUTION_FAILED", message: "Original device failure", detail });
     const harness = controllerHarness();
-    await harness.render().connect.run("rev-1");
+    await harness.render().connect.run(currentSource());
     assert.equal(harness.render().connect.error, "[COMMAND_EXECUTION_FAILED] Original device failure");
   }
 });
@@ -108,7 +109,7 @@ test("unknown, missing or malformed details preserve the original acquisition er
 test("other API codes do not reinterpret detail as an acquisition execution failure", async () => {
   sourceFixture({ success: false, code: "COMMAND_REJECTED", message: "Source is already reading", detail: { error_code: "TimeoutError" } });
   const harness = controllerHarness();
-  await harness.render().connect.run("rev-1");
+  await harness.render().connect.run(currentSource());
   assert.equal(harness.render().connect.error, "[COMMAND_REJECTED] Source is already reading");
 });
 
@@ -122,4 +123,82 @@ test("other control clients and existing three-argument ApiErrors keep their mes
     assert.equal(error.detail.error_code, "TimeoutError");
     return true;
   });
+});
+
+const currentSource = () => ({ module: "acquisition", expected_revision: "rev-1", bindings: [{
+  slot: "acquisition.source", selection: { package_id: "example.source", contribution_id: "main", version: "1.0.0" },
+  parameters: { host: "192.168.0.20", port: 4000 },
+}] });
+
+test("Connect applies the displayed parameters without saving a profile before connecting", async () => {
+  const state = sourceFixture(null);
+  const request = currentSource();
+  const harness = controllerHarness({ applyCurrentSelection: async (body) => {
+    assert.deepEqual(body, request);
+    assert.equal(state.calls.some(([path]) => path.endsWith("/connect")), false);
+    state.revision = "current-revision";
+    return revisions(state.revision);
+  } });
+  await harness.render().connect.run(request);
+  assert.equal(state.connected, true);
+  assert.equal(harness.render().connect.error, null);
+  assert.equal(state.calls.filter(([path]) => path.endsWith("/connect")).length, 1);
+  assert.equal(state.calls.some(([path]) => path.includes("plugin-profiles")), false);
+});
+
+test("a failed or unconfirmed application never connects using the previous configuration", async () => {
+  const state = sourceFixture(null);
+  let applies = 0;
+  const harness = controllerHarness({ applyCurrentSelection: async () => { applies += 1; return null; } });
+  await harness.render().connect.run(currentSource());
+  assert.equal(applies, 1);
+  assert.equal(state.connected, false);
+  assert.equal(state.calls.some(([path]) => path.endsWith("/connect")), false);
+  assert.equal(harness.render().pending, false);
+});
+
+test("a configuration replaced after application aborts before connecting", async () => {
+  const state = sourceFixture(null);
+  let applies = 0;
+  const harness = controllerHarness({ applyCurrentSelection: async () => {
+    applies += 1;
+    state.revision = "another-client-revision";
+    return revisions("current-revision");
+  } });
+  await harness.render().connect.run(currentSource());
+  assert.equal(applies, 1);
+  assert.equal(state.connected, false);
+  assert.match(harness.render().connect.error, /configuration changed/i);
+});
+
+test("the acquisition command lock covers applying parameters as well as connecting", async () => {
+  const state = sourceFixture(null);
+  let complete, applies = 0;
+  const applied = new Promise((resolve) => { complete = resolve; });
+  const harness = controllerHarness({ applyCurrentSelection: async () => {
+    applies += 1;
+    await applied;
+    state.revision = "current-revision";
+    return revisions(state.revision);
+  } });
+  const controller = harness.render();
+  const first = controller.connect.run(currentSource());
+  const second = controller.connect.run(currentSource());
+  assert.equal(harness.render().pending, true);
+  complete();
+  await Promise.all([first, second]);
+  assert.equal(applies, 1);
+  assert.equal(state.calls.filter(([path]) => path.endsWith("/connect")).length, 1);
+  assert.equal(harness.render().pending, false);
+});
+
+test("Connect cannot apply another module or rebuild an existing source connection", async () => {
+  for (const connected of [false, true]) {
+    const state = sourceFixture(null);
+    state.connected = connected;
+    const harness = controllerHarness({ applyCurrentSelection: async () => assert.fail("Unexpected application") });
+    await harness.render().connect.run({ ...currentSource(), module: connected ? "acquisition" : "processing" });
+    assert.match(harness.render().connect.error, connected ? /disconnect/i : /acquisition/i);
+    assert.equal(state.calls.some(([path]) => path.endsWith("/connect")), false);
+  }
 });

@@ -2,7 +2,6 @@
 .plugin-profiles .settings-editor { container-type: inline-size; }
 .plugin-profiles .settings-scroll { padding-top: 0; scroll-padding-block: 1rem; }
 .plugin-profiles .editor-heading { padding-inline: 0; gap: 1rem; }
-.plugin-profiles .editor-action { flex: 0 1 23rem; }
 .plugin-profiles .settings-scroll > .inline-message { margin-inline: 0; }
 .plugin-profiles .binding-summary { margin-bottom: 1rem; }
 .profile-library { display: flex; flex-direction: column; flex: 1; min-height: 0; }
@@ -62,7 +61,6 @@
   .plugin-profiles .settings-editor { min-height: 0; }
   .plugin-profiles .settings-scroll { overflow-y: auto; }
   .plugin-profiles .editor-heading { padding-block: 1rem; }
-  .plugin-profiles .editor-action { flex-basis: 100%; max-width: none; text-align: left; }
   .plugin-profiles .editor-footer { padding: 0.625rem 1rem; gap: 0.5rem; }
   .plugin-profiles .editor-feedback { flex-basis: 100%; }
   .plugin-profiles .editor-footer .actions { width: 100%; justify-content: flex-start; margin-left: 0; }
@@ -96,3 +94,6 @@
 .source-preparation-summary > div { display: grid; gap: 0.25rem; margin-bottom: 0.75rem; }
 .source-preparation-summary dt { color: var(--muted); }
 .source-preparation-summary dd { margin: 0; overflow-wrap: anywhere; }
+
+.configuration-history > ol { display: grid; gap: 1rem; padding-left: 1.25rem; }
+.configuration-history pre { max-height: 20rem; overflow: auto; font-size: .8rem; }

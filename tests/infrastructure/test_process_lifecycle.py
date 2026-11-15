@@ -122,23 +122,24 @@ def test_wait_times_out_boundedly() -> None:
 def test_reporter_preserves_configuration_identity() -> None:
     connection = MagicMock()
     reporter = StartupReporter(connection, component="Acquisition",
-                               config_revision="revision", generation="run-2")
+                               module_revisions={"acquisition": "revision"}, system_revision="system", generation="run-2")
     reporter.ready()
     report = connection.send.call_args.args[0]
-    assert report.config_revision == "revision"
+    assert report.module_revisions == {"acquisition": "revision"}
+    assert report.system_revision == "system"
     assert report.generation == "run-2"
 
 
-@pytest.mark.parametrize("revision,generation", [("old", "run-2"), ("revision", "run-1"), (None, None)])
-def test_wait_rejects_stale_or_unidentified_report(revision, generation) -> None:
+@pytest.mark.parametrize("revision,generation,system", [("old", "run-2", "system"), ("revision", "run-1", "system"), ("revision", "run-2", "old-system"), (None, None, None)])
+def test_wait_rejects_stale_or_unidentified_report(revision, generation, system) -> None:
     receiver = MagicMock()
     receiver.poll.return_value = True
     receiver.recv.return_value = StartupReport.ready(
-        "Acquisition", config_revision=revision, generation=generation,
+        "Acquisition", module_revisions={"acquisition": revision}, system_revision=system, generation=generation,
     )
     with pytest.raises(ChildProcessStartupError, match="mismatch"):
         wait_for_startup_report(receiver, _process(), component="Acquisition",
-                                timeout_s=1, expected_revision="revision",
+                                timeout_s=1, expected_module_revisions={"acquisition": "revision"}, expected_system_revision="system",
                                 expected_generation="run-2")
 
 

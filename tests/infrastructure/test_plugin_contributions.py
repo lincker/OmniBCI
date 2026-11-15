@@ -7,6 +7,7 @@ import pytest
 import tomlkit
 
 from omnibci.domain.ports.effector import Effector
+from omnibci.sdk import PluginContext
 from omnibci.infrastructure.plugins.descriptors import PluginSelection
 from omnibci.infrastructure.plugins.loader import PluginLoader
 from omnibci.infrastructure.plugins.plugin_catalog import (
@@ -30,7 +31,10 @@ def _write_package(root: Path, directory="device", *, publisher="acme",
     location.mkdir(parents=True)
     package = {
         "id": "device", "publisher": publisher, "version": version,
-        "api_version": "1", **(package_fields or {}),
+        "api_version": "2", "domain": {"acquisition": "acquisition", "trigger": "stimulation",
+            "filter": "processing", "epoch_detector": "processing", "decoder": "processing",
+            "effector": "actuation", "paradigm": "stimulation"}[(contributions or [_contribution()])[0]["kind"]],
+        **(package_fields or {}),
     }
     document = {
         "manifest_version": 2, "package": package,
@@ -114,7 +118,7 @@ def test_versions_coexist_and_exact_selection_never_substitutes(tmp_path):
         "1.0.0", "2.0.0",
     }
     assert catalog.resolve_selection("acquisition", _selection()).version == "1.0.0"
-    for version in ("3.0.0", None):
+    for version in ("3.0.0",):
         with pytest.raises(PluginNotFoundError):
             catalog.resolve_selection("acquisition", _selection(version=version))
     with pytest.raises(PluginNotFoundError):
@@ -216,22 +220,6 @@ def test_invalid_package_is_rejected_atomically(tmp_path, case):
         catalog.resolve_selection("acquisition", _selection())
 
 
-def test_v1_normalizes_to_default_and_keeps_legacy_resolution(tmp_path):
-    location = tmp_path / "legacy"
-    location.mkdir()
-    (location / "manifest.toml").write_text(tomlkit.dumps({"package": {
-        "id": "device", "publisher": "acme", "kind": "acquisition",
-        "plugin_type": "legacy_reader", "entrypoint": "driver:Driver",
-    }}), encoding="utf-8")
-    catalog = _catalog(PluginRoot(tmp_path, "user", 0))
-
-    legacy = catalog.resolve_legacy("acquisition", "legacy_reader")
-
-    assert legacy == catalog.resolve("acquisition", "legacy_reader")
-    assert legacy.contribution_id == "default"
-    assert legacy.selection == _selection("default", version=None)
-    assert catalog.resolve_selection("acquisition", legacy.selection) == legacy
-    assert catalog.scan("trigger") == ()
 
 
 def test_v2_effector_can_be_loaded_from_exact_selection(tmp_path):
@@ -240,6 +228,7 @@ def test_v2_effector_can_be_loaded_from_exact_selection(tmp_path):
         "from omnibci.domain.ports.effector import Effector\n"
         "class Driver(Effector):\n"
         "    plugin_type = 'output'\n"
+        "    def __init__(self, *, parameters, context): pass\n"
         "    def setup(self): pass\n"
         "    def teardown(self): pass\n"
         "    def play(self, command): self.command = command\n",
@@ -249,51 +238,36 @@ def test_v2_effector_can_be_loaded_from_exact_selection(tmp_path):
         "effector", _selection("output"),
     )
 
-    instance = PluginLoader.instantiate(descriptor, Effector)
+    instance = PluginLoader.instantiate(descriptor, Effector, parameters={}, context=PluginContext())
     instance.play({"target_id": 2})
 
     assert isinstance(instance, Effector)
     assert instance.command == {"target_id": 2}
 
 
-def test_v2_aliases_remain_available_to_legacy_callers(tmp_path):
-    _write_package(tmp_path, contributions=[
-        _contribution(plugin_type="legacy_reader"),
-        _contribution("trigger", "trigger", plugin_type="legacy_trigger"),
-    ])
-    catalog = _catalog(PluginRoot(tmp_path, "user", 0))
-
-    for category, alias, contribution in (
-        ("acquisition", "legacy_reader", "reader"),
-        ("trigger", "legacy_trigger", "trigger"),
-    ):
-        selected = catalog.resolve_selection(category, _selection(contribution))
-        assert catalog.resolve_legacy(category, alias) == selected
-        assert catalog.resolve(category, alias) == selected
-        assert catalog.list(category) == (selected,)
 
 
 def test_exact_builtin_selection_ignores_another_publishers_alias(monkeypatch, tmp_path):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path))
     catalog = PluginCatalog()
-    builtin = catalog.resolve_legacy("effector", "logger")
+    builtin = catalog.resolve_selection("effector", PluginSelection("omnibci.logger", "default", "0.1.0"))
     location = _write_package(tmp_path / "effectors", contributions=[
         _contribution("output", "effector", plugin_type="logger"),
     ])
 
-    assert catalog.resolve_legacy("effector", "logger").location == location.resolve()
+    assert catalog.resolve_selection("effector", PluginSelection("omnibci.logger", "default", "0.1.0")) == builtin
     assert catalog.resolve_selection("effector", builtin.selection) == builtin
 
     (location / "manifest.toml").unlink()
 
-    assert catalog.resolve_legacy("effector", "logger") == builtin
+    assert catalog.resolve_selection("effector", PluginSelection("omnibci.logger", "default", "0.1.0")) == builtin
     with pytest.raises(PluginNotFoundError):
         catalog.resolve_selection("effector", _selection("output"))
 
 
 def test_duplicate_package_version_is_ambiguous_across_categories(tmp_path):
     _write_package(tmp_path, "source")
-    _write_package(tmp_path, "trigger", contributions=[_contribution("trigger", "trigger")])
+    _write_package(tmp_path, "trigger", contributions=[_contribution("trigger", "trigger")], package_fields={"domain": "acquisition"})
     catalog = _catalog(PluginRoot(tmp_path, "user", 0))
 
     for category, contribution in (("acquisition", "reader"), ("trigger", "trigger")):

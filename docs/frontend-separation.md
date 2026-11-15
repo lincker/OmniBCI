@@ -26,9 +26,12 @@ A trigger must open an epoch with enough usable samples for the selected decoder
 before a result appears.
 
 Acquisition, Signal Processing, Stimulation and Actuation have separate plugin
-profiles. Saving a profile edits it; Apply changes the selected configuration.
-Acquisition Connect operates on the acquisition source. Starting reading prepares
-the selected processing configuration against that source, then starts its stream.
+profiles and independent current values. Saving preserves a reusable Profile;
+loading copies its values into the editor. Connect applies current Acquisition
+values. Start processing, Launch stimulation, and Start actuation apply their own
+current values independently. Start engine provides shared infrastructure only.
+Starting reading prepares Processing if it is already running, then starts the
+Acquisition stream. It does not start or reconfigure another module.
 See [stage2-design.md](stage2-design.md) for the operating sequence and
 [channel-mapping.md](channel-mapping.md) for input mapping.
 
@@ -45,13 +48,15 @@ operations are:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/engine/start` | Start the engine and workers |
-| POST | `/engine/stop` | Stop the engine |
-| GET | `/engine/status` | Read engine and worker availability |
-| POST | `/acquisition/connect` | Connect the selected source |
-| POST | `/acquisition/disconnect` | Disconnect the source |
-| POST | `/acquisition/stream/start` | Prepare processing, then start reading |
-| POST | `/acquisition/stream/stop` | Stop reading and drain processing |
+| POST | `/engine/start` | Start shared infrastructure without starting modules |
+| POST | `/engine/stop` | Stop all modules and the engine |
+| POST | `/engine/modules/{module}/start` | Start Acquisition, Processing, or Actuation independently |
+| POST | `/engine/modules/{module}/stop` | Stop the specified module |
+| GET | `/engine/status` | Read foundation readiness, A/P workers, and output availability |
+| POST | `/acquisition/connect` | Start Acquisition if needed and connect its source |
+| POST | `/acquisition/disconnect` | Disconnect the source and stop Acquisition |
+| POST | `/acquisition/stream/start` | Prepare Processing only if running, then start reading |
+| POST | `/acquisition/stream/stop` | Stop reading and drain Processing if running |
 | GET | `/acquisition/status` | Read connection and stream state |
 | GET | `/acquisition/metadata` | Read the current source descriptor |
 | POST | `/acquisition/metadata/refresh` | Refresh descriptor while stopped |
@@ -63,8 +68,8 @@ operations are:
 
 `GET /results` returns `data: {generation: string | null, trials: TrialResponse[]}`.
 Both keys are always present. Each trial contains `generation`, `trial_number`,
-`target_id`, `event_id`, `confidence`, `forced`, `produced_at`, and
-`config_revision`. Results are held in memory for the current engine generation,
+`target_id`, `event_id`, `confidence`, `forced`, `produced_at`,
+`processing_revision`, and `acquisition_revision`. Results are held in memory for the current engine generation,
 limited to the latest 200 trials. Restarting the engine clears them. This is not a
 persistent history or export API.
 
@@ -79,7 +84,7 @@ terminal record yet.
 `GET /results/epochs?offset=0&limit=25` returns `generation`, `total`, `offset`,
 `limit` and `epochs` in descending epoch-number order. The page limit is 100.
 Each record includes its status, closing reason, signal counts, processing times,
-configuration revision and optional classification. Records contain no signal
+Acquisition and Processing revisions and optional classification. Records contain no signal
 matrices, and there is no epoch-data detail endpoint. The internal
 `EpochProcessed` event is separate from `TrialCompleted` and is not forwarded to
 stimulation or actuation.
@@ -93,7 +98,7 @@ clients must use Acquisition stream controls and `/results`.
 
 | Event | Fields |
 | --- | --- |
-| `TrialCompleted` | `generation`, `trial_number`, classification fields, optional `config_revision` |
+| `TrialCompleted` | `generation`, `trial_number`, classification fields, optional `processing_revision` and `acquisition_revision` |
 | `StimulationAck` | `command`, `target_index`, `status`, `message` |
 | `Ping` | No additional fields |
 

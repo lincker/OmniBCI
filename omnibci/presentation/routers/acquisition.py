@@ -3,8 +3,9 @@
 """
 from omnibci.application.plugin_profiles import ProfileRevisionConflict
 from fastapi import APIRouter, Depends, Path, Query, status
+from starlette.concurrency import run_in_threadpool
 
-from omnibci.presentation.dependencies import get_acquisition_service
+from omnibci.presentation.dependencies import get_acquisition_service, get_engine_service
 from omnibci.presentation.errors import (
     ApiError,
     COMMAND_EXECUTION_RESPONSES,
@@ -24,6 +25,7 @@ from omnibci.application.commands.acquisition_commands import (
 )
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 from omnibci.application.services.acquisition_service import AcquisitionAppService
+from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.command_result_service import (
     CommandExecutionError,
     CommandRejectedError,
@@ -39,9 +41,11 @@ router = APIRouter(prefix="/acquisition", tags=["Acquisition"])
     responses=COMMAND_EXECUTION_RESPONSES,
     summary="Connect data source and wait for execution",
 )
-def connect(svc: AcquisitionAppService = Depends(get_acquisition_service)):
+async def connect(svc: AcquisitionAppService = Depends(get_acquisition_service),
+                  engine: NeuroEngineService = Depends(get_engine_service)):
     try:
-        svc.handle_connect(ConnectDataProviderCommand())
+        await engine.start_module("acquisition")
+        await run_in_threadpool(svc.handle_connect, ConnectDataProviderCommand())
         return ApiResponse(message="Data provider connected")
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
         raise command_error_to_api_error(e)
@@ -57,9 +61,13 @@ def connect(svc: AcquisitionAppService = Depends(get_acquisition_service)):
     responses=COMMAND_EXECUTION_RESPONSES,
     summary="Disconnect data source and wait for execution",
 )
-def disconnect(svc: AcquisitionAppService = Depends(get_acquisition_service)):
+async def disconnect(svc: AcquisitionAppService = Depends(get_acquisition_service),
+                     engine: NeuroEngineService = Depends(get_engine_service)):
     try:
-        svc.handle_disconnect(DisconnectDataProviderCommand())
+        if engine.is_module_running("acquisition"):
+            await run_in_threadpool(svc.handle_disconnect, DisconnectDataProviderCommand())
+            await engine.stop_module("acquisition")
+        svc.reset()
         return ApiResponse(message="Data provider disconnected")
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
         raise command_error_to_api_error(e)

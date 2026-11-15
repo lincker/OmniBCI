@@ -72,14 +72,10 @@ _COMMAND_ROUTES = [
      {"refresh": True}),
     (EventType.PrepareSignalProcessing, "processor_command_queue", SignalProcessorCommand.prepare_signal,
      {"plan": {}, "receipt": {}}),
-    (EventType.UpdateProcessingContext, "processor_command_queue", SignalProcessorCommand.update_context,
-     {"generation": "run", "expected_revision": "old", "settings_snapshot": {}}),
     (EventType.GetSourceCheckpoint, "acquisition_command_queue", AcquisitionCommand.get_checkpoint,
      {"generation": "run", "expected_revision": "old"}),
     (EventType.RestoreSourceCheckpoint, "acquisition_command_queue", AcquisitionCommand.restore_checkpoint,
      {"generation": "run", "expected_revision": "old", "checkpoint": {}}),
-    (EventType.UpdateAcquisitionRevision, "acquisition_command_queue", AcquisitionCommand.update_revision,
-     {"generation": "run", "expected_revision": "old", "target_revision": "new"}),
     (
         EventType.StageProcessingConfiguration,
         "processor_command_queue",
@@ -133,6 +129,7 @@ _EXPECTED_EVENT_TYPES = {
 
 
 def _registered_handlers(eng: NeuroEngine) -> dict:
+    eng._ready_modules.update(("acquisition", "processing"))
     eng._register_event_listeners()
     return {
         registration.args[0]: registration.args[1]
@@ -155,16 +152,16 @@ class TestConstruction:
 
 
 # ---------------------------------------------------------------------------
-# _start: spawns processes, starts bus and server
+# _start: starts the foundation without business modules
 # ---------------------------------------------------------------------------
 
 class TestStart:
     @pytest.mark.asyncio
-    async def test_starts_all_subsystems(self):
+    async def test_starts_foundation_without_business_workers(self):
         eng = _make_engine()
         await eng._start()
-        eng.acquisition_worker.start.assert_called_once()
-        eng.signal_processing_worker.start.assert_called_once()
+        eng.acquisition_worker.start.assert_not_called()
+        eng.signal_processing_worker.start.assert_not_called()
         eng.event_bus.start.assert_awaited_once()
         eng.peer_gateway.start.assert_awaited_once()
 
@@ -180,8 +177,8 @@ class TestStart:
 
         eng.event_bus.stop.assert_awaited_once()
         eng.peer_gateway.stop.assert_awaited_once()
-        eng.acquisition_worker.join.assert_called_once()
-        eng.signal_processing_worker.join.assert_called_once()
+        eng.acquisition_worker.join.assert_not_called()
+        eng.signal_processing_worker.join.assert_not_called()
         eng.acquisition_command_queue.close.assert_called_once()
         eng.processor_command_queue.close.assert_called_once()
         assert eng.shutdown_complete is True
@@ -259,6 +256,7 @@ class TestEventRouting:
         command_queue.put_nowait("existing command")
         bus = EventBus(queue.Queue())
         eng = _make_engine(event_bus=bus, processor_command_queue=command_queue)
+        eng._ready_modules.add("processing")
         eng._register_event_listeners()
         received = asyncio.get_running_loop().create_future()
         bus.register_event_listener(EventType.CommandResult, received.set_result)
@@ -409,8 +407,8 @@ class TestServeLifecycle:
 
         await eng.serve()
 
-        eng.acquisition_worker.start.assert_called_once()
-        eng.signal_processing_worker.start.assert_called_once()
+        eng.acquisition_worker.start.assert_not_called()
+        eng.signal_processing_worker.start.assert_not_called()
         eng.event_bus.start.assert_awaited_once()
         eng.peer_gateway.start.assert_awaited_once()
         eng.event_bus.stop.assert_awaited_once()

@@ -4,6 +4,8 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
+from time import monotonic, sleep
+from uuid import uuid4
 from unittest.mock import Mock
 
 import pytest
@@ -120,22 +122,34 @@ def test_real_lifespan_routes_install_enable_save_references_and_remove(tmp_path
         assert client.put(path + "/enabled", json={"enabled": False}).status_code == 409
         assert client.delete(path).status_code == 409
 
-        before = client.get("/api/v1/config/activation").json()["data"]
-        original_bindings = [{"slot": item["slot"], "profile_id": item["profile_id"]} for item in before["bindings"]] if before else []
+        def apply(bindings, expected_revision):
+            planned = client.post("/api/v1/config/apply-plan", json={
+                "module": "actuation", "bindings": bindings, "expected_revision": expected_revision})
+            assert planned.status_code == 200, planned.text
+            plan = planned.json()["data"]
+            assert plan["errors"] == []
+            operation_id = str(uuid4())
+            response = client.post("/api/v1/config/apply", json={
+                "plan_id": plan["plan_id"], "operation_id": operation_id})
+            assert response.status_code == 202, response.text
+            deadline = monotonic() + 5
+            while True:
+                operation = client.get(f"/api/v1/config/operations/{operation_id}").json()["data"]
+                if operation["status"] not in ("queued", "applying"):
+                    assert operation["status"] == "succeeded", operation
+                    return client.get("/api/v1/config/modules/actuation").json()["data"]
+                assert monotonic() < deadline, operation
+                sleep(.01)
+
+        before = client.get("/api/v1/config/modules/actuation").json()["data"]
+        original_bindings = [{"slot": item["slot"], "profile_id": item["profile_id"]} for item in before["bindings"]]
         bindings = [item for item in original_bindings if item["slot"] != "actuation.effector"]
-        accepted = client.put("/api/v1/config/activation", json={
-            "bindings": [*bindings, {"slot": "actuation.effector", "profile_id": profile["profile_id"]}],
-            "expected_revision": before["revision"] if before else None,
-        })
-        assert accepted.status_code == 200, accepted.text
+        accepted = apply([*bindings, {"slot": "actuation.effector", "profile_id": profile["profile_id"]}], before["revision"])
         inventory = client.get("/api/v1/plugin-packages").json()["data"][0]
         assert {ref["scope"] for ref in inventory["references"]} == {"profile", "accepted"}
         profile_path = f"/api/v1/config/plugin-profiles/{profile['profile_id']}?expected_revision=1"
         assert client.delete(profile_path).status_code == 409
-        restored = client.put("/api/v1/config/activation", json={
-            "bindings": original_bindings, "expected_revision": accepted.json()["data"]["revision"],
-        })
-        assert restored.status_code == 200, restored.text
+        apply(original_bindings, accepted["revision"])
         assert client.delete(profile_path).status_code == 200
         assert client.put(path + "/enabled", json={"enabled": False}).status_code == 200
         assert client.delete(path).status_code == 200
@@ -175,6 +189,7 @@ def test_configured_market_is_published_by_real_lifespan_and_installs_disabled(m
     key = _configure_market(monkeypatch, tmp_path)
     archive = package_archive(tmp_path).read_bytes()
     index = _index(archive)
+    index["packages"][0]["domain"] = "actuation"
     index["packages"][0]["contributions"] = [{"id": "output", "kind": "effector"}]
     app = create_app()
     with TestClient(app) as client:
@@ -201,9 +216,9 @@ def test_inventory_reports_profile_storage_failures_as_actionable_errors(monkeyp
     with TestClient(app, raise_server_exceptions=False) as client:
         repository = app.state.container.plugin_profile_service.repository
         if problem == "invalid":
-            directory = repository.root / "plugin-profiles"
+            directory = repository.root / "plugin-profiles" / "00000000-0000-0000-0000-000000000001"
             directory.mkdir(parents=True, exist_ok=True)
-            (directory / "00000000-0000-0000-0000-000000000001.toml").write_text("broken = [not valid TOML")
+            (directory / "current.toml").write_text("broken = [not valid TOML")
         else:
             monkeypatch.setattr(repository, "list_profiles", Mock(side_effect=PluginProfileStorageError("Profiles unavailable")))
         response = client.get("/api/v1/plugin-packages")

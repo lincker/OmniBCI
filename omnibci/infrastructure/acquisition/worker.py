@@ -38,6 +38,8 @@ class AcquisitionWorker(mp.Process):
         startup_reporter: StartupReporter | None = None,
         preview_queue=None,
         log_queue=None,
+        processing_active=None,
+        runtime_counters=None,
     ) -> None:
         super().__init__()
         self.data_source: SignalSource
@@ -50,6 +52,8 @@ class AcquisitionWorker(mp.Process):
         self.startup_reporter = startup_reporter
         self.preview_queue = preview_queue
         self.log_queue = log_queue
+        self.processing_active = processing_active
+        self.runtime_counters = runtime_counters
         self._startup_stage = "settings"
 
     def run(self) -> None:
@@ -79,7 +83,10 @@ class AcquisitionWorker(mp.Process):
                 self.data_source, "plugin_type", type(self.data_source).__name__),
             preparation_required=requires_signal_preparation(snapshot),
             generation=snapshot.get("CONFIG.generation"),
-            config_revision=snapshot.get("CONFIG.revision"),
+            acquisition_revision=snapshot.get("CONFIG.module_revisions", {}).get("acquisition"),
+            system_revision=snapshot.get("CONFIG.system_revision"),
+            processing_active=self.processing_active,
+            runtime_counters=self.runtime_counters,
             **({"preview_queue": self.preview_queue} if self.preview_queue is not None else {}),
         )
         forwarding = (AcquisitionLogForwarder(

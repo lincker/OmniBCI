@@ -1,4 +1,5 @@
 """Managed peer readiness belongs to its pinned configuration and generation."""
+from tests.plugin_configuration_helpers import builtin_selection
 
 from importlib import import_module
 from unittest.mock import MagicMock
@@ -18,8 +19,8 @@ def peer(request):
     kind, component, selection = request.param
     module = import_module(f"omnibci.infrastructure.{kind}.process_manager")
     alias = "STIMULATION_THUBCI_SSVEP_classic40" if kind == "stimulation" else "logger"
-    descriptor = PluginCatalog().resolve(selection, alias)
-    snapshot = {"CONFIG.revision": "revision", "CONFIG.generation": "run-2",
+    descriptor = PluginCatalog().resolve_selection(selection, builtin_selection(selection, alias))
+    snapshot = {"CONFIG.module_revisions": {'acquisition': "revision", 'processing': "revision", 'stimulation': "revision", 'actuation': "revision"}, "CONFIG.system_revision": "c" * 64, "CONFIG.generation": "run-2",
                 "PLUGINS.bindings": [ProfileBinding(
                     f"{kind}.{selection}", selection, None, descriptor.selection, {},
                 ).to_dict()],
@@ -50,7 +51,8 @@ def test_entrypoint_report_preserves_snapshot_identity(peer, monkeypatch, outcom
     else:
         entrypoint(startup_connection=connection, settings_snapshot=snapshot)
     report = connection.send.call_args.args[0]
-    assert report.config_revision == "revision"
+    assert report.module_revisions == {kind: "revision"}
+    assert report.system_revision == "c" * 64
     assert report.generation == "run-2"
     assert report.state is (ChildProcessState.READY if outcome == "ready" else ChildProcessState.FAILED)
     connection.close.assert_called_once()
@@ -60,14 +62,14 @@ def test_entrypoint_report_preserves_snapshot_identity(peer, monkeypatch, outcom
     ("revision", "run-2"), ("old", "run-2"), ("revision", "run-1"),
 ])
 def test_manager_requires_exact_snapshot_ack(peer, monkeypatch, revision, generation):
-    _, component, module, snapshot = peer
+    kind, component, module, snapshot = peer
     process = MagicMock()
     process.is_alive.return_value = True
     process.join.side_effect = lambda **kwargs: setattr(process.is_alive, "return_value", False)
     receiver, sender = MagicMock(), MagicMock()
     receiver.poll.return_value = True
     receiver.recv.return_value = StartupReport.ready(
-        component, config_revision=revision, generation=generation,
+        component, module_revisions={kind: revision}, system_revision="c" * 64, generation=generation,
     )
     monkeypatch.setattr(module.mp, "Process", MagicMock(return_value=process))
     monkeypatch.setattr(module.mp, "Event", MagicMock())

@@ -72,6 +72,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/engine/modules/{module}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start an independent engine module */
+        post: operations["start_module_api_v1_engine_modules__module__start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/engine/modules/{module}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop an independent engine module */
+        post: operations["stop_module_api_v1_engine_modules__module__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/engine/status": {
         parameters: {
             query?: never;
@@ -501,18 +535,119 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/config/activation": {
+    "/api/v1/config/modules": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Activation */
-        get: operations["get_activation_api_v1_config_activation_get"];
-        /** Accept Activation */
-        put: operations["accept_activation_api_v1_config_activation_put"];
+        /** Get Modules */
+        get: operations["get_modules_api_v1_config_modules_get"];
+        put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/modules/{module}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Module */
+        get: operations["get_module_api_v1_config_modules__module__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/modules/{module}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Module History */
+        get: operations["module_history_api_v1_config_modules__module__history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/modules/{module}/history/{entry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Module History Entry */
+        get: operations["module_history_entry_api_v1_config_modules__module__history__entry_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/system": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get System */
+        get: operations["get_system_api_v1_config_system_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/plugin-profiles/{profile_id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Profile History */
+        get: operations["profile_history_api_v1_config_plugin_profiles__profile_id__history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/plugin-profiles/{profile_id}/revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revert Profile */
+        post: operations["revert_profile_api_v1_config_plugin_profiles__profile_id__revert_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -598,6 +733,23 @@ export interface paths {
         get: operations["configuration_operation_api_v1_config_operations__operation_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/modules/{module}/revert-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revert Module */
+        post: operations["revert_module_api_v1_config_modules__module__revert_plan_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -784,22 +936,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** AcceptActivationRequest */
-        AcceptActivationRequest: {
-            /** Bindings */
-            bindings: components["schemas"]["SelectProfileBindingRequest"][];
-            /** Expected Revision */
-            expected_revision?: string | null;
-            /** Refresh Slots */
-            refresh_slots?: string[] | null;
-            /**
-             * Include Host Settings
-             * @default false
-             */
-            include_host_settings: boolean;
-            /** Module */
-            module?: ("acquisition" | "processing" | "stimulation" | "actuation") | null;
-        };
         /** AcquisitionMetadataResponse */
         AcquisitionMetadataResponse: {
             /** Source Id */
@@ -817,8 +953,10 @@ export interface components {
             capture_id: string;
             /** Generation */
             generation: string;
-            /** Config Revision */
-            config_revision: string | null;
+            /** Acquisition Revision */
+            acquisition_revision: string | null;
+            /** System Revision */
+            system_revision: string | null;
             /** Source Id */
             source_id: string;
             /** Connection Id */
@@ -892,8 +1030,10 @@ export interface components {
             capture_id: string | null;
             /** Generation */
             generation: string;
-            /** Config Revision */
-            config_revision: string | null;
+            /** Acquisition Revision */
+            acquisition_revision: string | null;
+            /** System Revision */
+            system_revision: string | null;
             /** Source Id */
             source_id: string | null;
             /** Connection Id */
@@ -986,23 +1126,6 @@ export interface components {
             /** Connection Id */
             connection_id?: string | null;
         };
-        /** ActivationResponse */
-        ActivationResponse: {
-            /**
-             * Format Version
-             * @default 2
-             * @constant
-             */
-            format_version: 2;
-            /** Revision */
-            revision: string;
-            /** Settings */
-            settings: {
-                [key: string]: unknown;
-            };
-            /** Bindings */
-            bindings: components["schemas"]["ProfileBindingResponse"][];
-        };
         /** ApiResponse */
         ApiResponse: {
             /**
@@ -1074,20 +1197,6 @@ export interface components {
             message: string;
             data?: components["schemas"]["AcquisitionStatusResponse"] | null;
         };
-        /** ApiResponse[ActivationResponse] */
-        ApiResponse_ActivationResponse_: {
-            /**
-             * Success
-             * @default true
-             */
-            success: boolean;
-            /**
-             * Message
-             * @default ok
-             */
-            message: string;
-            data?: components["schemas"]["ActivationResponse"] | null;
-        };
         /** ApiResponse[BackendLogsResponse] */
         ApiResponse_BackendLogsResponse_: {
             /**
@@ -1143,6 +1252,34 @@ export interface components {
              */
             message: string;
             data?: components["schemas"]["EpochListResponse"] | null;
+        };
+        /** ApiResponse[ModuleActivationResponse] */
+        ApiResponse_ModuleActivationResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["ModuleActivationResponse"] | null;
+        };
+        /** ApiResponse[ModulesResponse] */
+        ApiResponse_ModulesResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["ModulesResponse"] | null;
         };
         /** ApiResponse[NodeConfigurationPublicationResponse] */
         ApiResponse_NodeConfigurationPublicationResponse_: {
@@ -1354,6 +1491,20 @@ export interface components {
             message: string;
             data?: components["schemas"]["SystemInfoResponse"] | null;
         };
+        /** ApiResponse[SystemSettingsResponse] */
+        ApiResponse_SystemSettingsResponse_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data?: components["schemas"]["SystemSettingsResponse"] | null;
+        };
         /** ApiResponse[list[MarketPackageResponse]] */
         ApiResponse_list_MarketPackageResponse__: {
             /**
@@ -1368,6 +1519,21 @@ export interface components {
             message: string;
             /** Data */
             data?: components["schemas"]["MarketPackageResponse"][] | null;
+        };
+        /** ApiResponse[list[ModuleHistoryResponse]] */
+        ApiResponse_list_ModuleHistoryResponse__: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            /** Data */
+            data?: components["schemas"]["ModuleHistoryResponse"][] | null;
         };
         /** ApiResponse[list[PackageVersionResponse]] */
         ApiResponse_list_PackageVersionResponse__: {
@@ -1413,6 +1579,21 @@ export interface components {
             message: string;
             /** Data */
             data?: components["schemas"]["PluginProfileResponse"][] | null;
+        };
+        /** ApiResponse[list[ProfileHistoryResponse]] */
+        ApiResponse_list_ProfileHistoryResponse__: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            /** Data */
+            data?: components["schemas"]["ProfileHistoryResponse"][] | null;
         };
         /** BackendLogsResponse */
         BackendLogsResponse: {
@@ -1537,18 +1718,19 @@ export interface components {
             /** Default Names */
             default_names?: string[];
         };
-        /** DraftSourceBindingRequest */
-        DraftSourceBindingRequest: {
-            /**
-             * Slot
-             * @constant
-             */
-            slot: "acquisition.source";
+        /** DraftPluginBindingRequest */
+        DraftPluginBindingRequest: {
+            /** Slot */
+            slot: string;
             selection: components["schemas"]["PluginSelectionResponse"];
             /** Parameters */
             parameters: {
                 [key: string]: unknown;
             };
+            /** Configuration Version */
+            configuration_version?: number | null;
+            /** @description Required as an explicit object for processing.decoder; omit for other plugin roles. */
+            processing_input?: components["schemas"]["ProcessingInputModel"] | null;
         };
         /** EngineStatusResponse */
         EngineStatusResponse: {
@@ -1560,6 +1742,10 @@ export interface components {
             processor_alive: boolean;
             /** Stimulation Connected */
             stimulation_connected: boolean;
+            /** Actuation Alive */
+            actuation_alive: boolean;
+            /** Actuation Connected */
+            actuation_connected: boolean;
         };
         /** EpochListResponse */
         EpochListResponse: {
@@ -1591,8 +1777,10 @@ export interface components {
             epoch_number: number;
             /** Event Id */
             event_id: number | null;
-            /** Config Revision */
-            config_revision: string | null;
+            /** Processing Revision */
+            processing_revision: string | null;
+            /** Acquisition Revision */
+            acquisition_revision: string | null;
             /**
              * Status
              * @enum {string}
@@ -1670,6 +1858,8 @@ export interface components {
         };
         /** MarketPackageResponse */
         MarketPackageResponse: {
+            /** Domain */
+            domain: string;
             /** Repository Id */
             repository_id: string;
             /** Package Id */
@@ -1700,6 +1890,43 @@ export interface components {
                 string
             ][];
         };
+        /** ModuleActivationResponse */
+        ModuleActivationResponse: {
+            /**
+             * Module
+             * @enum {string}
+             */
+            module: "acquisition" | "processing" | "stimulation" | "actuation";
+            /** Revision */
+            revision: string | null;
+            /** Settings */
+            settings: {
+                [key: string]: unknown;
+            };
+            /** Bindings */
+            bindings: components["schemas"]["ProfileBindingResponse"][];
+        };
+        /** ModuleHistoryResponse */
+        ModuleHistoryResponse: {
+            /** Entry Id */
+            entry_id: string;
+            /** Revision */
+            revision: string;
+            /** Saved At */
+            saved_at: string;
+            /** Restored From */
+            restored_from?: string | null;
+            /** Binding Summary */
+            binding_summary: string[];
+        };
+        /** ModulesResponse */
+        ModulesResponse: {
+            /** Modules */
+            modules: {
+                [key: string]: components["schemas"]["ModuleActivationResponse"];
+            };
+            system: components["schemas"]["SystemSettingsResponse"];
+        };
         /** NodeConfigurationPublicationResponse */
         NodeConfigurationPublicationResponse: {
             /**
@@ -1721,8 +1948,12 @@ export interface components {
              * @enum {string}
              */
             role: "stimulation" | "actuation";
-            /** Revision */
-            revision: string;
+            /** Module Revisions */
+            module_revisions: {
+                [key: string]: string;
+            };
+            /** System Revision */
+            system_revision: string;
             /** Generation */
             generation: string | null;
             /** Settings */
@@ -1761,6 +1992,8 @@ export interface components {
         };
         /** PackageVersionResponse */
         PackageVersionResponse: {
+            /** Domain */
+            domain: string | null;
             /** Package Id */
             package_id: string;
             /** Version */
@@ -1868,6 +2101,11 @@ export interface components {
         };
         /** PluginConfigurationResponse */
         PluginConfigurationResponse: {
+            /**
+             * Domain
+             * @enum {string}
+             */
+            domain: "acquisition" | "processing" | "stimulation" | "actuation";
             selection: components["schemas"]["PluginSelectionResponse"];
             /**
              * Kind
@@ -1898,11 +2136,6 @@ export interface components {
         };
         /** PluginProfileResponse */
         PluginProfileResponse: {
-            /**
-             * Processing Input Requires Review
-             * @default false
-             */
-            processing_input_requires_review: boolean;
             /**
              * Format Version
              * @default 2
@@ -1936,7 +2169,7 @@ export interface components {
             /** Contribution Id */
             contribution_id: string;
             /** Version */
-            version?: string | null;
+            version: string;
         };
         /** PreviewSignalSetupRequest */
         PreviewSignalSetupRequest: {
@@ -1979,11 +2212,6 @@ export interface components {
         };
         /** ProfileBindingResponse */
         ProfileBindingResponse: {
-            /**
-             * Processing Input Requires Review
-             * @default false
-             */
-            processing_input_requires_review: boolean;
             /** Slot */
             slot: string;
             /**
@@ -2003,6 +2231,16 @@ export interface components {
             /** Profile Revision */
             profile_revision: number;
             processing_input?: components["schemas"]["ProcessingInputModel"] | null;
+        };
+        /** ProfileHistoryResponse */
+        ProfileHistoryResponse: {
+            /** Profile Id */
+            profile_id: string;
+            /** Revision */
+            revision: number;
+            /** Saved At */
+            saved_at: string;
+            profile: components["schemas"]["PluginProfileResponse"];
         };
         /** ProfileVersionProposalResponse */
         ProfileVersionProposalResponse: {
@@ -2048,6 +2286,18 @@ export interface components {
             /** Trials */
             trials: components["schemas"]["TrialResponse"][];
         };
+        /** RevertModuleRequest */
+        RevertModuleRequest: {
+            /** Entry Id */
+            entry_id: string;
+        };
+        /** RevertProfileRequest */
+        RevertProfileRequest: {
+            /** Revision */
+            revision: number;
+            /** Expected Revision */
+            expected_revision: number;
+        };
         /** RuntimeApplyRequest */
         RuntimeApplyRequest: {
             /** Plan Id */
@@ -2061,10 +2311,14 @@ export interface components {
             running: boolean;
             /** Recovery Required */
             recovery_required: boolean;
-            /** Accepted Revision */
-            accepted_revision: string | null;
-            /** Applied Revision */
-            applied_revision: string | null;
+            /** Accepted */
+            accepted: {
+                [key: string]: string | null;
+            };
+            /** Applied */
+            applied: {
+                [key: string]: string | null;
+            } | null;
             /** Generation */
             generation: string | null;
             operation: components["schemas"]["RuntimeOperationResponse"] | null;
@@ -2075,8 +2329,10 @@ export interface components {
             operation_id: string;
             /** Plan Id */
             plan_id: string;
-            /** Target Revision */
-            target_revision: string;
+            /** Target Revisions */
+            target_revisions: {
+                [key: string]: string;
+            };
             /**
              * Status
              * @enum {string}
@@ -2095,19 +2351,17 @@ export interface components {
         };
         /** RuntimePlanRequest */
         RuntimePlanRequest: {
-            /** Bindings */
-            bindings: (components["schemas"]["SelectProfileBindingRequest"] | components["schemas"]["DraftSourceBindingRequest"])[];
+            /**
+             * Module
+             * @enum {string}
+             */
+            module: "acquisition" | "processing" | "stimulation" | "actuation" | "system";
             /** Expected Revision */
             expected_revision?: string | null;
             /** Refresh Slots */
             refresh_slots?: string[] | null;
-            /**
-             * Include Host Settings
-             * @default false
-             */
-            include_host_settings: boolean;
-            /** Module */
-            module?: ("acquisition" | "processing" | "stimulation" | "actuation") | null;
+            /** Bindings */
+            bindings: (components["schemas"]["SelectProfileBindingRequest"] | components["schemas"]["DraftPluginBindingRequest"])[];
         };
         /** RuntimePlanResponse */
         RuntimePlanResponse: {
@@ -2115,10 +2369,18 @@ export interface components {
             plan_id: string;
             /** Expected Revision */
             expected_revision: string | null;
-            /** Target Revision */
-            target_revision: string;
-            /** Applied Revision */
-            applied_revision: string | null;
+            /** Expected Revisions */
+            expected_revisions: {
+                [key: string]: string | null;
+            };
+            /** Target Revisions */
+            target_revisions: {
+                [key: string]: string;
+            };
+            /** Applied Revisions */
+            applied_revisions: {
+                [key: string]: string | null;
+            } | null;
             /** Generation */
             generation: string | null;
             /** Running */
@@ -2136,8 +2398,11 @@ export interface components {
             errors: string[];
             /** Signal Summary */
             signal_summary?: string | null;
-            /** Module */
-            module?: ("acquisition" | "processing" | "stimulation" | "actuation") | null;
+            /**
+             * Module
+             * @enum {string}
+             */
+            module: "acquisition" | "processing" | "stimulation" | "actuation" | "system";
         };
         /** SelectProfileBindingRequest */
         SelectProfileBindingRequest: {
@@ -2315,6 +2580,15 @@ export interface components {
             /** Auth Enabled */
             auth_enabled: boolean;
         };
+        /** SystemSettingsResponse */
+        SystemSettingsResponse: {
+            /** Revision */
+            revision: string | null;
+            /** Settings */
+            settings: {
+                [key: string]: unknown;
+            };
+        };
         /** TrialResponse */
         TrialResponse: {
             /** Generation */
@@ -2334,8 +2608,10 @@ export interface components {
              * Format: date-time
              */
             produced_at: string;
-            /** Config Revision */
-            config_revision?: string | null;
+            /** Processing Revision */
+            processing_revision?: string | null;
+            /** Acquisition Revision */
+            acquisition_revision?: string | null;
         };
         /** UpdatePluginProfileRequest */
         UpdatePluginProfileRequest: {
@@ -2681,6 +2957,194 @@ export interface operations {
             };
             /** @description Service unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    start_module_api_v1_engine_modules__module__start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                module: "acquisition" | "processing" | "actuation";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    stop_module_api_v1_engine_modules__module__stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                module: "acquisition" | "processing" | "actuation";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Command execution timeout */
+            504: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5260,7 +5724,7 @@ export interface operations {
             };
         };
     };
-    get_activation_api_v1_config_activation_get: {
+    get_modules_api_v1_config_modules_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -5275,7 +5739,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse_ActivationResponse_"];
+                    "application/json": components["schemas"]["ApiResponse_ModulesResponse_"];
                 };
             };
             /** @description Bad request */
@@ -5343,16 +5807,442 @@ export interface operations {
             };
         };
     };
-    accept_activation_api_v1_config_activation_put: {
+    get_module_api_v1_config_modules__module__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                module: "acquisition" | "processing" | "stimulation" | "actuation";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_ModuleActivationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    module_history_api_v1_config_modules__module__history_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                module: "acquisition" | "processing" | "stimulation" | "actuation";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_ModuleHistoryResponse__"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    module_history_entry_api_v1_config_modules__module__history__entry_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                module: "acquisition" | "processing" | "stimulation" | "actuation";
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_ModuleActivationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_system_api_v1_config_system_get: {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_SystemSettingsResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    profile_history_api_v1_config_plugin_profiles__profile_id__history_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_ProfileHistoryResponse__"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    revert_profile_api_v1_config_plugin_profiles__profile_id__revert_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AcceptActivationRequest"];
+                "application/json": components["schemas"]["RevertProfileRequest"];
             };
         };
         responses: {
@@ -5362,7 +6252,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiResponse_ActivationResponse_"];
+                    "application/json": components["schemas"]["ApiResponse_PluginProfileResponse_"];
                 };
             };
             /** @description Bad request */
@@ -5790,6 +6680,95 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_RuntimeOperationResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    revert_module_api_v1_config_modules__module__revert_plan_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                module: "acquisition" | "processing" | "stimulation" | "actuation";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RevertModuleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_RuntimePlanResponse_"];
                 };
             };
             /** @description Bad request */

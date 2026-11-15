@@ -4,6 +4,7 @@ Tests for /api/v1/engine endpoints.
 NeuroEngine is mocked via the engine_service fixture in conftest.py.
 """
 from unittest.mock import AsyncMock, MagicMock, patch
+import pytest
 
 
 class TestEngineStatus:
@@ -16,6 +17,8 @@ class TestEngineStatus:
         assert "running" in data
         assert "acquisition_alive" in data
         assert "processor_alive" in data
+        assert data["actuation_alive"] is False
+        assert "actuation_connected" in data
 
     def test_status_running_true_when_service_running(self, api_client, engine_service):
         engine_service._running = True
@@ -60,3 +63,25 @@ class TestEngineStop:
             resp = api_client.post("/api/v1/engine/stop")
             assert resp.status_code == 200
             mock_stop.assert_awaited_once()
+
+
+@pytest.mark.parametrize("module", ["acquisition", "processing", "actuation"])
+@pytest.mark.parametrize("action", ["start", "stop"])
+def test_module_action_targets_only_requested_module(api_client, engine_service, module, action):
+    with patch.object(engine_service, f"{action}_module", new_callable=AsyncMock) as operation:
+        response = api_client.post(f"/api/v1/engine/modules/{module}/{action}")
+    assert response.status_code == 200
+    operation.assert_awaited_once_with(module)
+
+
+@pytest.mark.parametrize("module", ["unknown", "stimulation", "system"])
+def test_module_route_rejects_unsupported_modules(api_client, module):
+    assert api_client.post(f"/api/v1/engine/modules/{module}/start").status_code == 422
+
+
+def test_module_start_reports_foundation_not_ready(api_client, engine_service):
+    with patch.object(engine_service, "start_module", new_callable=AsyncMock,
+                      side_effect=RuntimeError("Start the engine before starting a module")):
+        response = api_client.post("/api/v1/engine/modules/processing/start")
+    assert response.status_code == 409
+    assert response.json()["code"] == "ENGINE_NOT_READY"

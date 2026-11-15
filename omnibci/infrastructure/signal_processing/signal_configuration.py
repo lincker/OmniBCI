@@ -16,7 +16,7 @@ def signal_context(snapshot, plan):
         sample_rate=source.sample_rate,
         # Retain acquired names for SDK compatibility; processing uses input_signal.channels.
         channel_names=tuple(channel.name for channel in source.channels),
-        config_revision=snapshot.get("CONFIG.revision"),
+        module_revision=snapshot.get("CONFIG.module_revisions", {}).get("processing"),
         acquired_signal=source, input_signal=output,
     )
 

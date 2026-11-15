@@ -1,9 +1,10 @@
 # Configuration ownership and consolidation
 
-Status: module configuration is independent. Activation routes share candidate construction and
-reject host changes that the current runtime cannot apply. New activations
-separate host settings from plugin inputs, and runtime projections use pinned
-bindings. Settings has one host editor; the old named Application Profile editor
+Status: four module configurations have independent accepted files, content
+revisions, locks, and history. Shared infrastructure settings have a separate
+system revision. The runtime combines these files without a global revision.
+See [Module configuration](module-config.md) for the application boundaries and
+[Plugin profiles](plugin-profiles.md) for current values and history. Settings has one host editor; the old named Application Profile editor
 and file overlay are removed.
 Playback speed and the reviewed unused settings are also removed. Acquisition
 runtime and preprocessing diagnostics use a dedicated logging channel; general
@@ -14,50 +15,71 @@ The historical inventory below covers the original 38 leaf keys declared in
 and the additional configuration inputs identified below. Key names in the
 tables are existing names, not a proposal to rename every setting.
 
-Each module page loads its own profiles and submits only its owned bindings with
+Each plugin has an editable **Current configuration**, independent of its saved
+Profiles and the values already applied to the runtime. Loading a Profile copies
+its values into the current configuration; saving preserves a reusable copy of
+the current values as a new Profile. Loading and saving do not overwrite an existing
+Profile or apply runtime changes. Profiles remain
+per plugin, including separate Decoder, Epoch Detector, Filter, Paradigm and
+Trigger profiles; there is no module-level preset.
+
+Each runtime command submits the current bindings of the modules it needs with
 `module: acquisition | processing | stimulation | actuation`. The backend retains
 other modules' pinned values without resolving their profiles, loading their
 plugins, or validating their parameters. A partial configuration can be selected;
 it does not need a complete experiment. Host settings remain a separate operation.
 
-Acquisition **Connect** uses the explicitly selected source configuration and
-establishes its connection without saving or applying editor changes. Acquisition
-setup and Run share one frontend controller for backend-reported connection status
+Acquisition **Connect** validates and applies a snapshot of the current source
+values, then starts the engine if needed and establishes its connection. It does
+not require or save a Profile. An unsuccessful application prevents connecting;
+an unsuccessful connection leaves the current values available for correction.
+Acquisition setup and Run share one frontend controller for backend-reported connection status
 and pending commands. **Disconnect** requires stopped reading. Metadata inspection
 is explicit through **Get Metadata**; it is not part of connecting. Run's **Start reading**
 requires an existing connection, and **Stop reading** retains that connection.
-Signal Processing
-starts in standby without interpreting the decoder input. Preparing processing
-validates its channel mapping and loads Decoder, Epoch Detector and Filters using
-the observed source descriptor. Starting the stream prepares configured processing
-and managed Actuation. With no Decoder selected, Acquisition can run on its own.
+Setup and Run share current values across page navigation. Start engine starts
+shared infrastructure without applying module edits or starting workers. Each
+module starts with its own current values. Stop and disconnect actions use the
+actual runtime without submitting edits. Changed source parameters require
+disconnecting and reconnecting before reading.
+Signal Processing starts independently in standby without interpreting the decoder
+input. Preparing processing validates its channel mapping and loads Decoder, Epoch
+Detector and Filters using the observed source descriptor. Starting reading
+prepares Processing only if already running; it never starts Actuation. Acquisition
+can stream and preview while Processing is stopped. Stimulation and Actuation run
+independently of A/P on the shared engine. Stopping the engine stops all modules.
 An unrelated missing or invalid decoder or effector cannot block Acquisition
 configuration or connection. Decoded results publish directly without a Session.
 
 Fresh installations have no selected plugins. Selections are created explicitly
 in their module pages; the global settings initializer and alias-to-profile mapper
-have been removed. Acquisition starts with a parameter draft without requiring a
-pre-existing Profile. Review previews the draft; final confirmation saves a new
-Profile and applies its pinned parameters. Changed existing Profiles show a
-parameter comparison and offer saving a new Profile (the default) or explicitly
-updating the original. Unchanged Profiles are reused without another save.
-After a refresh, Acquisition restores the applied configuration. Existing
+have been removed. Every plugin role starts with editable parameters without
+requiring a pre-existing Profile. Applying current values pins an independent
+snapshot; saving a new Profile is a separate action. The plugin editor has no
+separate Apply action; connection and start commands apply the current values they
+need. Runtime changes continue to use the coordinator's supported application
+boundaries. Editing or loading values never silently changes a running module.
+Inline Decoder bindings require an explicit `processing_input` object; missing or
+null input is rejected so an unreviewed legacy mapping cannot become all channels.
+An explicit empty `outputs` list selects all source signal rows.
+Page navigation preserves current edits in memory. A browser refresh initializes
+them from the backend's accepted configuration; unapplied edits have a leave warning
+and are not automatically persisted. Existing
 activations without a Profile remain readable, and Run labels them as
-**Current configuration (not saved as a profile)**. Other plugin roles retain
-their saved-Profile workflow. Packaged settings contain
-host controls only. Idle Apply saves the selected module. Runtime results remain
-transient; there is no Session repository or configuration archive.
+**Current configuration (not saved as a profile)**. Packaged settings contain
+host controls only. Runtime results remain
+transient; configuration history is stored independently of those results.
 
 ## Ownership rules
 
 | Configuration | Authoritative source | Single editing location | Application |
 | --- | --- | --- | --- |
-| Acquisition parameters | Applied source binding for an exact contribution and version; a named Profile preserves reusable parameters | Setup / Acquisition | Review previews the draft; final confirmation saves a new Profile or confirms how to save changes, then applies its pinned parameters |
-| Other plugin parameters | A named Plugin Profile for an exact contribution and version | Setup, under that plugin | Save preserves the running values; Review and Apply selects a pinned copy |
-| Acquisition metadata | Connected source plugin's raw metadata and `SignalInfo` | Setup / Acquisition / Get Metadata, read-only after Connect | Expectations may be omitted; adopting observations updates the draft explicitly, and final Review and Apply confirms Profile saving and establishes the current baseline |
-| Plugin selection and filter order | Activation bindings | Setup, plugin/profile selectors and filter chain | Review and Apply |
+| Acquisition parameters | Editable current values for an exact contribution and version; applied binding pins runtime values, and Profiles preserve reusable copies | Setup / Acquisition | Connect applies the current values before connecting; saving and loading Profiles are independent |
+| Other plugin parameters | Editable current values for an exact contribution and version; applied binding pins runtime values | Setup, under that plugin | Apply current values at a supported runtime boundary; save and load individual plugin Profiles independently |
+| Acquisition metadata | Connected source plugin's raw metadata and `SignalInfo` | Setup / Acquisition / Get Metadata, read-only after Connect | Expectations may be omitted; adopting observations explicitly updates current parameters, which must be applied before becoming the runtime baseline |
+| Plugin selection and filter order | Current module bindings, copied into activation on application | Setup, plugin selectors and filter chain | Apply the current module values |
 | Shared runtime settings | Host settings, copied into the candidate activation | Settings / General, grouped by subsystem | Review and Apply at a supported runtime boundary |
-| Channel mapping and type declarations | Decoder Plugin Profile `processing_input`, pinned in its activation binding | Setup / Signal Processing / Decoder / Processing input | Profile Review and Apply; input changes rebuild and prepare processing before streaming |
+| Channel mapping and type declarations | Decoder current `processing_input`; optionally saved with that plugin's Profile and pinned in its activation binding | Setup / Signal Processing / Decoder / Processing input | Apply current values; input changes rebuild and prepare processing before streaming |
 | Backend startup settings | Host settings or explicit deployment inputs | Settings / General for supported local settings; deployment configuration for environment inputs | Backend restart; never report an engine rebuild as sufficient |
 | Runtime context and state | Derived from accepted/applied configuration and runtime state | Read-only | Generated by the host |
 
@@ -98,26 +120,24 @@ available; it never replaces a saved mapping. The
 
 Signal Processing uses the current Acquisition binding and connected descriptor.
 Profiles do not store a fixed Acquisition profile identity. Saving a profile
-does not alter a running experiment. Review and Apply pins the mapping;
+does not alter a running experiment. Applying current values pins the mapping;
 channel changes require a stopped-stream rebuild and new preparation.
 
-Historical montage fields remain inert raw storage only to preserve old hashes.
-`SIGNAL.setup` is retired and never participates in module validation or execution.
-Version 1 decoder inputs remain readable for replacement in Signal Processing;
-there is no automatic migration or special conversion for old defaults. They do
-not prevent another module from being configured or Acquisition from connecting.
-Stored profiles and activation files are not rewritten during reads or startup.
+Legacy activation and profile formats are not read or migrated. The runtime
+accepts only explicit current-format bindings and decoder inputs. New sections
+remain absent until explicitly accepted; reads do not initialize them.
 
-`GET /api/v1/config/signal` reports `source_binding`, `source_revision`,
+`GET /api/v1/config/signal` reports `source_binding`, `acquisition_revision`,
 `acquisition_descriptor`, and the pinned `processing_input`, `accepted_input`,
-and `active_input`. Saved drafts remain in the profile editor until Review and
-Apply. Preview submits a draft mapping with the expected source revision and
+and `active_input`. Current edits remain separate until application.
+Preview submits a draft mapping with the expected source revision and
 exact decoder selection. The server resolves the descriptor and rejects stale
 revisions or caller-supplied metadata overrides.
 
-Connected metadata is cached under the acquisition profile, plugin selection,
-parameters, and connection identity that own the source. Another source profile
-cannot reuse that cache, even when it selects the same plugin. Disconnect and
+Connected metadata is cached under the plugin selection, parameters and
+connection identity that own the source. Profile identity is provenance only:
+loading or saving identical values preserves metadata and preparation readiness.
+Changing source values or connection identity invalidates that ownership. Disconnect and
 refresh invalidate cached metadata and readiness; reconnection requires current
 metadata and a new receipt. Offline views do not fall back to saved observations
 or manual declarations. Missing or invalid processing metadata keeps the source
@@ -161,22 +181,22 @@ and [plugin loading](../omnibci/infrastructure/plugins/runtime_configuration.py)
 
 ## 2. Plugin parameters
 
-Apply boundaries below describe the existing coordinator's conservative
-behavior, not a promise that every `x-apply: module` edit restarts only one
-process. Acquisition changes currently rebuild the engine graph. A running
-rebuild creates a new engine generation; decoder/filter trial-boundary changes
-preserve the generation and result counter. External processes have additional
-application limits.
+Apply boundaries belong to the module that owns the configuration. Acquisition
+changes restart Acquisition; structural Processing changes restart Processing.
+Both preserve the shared engine generation and unrelated output processes.
+Sequence, trial, and epoch counters remain monotonic across worker replacement.
+A shared system change restarts the foundation. Connected external peers block
+changes to their own configuration or shared system settings.
 
 | Existing flat key | Owner and Profile parameter | Scope | Runtime boundary |
 | --- | --- | --- | --- |
-| `ACQUISITION.sample_rate` | Selected source: expected `sample_rate` | Portable | Engine rebuild and comparison with observed source |
-| `ACQUISITION.channel_count` | Selected source: expected `channel_count`, including event row | Portable | Engine rebuild and comparison with observed source |
-| `ACQUISITION.channel_labels` | Selected Curry8 source: optional ordered `channel_labels`, including the final trigger row | Portable | Engine rebuild; saved labels do not override observed `SignalInfo` |
-| `ACQUISITION.DATA_PROVIDER_IP` | Scan45 or Curry8 source: `DATA_PROVIDER_IP` | Machine | Engine rebuild |
-| `ACQUISITION.DATA_PROVIDER_PORT` | Scan45 or Curry8 source: `DATA_PROVIDER_PORT` | Machine | Engine rebuild |
-| `ACQUISITION.data_file_path` | File Reader: `data_file_path` | Machine | Engine rebuild |
-| `ACQUISITION.file_reader_chunk_size` | File Reader: `file_reader_chunk_size` | Portable | Engine rebuild |
+| `ACQUISITION.sample_rate` | Selected source: expected `sample_rate` | Portable | Acquisition restart and comparison with observed source |
+| `ACQUISITION.channel_count` | Selected source: expected `channel_count`, including event row | Portable | Acquisition restart and comparison with observed source |
+| `ACQUISITION.channel_labels` | Selected Curry8 source: optional ordered `channel_labels`, including the final trigger row | Portable | Acquisition restart; saved labels do not override observed `SignalInfo` |
+| `ACQUISITION.DATA_PROVIDER_IP` | Scan45 or Curry8 source: `DATA_PROVIDER_IP` | Machine | Acquisition restart |
+| `ACQUISITION.DATA_PROVIDER_PORT` | Scan45 or Curry8 source: `DATA_PROVIDER_PORT` | Machine | Acquisition restart |
+| `ACQUISITION.data_file_path` | File Reader: `data_file_path` | Machine | Acquisition restart |
+| `ACQUISITION.file_reader_chunk_size` | File Reader: `file_reader_chunk_size` | Portable | Acquisition restart |
 | `ACQUISITION.parallel_port_address` | Scan45 Trigger: `parallel_port_address` | Machine | Output-module application when active |
 | `ALGORITHM.window_duration`, `ssvep.duration` | Selected CCA/FBCCA decoder: `window_duration` | Portable | Trial boundary |
 | `ALGORITHM.offset_time`, `ssvep.offset_time` | Selected CCA/FBCCA decoder: `offset_time` | Portable | Trial boundary |
@@ -191,7 +211,7 @@ Important boundaries:
 - Curry8 and File Reader obtain actual data dimensions from the device/file.
   Their Profile dimensions are optional expectations with no defaults. Missing
   or mismatched expectations block Signal Processing preparation until the source is
-  corrected or observed values are explicitly saved and applied. Actual
+  corrected or observed values are explicitly adopted into the current configuration and applied. Actual
   `SignalInfo` supplies Signal Processing context; metadata reads do not rewrite saved
   values. The adapter output includes one final trigger row, separate from the
   signal count; the expected `channel_count` includes that row.
@@ -252,16 +272,15 @@ Plugin Profile merely because a key starts with a module name.
 
 | Existing key | Responsibility | Application boundary and current limitation |
 | --- | --- | --- |
-| `ALGORITHM.baseline_duration` | Signal Processing framework: amount of pre-trigger data retained | Engine rebuild; keep the existing key for this consolidation |
-| `NEUROENGINE.queue_size` | Worker command queue capacity | Engine rebuild |
+| `ALGORITHM.baseline_duration` | Signal Processing framework: amount of pre-trigger data retained | Processing restart |
+| `NEUROENGINE.queue_size` | Shared worker command queue capacity (system) | Engine rebuild |
 | `NEUROENGINE.message_server_ip`, `NEUROENGINE.message_server_port` | Engine/Stimulation communication | Engine rebuild with managed peers; no live update for external peers |
 | `debug` | Engine event-loop debug mode | Engine rebuild |
-| `ACTUATION.server_ip`, `ACTUATION.server_port` | Engine/Actuation communication | Engine rebuild with managed peers |
-| `ACTUATION.watchdog_timeout_s` | Actuation connection watchdog and heartbeat | Engine rebuild; update both endpoints together |
-| `ACTUATION.max_command_age_s` | Actuation process command-age gate | Currently classified as engine rebuild; no narrower update is promised |
-| `STIMULATION.renderer` | Shared rendering backend chosen by the host | Currently classified as engine rebuild; the renderer is not a Paradigm parameter |
-| `ACTUATION.enabled` | Actuation subsystem topology | Engine rebuild; the process manager recalculates enabled/managed state from the supplied snapshot |
-| `STIMULATION.auto_spawn`, `ACTUATION.auto_spawn` | Deployment mode: host-managed or external process | Managers read each supplied snapshot; the current plan rejects live rebuilds involving external peers, including relevant deployment-mode transitions |
+| `ACTUATION.server_ip`, `ACTUATION.server_port` | Engine/Actuation communication | Actuation module replacement; reconfigure only its gateway and driver |
+| `ACTUATION.watchdog_timeout_s` | Actuation connection watchdog and heartbeat | Actuation module replacement; update its two endpoints together |
+| `ACTUATION.max_command_age_s` | Actuation process command-age gate | Actuation module replacement |
+| `STIMULATION.renderer` | Rendering backend chosen by the host | Stimulation module replacement; the renderer is not a Paradigm parameter |
+| `STIMULATION.auto_spawn`, `ACTUATION.auto_spawn` | Deployment mode: host-managed or external process | Replace only the owning module; connected external peers block changes affecting their runtime, including shared system rebuilds |
 | `NEUROENGINE.command_timeout_s` | REST command-result waiting policy | Backend startup; the command broker captures the value |
 | `PLUGINS.user_dir` | Local plugin discovery/install location | Deployment/startup setting; currently environment override, then raw settings, then platform default |
 
@@ -362,21 +381,18 @@ runtime fields.
 
 Source configurations retain `sample_rate` and `channel_count`; provided values
 must be positive integers. Curry8 and File Reader can apply and connect without
-expectations or an upfront Profile save. Metadata reads do not fill or save the
-editor automatically. Adopting observed values followed by final Review and Apply
-saves the Profile and establishes the current experiment baseline. A new Profile
-is saved automatically on confirmation; changed existing parameters default to
-saving a new Profile, with updating the original as an explicit choice. Conflicting
+expectations or an upfront Profile save. Metadata reads do not fill or save the editor automatically. Adopting observed
+values changes the current editor; connecting applies them and establishes the
+experiment baseline. Saving a reusable Profile is optional. Conflicting
 provided parameters are shown in red. Missing
 expectations use the observed source values. The comparison uses the pinned
 source binding, never old host copies or saved edits that have not been applied.
 A mismatched comparison blocks preparation and streaming, including when only
 one expectation is provided. An unconfirmed comparison is informational;
 preparation uses actual source dimensions without changing the Profile.
-Neither status hides source metadata. Observed values are first adopted into the
-draft; final Review handles the Profile choice and application. Saving and applying
-are separate backend requests: partial success is reported explicitly, and a retry
-reuses the confirmed saved Profile. Canceling Review does not write either resource. Scan45 retains its required configuration and
+Neither status hides source metadata. Observed values are first adopted into
+current configuration; saving a Profile and applying the module are independent.
+Scan45 retains its required configuration and
 is marked unverified because it cannot query independent device dimensions.
 
 The old initialization path and packaged flat plugin defaults have been removed.
@@ -402,9 +418,9 @@ Review/Apply retains its pinned plan and runtime acknowledgement requirements.
 The shared configuration service reads the selected host source once when
 constructing a candidate. Its runtime host key set covers the inputs listed in
 sections 3 and 5, including `NEUROENGINE.startup_timeout_s`, and excludes retired
-keys such as `ACQUISITION.channel_names`. Existing `ACTUATION.enabled` and both
-`auto_spawn` settings remain runtime topology/deployment inputs. They still
-require the current managed-process and external-peer checks.
+keys such as `ACQUISITION.channel_names`. Both `auto_spawn` settings remain
+deployment inputs and retain managed-process and external-peer checks. Actuation
+uses explicit Start/Stop controls; the separate enable setting has been removed.
 
 The backend-startup boundary covers `NEUROENGINE.command_timeout_s`,
 `PLUGINS.user_dir`, `LOGGING.level`, and
@@ -464,7 +480,7 @@ GET returns the saved values and a SHA-256 revision from the same read. PATCH
 requires that revision and returns the committed revision. The token includes
 the defaults bytes, user file bytes, and presence of the user file, so manual
 edits, deletion, and changes to defaults invalidate stale edits. This is a host
-storage revision, independent of the BCI activation revision. A conflict returns
+storage revision, independent of module and system revisions. A conflict returns
 409; the console retains its draft and requires an explicit refresh. There is
 no automatic overwrite or retry. Invalid input returns 422; inaccessible
 storage returns 503. Queue capacity must be positive; pre-trigger duration must be
@@ -489,12 +505,12 @@ adapters remain available for isolated tests and embedding.
 
 ### Step 6: explicit configuration at every launch
 
-Backend engine startup uses the accepted-configuration resolver. It
-reads `activation.toml`, validates its pinned selections and resolved parameters,
-and materializes one runtime snapshot. It neither refreshes saved Profiles nor
-creates an activation. Missing, corrupt, unavailable, or unsupported selections
-fail before runtime construction. Standalone scripts now obtain a projection
-from the backend as described below.
+Backend engine startup reads accepted module snapshots and shared settings,
+accepting initial system settings if absent. It starts the shared runtime without
+requiring or loading plugins. Starting a module validates its own pinned selections
+and parameters; missing, corrupt, unavailable, or unsupported required selections
+fail before that module executes. Saved Profiles are never refreshed implicitly.
+Standalone output scripts obtain a role projection from the backend as below.
 
 The standalone scripts install that snapshot in the in-memory settings adapter
 and pass it to the application. Transport addresses and plugins therefore use
@@ -508,8 +524,7 @@ package/contribution/version and checks the schema version, with no alias
 fallback. Ordered filters come from their binding slots. File Reader, Scan45,
 Curry8, and Scan45 Trigger require explicit parameters; CCA and FBCCA also
 require sampling context. Their constructors no longer read global settings.
-Stateless constructor API 1 contributions can still be loaded through an exact
-binding; configurable contributions require constructor API 2. Loading one slot
+All contributions require constructor API 2. Loading one slot
 does not parse another module's plugin parameters or decoder input.
 
 ### Independent nodes: role-scoped startup and reconnect
@@ -519,21 +534,27 @@ does not parse another module's plugin parameters or decoder input.
 generation; while running it projects the actual applied snapshot. Startup,
 shutdown, configuration transition, and recovery states reject publication.
 Publication never treats a historical stopped snapshot or saved Profile edits
-as current runtime inputs. Backend-managed roles and disabled Actuation reject
-external node requests.
+as current runtime inputs. Backend-managed roles reject external node requests.
+External outputs can obtain and use their own configuration without any selected
+Acquisition source once the foundation is running.
 
-The versioned `NodeConfiguration` envelope contains a role, the parent Activation
-revision, engine generation, necessary host/context settings, and owned bindings:
+The versioned `NodeConfiguration` envelope contains a role, its `module_revisions`
+map, `system_revision`, engine generation, necessary settings, and owned bindings.
+Engine nodes carry Acquisition and Processing revisions; each output node carries
+only its own module revision:
 
 | Role | Locally validated and loaded contributions |
 | --- | --- |
-| Engine startup | Acquisition; Signal Processing waits in standby |
+| Engine startup | No plugin is loaded; shared infrastructure only |
+| Acquisition Connect | Source |
+| Processing start | Standby until source metadata is available |
 | Signal preparation | Decoder, Epoch boundary detector, Filters |
 | Stimulation | Paradigm, Trigger |
 | Actuation | Effector |
 
-Sampling rate, channel count, and optional channel names provide shared context;
-other roles' plugin parameters and local paths are omitted. Nodes validate exact
+Output projections contain only their owned settings and bindings; Acquisition
+sampling metadata is not a startup prerequisite. Other roles' plugin parameters
+and local paths are omitted. Nodes validate exact
 package/contribution/version, resolved defaults, schema version, and local
 platform support. They derive aliases from the local catalog. The backend still
 needs the complete manifest/schema catalog for configuration authoring, but does
@@ -543,7 +564,7 @@ Standalone scripts use `--backend` or `OMNIBCI_BACKEND_URL`; no local Activation
 fallback exists. HTTP fetching and validation happen only between application
 lifetimes. Offline, selected, and transitioning backends are retried before
 hardware initialization. After local setup, external IPC connections must match
-role, revision, and generation through `PeerHello` / `PeerAccepted`; mismatches
+role, own-module revision, system revision, and generation through `PeerHello` / `PeerAccepted`; mismatches
 cannot route business events or count as connected. Managed subprocesses retain
 their existing `StartupReporter` barrier. Each external role has one connection
 owner. This handshake confirms configuration consistency, not authentication.
@@ -554,11 +575,11 @@ rendering exits. Actuation requires `Effector.quiesce()` to confirm outputs have
 finished or been cancelled before releasing the device. Setup, quiescence,
 trigger-clear, and teardown failures stop the script. An explicit normal
 application stop does not restart it. No cloud, account, plugin installation,
-or cross-node live-apply protocol is added. Revision-changing Apply operations,
-including decoder-only changes, require a stop while an external peer is connected
-or an experiment is using it. Disconnected external roles do not block module
-configuration; Apply rebuilds their gateway identity so waiting nodes can fetch
-the new generation. The API backend and IPC addresses must be
+or cross-node live-apply protocol is added. Changes affecting an external node, including shared system rebuilds, require it to be
+disconnected. Unrelated narrow module changes do not block on that node.
+Disconnected external roles do not block module configuration; applying an output
+module updates only its gateway identity, so waiting nodes can fetch its new
+module revision in the same generation. The API backend and IPC addresses must be
 reachable; use explicit backend LAN addresses, not wildcard listener addresses,
 for cross-machine IPC.
 
@@ -649,7 +670,7 @@ These are outside the 38-key file inventory but must have an explicit boundary.
 | `NEUROENGINE.startup_timeout_s` | Existing host runtime input, absent from the file; engine rebuild. Consolidate declared and fallback defaults before exposing it |
 | `ACQUISITION.channel_names` | Retired configuration key; ignored in old settings and snapshots and omitted from node transport. Original signal channels come from live `SignalInfo`; Curry8's optional `channel_labels` snapshot and processing channel mapping remain separate |
 | `PLUGINS.bindings` | Derived serialization of accepted bindings; never an editable host setting |
-| `CONFIG.revision`, `CONFIG.generation` | Generated accepted revision and process generation; never user-entered settings |
+| `CONFIG.module_revisions`, `CONFIG.system_revision`, `CONFIG.generation` | Derived module/system identities and process generation; never user-entered settings |
 | `CONFIG.initialization_warnings` | Initialization diagnostics; read-only metadata. Exclude diagnostics from future runtime change detection |
 | `OMNIBCI_CONFIG_DIR`, `OMNIBCI_PLUGIN_DIR` | Machine deployment inputs; retain explicit path overrides and platform defaults |
 | `OMNIBCI_MARKET_URL`, `OMNIBCI_MARKET_REPOSITORY_ID`, `OMNIBCI_MARKET_TRUSTED_KEYS`, `OMNIBCI_MARKET_CACHE_DIR` | Existing market deployment inputs; outside plugin parameters and activation |
@@ -675,10 +696,8 @@ it cannot silently select a different legacy alias.
 | 6 (committed) | Use the accepted configuration at standalone launch; retire remaining implicit legacy plugin constructors/loaders | Managed and standalone launches resolve the same explicit selection; missing/invalid configuration fails clearly; external-peer limitations remain explicit |
 
 Do not add an automatic legacy migration layer for this unreleased system.
-Preserve valid current Plugin Profiles and accepted activations where their
-meaning is unambiguous. Any format reset or parameter change must be presented
-for review before it is applied to user data. Actual settings and Profile files
-are not test fixtures.
+Legacy flat Profile files and global activation files are not read or rewritten.
+Actual settings and Profile files are not test fixtures.
 
 This plan preserves the current real-time execution model: configuration I/O,
 schema validation, planning, and persistence run at management/start/apply

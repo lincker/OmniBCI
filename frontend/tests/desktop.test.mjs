@@ -149,12 +149,12 @@ test("an offline desktop workspace keeps the current page visible with its contr
 test("the built-in manifest's qualified File Reader identity requires a recording before starting", async () => {
   const manifest = await readFile(new URL("../../omnibci/infrastructure/plugins/acquisition/file/manifest.toml", import.meta.url), "utf8");
   const identity = `${/^publisher = "([^"]+)"/m.exec(manifest)[1]}.${/^id = "([^"]+)"/m.exec(manifest)[1]}`;
-  const selected = (path, packageId = identity) => ({ bindings: [{ slot: "acquisition.source", selection: { package_id: packageId }, parameters: { data_file_path: path } }] });
+  const selected = (path, packageId = identity) => ({ selection: { package_id: packageId }, parameters: { data_file_path: path } });
   assert.equal(identity, "OmniBCI.file_reader");
   for (const value of [undefined, "", "   "]) assert.equal(recordingPathMissing(selected(value)), true);
   assert.equal(recordingPathMissing(selected("/recordings/subject.cnt")), false);
   assert.equal(recordingPathMissing(selected("", "example.device")), false);
-  assert.equal(recordingPathMissing(null), false);
+  assert.equal(recordingPathMissing(undefined), false);
 });
 
 test("live results and read controls use only results and acquisition endpoints", async () => {

@@ -48,7 +48,7 @@ async def test_real_capture_round_trip_preserves_selected_values_and_main_stream
         EventType.GetAcquisitionPreview: AcquisitionCommand.get_preview,
     }
     broker = CommandResultBroker(SimpleNamespace(
-        is_engine_ready=True,
+        is_engine_ready=True, is_command_ready=lambda _: True,
         dispatch=lambda event: commands.put((routes[event.type], event.data)),
     ), timeout_s=2)
     service = AcquisitionAppService(broker, preview_provider=cache.read, generation_provider=lambda: "g")
@@ -62,7 +62,7 @@ async def test_real_capture_round_trip_preserves_selected_values_and_main_stream
     source = Source()
     runtime = AcquisitionRuntime(source, commands, SimpleNamespace(put_data=main.put_nowait),
                                  SimpleNamespace(put_event=publish), source_id="test", preparation_required=False,
-                                 generation="g", config_revision="a" * 64, preview_queue=diagnostics)
+                                 generation="g", acquisition_revision="a" * 64, system_revision="system", preview_queue=diagnostics)
     app = create_app()
     app.dependency_overrides[get_acquisition_service] = lambda: service
     client = TestClient(app)
@@ -120,7 +120,7 @@ async def test_automatic_rolling_preview_retains_latest_chunks_without_changing_
     cache = PreviewCache(diagnostics, generation="g")
     routes = {EventType.GetAcquisitionPreview: AcquisitionCommand.get_preview}
     broker = CommandResultBroker(SimpleNamespace(
-        is_engine_ready=True,
+        is_engine_ready=True, is_command_ready=lambda _: True,
         dispatch=lambda event: commands.put((routes[event.type], event.data)),
     ), timeout_s=2)
     service = AcquisitionAppService(broker, preview_provider=cache.read, generation_provider=lambda: "g")
@@ -134,7 +134,7 @@ async def test_automatic_rolling_preview_retains_latest_chunks_without_changing_
     source = Source()
     runtime = AcquisitionRuntime(source, commands, SimpleNamespace(put_data=main.put_nowait),
                                  SimpleNamespace(put_event=publish), source_id="test", preparation_required=False,
-                                 generation="g", config_revision="a" * 64, preview_queue=diagnostics)
+                                 generation="g", acquisition_revision="a" * 64, system_revision="system", preview_queue=diagnostics)
     app = create_app()
     app.dependency_overrides[get_acquisition_service] = lambda: service
     client = TestClient(app)

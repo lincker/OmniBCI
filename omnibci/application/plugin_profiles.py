@@ -4,10 +4,14 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
+from datetime import datetime
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from types import MappingProxyType
+from typing import Any, Mapping, Protocol
 from uuid import UUID
 
+from omnibci.application.activation_settings import MODULES, SECTION_SETTING_KEYS
 from omnibci.domain.channel_mapping import ProcessingInput
 
 
@@ -55,6 +59,17 @@ def validate_profile_id(value: str) -> None:
         raise PluginProfileValidationError("profile_id must be a canonical UUID")
 
 
+def plugin_kind_for_slot(slot: str) -> str:
+    if not isinstance(slot, str):
+        raise PluginProfileValidationError("slot must be a string")
+    if slot.startswith("processing.filter."):
+        validate_profile_id(slot.removeprefix("processing.filter."))
+        return "filter"
+    if slot not in _SLOTS:
+        raise PluginProfileValidationError("Unsupported configuration slot")
+    return _SLOTS[slot]
+
+
 def _positive_integer(value: int, name: str, *, minimum: int = 1) -> None:
     if type(value) is not int or value < minimum:
         raise PluginProfileValidationError(f"{name} must be an integer >= {minimum}")
@@ -92,76 +107,49 @@ def _processing_input(value, kind: str) -> ProcessingInput | None:
     return value
 
 
-def is_default_legacy_processing_input(value) -> bool:
-    """Recognize only stored v1 defaults that preserve every source sample."""
-    if (not isinstance(value, dict)
-            or type(value.get("schema_version", 1)) is not int
-            or value.get("schema_version", 1) != 1
-            or set(value) - {"schema_version", "outputs", "excluded_channels", "reference"}
-            or value.get("outputs", []) != []
-            or value.get("excluded_channels", []) != []):
-        return False
-    reference = value.get("reference", {})
-    return (isinstance(reference, dict)
-            and not set(reference) - {"mode", "channels"}
-            and reference.get("mode", "original") == "original"
-            and reference.get("channels", []) == [])
+def module_for_slot(slot: str) -> str:
+    plugin_kind_for_slot(slot)
+    return slot.split(".", 1)[0]
 
 
-def _legacy_fields(value, kind: str, processing_input) -> dict:
-    data = _object_data(value, "legacy fields")
-    allowed = {"acquisition_montage", "manual_montage"} if kind == "acquisition" else {"processing_input"} if kind == "decoder" else set()
-    if set(data) - allowed or processing_input is not None and "processing_input" in data:
-        raise PluginProfileValidationError("Invalid legacy profile fields")
-    return data
+def _canonical(value) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
 
 
 def _parse_profile_fields(data: dict) -> dict:
     result = dict(data)
-    legacy = {key: result.pop(key) for key in ("acquisition_montage", "manual_montage") if key in result}
     if "processing_input" in result:
-        value = result.pop("processing_input")
-        if not isinstance(value, dict):
-            raise PluginProfileValidationError("processing_input must be an object")
-        if type(value.get("schema_version", 1)) is not int:
-            raise PluginProfileValidationError("processing_input schema_version must be an integer")
-        if value.get("schema_version", 1) == 1:
-            legacy["processing_input"] = value
-        else:
-            try:
-                result["processing_input"] = ProcessingInput.from_dict(value)
-            except (ValueError, TypeError) as exc:
-                raise PluginProfileValidationError(f"Invalid processing_input: {exc}") from exc
-    result["legacy"] = legacy
+        try:
+            result["processing_input"] = ProcessingInput.from_dict(result["processing_input"])
+        except (ValueError, TypeError) as exc:
+            raise PluginProfileValidationError(f"Invalid processing_input: {exc}") from exc
     return result
 
 
 @dataclass(frozen=True, slots=True)
 class PluginSelection:
-    """Exact capability identity; None selects an unversioned legacy package."""
+    """Exact package, contribution and installed version identity."""
 
     package_id: str
     contribution_id: str
-    version: str | None
+    version: str
 
     def __post_init__(self) -> None:
         for name in ("package_id", "contribution_id", "version"):
             value = getattr(self, name)
-            if name == "version" and value is None:
-                continue
             if not isinstance(value, str) or not value or value != value.strip():
                 raise PluginProfileValidationError(f"{name} must be a non-empty, trimmed string")
 
+        if not re.fullmatch(r"[0-9][A-Za-z0-9._+-]{0,127}", self.version) or self.version.endswith("."):
+            raise PluginProfileValidationError("version must be an exact package version")
+
     def to_dict(self) -> dict:
-        data = {"package_id": self.package_id, "contribution_id": self.contribution_id}
-        if self.version is not None:
-            data["version"] = self.version
-        return data
+        return {"package_id": self.package_id, "contribution_id": self.contribution_id, "version": self.version}
 
     @classmethod
     def from_dict(cls, data: dict) -> PluginSelection:
-        _fields(data, {"package_id", "contribution_id"}, {"version"})
-        return cls(data["package_id"], data["contribution_id"], data.get("version"))
+        _fields(data, {"package_id", "contribution_id", "version"})
+        return cls(data["package_id"], data["contribution_id"], data["version"])
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,8 +163,6 @@ class PluginProfile:
     revision: int = 0
     format_version: int = 2
     processing_input: ProcessingInput | None = None
-    # Raw legacy fields preserve stored files and revision hashes until explicit replacement.
-    legacy: dict = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         validate_profile_id(self.profile_id)
@@ -194,12 +180,6 @@ class PluginProfile:
         object.__setattr__(self, "name", self.name.strip())
         object.__setattr__(self, "parameters", _object_data(self.parameters, "parameters"))
         object.__setattr__(self, "processing_input", _processing_input(self.processing_input, self.kind))
-        object.__setattr__(self, "legacy", _legacy_fields(self.legacy, self.kind, self.processing_input))
-
-    @property
-    def processing_input_requires_review(self) -> bool:
-        return ("processing_input" in self.legacy
-                and not is_default_legacy_processing_input(self.legacy["processing_input"]))
 
     def to_dict(self) -> dict:
         data = {
@@ -208,7 +188,6 @@ class PluginProfile:
             "parameters": _object_data(self.parameters, "parameters"),
             "configuration_version": self.configuration_version, "revision": self.revision,
         }
-        data.update(_object_data(self.legacy, "legacy fields"))
         if self.processing_input is not None:
             data["processing_input"] = self.processing_input.to_dict()
         return data
@@ -217,7 +196,7 @@ class PluginProfile:
     def from_dict(cls, data: dict) -> PluginProfile:
         _fields(data, {"format_version", "profile_id", "name", "kind", "selection",
                        "parameters", "configuration_version", "revision"},
-                {"acquisition_montage", "manual_montage", "processing_input"})
+                {"processing_input"})
         return cls(**{**_parse_profile_fields(data),
                       "selection": PluginSelection.from_dict(data["selection"])})
 
@@ -234,16 +213,9 @@ class ProfileBinding:
     configuration_version: int = 1
     profile_revision: int = 0
     processing_input: ProcessingInput | None = None
-    legacy: dict = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.slot, str):
-            raise PluginProfileValidationError("slot must be a string")
-        expected = _SLOTS.get(self.slot)
-        if self.slot.startswith("processing.filter."):
-            validate_profile_id(self.slot.removeprefix("processing.filter."))
-            expected = "filter"
-        if expected is None or self.kind != expected:
+        if self.kind != plugin_kind_for_slot(self.slot):
             raise PluginProfileValidationError("slot and plugin kind must match")
         if self.profile_id is not None:
             validate_profile_id(self.profile_id)
@@ -254,12 +226,6 @@ class ProfileBinding:
                           minimum=0 if self.profile_id is None else 1)
         object.__setattr__(self, "parameters", _object_data(self.parameters, "parameters"))
         object.__setattr__(self, "processing_input", _processing_input(self.processing_input, self.kind))
-        object.__setattr__(self, "legacy", _legacy_fields(self.legacy, self.kind, self.processing_input))
-
-    @property
-    def processing_input_requires_review(self) -> bool:
-        return ("processing_input" in self.legacy
-                and not is_default_legacy_processing_input(self.legacy["processing_input"]))
 
     def to_dict(self) -> dict:
         data = {
@@ -270,7 +236,6 @@ class ProfileBinding:
         }
         if self.profile_id is not None:
             data["profile_id"] = self.profile_id
-        data.update(_object_data(self.legacy, "legacy fields"))
         if self.processing_input is not None:
             data["processing_input"] = self.processing_input.to_dict()
         return data
@@ -278,42 +243,40 @@ class ProfileBinding:
     @classmethod
     def from_dict(cls, data: dict) -> ProfileBinding:
         _fields(data, {"slot", "kind", "selection", "parameters", "configuration_version",
-                       "profile_revision"}, {"profile_id", "manual_montage", "processing_input"})
+                       "profile_revision"}, {"profile_id", "processing_input"})
         return cls(**{**_parse_profile_fields(data), "profile_id": data.get("profile_id"),
                       "selection": PluginSelection.from_dict(data["selection"])})
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class ActivationSnapshot:
-    """Immutable accepted content; collection getters return independent copies."""
+class ModuleActivation:
+    """Immutable module content; getters return independent collection copies."""
 
+    module: str
     _settings_json: str = field(repr=False)
     _bindings_json: str = field(repr=False)
-    _revision: str
-    format_version: int = 2
+    revision: str
 
-    def __init__(self, settings: dict, bindings: tuple[ProfileBinding, ...],
-                 format_version: int = 2) -> None:
-        if type(format_version) is not int or format_version != 2:
-            raise PluginProfileValidationError("Unsupported activation format_version")
-        if not isinstance(bindings, (tuple, list)) or any(
-            not isinstance(binding, ProfileBinding) for binding in bindings
-        ):
+    def __init__(self, module: str, settings: dict, bindings: tuple[ProfileBinding, ...]) -> None:
+        if not isinstance(module, str) or module not in MODULES:
+            raise PluginProfileValidationError("Unsupported configuration module")
+        if not isinstance(bindings, (tuple, list)) or any(not isinstance(item, ProfileBinding) for item in bindings):
             raise PluginProfileValidationError("bindings must be an ordered list of ProfileBinding")
-        if len({binding.slot for binding in bindings}) != len(bindings):
+        if len({item.slot for item in bindings}) != len(bindings):
             raise PluginProfileValidationError("Duplicate activation slot")
+        if any(module_for_slot(item.slot) != module or item.kind not in MODULE_KINDS[module] for item in bindings):
+            raise PluginProfileValidationError("Bindings must belong to the configuration module")
         settings = _object_data(settings, "settings")
-        binding_data = [binding.to_dict() for binding in bindings]
-        canonical = lambda data: json.dumps(data, sort_keys=True, separators=(",", ":"),
-                                            ensure_ascii=False, allow_nan=False)
-        object.__setattr__(self, "format_version", format_version)
-        object.__setattr__(self, "_settings_json", canonical(settings))
-        object.__setattr__(self, "_bindings_json", canonical(binding_data))
-        semantic_bindings = [{key: value for key, value in data.items()
-                              if key not in {"profile_id", "profile_revision"}}
-                             for data in binding_data]
-        content = canonical({"settings": settings, "bindings": semantic_bindings})
-        object.__setattr__(self, "_revision", hashlib.sha256(content.encode("utf-8")).hexdigest())
+        if settings.keys() - SECTION_SETTING_KEYS[module]:
+            raise PluginProfileValidationError("Settings must belong to the configuration module")
+        values = [item.to_dict() for item in bindings]
+        semantic = [{key: value for key, value in item.items() if key not in {"profile_id", "profile_revision"}}
+                    for item in values]
+        object.__setattr__(self, "module", module)
+        object.__setattr__(self, "_settings_json", _canonical(settings))
+        object.__setattr__(self, "_bindings_json", _canonical(values))
+        content = _canonical({"module": module, "settings": settings, "bindings": semantic})
+        object.__setattr__(self, "revision", hashlib.sha256(content.encode("utf-8")).hexdigest())
 
     @property
     def settings(self) -> dict:
@@ -321,26 +284,154 @@ class ActivationSnapshot:
 
     @property
     def bindings(self) -> tuple[ProfileBinding, ...]:
-        return tuple(ProfileBinding.from_dict(data) for data in json.loads(self._bindings_json))
+        return tuple(ProfileBinding.from_dict(item) for item in json.loads(self._bindings_json))
+
+    def to_dict(self) -> dict:
+        return {"module": self.module, "revision": self.revision, "settings": self.settings,
+                "bindings": json.loads(self._bindings_json)}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> ModuleActivation:
+        _fields(data, {"module", "revision", "settings", "bindings"})
+        if not isinstance(data["bindings"], list):
+            raise PluginProfileValidationError("bindings must be a list")
+        result = cls(data["module"], data["settings"], tuple(ProfileBinding.from_dict(item) for item in data["bindings"]))
+        if data["revision"] != result.revision:
+            raise PluginProfileValidationError("Activation revision does not match its content")
+        return result
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class SystemSettings:
+    _settings_json: str = field(repr=False)
+    revision: str
+
+    def __init__(self, settings: dict) -> None:
+        settings = _object_data(settings, "settings")
+        if settings.keys() - SECTION_SETTING_KEYS["system"]:
+            raise PluginProfileValidationError("Settings must belong to the system section")
+        object.__setattr__(self, "_settings_json", _canonical(settings))
+        content = _canonical({"system": settings})
+        object.__setattr__(self, "revision", hashlib.sha256(content.encode("utf-8")).hexdigest())
+
+    @property
+    def settings(self) -> dict:
+        return json.loads(self._settings_json)
+
+    def to_dict(self) -> dict:
+        return {"revision": self.revision, "settings": self.settings}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> SystemSettings:
+        _fields(data, {"revision", "settings"})
+        result = cls(data["settings"])
+        if data["revision"] != result.revision:
+            raise PluginProfileValidationError("System revision does not match its content")
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class ActivationSet:
+    modules: Mapping[str, ModuleActivation | None]
+    system: SystemSettings | None
+
+    def __post_init__(self):
+        if not isinstance(self.modules, Mapping) or self.modules.keys() - set(MODULES):
+            raise PluginProfileValidationError("Unsupported activation sections")
+        values = {module: self.modules.get(module) for module in MODULES}
+        if any(item is not None and (not isinstance(item, ModuleActivation) or item.module != module)
+               for module, item in values.items()):
+            raise PluginProfileValidationError("Activation module does not match its section")
+        if self.system is not None and not isinstance(self.system, SystemSettings):
+            raise PluginProfileValidationError("system must be SystemSettings or None")
+        object.__setattr__(self, "modules", MappingProxyType(values))
+
+    def revisions(self) -> dict[str, str | None]:
+        return {**{module: item.revision if item else None for module, item in self.modules.items()},
+                "system": self.system.revision if self.system else None}
+
+    def bindings(self) -> tuple[ProfileBinding, ...]:
+        return tuple(binding for item in self.modules.values() if item for binding in item.bindings)
+
+    def settings(self) -> dict:
+        values = {key: value for item in self.modules.values() if item for key, value in item.settings.items()}
+        if self.system is not None:
+            values.update(self.system.settings)
+        return values
+
+
+def _saved_at(value: str) -> None:
+    try:
+        valid = isinstance(value, str) and datetime.fromisoformat(value).tzinfo is not None
+    except ValueError:
+        valid = False
+    if not valid:
+        raise PluginProfileValidationError("saved_at must be an ISO-8601 timestamp with a timezone")
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ProfileRevision:
+    profile_id: str
+    revision: int
+    saved_at: str
+    _profile_json: str = field(repr=False)
+
+    def __init__(self, profile_id: str, revision: int, saved_at: str, profile: PluginProfile):
+        if not isinstance(profile, PluginProfile) or profile.profile_id != profile_id or profile.revision != revision:
+            raise PluginProfileValidationError("History must match the saved profile identity and revision")
+        _positive_integer(revision, "revision")
+        _saved_at(saved_at)
+        object.__setattr__(self, "profile_id", profile_id)
+        object.__setattr__(self, "revision", revision)
+        object.__setattr__(self, "saved_at", saved_at)
+        object.__setattr__(self, "_profile_json", _canonical(profile.to_dict()))
+
+    @property
+    def profile(self) -> PluginProfile:
+        return PluginProfile.from_dict(json.loads(self._profile_json))
+
+    def to_dict(self) -> dict:
+        return {"profile_id": self.profile_id, "revision": self.revision, "saved_at": self.saved_at,
+                "profile": json.loads(self._profile_json)}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> ProfileRevision:
+        _fields(data, {"profile_id", "revision", "saved_at", "profile"})
+        return cls(data["profile_id"], data["revision"], data["saved_at"], PluginProfile.from_dict(data["profile"]))
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleActivationRevision:
+    module: str
+    entry_id: str
+    saved_at: str
+    activation: ModuleActivation
+    restored_from: str | None = None
+
+    def __post_init__(self):
+        validate_profile_id(self.entry_id)
+        if self.restored_from is not None:
+            validate_profile_id(self.restored_from)
+        _saved_at(self.saved_at)
+        if not isinstance(self.activation, ModuleActivation) or self.activation.module != self.module:
+            raise PluginProfileValidationError("History must match its module")
 
     @property
     def revision(self) -> str:
-        return self._revision
+        return self.activation.revision
 
     def to_dict(self) -> dict:
-        return {"format_version": self.format_version, "revision": self.revision,
-                "settings": self.settings, "bindings": json.loads(self._bindings_json)}
+        data = {"module": self.module, "entry_id": self.entry_id, "saved_at": self.saved_at,
+                "activation": self.activation.to_dict()}
+        if self.restored_from is not None:
+            data["restored_from"] = self.restored_from
+        return data
 
     @classmethod
-    def from_dict(cls, data: dict) -> ActivationSnapshot:
-        _fields(data, {"format_version", "revision", "settings", "bindings"})
-        if not isinstance(data["bindings"], list):
-            raise PluginProfileValidationError("bindings must be a list")
-        snapshot = cls(data["settings"], tuple(ProfileBinding.from_dict(item)
-                                             for item in data["bindings"]), data["format_version"])
-        if data["revision"] != snapshot.revision:
-            raise PluginProfileValidationError("Activation revision does not match its content")
-        return snapshot
+    def from_dict(cls, data: dict) -> ModuleActivationRevision:
+        _fields(data, {"module", "entry_id", "saved_at", "activation"}, {"restored_from"})
+        return cls(data["module"], data["entry_id"], data["saved_at"],
+                   ModuleActivation.from_dict(data["activation"]), data.get("restored_from"))
 
 
 class PluginProfileRepository(Protocol):
@@ -348,6 +439,16 @@ class PluginProfileRepository(Protocol):
     def get_profile(self, profile_id: str) -> PluginProfile: ...
     def save_profile(self, profile: PluginProfile, expected_revision: int | None) -> PluginProfile: ...
     def delete_profile(self, profile_id: str, expected_revision: int) -> None: ...
-    def get_activation(self) -> ActivationSnapshot | None: ...
-    def save_activation(self, snapshot: ActivationSnapshot,
-                        expected_revision: str | None) -> ActivationSnapshot: ...
+    def list_profile_history(self, profile_id: str) -> list[ProfileRevision]: ...
+    def get_profile_revision(self, profile_id: str, revision: int) -> ProfileRevision | None: ...
+    def get_module(self, module: str) -> ModuleActivation | None: ...
+    def save_module(self, activation: ModuleActivation, expected_revision: str | None) -> ModuleActivation: ...
+    def remove_module(self, module: str, *, expected_revision: str) -> None: ...
+    def list_module_history(self, module: str) -> list[ModuleActivationRevision]: ...
+    def get_module_history_entry(self, module: str, entry_id: str) -> ModuleActivationRevision | None: ...
+    def record_module_history(self, activation: ModuleActivation, entry_id: str,
+                              restored_from: str | None = None) -> ModuleActivationRevision: ...
+    def get_system(self) -> SystemSettings | None: ...
+    def save_system(self, settings: SystemSettings, expected_revision: str | None) -> SystemSettings: ...
+    def remove_system(self, *, expected_revision: str) -> None: ...
+    def get_activation_set(self) -> ActivationSet: ...

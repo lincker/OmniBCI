@@ -249,7 +249,9 @@ def test_cached_signal_metadata_belongs_to_the_running_acquisition_binding():
     service.get_metadata()
     assert service.cached_descriptor_for(binding.to_dict()) == metadata.to_dict()
     other_profile = replace(binding, profile_id="00000000-0000-0000-0000-000000000002")
-    assert service.cached_descriptor_for(other_profile.to_dict()) is None
+    assert service.cached_descriptor_for(other_profile.to_dict()) == metadata.to_dict()
+    current = replace(binding, profile_id=None, profile_revision=0)
+    assert service.cached_descriptor_for(current.to_dict()) == metadata.to_dict()
     assert service.cached_descriptor_for(replace(binding, parameters={"sample_rate": 500}).to_dict()) is None
     assert service.cached_descriptor_for(None) is None
     assert service.cached_descriptor_for(replace(binding, profile_revision=2).to_dict()) == metadata.to_dict()

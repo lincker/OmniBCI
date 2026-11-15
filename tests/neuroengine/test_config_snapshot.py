@@ -28,8 +28,12 @@ def test_builder_passes_one_resolved_configuration_to_both_workers():
         builder = NeuroEngineBuilder(settings_snapshot=snapshot)
         snapshot["ACQUISITION.sample_rate"] = 1000
         engine = builder.build()
-    acquisition = engine.acquisition_worker
-    processing = engine.signal_processing_worker
+    channels = [engine._worker_factory(module, builder._settings_snapshot)
+                for module in ("acquisition", "processing")]
+    acquisition, processing = [channel.process for channel in channels]
+    for channel in channels:
+        channel.receiver.close()
+        channel.reporter.close()
     assert acquisition.settings_snapshot == processing.settings_snapshot
     assert not hasattr(processing, "sample_rate")
     assert acquisition.settings_snapshot["ACQUISITION.sample_rate"] == 250

@@ -24,6 +24,8 @@ from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 from omnibci.shared.events import EventType
+from tests.plugin_configuration_helpers import builtin_selection
+from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 
 
 @pytest.mark.integration
@@ -35,7 +37,7 @@ async def test_cnt_mapping_prepares_before_streaming_and_rejects_stale_connectio
     })
     host = {"NEUROENGINE.message_server_port": 0, "NEUROENGINE.startup_timeout_s": 15.0,
             "NEUROENGINE.command_timeout_s": 30.0, "STIMULATION.auto_spawn": True,
-            "ACTUATION.enabled": False, "ALGORITHM.baseline_duration": 0.2}
+            "ACTUATION.server_port": 0, "ALGORITHM.baseline_duration": 0.2}
     profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "profiles"),
                                     CatalogConfigurationAdapter(), settings_source=lambda: host)
     selections = []
@@ -48,7 +50,7 @@ async def test_cnt_mapping_prepares_before_streaming_and_rejects_stale_connectio
         ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
         ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40", {}),
     ):
-        selection = profiles.catalog.legacy(kind, alias).selection
+        selection = builtin_selection(kind, alias)
         if kind == "acquisition":
             selections.append({"slot": slot, "selection": selection.to_dict(), "parameters": parameters})
             continue
@@ -60,15 +62,21 @@ async def test_cnt_mapping_prepares_before_streaming_and_rejects_stale_connectio
                                 processing_input=ProcessingInput(outputs=(ChannelBinding("Pz", "channel-0"), ChannelBinding("O2", "channel-8"))))
     missing_decoder = profiles.create("decoder", decoder_a.selection, "Missing channel", {},
                                       processing_input=ProcessingInput(outputs=(ChannelBinding("NotPresent", "not-present"),)))
-    profiles.accept(profiles.propose(selections), expected_revision=None)
+    profiles.accept_system(profiles.propose_system(), expected_revision=None)
+    for module in ("acquisition", "processing", "stimulation"):
+        profiles.accept_module(profiles.propose(module, [item for item in selections if item["slot"].startswith(f"{module}.")]),
+                               expected_revision=None)
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
-                                snapshot_provider=profiles.resolve_settings)
+                                snapshot_provider=lambda: accepted_runtime_settings(profiles=profiles))
     await engine.startup()
     container = assemble(engine, settings=host, admission=engine.admission)
     container.acquisition_service.set_metadata_binding(lambda: _acquisition_binding(engine))
     signal = SignalSetupService(SimpleNamespace(read_saved=lambda: (host, "saved")), profiles, engine,
                                 container.acquisition_service, container.command_results)
     container.acquisition_service.set_signal_preparer(signal.prepare)
+    from omnibci.application.plugin_profiles import MODULE_KINDS
+    engine.configure_modules(container.acquisition_service, container.command_results, signal,
+                             lambda module: accepted_runtime_settings(profiles=profiles, active_kinds=MODULE_KINDS[module]))
     register_engine_listeners(container)
     coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
                                           container.stimulation_service,
@@ -76,6 +84,15 @@ async def test_cnt_mapping_prepares_before_streaming_and_rejects_stale_connectio
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
     try:
         await engine.handle_start_engine(StartEngineCommand())
+        await engine.start_module("processing")
+        processor = engine._engine.signal_processing_worker
+        # Processing can precede acquisition, including a new source selection.
+        previous_source = profiles.repository.get_module("acquisition")
+        selections[0]["parameters"]["file_reader_chunk_size"] = 200
+        profiles.accept_module(profiles.propose("acquisition", selections[:1]),
+                               expected_revision=previous_source.revision)
+        await engine.start_module("acquisition")
+        assert engine._engine.signal_processing_worker is processor
         assert engine.is_engine_ready
         assert "SIGNAL.setup" not in engine.applied_snapshot
         assert signal.read()["readiness"]["ready"] is False
@@ -104,21 +121,21 @@ async def test_cnt_mapping_prepares_before_streaming_and_rejects_stale_connectio
         assert profiles.repository.list_profiles("acquisition") == []
 
         # Optionally pin observed dimensions as expectations for subsequent reads.
-        source = profiles.repository.get_activation().bindings[0]
+        source = profiles.repository.get_module("acquisition").bindings[0]
         assert source.profile_id is None
         saved_source = profiles.create("acquisition", source.selection, "Observed CNT experiment", {
             **source.parameters, "sample_rate": metadata["descriptor"]["sample_rate"],
             "channel_count": metadata["descriptor"]["output_row_count"],
         })
-        assert profiles.repository.get_activation().bindings[0].profile_id is None
+        assert profiles.repository.get_module("acquisition").bindings[0].profile_id is None
         selections[0] = {"slot": "acquisition.source", "profile_id": saved_source.profile_id}
-        reviewed = runtime.plan(selections, expected_revision=profiles.repository.get_activation().revision,
+        reviewed = runtime.plan("acquisition", selections[:1], expected_revision=profiles.repository.get_module("acquisition").revision,
                                 refresh_slots=["acquisition.source"])
         operation = runtime.submit(reviewed.plan_id, str(uuid4()))
         await runtime.wait_for_idle()
         result = runtime.operation(operation["operation_id"])
         assert result["status"] == "succeeded", result
-        assert profiles.repository.get_activation().bindings[0].profile_id == saved_source.profile_id
+        assert profiles.repository.get_module("acquisition").bindings[0].profile_id == saved_source.profile_id
         metadata = await asyncio.to_thread(container.acquisition_service.get_metadata)
         assert metadata["comparison"]["status"] == "matched"
         assert profiles.repository.get_profile(saved_source.profile_id) == saved_source
@@ -167,9 +184,12 @@ async def test_cnt_mapping_prepares_before_streaming_and_rejects_stale_connectio
             profiles.repository = TomlPluginProfileRepository(tmp_path / "profiles")
             assert profiles.repository.get_profile(decoder.profile_id).processing_input == decoder.processing_input
             selections[1] = {"slot": "processing.decoder", "profile_id": decoder.profile_id}
-            previous = profiles.repository.get_activation()
-            profiles.accept(profiles.propose(selections), expected_revision=previous.revision)
+            previous = profiles.repository.get_module("processing")
+            profiles.accept_module(profiles.propose("processing", [item for item in selections if item["slot"].startswith("processing.")]),
+                                   expected_revision=previous.revision)
             await engine.handle_start_engine(StartEngineCommand())
+            await engine.start_module("acquisition")
+            await engine.start_module("processing")
             await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
             await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
             current_plan = signal._plan.to_dict()
@@ -181,9 +201,12 @@ async def test_cnt_mapping_prepares_before_streaming_and_rejects_stale_connectio
 
         await engine.handle_stop_engine(StopEngineCommand())
         selections[1] = {"slot": "processing.decoder", "profile_id": missing_decoder.profile_id}
-        previous = profiles.repository.get_activation()
-        profiles.accept(profiles.propose(selections), expected_revision=previous.revision)
+        previous = profiles.repository.get_module("processing")
+        profiles.accept_module(profiles.propose("processing", [item for item in selections if item["slot"].startswith("processing.")]),
+                                   expected_revision=previous.revision)
         await engine.handle_start_engine(StartEngineCommand())
+        await engine.start_module("acquisition")
+        await engine.start_module("processing")
         await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
         with pytest.raises(ValueError, match="Missing acquisition channel: not-present"):
             await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())

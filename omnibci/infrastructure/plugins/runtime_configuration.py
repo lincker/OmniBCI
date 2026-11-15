@@ -22,10 +22,10 @@ def configured_bindings(snapshot: dict, *, slot: str | None = None) -> tuple[Pro
                  if slot is None or value["slot"] == slot)
 
 
-def plugin_context(snapshot: dict) -> PluginContext:
+def plugin_context(snapshot: dict, module: str) -> PluginContext:
     return PluginContext(
-        sample_rate=snapshot.get("ACQUISITION.sample_rate"),
-        config_revision=snapshot.get("CONFIG.revision"),
+        sample_rate=snapshot.get("ACQUISITION.sample_rate") if module in {"acquisition", "processing"} else None,
+        module_revision=snapshot.get("CONFIG.module_revisions", {}).get(module),
     )
 
 
@@ -44,11 +44,10 @@ def load_configured_plugin(snapshot: dict, slot: str, kind: str, expected_base,
             and context.input_signal != context.acquired_signal
             and descriptor.signal_input_contract not in {1, 2}):
         raise PluginLoadError(f"{slot}: plugin must declare signal_input_contract = 1 or 2 for transformed input")
-    if ((descriptor.api_version == "2" or descriptor.configuration_version is not None)
-            and descriptor.configuration_version != binding.configuration_version):
+    if descriptor.configuration_version != binding.configuration_version:
         raise PluginLoadError(f"{slot}: configuration schema migration required")
     parameters = deepcopy(binding.parameters)
-    context = context or plugin_context(snapshot)
+    context = context or plugin_context(snapshot, slot.split(".", 1)[0])
     if descriptor.channel_requirements is not None:
         if context.input_signal is None:
             raise PluginLoadError(f"{slot}: channel requirements need prepared input; configure the decoder profile input first")
@@ -56,11 +55,6 @@ def load_configured_plugin(snapshot: dict, slot: str, kind: str, expected_base,
             descriptor.channel_requirements.validate_channels(context.input_signal.channels)
         except ValueError as exc:
             raise PluginLoadError(f"{slot}: {exc}") from exc
-    if descriptor.api_version == "2":
-        return loader.instantiate(
-            descriptor, expected_base, parameters=parameters,
-            context=context,
-        )
-    if parameters:
-        raise PluginLoadError(f"{slot}: configurable plugins require constructor API 2")
-    return loader.instantiate(descriptor, expected_base)
+    return loader.instantiate(
+        descriptor, expected_base, parameters=parameters, context=context,
+    )

@@ -7,17 +7,37 @@ from threading import RLock
 from time import monotonic
 from uuid import UUID, uuid4
 
-from omnibci.application.plugin_profiles import ActivationSnapshot, ProfileRevisionConflict
+from omnibci.application.activation_settings import MODULES, SECTIONS
+from omnibci.application.plugin_profiles import (
+    ActivationSet, ModuleActivation, SystemSettings, ProfileRevisionConflict,
+)
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.processing_source import processing_input
+
+
+def validate_external_peers(engine, activation_set, candidates, strategy):
+    if not engine.is_engine_ready or strategy == "no_change":
+        return
+    active = engine.applied_snapshot or {}
+    target = activation_set.settings()
+    for role in ("stimulation", "actuation"):
+        if role not in candidates and not (strategy == "rebuild" and not candidates):
+            continue
+        key = role.upper()
+        external = (not active.get(f"{key}.auto_spawn", True)
+                    or not target.get(f"{key}.auto_spawn", True))
+        if external and engine.is_peer_connected(role):
+            raise PluginSchemaError(f"{role.title()} is externally managed; disconnect its node before changing configuration")
 
 
 @dataclass(frozen=True)
 class ConfigurationPlan:
     plan_id: str
+    module: str
     expected_revision: str | None
-    target_revision: str
-    applied_revision: str | None
+    expected_revisions: dict[str, str | None]
+    target_revisions: dict[str, str]
+    applied_revisions: dict[str, str | None] | None
     generation: str | None
     running: bool
     strategy: str
@@ -25,7 +45,6 @@ class ConfigurationPlan:
     changed_settings: tuple[str, ...]
     errors: tuple[str, ...]
     signal_summary: str | None = None
-    module: str | None = None
 
     def to_dict(self):
         return asdict(self)
@@ -34,8 +53,14 @@ class ConfigurationPlan:
 @dataclass(frozen=True)
 class PlannedConfiguration:
     plan: ConfigurationPlan
-    snapshot: ActivationSnapshot
+    candidates: dict[str, ModuleActivation]
+    system: SystemSettings | None
     created_at: float
+    restored_from: str | None = None
+
+    def activation_set(self, current):
+        return ActivationSet({**current.modules, **self.candidates},
+                             self.system if self.system is not None else current.system)
 
 
 class RuntimeConfigurationService:
@@ -55,89 +80,94 @@ class RuntimeConfigurationService:
         self._lock = RLock()
 
     def status(self) -> dict:
-        accepted = self.profiles.repository.get_activation()
+        accepted = self.profiles.repository.get_activation_set()
         running = self.engine.is_engine_ready
         return {
             "running": running,
             "recovery_required": getattr(getattr(self.engine, "admission", None), "recovery_required", False) is True,
-            "accepted_revision": accepted.revision if accepted else None,
-            "applied_revision": self.engine.applied_revision if running else None,
+            "accepted": accepted.revisions(),
+            "applied": self.engine.applied_revisions if running else None,
             "generation": self.engine.generation if running else None,
             "operation": self.operation(self._active_operation) if self._active_operation else None,
         }
 
-    def plan(self, bindings: list[dict], *, expected_revision: str | None,
-             refresh_slots: list[str] | None = None,
-             include_host_settings: bool = False,
-             module: str | None = None) -> ConfigurationPlan:
-        current = self.profiles.repository.get_activation()
-        actual_revision = current.revision if current else None
-        if expected_revision != actual_revision:
-            raise ProfileRevisionConflict("The selected configuration changed; reload before planning")
-        snapshot = self.profiles.propose(
-            bindings, refresh_slots=refresh_slots,
-            include_host_settings=include_host_settings, module=module,
-        )
+    def plan(self, module: str, bindings: list[dict], *, expected_revision: str | None,
+             refresh_slots: list[str] | None = None) -> ConfigurationPlan:
+        if module not in SECTIONS:
+            raise PluginSchemaError("Unsupported configuration section")
+        if module == "system":
+            if bindings or refresh_slots:
+                raise PluginSchemaError("System settings cannot contain plugin bindings")
+            candidate = self.profiles.propose_system()
+        else:
+            candidate = self.profiles.propose(module, bindings, refresh_slots=refresh_slots)
+        return self._plan(module, candidate, expected_revision)
+
+    def revert_plan(self, module: str, entry_id: str) -> ConfigurationPlan:
+        if module not in MODULES:
+            raise PluginSchemaError("Unsupported configuration module")
+        entry = self.profiles.repository.get_module_history_entry(module, entry_id)
+        if entry is None:
+            raise KeyError(entry_id)
+        current = self.profiles.repository.get_module(module)
+        return self._plan(module, entry.activation, current.revision if current else None,
+                          restored_from=entry_id)
+
+    def _plan(self, module, candidate, expected_revision, *, restored_from=None):
+        current = self.profiles.repository.get_activation_set()
+        revisions = current.revisions()
+        if revisions[module] != expected_revision:
+            raise ProfileRevisionConflict("The module configuration changed; reload before planning")
+        candidates = {} if module == "system" else {module: candidate}
+        system = candidate if module == "system" else None
+        if system is None and current.system is None:
+            system = self.profiles.propose_system()
+        combined = ActivationSet({**current.modules, **candidates}, system or current.system)
+        targets = {name: value.revision for name, value in candidates.items()}
+        if system is not None:
+            targets["system"] = system.revision
+        before = current.system if module == "system" else current.modules[module]
+        old = {b.slot: b for b in before.bindings} if module != "system" and before else {}
+        new = {b.slot: b for b in candidate.bindings} if module != "system" else {}
+        slots = sorted(s for s in old.keys() | new.keys()
+                       if self._binding_values(old.get(s)) != self._binding_values(new.get(s)))
+        if [s for s in old if s.startswith("processing.filter.")] != [s for s in new if s.startswith("processing.filter.")]:
+            slots = sorted(set(slots) | {s for s in old.keys() | new.keys() if s.startswith("processing.filter.")})
+        old_settings = before.settings if before else {}
+        changed_settings = tuple(sorted(k for k in old_settings.keys() | candidate.settings.keys()
+                                        if old_settings.get(k) != candidate.settings.get(k)))
+        changed = any(revisions[k] != v for k, v in targets.items())
         running = self.engine.is_engine_ready
+        strategy = self._strategy(module, slots, changed_settings, old, new) if changed else "no_change"
+        if changed and system is not None and system.revision != revisions["system"]:
+            strategy = "rebuild"
+        if changed and (not running or module in ("acquisition", "processing")
+                        and not self.engine.is_module_running(module)):
+            strategy = "select_on_start"
+        dependencies = {module, "system"}
+        if module == "processing":
+            dependencies.add("acquisition")
+        if strategy == "rebuild" and module == "system":
+            dependencies.update(SECTIONS)
+        expected = {key: revisions[key] for key in SECTIONS if key in dependencies}
+        applied = self.engine.applied_revisions if running else None
         errors = []
-        materialized = {}
         try:
-            self._validate_runtime(snapshot, module=module)
-            # Configuration pages do not need another module's runtime projection.
-            materialized = {"PLUGINS.bindings": [binding.to_dict() for binding in snapshot.bindings]}
+            self._validate_runtime(combined, candidates, strategy)
         except (ValueError, KeyError) as exc:
             errors.append(str(exc))
-        old = {binding.slot: binding for binding in current.bindings} if current else {}
-        new = {binding.slot: binding for binding in snapshot.bindings}
-        slots = sorted(slot for slot in old.keys() | new.keys()
-                       if self._binding_values(old.get(slot)) != self._binding_values(new.get(slot)))
-        old_order = [b.slot for b in current.bindings if b.kind == "filter"] if current else []
-        new_order = [b.slot for b in snapshot.bindings if b.kind == "filter"]
-        if old_order != new_order:
-            slots = sorted(set(slots) | set(old_order) | set(new_order))
-        old_settings = current.settings if current else {}
-        settings = tuple(sorted(key for key in old_settings.keys() | snapshot.settings.keys()
-                                if old_settings.get(key) != snapshot.settings.get(key)))
-        strategy = self._strategy(slots, settings, old, new)
-        if (running and strategy == "trial_boundary" and materialized
-                and processing_input(self.engine.applied_snapshot or {}) != processing_input(materialized)):
-            # Historical profiles may acquire an identity input only in their runtime projection.
-            strategy = "rebuild"
-        if strategy == "no_change" and current is not None and snapshot.revision != current.revision:
-            strategy = "rebuild"
-        if self.executor is not None and strategy not in self.executor.supported_strategies:
-            strategy = "rebuild"
-        if not running:
-            strategy = "select_on_start"
-        elif current is None or self.engine.applied_revision != current.revision:
-            errors.append("Applied and selected revisions differ; reconcile the runtime before applying")
-        if running and strategy != "no_change":
-            before = self.engine.applied_snapshot or {}
-            # External identities are fixed for one graph generation. Until a
-            # coordinated update protocol exists, even decoder-only edits must
-            # wait for a stop/start so every node receives the same revision.
-            for role in ("STIMULATION", "ACTUATION"):
-                enabled = role != "ACTUATION" or before.get("ACTUATION.enabled", False)
-                target_enabled = role != "ACTUATION" or snapshot.settings.get("ACTUATION.enabled", False)
-                if ((enabled and not before.get(f"{role}.auto_spawn", True)) or
-                        (target_enabled and not snapshot.settings.get(f"{role}.auto_spawn", True))):
-                    peer_connected = getattr(self.engine, "is_peer_connected", None)
-                    in_use = callable(peer_connected) and peer_connected(role.lower()) is True
-                    if in_use:
-                        errors.append(f"{role.title()} is externally managed; stop the engine before changing configuration")
-                    else:
-                        # A fresh gateway publishes the new identity to waiting external nodes.
-                        strategy = "rebuild"
+        if running and any(applied.get(key) != revision for key, revision in expected.items() if revision is not None):
+            errors.append("Applied and selected module revisions differ; reconcile the runtime before applying")
+        projection = {"PLUGINS.bindings": [b.to_dict() for b in combined.bindings()]}
         plan = ConfigurationPlan(
-            str(uuid4()), actual_revision, snapshot.revision,
-            self.engine.applied_revision if running else None,
+            str(uuid4()), module, expected_revision, expected, targets,
+            {key: applied.get(key) for key in expected} if applied is not None else None,
             self.engine.generation if running else None, running, strategy,
-            tuple(slots), settings,
-            tuple(errors), self._signal_summary(materialized) if module in (None, "processing") else None,
-            module,
+            tuple(slots), changed_settings, tuple(errors),
+            self._signal_summary(projection) if module == "processing" else None,
         )
         with self._lock:
-            self._plans[plan.plan_id] = PlannedConfiguration(plan, snapshot, monotonic())
+            self._plans[plan.plan_id] = PlannedConfiguration(plan, candidates, system, monotonic(), restored_from)
             while len(self._plans) > self._MAX_PLANS:
                 self._plans.popitem(last=False)
         return plan
@@ -170,30 +200,36 @@ class RuntimeConfigurationService:
         plan = stored.plan
         if plan.errors:
             raise PluginSchemaError("; ".join(plan.errors))
-        current = self.profiles.repository.get_activation()
-        revision = current.revision if current else None
-        running = self.engine.is_engine_ready
-        if (revision != plan.expected_revision or running != plan.running
-                or (running and (self.engine.generation != plan.generation
-                                 or self.engine.applied_revision != plan.applied_revision))):
-            raise ProfileRevisionConflict("Runtime or selected configuration changed; create a new plan")
-        # Recheck availability; installed packages may have changed since review.
-        self._validate_runtime(stored.snapshot, module=plan.module)
+        current = self.profiles.repository.get_activation_set()
+        revisions = current.revisions()
+        applied = self.engine.applied_revisions or {}
+        if (any(revisions[k] != v for k, v in plan.expected_revisions.items())
+                or self.engine.is_engine_ready != plan.running
+                or (plan.running and (self.engine.generation != plan.generation
+                    or any(applied.get(k) != v for k, v in plan.applied_revisions.items())))):
+            raise ProfileRevisionConflict("Runtime or module configuration changed; create a new plan")
+        self._validate_runtime(stored.activation_set(current), stored.candidates, plan.strategy)
+        if (plan.running and plan.module in ("acquisition", "processing") and plan.strategy != "no_change"
+                and self.engine.is_module_running(plan.module) == (plan.strategy == "select_on_start")):
+            raise ProfileRevisionConflict("Module state changed; create a new plan")
         return stored
 
-    def _validate_runtime(self, snapshot, *, module=None):
+    def _validate_runtime(self, activation_set, candidates, strategy):
         if not self.engine.is_engine_ready and (
                 getattr(self.engine, "restart_blocked", False)
                 or getattr(self.engine, "runtime_package_snapshots", ())):
-            raise PluginSchemaError(
-                "The previous engine still owns resources; stop it before selecting configuration"
-            )
+            raise PluginSchemaError("The previous engine still owns resources; stop it before selecting configuration")
+        validate_external_peers(self.engine, activation_set, candidates, strategy)
         usage = getattr(self.executor, "active_kinds", None)
-        self.profiles.validate_activation(
-            snapshot, active_kinds=usage(snapshot) if callable(usage) else None, module=module,
-        )
-        if self.engine.is_engine_ready and not any(b.slot == "acquisition.source" for b in snapshot.bindings):
-            raise PluginSchemaError("The running engine requires acquisition.source")
+        active_kinds = usage(activation_set) if callable(usage) else None
+        modules = activation_set.modules if strategy == "rebuild" and not candidates else candidates
+        for candidate in modules.values():
+            if candidate is not None:
+                self.profiles.validate_module(candidate, active_kinds=active_kinds)
+        if (self.engine.is_module_running("acquisition") and
+                ("acquisition" in candidates or strategy == "rebuild" and not candidates)
+                and not any(binding.slot == "acquisition.source" for binding in activation_set.bindings())):
+            raise PluginSchemaError("The running Acquisition module requires acquisition.source")
 
     def operation(self, operation_id: str):
         with self._lock:
@@ -223,7 +259,7 @@ class RuntimeConfigurationService:
             if self.executor is None:
                 raise RuntimeError("Runtime configuration executor is unavailable")
             operation = dict(operation_id=operation_id, plan_id=plan_id,
-                             target_revision=stored.plan.target_revision, status="queued", stage="queued",
+                             target_revisions=stored.plan.target_revisions, status="queued", stage="queued",
                              error=None, rolled_back=False, result=None)
             self._operations[operation_id] = operation
             self._active_operation = operation_id
@@ -241,7 +277,7 @@ class RuntimeConfigurationService:
 
         try:
             progress("validating")
-            result = await self.executor.execute(stored, progress)
+            result = await self.executor.execute(stored, progress, operation_id=operation_id)
         except BaseException as exc:
             if getattr(exc, "recovery_required", False):
                 self.engine.admission.quarantine(str(exc))
@@ -266,29 +302,27 @@ class RuntimeConfigurationService:
         return (binding.kind, binding.selection, binding.parameters, binding.configuration_version,
                 binding.processing_input)
 
-    def _strategy(self, slots, settings, old, new):
-        if not slots and not settings:
-            return "no_change"
-        if settings or any(s in ("acquisition.source", "processing.epoch_detector") for s in slots):
+    def _strategy(self, module, slots, settings, old, new):
+        if module in ("system", "acquisition"):
             return "rebuild"
-        previous_decoder, following_decoder = old.get("processing.decoder"), new.get("processing.decoder")
-        if (getattr(previous_decoder, "processing_input", None)
-                != getattr(following_decoder, "processing_input", None)):
-            return "rebuild"
-        if all(s == "processing.decoder" or s.startswith("processing.filter.") for s in slots):
-            # Schema annotations are a permission to use a narrower boundary;
-            # unknown or restart-scoped parameter changes require a rebuild.
-            for slot in slots:
-                previous, following = old.get(slot), new.get(slot)
-                if previous is None or following is None or previous.selection != following.selection:
-                    continue
-                schema = self.profiles.catalog.get(following.kind, following.selection).schema or {}
-                properties = schema.get("properties", {})
-                for key in previous.parameters.keys() | following.parameters.keys():
-                    if previous.parameters.get(key) != following.parameters.get(key):
-                        if properties.get(key, {}).get("x-apply") != "trial":
-                            return "rebuild"
-            return "trial_boundary"
-        if all(s.startswith(("stimulation.", "actuation.")) for s in slots):
+        if module in ("stimulation", "actuation"):
             return "module"
-        return "rebuild"
+        if settings or "processing.epoch_detector" in slots:
+            return "rebuild"
+        if (getattr(old.get("processing.decoder"), "processing_input", None)
+                != getattr(new.get("processing.decoder"), "processing_input", None)):
+            return "rebuild"
+        if list(old) != list(new):
+            return "module"
+        for slot in slots:
+            previous, following = old.get(slot), new.get(slot)
+            if previous is None or following is None or previous.selection != following.selection:
+                return "module"
+            if previous.configuration_version != following.configuration_version:
+                return "module"
+            properties = (self.profiles.catalog.get(following.kind, following.selection).schema or {}).get("properties", {})
+            for key in previous.parameters.keys() | following.parameters.keys():
+                if previous.parameters.get(key) != following.parameters.get(key):
+                    if properties.get(key, {}).get("x-apply") != "trial":
+                        return "module"
+        return "trial_boundary"

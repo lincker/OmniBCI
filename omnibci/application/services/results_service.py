@@ -39,7 +39,8 @@ class ResultsService:
                 "generation": record.generation,
                 "epoch_number": record.epoch_number,
                 "event_id": record.event_id,
-                "config_revision": record.config_revision,
+                "processing_revision": record.processing_revision,
+                "acquisition_revision": record.acquisition_revision,
                 "status": record.status,
                 "reason": record.reason,
                 "sample_rate": record.sample_rate,
@@ -79,7 +80,8 @@ class ResultsService:
             self._refresh()
             return {"generation": self._generation, "trials": [
                 {"generation": item.generation, "trial_number": item.trial_number,
-                 "config_revision": item.config_revision,
+                 "processing_revision": item.processing_revision,
+                 "acquisition_revision": item.acquisition_revision,
                  "target_id": item.classification.target_id,
                  "event_id": item.classification.event_id,
                  "confidence": item.classification.confidence,

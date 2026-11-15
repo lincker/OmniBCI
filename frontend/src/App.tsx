@@ -4,6 +4,7 @@ import { usePoll } from "./hooks/usePoll";
 import { useAcquisition } from "./hooks/useAcquisition";
 import { useResultsFeed } from "./hooks/useResultsFeed";
 import { useRuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
+import { useCurrentConfiguration } from "./hooks/useCurrentConfiguration";
 import { RuntimeConfigurationStatus, RuntimeConfigurationReview } from "./RuntimeConfiguration";
 import { ConfigCard } from "./ConfigCard";
 import { BackendLogs } from "./BackendLogs";
@@ -58,6 +59,7 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
   const feed = useResultsFeed();
   const engine = usePoll(api.engineStatus);
   const runtime = useRuntimeConfiguration();
+  const current = useCurrentConfiguration(runtime.status?.accepted, runtime.completedRestoration);
   const acquisition = useAcquisition(runtime, engine.refresh);
   const engineRunning = engine.data?.running ?? false;
   const isSetup = setupPages.some(([page]) => page === view);
@@ -74,15 +76,15 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
     if (previousView.current !== view) { previousView.current = view; focusEditor(); }
   }, [view]);
   useEffect(() => {
-    if (desktopBridge() || (!dirty && !busy && !runtime.inProgress)) return;
+    if (desktopBridge() || (!dirty && !current.dirty && !busy && !runtime.inProgress)) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty, busy, runtime.inProgress]);
+  }, [dirty, current.dirty, busy, runtime.inProgress]);
 
   useEffect(() => {
-    desktopBridge()?.setEditorState({ dirty, busy: busy || runtime.inProgress });
-  }, [dirty, busy, runtime.inProgress]);
+    desktopBridge()?.setEditorState({ dirty: dirty || current.dirty, busy: busy || runtime.inProgress });
+  }, [dirty, current.dirty, busy, runtime.inProgress]);
 
   const navigate = useCallback((next: View) => {
     if (next === view || busy || acquisition.pending) return;
@@ -143,12 +145,12 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
         <fieldset className="desktop-control-guard" disabled={!!desktopConnection && desktopConnection.status !== "ready"}>
         <div className="editor-viewport">
           {isSetup ? <PluginProfiles key={view} module={view as SetupPage} engineRunning={engineRunning} engineAvailable={engine.data !== null && engine.error === null} navigation={navigation}
-            runtime={runtime} acquisition={acquisition}
-            onDirtyChange={setDirty} onBusyChange={setBusy} onRun={() => navigate("run")} />
+            runtime={runtime} acquisition={acquisition} current={current}
+            onBusyChange={setBusy} onRun={() => navigate("run")} />
             : view === "extensions" ? <PluginMarket runtimeBusy={runtime.blocked}
               onBusyChange={setBusy} onDirtyChange={setDirty} onOpenSetup={() => navigate(lastSetup)} />
             : view === "run" ? <RunConsole engine={engine} acquisition={acquisition} feed={feed}
-              runtime={runtime} onBusyChange={setBusy} onEditSetup={() => navigate("acquisition")}
+              runtime={runtime} current={current} onBusyChange={setBusy} onEditSetup={() => navigate("acquisition")}
               onEditProcessing={() => navigate("processing")}
               onResults={() => navigate("results")} />
             : view === "results" ? <div className="runtime-content">

@@ -1,5 +1,6 @@
 """Tests for SignalProcessingWorker plugin loading and processor wiring."""
 from __future__ import annotations
+from tests.plugin_configuration_helpers import builtin_selection
 
 from queue import Queue
 from unittest.mock import MagicMock, call, patch
@@ -47,7 +48,7 @@ class TestFilterLoading:
         from omnibci.application.plugin_profiles import ProfileBinding
         from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
         from uuid import uuid4
-        descriptor = PluginCatalog().resolve("filter", "BASELINE_CORRECTION")
+        descriptor = PluginCatalog().resolve_selection("filter", builtin_selection("filter", "BASELINE_CORRECTION"))
         selection = replace(descriptor.selection, package_id="missing") if missing else descriptor.selection
         return {"PLUGINS.bindings": [ProfileBinding(
             f"processing.filter.{uuid4()}", "filter", None, selection, {},
@@ -74,21 +75,21 @@ class TestAlgorithmLoading:
         from omnibci.domain.channel_mapping import ChannelDescriptor, ProcessingInput, SignalInfo, compile_processing_plan
         from omnibci.infrastructure.signal_processing.signal_configuration import load_signal_pipeline
         from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-        snapshot = {"ACQUISITION.sample_rate": 1000, "CONFIG.revision": "test-revision"}
+        snapshot = {"ACQUISITION.sample_rate": 1000, "CONFIG.module_revisions": {"acquisition": "test-revision", "processing": "test-revision", "stimulation": "test-revision", "actuation": "test-revision"}, "CONFIG.system_revision": "system"}
         bindings = []
         descriptors = []
         for slot, kind, alias, parameters in (
             ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA", {"window_duration": 1.5, "offset_time": 0.2}),
             ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
         ):
-            descriptor = PluginCatalog().resolve(kind, alias)
+            descriptor = PluginCatalog().resolve_selection(kind, builtin_selection(kind, alias))
             descriptors.append(descriptor)
             bindings.append(ProfileBinding(slot, kind, None, descriptor.selection, parameters,
                                            processing_input=ProcessingInput() if kind == "decoder" else None).to_dict())
         snapshot["PLUGINS.bindings"] = bindings
         source = SignalInfo("file_reader", 250,
                                 (ChannelDescriptor(0, "O1", signal_type="eeg", unit="V"),), 1)
-        plan = compile_processing_plan(source, ProcessingInput(), config_revision=snapshot["CONFIG.revision"])
+        plan = compile_processing_plan(source, ProcessingInput(), acquisition_revision=snapshot["CONFIG.module_revisions"]["processing"])
         monkeypatch.setattr(conf_module.settings, "get", lambda *a, **k: pytest.fail("global settings read"))
         with patch.object(
             PluginLoader, "load_entrypoint", wraps=PluginLoader.load_entrypoint
@@ -138,14 +139,14 @@ class TestProcessorWiring:
         source = SignalInfo("test-source", 250, (ChannelDescriptor(0, "O1"),), 1,
                             connection_id="test-connection")
         inputs = ProcessingInput()
-        plan = compile_processing_plan(source, inputs, config_revision="test-revision")
+        plan = compile_processing_plan(source, inputs, acquisition_revision="test-revision")
         receipt = {
-            "generation": "test-run", "config_revision": "test-revision",
+            "generation": "test-run", "acquisition_revision": "test-revision", "processing_revision": "test-revision", "system_revision": "system",
             "connection_id": source.connection_id,
             "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint,
         }
         snapshot = {
-            "CONFIG.revision": "test-revision", "CONFIG.generation": "test-run",
+            "CONFIG.module_revisions": {"acquisition": "test-revision", "processing": "test-revision", "stimulation": "test-revision", "actuation": "test-revision"}, "CONFIG.system_revision": "system", "CONFIG.generation": "test-run",
             "ACQUISITION.signal_source": source.source_id,
             "PLUGINS.bindings": [ProfileBinding(
                 "processing.decoder", "decoder", None,
@@ -206,8 +207,8 @@ class TestProcessorWiring:
             baseline_duration=0.3,
             filters=[],
             generation=None,
-            config_revision=None,
-            settings_snapshot=worker._snapshot(),
+            processing_revision=None, acquisition_revision=None, system_revision=None,
+            settings_snapshot=worker._snapshot(), runtime_counters=None,
         )
         assert worker.signal_processor is processor
         processor.run.assert_called_once_with()

@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
+from omnibci.application.plugin_profiles import ActivationSet
 from omnibci.application.services.signal_setup_service import SignalSetupService
 from omnibci.conf import OmniBCISettings
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
@@ -17,8 +18,9 @@ def signal_client(tmp_path):
     path = tmp_path / "settings.toml"
     path.write_text('[NEUROENGINE]\nqueue_size = 100\n', encoding="utf-8")
     service = SignalSetupService(
-        OmniBCISettings(path), SimpleNamespace(repository=SimpleNamespace(get_activation=lambda: None)),
-        SimpleNamespace(admission=None, applied_snapshot=None, is_engine_ready=False),
+        OmniBCISettings(path), SimpleNamespace(repository=SimpleNamespace(get_activation_set=lambda: ActivationSet({}, None)), materialize=lambda _: {}),
+        SimpleNamespace(admission=None, applied_snapshot=None, is_engine_ready=False,
+                        is_module_running=lambda module: False),
         SimpleNamespace(cached_descriptor_for=lambda binding: None), None,
     )
     app = FastAPI()
@@ -58,7 +60,7 @@ def test_malformed_drafts_are_rejected_without_writes(signal_client, patch):
 def connected_descriptor(signal_client, signal_type="unknown"):
     service = signal_client.app.state.container.signal_setup_service
     service.engine.is_engine_ready = True
-    service.engine.applied_snapshot = {"ACQUISITION.signal_source": "fixture"}
+    service.engine.applied_snapshot = {"ACQUISITION.signal_source": "fixture", "PLUGINS.bindings": [{"slot": "acquisition.source", "kind": "acquisition", "selection": {"package_id": "test.source", "contribution_id": "default", "version": "1"}, "parameters": {}}]}
     descriptor = SignalInfo("fixture", 500, (
         ChannelDescriptor(0, "CH1", signal_type=signal_type, unit="uV"),
         ChannelDescriptor(1, "CH1", unit="uV"),

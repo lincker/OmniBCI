@@ -5,6 +5,8 @@ import sys
 from importlib import import_module
 from unittest.mock import Mock, call
 
+from tests.plugin_configuration_helpers import builtin_selection
+
 import pytest
 
 from omnibci.domain.ports.acquisition import SignalSource
@@ -24,7 +26,7 @@ def test_neuroscan_driver_is_discoverable_and_loadable(
     plugin_type = f"neuroscan_{driver}_reader"
 
     plugins = {plugin.plugin_type: plugin for plugin in list_plugins("acquisition")}
-    descriptor = PluginCatalog().resolve("acquisition", plugin_type)
+    descriptor = PluginCatalog().resolve_selection("acquisition", builtin_selection("acquisition", plugin_type))
     instance = PluginLoader.instantiate(descriptor, SignalSource, parameters={}, context=PluginContext())
 
     assert plugins[plugin_type].source == "builtin"
@@ -48,7 +50,7 @@ def test_scan45_trigger_uses_configured_address_and_sends_events(
     monkeypatch, tmp_path, configured_address, explicit_address, expected_address,
 ):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "no-user-plugins"))
-    descriptor = PluginCatalog().resolve("acquisition", "neuroscan_scan45_reader")
+    descriptor = PluginCatalog().resolve_selection("acquisition", builtin_selection("acquisition", "neuroscan_scan45_reader"))
     reader_class = PluginLoader.load_entrypoint(descriptor, SignalSource)
     driver_module = sys.modules[reader_class.__module__]
     support_module = import_module(".._inpout", driver_module.__name__)
@@ -71,7 +73,7 @@ def test_scan45_trigger_uses_configured_address_and_sends_events(
 
 def test_scan45_trigger_rejects_missing_address_before_opening_port(monkeypatch, tmp_path):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "no-user-plugins"))
-    descriptor = PluginCatalog().resolve("acquisition", "neuroscan_scan45_reader")
+    descriptor = PluginCatalog().resolve_selection("acquisition", builtin_selection("acquisition", "neuroscan_scan45_reader"))
     reader_class = PluginLoader.load_entrypoint(descriptor, SignalSource)
     driver_module = sys.modules[reader_class.__module__]
     open_port = Mock()
@@ -91,7 +93,7 @@ def test_scan45_trigger_rejects_invalid_address_before_opening_port(
     monkeypatch, tmp_path, address,
 ):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "no-user-plugins"))
-    descriptor = PluginCatalog().resolve("acquisition", "neuroscan_scan45_reader")
+    descriptor = PluginCatalog().resolve_selection("acquisition", builtin_selection("acquisition", "neuroscan_scan45_reader"))
     reader_class = PluginLoader.load_entrypoint(descriptor, SignalSource)
     driver_module = sys.modules[reader_class.__module__]
     open_port = Mock()

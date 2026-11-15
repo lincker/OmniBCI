@@ -48,6 +48,23 @@ const canonical = (value: unknown) => JSON.stringify(value, (_key, item) =>
 );
 export const sameParameters = (left: unknown, right: unknown) => canonical(left) === canonical(right);
 
+/** Apply explicit schema defaults without changing the editor's values. */
+export function normalizedParameters(parameters: Record<string, unknown>, schema?: ConfigurationSchema | null): Record<string, unknown> {
+  const normalize = (value: unknown, definition?: ConfigurationSchema): unknown => {
+    if (definition?.type === "object" && object(value)) {
+      const result = { ...value };
+      for (const [key, child] of Object.entries(definition.properties ?? {})) {
+        if (Object.prototype.hasOwnProperty.call(result, key)) result[key] = normalize(result[key], child);
+        else if (child.default !== undefined) result[key] = normalize(structuredClone(child.default), child);
+      }
+      return result;
+    }
+    return definition?.type === "array" && Array.isArray(value)
+      ? value.map((item) => normalize(item, definition.items)) : value;
+  };
+  return normalize(structuredClone(parameters), schema ?? undefined) as Record<string, unknown>;
+}
+
 export function initialSchemaValue(schema: ConfigurationSchema): unknown {
   if (schema.enum?.length) return clone(schema.default !== undefined ? schema.default : schema.enum[0]);
   if (schema.type === "object") {

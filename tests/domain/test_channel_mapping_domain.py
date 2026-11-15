@@ -128,7 +128,7 @@ def test_data_mapping_requirement_depends_only_on_complete_physical_order(channe
     restored = ResolvedSignalPlan.from_dict(json.loads(json.dumps(plan.to_dict())))
     assert restored.requires_data_mapping is requires_data_mapping
     assert restored.fingerprint == plan.fingerprint
-    assert replace(plan, config_revision="new-revision").requires_data_mapping is requires_data_mapping
+    assert replace(plan, acquisition_revision="new-revision").requires_data_mapping is requires_data_mapping
     with pytest.raises(FrozenInstanceError):
         plan.requires_data_mapping = not requires_data_mapping
 

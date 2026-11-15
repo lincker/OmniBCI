@@ -4,6 +4,8 @@ import { useI18n, type Translate } from "../i18n";
 import { connectSource, startReading } from "../source-lifecycle";
 import { usePoll } from "./usePoll";
 import type { RuntimeConfiguration } from "./useRuntimeConfiguration";
+import type { RevisionMap } from "../api/plugin-config";
+import type { RuntimePlanRequest } from "../api/runtime-config";
 
 type Operation = "connect" | "disconnect" | "read" | "stopRead";
 
@@ -48,7 +50,14 @@ export function useAcquisition(runtime: RuntimeConfiguration, refreshEngine: () 
   return {
     ...status, refresh, pending: operation !== null,
     connect: { pending: operation === "connect", error: acquisitionError(errors.connect, t),
-      run: (revision: string) => run("connect", () => connectSource(revision)) },
+      run: (configuration: RuntimePlanRequest) => run("connect", async () => {
+        if (configuration.module !== "acquisition") throw new Error("Connect requires the current acquisition configuration.");
+        const current = await api.acquisitionStatus();
+        if (!current) throw new Error("Source status is unavailable. Refresh before retrying.");
+        if (current.connected || current.streaming) throw new Error("Stop reading and disconnect before changing the source connection.");
+        const revision = await runtime.applyCurrentSelection(configuration);
+        if (revision) return connectSource(revision);
+      }) },
     disconnect: { pending: operation === "disconnect", error: acquisitionError(errors.disconnect, t),
       run: () => run("disconnect", async () => {
         const current = await api.acquisitionStatus();
@@ -60,7 +69,7 @@ export function useAcquisition(runtime: RuntimeConfiguration, refreshEngine: () 
         if (current.connected) await api.acqDisconnect();
       }) },
     read: { pending: operation === "read", error: acquisitionError(errors.read, t),
-      run: (revision: string) => run("read", () => startReading(revision)) },
+      run: (revision: RevisionMap) => run("read", () => startReading(revision)) },
     stopRead: { pending: operation === "stopRead", error: acquisitionError(errors.stopRead, t),
       run: () => run("stopRead", api.acqStreamStop) },
   };

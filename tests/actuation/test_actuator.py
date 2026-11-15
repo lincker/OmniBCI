@@ -67,19 +67,27 @@ class TestLifecycle:
         (package_dir / "manifest.toml").write_text(
             dedent(
                 """
+                manifest_version = 2
                 [package]
                 id = "user-device"
                 publisher = "alice"
                 version = "1.0.0"
+                domain = "actuation"
+                api_version = "2"
+                [[contributions]]
+                id = "default"
                 kind = "effector"
-                api_version = "1"
                 plugin_type = "user_device"
                 entrypoint = "driver:UserDevice"
                 display_name = "User Device"
+                [contributions.configuration]
+                schema = "schema.json"
+                schema_version = 1
                 """
             ),
             encoding="utf-8",
         )
+        (package_dir / "schema.json").write_text('{"type":"object","properties":{},"additionalProperties":false}')
         (package_dir / "driver.py").write_text(
             dedent(
                 """
@@ -88,7 +96,7 @@ class TestLifecycle:
                 class UserDevice(Effector):
                     plugin_type = "user_device"
 
-                    def __init__(self):
+                    def __init__(self, *, parameters, context):
                         self.calls = []
 
                     def setup(self):
@@ -106,7 +114,7 @@ class TestLifecycle:
         monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(plugin_root))
         from omnibci.application.plugin_profiles import ProfileBinding
         from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-        descriptor = PluginCatalog().resolve("effector", "user_device")
+        descriptor = next(item for item in PluginCatalog().list_contributions("effector") if item.plugin_type == "user_device")
         binding = ProfileBinding("actuation.effector", "effector", None, descriptor.selection, {})
         actuator = Actuator(settings_snapshot={"PLUGINS.bindings": [binding.to_dict()]})
         actuator.setup()

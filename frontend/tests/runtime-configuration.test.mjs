@@ -15,8 +15,10 @@ const { TrialResults } = await server.ssrLoadModule("/src/TrialResults.tsx");
 const { readTrialControls } = await server.ssrLoadModule("/src/plugin-controls.ts");
 globalThis.window = { localStorage: { getItem: () => "en" }, navigator: { language: "en" } };
 const noop = () => {};
-const status = { running: true, accepted_revision: "selected-previous", applied_revision: "selected-previous", generation: "generation-1", operation: null };
-const plan = { plan_id: "plan-1", expected_revision: status.accepted_revision, target_revision: "selected-next", applied_revision: status.applied_revision,
+const current = { ready: true, error: null, entries: {}, filterOrder: [], hasChanges: () => false, validationError: () => null };
+const revisions = { acquisition: "a", processing: "selected-previous", stimulation: "s", actuation: "e", system: "sys" };
+const status = { running: true, accepted: revisions, applied: revisions, generation: "generation-1", operation: null };
+const plan = { plan_id: "plan-1", module: "processing", expected_revision: revisions.processing, expected_revisions: { processing: revisions.processing, system: revisions.system }, target_revisions: { processing: "selected-next" }, applied_revisions: status.applied,
   generation: status.generation, running: true, strategy: "trial_boundary", changed_slots: ["processing.decoder"], changed_settings: [], errors: [] };
 const baseRuntime = { status, plan, operation: null, blocked: false, inProgress: false, recoveryRequired: false, submitting: false,
   uncertain: false, error: null, requestError: null, review: noop, apply: noop, dismissPlan: noop, refresh: noop, retryUnconfirmed: noop };
@@ -37,10 +39,13 @@ test("review presents the impact before Apply and blocks invalid plans", () => {
   assert.match(invalid, /Selected package is unavailable/);
   assert.equal(buttonDisabled(invalid, "Apply configuration"), true);
   const rebuild = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan, strategy: "rebuild" } } });
-  assert.match(rebuild, /Pause and rebuild the engine/);
-  assert.match(rebuild, /Acquisition or an in-progress epoch may be interrupted/);
+  assert.match(rebuild, /Restart the affected module/);
+  assert.match(rebuild, /The selected module will restart/);
+  assert.doesNotMatch(rebuild, /The engine will restart/);
+  const engineRebuild = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan, module: "system", strategy: "rebuild" } } });
+  assert.match(engineRebuild, /All running modules will be interrupted/);
   const nextStart = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan, strategy: "select_on_start" } } });
-  assert.match(nextStart, /It does not start the engine/);
+  assert.match(nextStart, /It does not start any module/);
   const channels = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan,
     signal_summary: "Channels: C4, C3; types: EEG" } } });
   assert.match(channels, /Channels: C4, C3; types: EEG/);
@@ -73,7 +78,7 @@ test("blocked reviews explain whether to wait, reconnect, or recover", () => {
   }
 });
 
-for (const [field, value] of [["accepted_revision", "changed"], ["applied_revision", "changed"], ["generation", "changed"], ["running", false]]) {
+for (const [field, value] of [["accepted", { ...revisions, processing: "changed" }], ["applied", { ...revisions, processing: "changed" }], ["generation", "changed"], ["running", false]]) {
   test(`a changed ${field} invalidates the preview without applying it`, () => {
     const html = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, status: { ...status, [field]: value } } });
     assert.match(html, /runtime or selected configuration changed/);
@@ -84,7 +89,7 @@ for (const [field, value] of [["accepted_revision", "changed"], ["applied_revisi
 
 test("configuration feedback retains errors and recovery without revision details", () => {
   const runtime = { ...baseRuntime, recoveryRequired: true,
-    status: { ...status, accepted_revision: "selected-new", applied_revision: "applied-old" },
+    status: { ...status, accepted: { ...revisions, processing: "selected-new" }, applied: { ...revisions, processing: "applied-old" } },
     operation: { status: "recovery_required", stage: "rollback", error: "Module acknowledgement is missing", rolled_back: false } };
   const html = render(RuntimeConfigurationStatus, { runtime });
   assert.doesNotMatch(html, /selected-new|applied-old|Configuration details|<details/);
@@ -107,9 +112,9 @@ test("routine configuration states render no status bar or revision details", ()
   for (const overrides of [
     {},
     { status: null },
-    { status: { ...status, running: false, applied_revision: null } },
-    { status: { ...status, applied_revision: "older-configuration" } },
-    { status: { ...status, running: false, accepted_revision: null, applied_revision: null } },
+    { status: { ...status, running: false, applied: null } },
+    { status: { ...status, applied: { ...revisions, processing: "older-configuration" } } },
+    { status: { ...status, running: false, accepted: {}, applied: null } },
     { operation: { status: "queued", stage: "queued" } },
     { operation: { status: "applying", stage: "waiting_for_trial_boundary" } },
     { operation: { status: "succeeded", stage: "complete", result: { outcome: "selected" } } },
@@ -119,17 +124,19 @@ test("routine configuration states render no status bar or revision details", ()
   }
 });
 
-test("Run preserves system progress and permits stop controls only after an operation settles", () => {
+test("Run preserves independent module controls and permits stopping only after an operation settles", () => {
   const props = { engine: { data: { running: true, acquisition_alive: true, processor_alive: true }, error: null, refresh: noop },
     acquisition: { data: { connected: true, streaming: true, sample_rate: 250, channel_count: 8 }, error: null, refresh: noop, pending: false,
       ...Object.fromEntries(["connect", "disconnect", "read", "stopRead"].map((name) => [name, { run: noop, pending: false, error: null }])) },
-    feed: { generation: "engine-1", trials: [], acks: [] }, onBusyChange: noop, onEditSetup: noop, onResults: noop };
+    feed: { generation: "engine-1", trials: [], acks: [] }, current, onBusyChange: noop, onEditSetup: noop, onResults: noop };
   const run = (runtime, streaming) => renderToStaticMarkup(React.createElement(I18nProvider, null,
     React.createElement(RunConsole, { ...props, runtime,
       acquisition: { ...props.acquisition, data: { ...props.acquisition.data, streaming } } })));
   for (const streaming of [false, true]) {
     const pending = run({ ...baseRuntime, blocked: true, inProgress: true }, streaming);
-    assert.match(pending, /aria-label="System progress"/);
+    assert.doesNotMatch(pending, /aria-label="System progress"/);
+    assert.match(pending, /Start processing/);
+    assert.match(pending, /Start actuation/);
     for (const label of ["Start engine", "Stop engine", "Connect", "Disconnect", "Start reading", "Stop reading", "Launch stimulation", "Trigger trial"]) {
       assert.equal(buttonDisabled(pending, label), true, label);
     }
@@ -143,7 +150,7 @@ test("Run preserves system progress and permits stop controls only after an oper
     for (const html of [pending, recovery]) {
       const engineControls = html.match(/<section\b[^>]*aria-label="Engine controls"[^>]*>[\s\S]*?<\/section>/)?.[0];
       assert.ok(engineControls, "Engine controls remain visible while configuration changes or recovery is needed");
-      assert.ok(html.indexOf(engineControls) < html.indexOf('aria-label="Startup configuration"'));
+      assert.ok(html.indexOf(engineControls) < html.indexOf('aria-label="Module configurations"'));
       for (const label of ["Start engine", "Stop engine"]) {
         buttonDisabled(engineControls, label);
         const buttons = [...html.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)]
@@ -159,8 +166,8 @@ test("Run preserves system progress and permits stop controls only after an oper
 
 test("trial results display the revision pinned to each trial", () => {
   const html = render(TrialResults, { trials: [
-    { trial_number: 1, target_id: 2, event_id: 1, confidence: null, forced: false, produced_at: "2026-09-24T00:00:00", config_revision: "old-trial-revision" },
-    { trial_number: 2, target_id: 2, event_id: 1, confidence: null, forced: false, produced_at: "2026-09-24T00:00:01", config_revision: "new-trial-revision" },
+    { trial_number: 1, target_id: 2, event_id: 1, confidence: null, forced: false, produced_at: "2026-09-24T00:00:00", processing_revision: "old-trial-revision" },
+    { trial_number: 2, target_id: 2, event_id: 1, confidence: null, forced: false, produced_at: "2026-09-24T00:00:01", processing_revision: "new-trial-revision" },
   ] });
   assert.match(html, /title="old-trial-revision"/);
   assert.match(html, /title="new-trial-revision"/);
@@ -195,9 +202,9 @@ for (const [name, activeInput, expected] of [
   // Active mapping is meaningful only after the matching decoder configuration has loaded.
   const seeded = {
     2: { active_input: activeInput, readiness: { ready: true } },
-    4: { revision: status.accepted_revision, bindings: [{ slot: "processing.decoder", kind: "decoder",
-      selection: { package_id: "example.decoder", contribution_id: "main", version: "1.0.0" }, parameters: {} }] },
-    21: { status: "ready", revision: status.accepted_revision },
+    4: { modules: { processing: { revision: revisions.processing, bindings: [{ slot: "processing.decoder", kind: "decoder",
+      selection: { package_id: "example.decoder", contribution_id: "main", version: "1.0.0" }, parameters: {} }] } }, system: { revision: revisions.system } },
+    31: { status: "ready", revision: JSON.stringify(revisions) },
   };
   dispatcher.current = {
     useState: (initial) => {
@@ -209,13 +216,29 @@ for (const [name, activeInput, expected] of [
   };
   let tree;
   try {
-    tree = RunConsole({ engine: { data: { running: true }, error: null, refresh: noop },
+    tree = RunConsole({ engine: { data: { running: true, processor_alive: true }, error: null, refresh: noop },
       acquisition: { data: { connected: true, streaming: false }, error: null, refresh: noop, pending: false,
         ...Object.fromEntries(["connect", "disconnect", "read", "stopRead"].map((name) => [name, { run: noop, pending: false, error: null }])) },
-      feed: { generation: null, trials: [], acks: [] }, runtime: baseRuntime,
+      feed: { generation: null, trials: [], acks: [] }, runtime: baseRuntime, current,
       onBusyChange: noop, onEditSetup: noop, onResults: noop });
   } finally { dispatcher.current = previous; }
   const html = renderToStaticMarkup(React.createElement(I18nProvider, null, tree));
   assert.ok(html.includes(`<strong>${expected}</strong>`));
   assert.doesNotMatch(html, /Active reference mode|montage|excluded channels/i);
+});
+
+
+test("unrelated accepted and applied module changes do not stale a processing review", () => {
+  const html = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, status: { ...status,
+    accepted: { ...revisions, stimulation: "next-stimulation" }, applied: { ...revisions, stimulation: "next-stimulation" },
+  } } });
+  assert.equal(buttonDisabled(html, "Apply configuration"), false);
+  assert.doesNotMatch(html, /runtime or selected configuration changed/);
+});
+
+test("shared system changes invalidate a module review", () => {
+  const html = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, status: { ...status,
+    accepted: { ...revisions, system: "next-system" },
+  } } });
+  assert.equal(buttonDisabled(html, "Apply configuration"), true);
 });

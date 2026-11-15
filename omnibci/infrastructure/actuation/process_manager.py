@@ -9,9 +9,8 @@ process manually on the device machine:
 
 Single-machine deployment
 --------------------------
-Leave ``ACTUATION.auto_spawn = true``. With ``ACTUATION.enabled = true`` the
-backend spawns the Actuation subprocess when processing is prepared and terminates
-it when the engine stops (see NeuroEngineService).
+Leave ``ACTUATION.auto_spawn = true``. The backend spawns the subprocess when
+Actuation starts and terminates it when Actuation or the engine stops.
 
 In both modes the IPC socket architecture (Actuation → NeuroEngine) is
 unchanged — this class only manages the OS-level process lifecycle. Mirrors
@@ -28,6 +27,7 @@ from typing import Any
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessState,
     StartupReporter,
+    module_runtime_identity,
     wait_for_startup_report,
 )
 
@@ -51,7 +51,8 @@ def _run_actuation(
     reporter = (
         StartupReporter(
             startup_connection, component="Actuation",
-            config_revision=(settings_snapshot or {}).get("CONFIG.revision"),
+            module_revisions={"actuation": (settings_snapshot or {}).get("CONFIG.module_revisions", {}).get("actuation")},
+            system_revision=(settings_snapshot or {}).get("CONFIG.system_revision"),
             generation=(settings_snapshot or {}).get("CONFIG.generation"),
         )
         if startup_connection is not None
@@ -83,9 +84,7 @@ class ActuationProcessManager:
     """Manages the Actuation OS process.
 
     When *auto_spawn* is False all public methods are no-ops, so the same
-    engine-lifecycle code path works for both deployment modes (and for
-    ``ACTUATION.enabled = false``, where the composition root passes
-    auto_spawn=False).
+    module lifecycle works for both deployment modes.
     Desktop hosts disable process termination and retain unresponsive children.
     """
 
@@ -138,9 +137,7 @@ class ActuationProcessManager:
             if effector is not None and effector != selected:
                 raise RuntimeError("Apply the effector configuration before starting Actuation")
             effector = selected
-            auto_spawn = bool(snapshot.get("ACTUATION.enabled", self._default_auto_spawn)) and bool(
-                snapshot.get("ACTUATION.auto_spawn", self._default_auto_spawn)
-            )
+            auto_spawn = bool(snapshot.get("ACTUATION.auto_spawn", self._default_auto_spawn))
         else:
             auto_spawn = self._default_auto_spawn
         if not auto_spawn:
@@ -156,7 +153,8 @@ class ActuationProcessManager:
                 process_alive
                 and self._state is ChildProcessState.READY
                 and effector == self._effector
-                and snapshot == self._settings_snapshot
+                and module_runtime_identity(snapshot, "actuation")
+                == module_runtime_identity(self._settings_snapshot, "actuation")
             ):
                 logger.debug(
                     "Actuation process already running requested effector (pid=%s, effector=%s)",
@@ -232,7 +230,8 @@ class ActuationProcessManager:
         )
         try:
             expected_identity = ({
-                "expected_revision": snapshot.get("CONFIG.revision"),
+                "expected_module_revisions": {"actuation": snapshot.get("CONFIG.module_revisions", {}).get("actuation")},
+                    "expected_system_revision": snapshot.get("CONFIG.system_revision"),
                 "expected_generation": snapshot.get("CONFIG.generation"),
             } if snapshot is not None else {})
             wait_for_startup_report(

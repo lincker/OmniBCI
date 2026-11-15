@@ -27,10 +27,9 @@ MANAGERS = (
 def _snapshot(key, revision="revision-1"):
     snapshot = {
         key: "selected-plugin",
-        "CONFIG.revision": revision,
+        "CONFIG.module_revisions": {"acquisition": revision, "processing": revision, "stimulation": revision, "actuation": revision}, "CONFIG.system_revision": "system",
         "CONFIG.generation": "graph-1",
         "STIMULATION.auto_spawn": True,
-        "ACTUATION.enabled": True,
         "ACTUATION.auto_spawn": True,
         "PLUGINS.bindings": [{"parameters": {"level": 1}}],
     }
@@ -55,7 +54,8 @@ def _mock_spawning(monkeypatch, module, component):
     def process(**kwargs):
         snapshot = kwargs.get("kwargs", {}).get("settings_snapshot", {})
         receiver.recv.return_value = StartupReport.ready(
-            component, config_revision=snapshot.get("CONFIG.revision"),
+            component, module_revisions={component.lower(): snapshot["CONFIG.module_revisions"][component.lower()]},
+            system_revision=snapshot["CONFIG.system_revision"],
             generation=snapshot.get("CONFIG.generation"),
         )
         child = Mock(pid=123, exitcode=0)
@@ -82,14 +82,48 @@ def test_snapshot_transport_and_revision_restart(monkeypatch, module, manager_cl
     assert spawned["args"][0] == expected
     assert pickle.loads(pickle.dumps(spawned["kwargs"])) == {"settings_snapshot": original}
 
-    saved["CONFIG.revision"] = "revision-2"
+    saved["CONFIG.module_revisions"][component.lower()] = "revision-2"
     saved["PLUGINS.bindings"][0]["parameters"]["level"] = 2
     assert spawned["kwargs"]["settings_snapshot"] == original
     manager.start(settings_snapshot=saved)
 
     assert factory.call_count == 2
     assert manager.is_ready
-    assert factory.call_args.kwargs["kwargs"]["settings_snapshot"]["CONFIG.revision"] == "revision-2"
+    assert factory.call_args.kwargs["kwargs"]["settings_snapshot"]["CONFIG.module_revisions"][component.lower()] == "revision-2"
+
+
+@pytest.mark.parametrize(("module", "manager_class", "component", "key"), MANAGERS)
+def test_processing_update_does_not_restart_or_relabel_output_child(monkeypatch, module, manager_class, component, key):
+    factory = _mock_spawning(monkeypatch, module, component)
+    manager = manager_class()
+    original = _snapshot(key)
+    manager.start(settings_snapshot=original)
+    changed = deepcopy(original)
+    changed["CONFIG.module_revisions"]["processing"] = "new-processing"
+    changed["ALGORITHM.decoder"] = "new-decoder"
+    manager.start(settings_snapshot=changed)
+    assert factory.call_count == 1
+    assert manager._settings_snapshot == original
+    assert factory.call_args.kwargs["kwargs"]["settings_snapshot"] == original
+    manager.stop()
+
+
+@pytest.mark.parametrize(("module", "manager_class", "component", "key"), MANAGERS)
+@pytest.mark.parametrize("field", ["own", "CONFIG.system_revision", "CONFIG.generation"])
+def test_output_child_restarts_for_own_identity_changes(monkeypatch, module, manager_class, component, key, field):
+    factory = _mock_spawning(monkeypatch, module, component)
+    manager = manager_class()
+    snapshot = _snapshot(key)
+    manager.start(settings_snapshot=snapshot)
+    changed = deepcopy(snapshot)
+    if field == "own":
+        changed["CONFIG.module_revisions"][component.lower()] = "replacement"
+    else:
+        changed[field] = "replacement"
+    manager.start(settings_snapshot=changed)
+    assert factory.call_count == 2
+    assert manager._settings_snapshot == changed
+    manager.stop()
 
 
 @pytest.mark.parametrize(("module", "manager_class", "component", "key"), MANAGERS)
@@ -105,15 +139,14 @@ def test_snapshot_rejects_conflicting_legacy_override_before_spawn(
     factory.assert_not_called()
 
 
-@pytest.mark.parametrize("disabled_key", ["ACTUATION.enabled", "ACTUATION.auto_spawn"])
-def test_actuation_snapshot_can_disable_and_reenable_owned_child(monkeypatch, disabled_key):
+def test_actuation_snapshot_can_switch_between_managed_and_external_child(monkeypatch):
     factory = _mock_spawning(monkeypatch, actuation, "Actuation")
     manager = actuation.ActuationProcessManager(auto_spawn=False)
     snapshot = _snapshot("ACTUATION.effector")
     manager.start(settings_snapshot=snapshot)
     child = manager._process
 
-    snapshot[disabled_key] = False
+    snapshot["ACTUATION.auto_spawn"] = False
     manager.start(settings_snapshot=snapshot)
 
     child.join.assert_called_once()
@@ -121,7 +154,7 @@ def test_actuation_snapshot_can_disable_and_reenable_owned_child(monkeypatch, di
     assert not manager.auto_spawn
     assert factory.call_count == 1
 
-    snapshot[disabled_key] = True
+    snapshot["ACTUATION.auto_spawn"] = True
     manager.start(settings_snapshot=snapshot)
     assert manager.auto_spawn
     assert factory.call_count == 2
@@ -175,7 +208,8 @@ def _report_plugin_directory(connection):
 def _ready_with_current_plugin_directory(selected, stop_event, connection, *, settings_snapshot):
     reporter = StartupReporter(
         connection, component=settings_snapshot["TEST.component"],
-        config_revision=settings_snapshot["CONFIG.revision"],
+        module_revisions={settings_snapshot["TEST.component"].lower(): settings_snapshot["CONFIG.module_revisions"][settings_snapshot["TEST.component"].lower()]},
+        system_revision=settings_snapshot["CONFIG.system_revision"],
         generation=settings_snapshot["CONFIG.generation"],
     )
     if os.environ.get("OMNIBCI_PLUGIN_DIR") != settings_snapshot["TEST.plugin_dir"]:

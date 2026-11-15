@@ -102,6 +102,7 @@ def actuation_peer_config(host: str, port: int,
             outbound=frozenset({
                 EventType.ActuationCommand,
                 EventType.SettleActuation,
+                EventType.ResumeActuation,
             }),
             inbound=frozenset({
                 EventType.ActuationAck,

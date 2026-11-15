@@ -14,10 +14,10 @@ const { runtimeConfigApi } = await server.ssrLoadModule("/src/api/runtime-config
 const { ApiError } = await server.ssrLoadModule("/src/api/client.ts");
 const { RuntimeConfigurationReview, RuntimeConfigurationStatus } = await server.ssrLoadModule("/src/RuntimeConfiguration.tsx");
 const history = { status: "recovery_required", operation_id: "failed-operation", error: "Unknown startup" };
-const plan = { plan_id: "new-plan", errors: [] };
+const plan = { expected_revisions: { system: "sys" }, module: "acquisition", plan_id: "new-plan", target_revisions: { acquisition: "new-revision" }, errors: [] };
 
 function hookRenderer(status) {
-  const values = [status, history, plan, false, false, false, null, null];
+  const values = [status, history, plan, false, false, false, null, null, null];
   const refs = [];
   const dispatcher = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
   return () => {
@@ -63,9 +63,9 @@ test("connecting a source waits for configuration to finish before returning suc
   runtimeConfigApi.apply = async () => ({ operation_id: "connect-operation", status: "queued" });
   runtimeConfigApi.operation = async () => { calls.push("poll"); return { status: "succeeded" }; };
   runtimeConfigApi.status = async () => status;
-  const request = { bindings: [], refresh_slots: ["acquisition.source"], expected_revision: null };
+  const request = { module: "acquisition", bindings: [], refresh_slots: ["acquisition.source"], expected_revision: null };
   try {
-    assert.equal(await render().applySelection(request), true);
+    assert.deepEqual(await render().applyCurrentSelection(request), { ...plan.expected_revisions, ...plan.target_revisions });
     assert.deepEqual(calls[0], request);
     assert.ok(calls.includes("poll"));
   } finally { Object.assign(runtimeConfigApi, original); }
@@ -80,9 +80,188 @@ test("a rejected connection configuration cannot report success", async () => {
   runtimeConfigApi.apply = async () => { submitted = true; };
   runtimeConfigApi.status = async () => status;
   try {
-    assert.equal(await render().applySelection({ bindings: [] }), false);
+    assert.equal(await render().applyCurrentSelection({ bindings: [] }), null);
     assert.equal(submitted, false);
     assert.equal(render().requestError, "Source unavailable");
+  } finally { Object.assign(runtimeConfigApi, original); }
+});
+
+test("applying current parameters returns its own revision even when another client changes runtime status", async () => {
+  const status = { running: false, recovery_required: false, accepted: { acquisition: "before", system: "sys" }, operation: null };
+  const render = hookRenderer(status);
+  const original = { ...runtimeConfigApi };
+  const target = { ...plan, target_revisions: { acquisition: "current-parameters" } };
+  const request = { module: "acquisition", expected_revision: "before", bindings: [{
+    slot: "acquisition.source", selection: { package_id: "example.source", contribution_id: "main", version: "1.0.0" },
+    parameters: { port: 4000 },
+  }] };
+  let submitted = 0;
+  runtimeConfigApi.plan = async (body) => { assert.deepEqual(body, request); return target; };
+  runtimeConfigApi.apply = async (planId, operationId) => {
+    submitted += 1;
+    assert.equal(planId, target.plan_id);
+    return { operation_id: operationId, plan_id: planId, target_revisions: { acquisition: target.target_revisions.acquisition }, status: "succeeded" };
+  };
+  runtimeConfigApi.status = async () => ({ ...status, accepted: { acquisition: "another-client", system: "sys" } });
+  try {
+    assert.deepEqual(await render().applyCurrentSelection(request), { ...target.expected_revisions, ...target.target_revisions });
+    assert.equal(submitted, 1);
+    assert.equal(render().status.accepted.acquisition, "another-client");
+    assert.equal(render().completedOperation.target_revisions.acquisition, target.target_revisions.acquisition);
+  } finally { Object.assign(runtimeConfigApi, original); }
+});
+
+for (const result of ["failed", "recovery_required"]) test(`a ${result} application returns no current revision`, async () => {
+  const status = { running: false, recovery_required: false, operation: null };
+  const render = hookRenderer(status);
+  const original = { ...runtimeConfigApi };
+  runtimeConfigApi.plan = async () => ({ ...plan, target_revisions: { acquisition: "current-parameters" } });
+  runtimeConfigApi.apply = async (planId, operationId) => ({
+    operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "current-parameters" }, status: result,
+  });
+  runtimeConfigApi.status = async () => status;
+  try {
+    assert.equal(await render().applyCurrentSelection({ module: "acquisition", bindings: [] }), null);
+    assert.equal(render().completedOperation, null);
+    assert.equal(render().reviewing, false);
+  } finally { Object.assign(runtimeConfigApi, original); }
+});
+
+test("an invalid current configuration never submits an apply operation", async () => {
+  const render = hookRenderer({ running: false, recovery_required: false, operation: null });
+  const original = { ...runtimeConfigApi };
+  runtimeConfigApi.plan = async () => ({ ...plan, target_revisions: { acquisition: "invalid" }, errors: ["Invalid source address"] });
+  runtimeConfigApi.apply = async () => assert.fail("Invalid parameters must not be applied");
+  try {
+    assert.equal(await render().applyCurrentSelection({ module: "acquisition", bindings: [] }), null);
+    assert.equal(render().requestError, "Invalid source address");
+    assert.equal(render().reviewing, false);
+  } finally { Object.assign(runtimeConfigApi, original); }
+});
+
+test("an interrupted current application returns no revision while its result is uncertain", async () => {
+  const status = { running: false, recovery_required: false, operation: null };
+  const render = hookRenderer(status);
+  const original = { ...runtimeConfigApi };
+  runtimeConfigApi.plan = async () => ({ ...plan, target_revisions: { acquisition: "current-parameters" } });
+  runtimeConfigApi.apply = async () => { throw new Error("Connection interrupted"); };
+  runtimeConfigApi.operation = async () => { throw new ApiError(404, "NOT_FOUND", "Operation not visible yet"); };
+  runtimeConfigApi.status = async () => status;
+  try {
+    assert.equal(await render().applyCurrentSelection({ module: "acquisition", bindings: [] }), null);
+    assert.equal(render().uncertain, true);
+    assert.equal(render().completedOperation, null);
+  } finally { Object.assign(runtimeConfigApi, original); }
+});
+
+test("a stale runtime plan returns no revision and a fresh request can apply current parameters", async () => {
+  const status = { running: false, recovery_required: false, accepted: { acquisition: "another-client", system: "sys" }, operation: null };
+  const render = hookRenderer(status);
+  const original = { ...runtimeConfigApi };
+  const planned = [];
+  let submitted = 0;
+  runtimeConfigApi.plan = async (body) => {
+    planned.push(body);
+    return { ...plan, plan_id: `plan-${planned.length}`, target_revisions: { acquisition: `target-${planned.length}` } };
+  };
+  runtimeConfigApi.apply = async (planId, operationId) => {
+    submitted += 1;
+    if (submitted === 1) throw new ApiError(409, "REVISION_CONFLICT", "Runtime configuration changed");
+    return { operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "target-2" }, status: "succeeded" };
+  };
+  runtimeConfigApi.status = async () => status;
+  try {
+    assert.equal(await render().applyCurrentSelection({ module: "acquisition", bindings: [], expected_revision: "before" }), null);
+    assert.equal(render().uncertain, false);
+    assert.equal(render().plan, null);
+    assert.equal(render().completedOperation, null);
+    assert.match(render().requestError, /Runtime configuration changed/);
+    assert.deepEqual(await render().applyCurrentSelection({ module: "acquisition", bindings: [], expected_revision: status.accepted.acquisition }), { acquisition: "target-2", system: "sys" });
+    assert.deepEqual(planned.map((request) => request.expected_revision), ["before", "another-client"]);
+    assert.equal(submitted, 2);
+  } finally { Object.assign(runtimeConfigApi, original); }
+});
+
+test("same-render current configuration requests share one planning and application lock", async () => {
+  const status = { running: false, recovery_required: false, operation: null };
+  const render = hookRenderer(status);
+  const original = { ...runtimeConfigApi };
+  const calls = [];
+  let finishPlanning, finishApplying;
+  runtimeConfigApi.plan = async (body) => {
+    calls.push(["plan", body]);
+    await new Promise((resolve) => { finishPlanning = resolve; });
+    return { ...plan, target_revisions: { acquisition: "current-parameters" } };
+  };
+  runtimeConfigApi.apply = async (planId, operationId) => {
+    calls.push(["apply", planId]);
+    await new Promise((resolve) => { finishApplying = resolve; });
+    return { operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "current-parameters" }, status: "succeeded" };
+  };
+  runtimeConfigApi.status = async () => status;
+  const request = { module: "acquisition", bindings: [] };
+  try {
+    const hook = render();
+    const first = hook.applyCurrentSelection(request);
+    assert.equal(await hook.applyCurrentSelection(request), null);
+    assert.deepEqual(calls, [["plan", request]]);
+    finishPlanning();
+    for (let index = 0; index < 5; index += 1) await Promise.resolve();
+    assert.equal(await hook.applyCurrentSelection(request), null);
+    assert.deepEqual(calls, [["plan", request], ["apply", plan.plan_id]]);
+    finishApplying();
+    assert.deepEqual(await first, { acquisition: "current-parameters", system: "sys" });
+    assert.equal(render().reviewing, false);
+    assert.equal(render().submitting, false);
+  } finally { Object.assign(runtimeConfigApi, original); }
+});
+
+test("an outstanding review blocks automatic application and stale Apply callbacks", async () => {
+  const render = hookRenderer({ running: false, recovery_required: false, operation: null });
+  const original = { ...runtimeConfigApi };
+  let finishPlanning, planned = 0;
+  runtimeConfigApi.plan = async () => {
+    planned += 1;
+    await new Promise((resolve) => { finishPlanning = resolve; });
+    return { ...plan, target_revisions: { acquisition: "reviewed" } };
+  };
+  runtimeConfigApi.apply = async () => assert.fail("Do not apply a stale plan during review");
+  try {
+    const hook = render();
+    const review = hook.review({ module: "processing", bindings: [] });
+    assert.equal(await hook.applyCurrentSelection({ module: "acquisition", bindings: [] }), null);
+    assert.equal(await hook.apply(), false);
+    assert.equal(planned, 1);
+    finishPlanning();
+    assert.equal((await review).target_revisions.acquisition, "reviewed");
+  } finally { Object.assign(runtimeConfigApi, original); }
+});
+
+test("automatic planning blocks manual review and stale Apply callbacks", async () => {
+  const status = { running: false, recovery_required: false, operation: null };
+  const render = hookRenderer(status);
+  const original = { ...runtimeConfigApi };
+  let finishPlanning, planned = 0, submitted = 0;
+  runtimeConfigApi.plan = async () => {
+    planned += 1;
+    await new Promise((resolve) => { finishPlanning = resolve; });
+    return { ...plan, target_revisions: { acquisition: "current-parameters" } };
+  };
+  runtimeConfigApi.apply = async (planId, operationId) => {
+    submitted += 1;
+    return { operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "current-parameters" }, status: "succeeded" };
+  };
+  runtimeConfigApi.status = async () => status;
+  try {
+    const hook = render();
+    const applying = hook.applyCurrentSelection({ module: "acquisition", bindings: [] });
+    assert.equal(await hook.review({ module: "processing", bindings: [] }), null);
+    assert.equal(await hook.apply(), false);
+    assert.equal(planned, 1);
+    assert.equal(submitted, 0);
+    finishPlanning();
+    assert.deepEqual(await applying, { acquisition: "current-parameters", system: "sys" });
+    assert.equal(submitted, 1);
   } finally { Object.assign(runtimeConfigApi, original); }
 });
 
@@ -107,7 +286,7 @@ test("a rejected host-settings review clears the previous plan and displays the 
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
   const message = "Backend restart required for LOGGING.level";
-  const request = { bindings: [], refresh_slots: [], include_host_settings: true };
+  const request = { module: "system", bindings: [], refresh_slots: [] };
   let submitted = 0;
   runtimeConfigApi.plan = async (body) => {
     assert.deepEqual(body, request);
@@ -135,7 +314,7 @@ test("review returns the immutable plan identity used to associate a later compl
   const status = { running: false, recovery_required: false, operation: null };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
-  const reviewed = { ...plan, target_revision: "source-target" };
+  const reviewed = { ...plan, target_revisions: { acquisition: "source-target" } };
   const request = { module: "acquisition", bindings: [], expected_revision: null };
   runtimeConfigApi.plan = async (body) => {
     assert.deepEqual(body, request);
@@ -152,11 +331,11 @@ test("a tracked success is retained when runtime status already describes anothe
   const status = { running: false, recovery_required: false, operation: null };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
-  const other = { operation_id: "other-operation", plan_id: "other-plan", target_revision: "other-target", status: "applying" };
+  const other = { operation_id: "other-operation", plan_id: "other-plan", target_revisions: { acquisition: "other-target" }, status: "applying" };
   let own;
   const polled = [];
   runtimeConfigApi.apply = async (planId, operationId) => {
-    own = { operation_id: operationId, plan_id: planId, target_revision: "source-target", status: "succeeded" };
+    own = { operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "source-target" }, status: "succeeded" };
     return { ...own, status: "queued" };
   };
   runtimeConfigApi.operation = async (operationId) => {
@@ -180,10 +359,10 @@ test("an immediately completed Apply records its own identity before global stat
   const status = { running: false, recovery_required: false, operation: null };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
-  const other = { operation_id: "other-operation", plan_id: "other-plan", target_revision: "other-target", status: "succeeded" };
+  const other = { operation_id: "other-operation", plan_id: "other-plan", target_revisions: { acquisition: "other-target" }, status: "succeeded" };
   let own;
   runtimeConfigApi.apply = async (planId, operationId) => {
-    own = { operation_id: operationId, plan_id: planId, target_revision: "source-target", status: "succeeded" };
+    own = { operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "source-target" }, status: "succeeded" };
     return own;
   };
   runtimeConfigApi.status = async () => ({ ...status, operation: other });
@@ -198,13 +377,13 @@ test("confirming an interrupted Apply records the original operation success wit
   const status = { running: false, recovery_required: false, operation: null };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
-  const other = { operation_id: "other-operation", plan_id: "other-plan", target_revision: "other-target", status: "succeeded" };
+  const other = { operation_id: "other-operation", plan_id: "other-plan", target_revisions: { acquisition: "other-target" }, status: "succeeded" };
   let own;
   let submitted = 0;
   let checked = 0;
   runtimeConfigApi.apply = async (planId, operationId) => {
     submitted += 1;
-    own = { operation_id: operationId, plan_id: planId, target_revision: "source-target", status: "succeeded" };
+    own = { operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "source-target" }, status: "succeeded" };
     throw new Error("Connection interrupted");
   };
   runtimeConfigApi.operation = async (operationId) => {
@@ -226,407 +405,24 @@ test("confirming an interrupted Apply records the original operation success wit
   } finally { Object.assign(runtimeConfigApi, original); }
 });
 
-const { pluginConfigApi: profileApi } = await server.ssrLoadModule("/src/api/plugin-config.ts");
-const profileSelection = { package_id: "example.source", contribution_id: "reader", version: "1.0.0" };
-const savedSource = { profile_id: "source-a", kind: "acquisition", name: "Stable source", selection: profileSelection,
-  parameters: { address: "device-a", port: 4000 }, revision: 3, configuration_version: 1 };
 
-async function withProfileWorkflow(action, options = {}) {
-  const originalRuntime = { ...runtimeConfigApi };
-  const originalProfiles = { ...profileApi };
-  const state = { running: false, recovery_required: false, accepted_revision: "old-revision",
-    applied_revision: null, generation: null, operation: null };
-  const render = hookRenderer(state);
-  const records = [structuredClone(savedSource)];
-  const calls = { plans: [], creates: [], updates: [], applies: [], lists: 0 };
-  runtimeConfigApi.status = async () => state;
-  runtimeConfigApi.plan = async (body) => {
-    calls.plans.push(structuredClone(body));
-    return { plan_id: `profile-plan-${calls.plans.length}`, errors: [], expected_revision: body.expected_revision,
-      target_revision: options.replannedRevision && calls.plans.length > 1 ? options.replannedRevision : "new-revision",
-      running: false, applied_revision: null, generation: null,
-      strategy: options.replannedStrategy && calls.plans.length > 1 ? options.replannedStrategy : "select_on_start",
-      changed_slots: ["acquisition.source"], changed_settings: [], module: "acquisition" };
-  };
-  runtimeConfigApi.apply = async (planId, operationId) => {
-    calls.applies.push({ planId, operationId });
-    const result = { operation_id: operationId, plan_id: planId, target_revision: "new-revision", status: "succeeded" };
-    state.operation = result;
-    if (options.applyError) throw options.applyError;
-    state.accepted_revision = result.target_revision;
-    return result;
-  };
-  runtimeConfigApi.operation = async () => {
-    if (options.operationError) throw options.operationError;
-    return state.operation;
-  };
-  profileApi.profiles = async () => {
-    calls.lists += 1;
-    if (options.listUnavailableAfterSave && calls.lists > 1) throw new Error("Profile list unavailable");
-    return structuredClone(records);
-  };
-  profileApi.create = async (kind, selection, name, parameters) => {
-    calls.creates.push(structuredClone({ kind, selection, name, parameters }));
-    if (options.createError) throw options.createError;
-    const saved = { profile_id: `new-source-${calls.creates.length}`, kind, selection: structuredClone(selection),
-      name, parameters: structuredClone(parameters), revision: 1, configuration_version: 1 };
-    records.push(saved);
-    if (options.createResponseError) throw options.createResponseError;
-    return structuredClone(saved);
-  };
-  profileApi.update = async (profile, name, parameters) => {
-    calls.updates.push(structuredClone({ profile, name, parameters }));
-    if (options.updateError) throw options.updateError;
-    const saved = { ...profile, name, parameters: structuredClone(parameters), revision: profile.revision + 1 };
-    records.splice(records.findIndex((item) => item.profile_id === profile.profile_id), 1, saved);
-    return structuredClone(saved);
-  };
-  const draft = (profile = null, parameters = { address: "device-b", port: 4000 }) => ({ kind: "acquisition",
-    selection: structuredClone(profileSelection), parameters, profile: profile && structuredClone(profile), name: profile?.name ?? "New source" });
-  const review = async (input = draft()) => {
-    const bindings = input.profile && JSON.stringify(input.parameters) === JSON.stringify(input.profile.parameters)
-      ? [{ slot: "acquisition.source", profile_id: input.profile.profile_id }]
-      : [{ slot: "acquisition.source", selection: input.selection, parameters: input.parameters }];
-    return render().review({ module: "acquisition", bindings, refresh_slots: ["acquisition.source"],
-      expected_revision: "old-revision", include_host_settings: false }, input);
-  };
-  try { await action({ render, calls, records, state, draft, review, options }); }
-  finally { Object.assign(runtimeConfigApi, originalRuntime); Object.assign(profileApi, originalProfiles); }
-}
-
-test("reviewing and cancelling a first source never creates a profile or applies configuration", async () => {
-  await withProfileWorkflow(async ({ render, calls, review }) => {
-    await review();
-    assert.equal(render().profileReview.mode, "create");
-    assert.ok(render().profileReview.name.trim(), "The final Review starts with an editable generated name");
-    assert.equal(calls.creates.length, 0);
-    assert.equal(calls.applies.length, 0);
-    render().dismissPlan();
-    assert.equal(render().plan, null);
-    assert.equal(render().profileReview, null);
-    assert.equal(calls.creates.length, 0);
-  });
-});
-
-test("confirming the first source saves a profile then applies its reviewed binding", async () => {
-  await withProfileWorkflow(async ({ render, calls, records, review }) => {
-    const reviewed = await review();
-    render().setProfileReviewName("Lab device");
+test("only the successful reviewed revert marks its module for current-value synchronization", async () => {
+  const original = { ...runtimeConfigApi };
+  const status = { running: false, recovery_required: false, operation: null, accepted: { processing: "before", system: "sys" } };
+  const render = hookRenderer(status);
+  const target = { ...plan, plan_id: "restore-plan", module: "processing", target_revisions: { processing: "restored" } };
+  const other = { operation_id: "another-operation", plan_id: "another-plan", status: "succeeded", target_revisions: { acquisition: "other" } };
+  runtimeConfigApi.apply = async (_plan, operationId) => ({ operation_id: operationId, plan_id: target.plan_id,
+    status: "succeeded", target_revisions: target.target_revisions });
+  runtimeConfigApi.status = async () => ({ ...status, operation: other });
+  try {
+    render().reviewPlan(target, "processing");
+    assert.equal(render().completedRestoration, null);
     assert.equal(await render().apply(), true);
-    assert.equal(calls.creates.length, 1);
-    assert.equal(calls.creates[0].name, "Lab device");
-    assert.equal(calls.updates.length, 0);
-    assert.deepEqual(calls.plans[1].bindings, [{ slot: "acquisition.source", profile_id: "new-source-1" }]);
-    assert.equal(calls.applies.length, 1);
-    assert.equal(calls.applies[0].planId, "profile-plan-2");
-    assert.equal(render().savedProfile.reviewed_plan_id, reviewed.plan_id);
-    assert.equal(render().savedProfile.profile.profile_id, "new-source-1");
-    assert.equal(render().completedOperation.reviewed_plan_id, reviewed.plan_id);
-    assert.equal(render().completedOperation.profile.profile_id, "new-source-1");
-    assert.deepEqual(records[0], savedSource);
-  });
-});
-
-test("an unchanged existing source applies without creating or revising any profile", async () => {
-  await withProfileWorkflow(async ({ render, calls, draft, review }) => {
-    await review(draft(savedSource, structuredClone(savedSource.parameters)));
-    assert.equal(render().profileReview.mode, "existing");
-    assert.equal(await render().apply(), true);
-    assert.equal(calls.creates.length, 0);
-    assert.equal(calls.updates.length, 0);
-    assert.equal(calls.applies.length, 1);
-  });
-});
-
-test("changed saved source parameters default to a new profile and retain the original", async () => {
-  await withProfileWorkflow(async ({ render, calls, records, draft, review }) => {
-    await review(draft(savedSource));
-    assert.equal(render().profileReview.mode, "create");
-    assert.notEqual(render().profileReview.name, savedSource.name);
-    assert.equal(await render().apply(), true);
-    assert.equal(calls.creates.length, 1);
-    assert.equal(calls.updates.length, 0);
-    assert.deepEqual(records[0], savedSource);
-    assert.equal(records[1].parameters.address, "device-b");
-  });
-});
-
-test("explicit update preserves the selected profile identity and applies its new revision", async () => {
-  await withProfileWorkflow(async ({ render, calls, records, draft, review }) => {
-    await review(draft(savedSource));
-    render().setProfileReviewMode("update");
-    assert.equal(render().profileReview.mode, "update");
-    assert.equal(await render().apply(), true);
-    assert.equal(calls.creates.length, 0);
-    assert.equal(calls.updates.length, 1);
-    assert.equal(calls.updates[0].profile.revision, 3, "Update retains the optimistic revision guard");
-    assert.equal(records[0].revision, 4);
-    assert.equal(records[0].parameters.address, "device-b");
-    assert.deepEqual(calls.plans[1].bindings, [{ slot: "acquisition.source", profile_id: "source-a" }]);
-  });
-});
-
-test("a rejected profile save leaves the review open and never applies an unsaved profile", async () => {
-  await withProfileWorkflow(async ({ render, calls, review }) => {
-    await review();
-    assert.equal(await render().apply(), false);
-    assert.equal(calls.applies.length, 0);
-    assert.ok(render().plan);
-    assert.match(render().requestError, /Profile name rejected/);
-    assert.equal(render().submitting, false);
-  }, { createError: new ApiError(422, "VALIDATION_ERROR", "Profile name rejected") });
-});
-
-test("updating a concurrently edited profile requires fresh review and cannot apply stale values", async () => {
-  await withProfileWorkflow(async ({ render, calls, records, draft, review }) => {
-    await review(draft(savedSource));
-    render().setProfileReviewMode("update");
-    assert.equal(await render().apply(), false);
-    assert.equal(calls.updates.length, 1);
-    assert.equal(calls.applies.length, 0);
-    assert.deepEqual(records[0], savedSource);
-    assert.match(render().requestError, /profile was changed elsewhere/);
-  }, { updateError: new ApiError(409, "CONFLICT", "Profile changed elsewhere") });
-});
-
-test("changed runtime impact after saving requires another confirmation and reuses the saved profile", async () => {
-  await withProfileWorkflow(async ({ render, calls, review }) => {
-    await review();
-    assert.equal(await render().apply(), false);
-    assert.equal(calls.creates.length, 1);
-    assert.equal(calls.applies.length, 0);
-    assert.equal(render().plan.strategy, "rebuild");
-    assert.ok(render().profileReview.savedProfile);
-    assert.ok(render().profileSaveNotice, "The partial save is disclosed while application is unconfirmed");
-    await render().apply();
-    assert.equal(calls.creates.length, 1, "Confirming the refreshed plan must not create a second profile");
-  }, { replannedStrategy: "rebuild" });
-});
-
-test("an ambiguous successful profile create is reconciled before applying without duplication", async () => {
-  await withProfileWorkflow(async ({ render, calls, records, review }) => {
-    await review();
-    assert.equal(await render().apply(), true);
-    assert.equal(calls.creates.length, 1);
-    assert.equal(records.length, 2);
-    assert.equal(calls.applies.length, 1);
-    assert.equal(render().savedProfile.profile.profile_id, "new-source-1");
-  }, { createResponseError: new Error("Profile response interrupted") });
-});
-
-test("a failed Apply retains the saved profile and reports that saving did not apply it", async () => {
-  await withProfileWorkflow(async ({ render, calls, review }) => {
-    await review();
-    assert.equal(await render().apply(), false);
-    assert.equal(calls.creates.length, 1);
-    assert.ok(render().savedProfile);
-    assert.ok(render().profileSaveNotice);
-    assert.match(render().requestError, /Configuration stale/);
-    assert.equal(render().completedOperation, null);
-  }, { applyError: new ApiError(409, "CONFLICT", "Configuration stale") });
-});
-
-
-test("a changed target after saving closes Review so unreviewed profile values cannot be applied", async () => {
-  await withProfileWorkflow(async ({ render, calls, draft, review }) => {
-    await review();
-    assert.equal(await render().apply(), false);
-    assert.equal(render().plan, null);
-    assert.ok(render().savedProfile);
-    assert.equal(calls.applies.length, 0);
-    const saved = render().savedProfile.profile;
-    await review(draft(saved, saved.parameters));
-    assert.equal(render().profileReview.mode, "existing");
-    await render().apply();
-    assert.equal(calls.creates.length, 1);
-    assert.equal(calls.applies.length, 1);
-  }, { replannedRevision: "different-target" });
-});
-
-test("a runtime revision changed since Review prevents the profile write", async () => {
-  await withProfileWorkflow(async ({ render, calls, state, review }) => {
-    await review();
-    state.accepted_revision = "another-client";
-    assert.equal(await render().apply(), false);
-    assert.equal(calls.creates.length, 0);
-    assert.equal(calls.updates.length, 0);
-    assert.equal(calls.applies.length, 0);
-  });
-});
-
-test("rapid confirmations cannot create two profiles from the same Review", async () => {
-  await withProfileWorkflow(async ({ render, calls, review }) => {
-    await review();
-    const runtime = render();
-    await Promise.all([runtime.apply(), runtime.apply()]);
-    assert.equal(calls.creates.length, 1);
-    assert.equal(calls.applies.length, 1);
-  });
-});
-
-test("an interrupted save checks the existing write before retrying and never repeats the POST", async () => {
-  await withProfileWorkflow(async ({ render, calls, options, review }) => {
-    await review();
-    assert.equal(await render().apply(), false);
-    assert.equal(render().profileReview.saveUncertain, true);
-    assert.equal(render().blocked, true);
-    await render().apply();
-    await render().retryProfileSave();
-    assert.equal(calls.creates.length, 1);
-    assert.equal(calls.applies.length, 0);
-    options.listUnavailableAfterSave = false;
-    await render().retryProfileSave();
-    assert.equal(render().profileReview.saveUncertain, false);
-    assert.equal(render().profileReview.savedProfile.profile_id, "new-source-1");
-    assert.equal(calls.applies.length, 0, "Checking a save does not authorize Apply");
-    assert.equal(await render().apply(), true);
-    assert.equal(calls.creates.length, 1);
-    assert.equal(calls.applies.length, 1);
-  }, { createResponseError: new Error("Profile response interrupted"), listUnavailableAfterSave: true });
-});
-
-test("returning to editing after an unresolved save never writes or deletes a profile", async () => {
-  await withProfileWorkflow(async ({ render, calls, records, options, review }) => {
-    await review();
-    await render().apply();
-    assert.equal(render().profileReview.saveUncertain, true);
-    render().abandonProfileSave();
-    assert.equal(render().plan, null);
-    assert.equal(render().profileReview, null);
-    assert.equal(render().blocked, false);
-    assert.equal(calls.creates.length, 1);
-    assert.equal(calls.applies.length, 0);
-    assert.equal(records.length, 2, "The escape must not remove a possibly saved profile");
-    options.listUnavailableAfterSave = false;
-    await review();
-    assert.ok(render().plan);
-    assert.equal(calls.creates.length, 1, "Fresh review still waits for explicit final confirmation");
-  }, { createResponseError: new Error("Profile response interrupted"), listUnavailableAfterSave: true });
-});
-
-test("a saved profile is reused after Apply fails and the user reviews the same draft again", async () => {
-  await withProfileWorkflow(async ({ render, calls, draft, options, review }) => {
-    await review();
-    assert.equal(await render().apply(), false);
-    const saved = render().savedProfile.profile;
-    assert.equal(render().savedProfile.applied, false);
-    options.applyError = null;
-    await review(draft(saved, saved.parameters));
-    assert.equal(await render().apply(), true);
-    assert.equal(calls.creates.length, 1);
-    assert.equal(calls.updates.length, 0);
-    assert.equal(calls.applies.length, 2);
-    assert.equal(render().completedOperation.profile.profile_id, saved.profile_id);
-  }, { applyError: new ApiError(409, "CONFLICT", "Configuration stale") });
-});
-
-test("a lost Apply response recovers its original saved-profile association without another create", async () => {
-  await withProfileWorkflow(async ({ render, calls, options, review }) => {
-    const reviewed = await review();
-    assert.equal(await render().apply(), false);
-    assert.equal(render().uncertain, true);
-    options.operationError = null;
-    await render().retryUnconfirmed();
-    assert.equal(render().uncertain, false);
-    assert.equal(render().completedOperation.reviewed_plan_id, reviewed.plan_id);
-    assert.equal(render().completedOperation.profile.profile_id, "new-source-1");
-    assert.equal(render().savedProfile.applied, true);
-    assert.equal(calls.creates.length, 1);
-    assert.equal(calls.applies.length, 1);
-  }, { applyError: new Error("Apply response interrupted"), operationError: new Error("Operation temporarily unavailable") });
-});
-
-
-test("unchanged profile application carries the latest name and revision without rewriting it", async () => {
-  await withProfileWorkflow(async ({ render, calls, records, draft, review }) => {
-    await review(draft(savedSource, structuredClone(savedSource.parameters)));
-    records[0].name = "Renamed elsewhere";
-    records[0].revision = 4;
-    assert.equal(await render().apply(), true);
-    assert.equal(calls.creates.length, 0);
-    assert.equal(calls.updates.length, 0);
-    assert.equal(render().completedOperation.profile.name, "Renamed elsewhere");
-    assert.equal(render().completedOperation.profile.revision, 4);
-  });
-});
-
-for (const conflict of ["changed", "deleted"]) {
-  test(`an unchanged selected profile that is ${conflict} elsewhere cannot apply an unseen configuration`, async () => {
-    await withProfileWorkflow(async ({ render, calls, records, draft, review }) => {
-      await review(draft(savedSource, structuredClone(savedSource.parameters)));
-      if (conflict === "changed") records[0].parameters.address = "unreviewed-device";
-      else records.splice(0, 1);
-      assert.equal(await render().apply(), false);
-      assert.equal(calls.creates.length, 0);
-      assert.equal(calls.updates.length, 0);
-      assert.equal(calls.applies.length, 0);
-      assert.match(render().requestError, /profile was changed elsewhere/);
-    });
-  });
-}
-
-for (const conflict of ["changed", "deleted", "changed during planning"]) {
-  test(`saved-profile review refuses a profile ${conflict} after the editor loaded it`, async () => {
-    await withProfileWorkflow(async ({ render, calls, records }) => {
-      const expected = structuredClone(savedSource);
-      const request = { module: "acquisition", bindings: [{ slot: "acquisition.source", profile_id: expected.profile_id }],
-        refresh_slots: ["acquisition.source"], expected_revision: "old-revision", include_host_settings: false };
-      let finishPlan;
-      if (conflict === "changed during planning") {
-        const originalPlan = runtimeConfigApi.plan;
-        runtimeConfigApi.plan = async (body) => {
-          const result = await originalPlan(body);
-          await new Promise((resolve) => { finishPlan = resolve; });
-          return result;
-        };
-      } else if (conflict === "deleted") records.splice(0, 1);
-      else { records[0].revision += 1; records[0].parameters.address = "unseen-device"; }
-      const reviewing = render().review(request, undefined, [expected]);
-      if (conflict === "changed during planning") {
-        for (let index = 0; index < 5; index += 1) await Promise.resolve();
-        assert.equal(render().plan, null, "A pending plan is never exposed for Apply");
-        records[0].revision += 1;
-        records[0].parameters.address = "unseen-device";
-        finishPlan();
-      }
-      assert.equal(await reviewing, null);
-      assert.equal(render().plan, null);
-      assert.match(render().requestError, /profile was changed elsewhere/);
-      assert.equal(await render().apply(), false);
-      assert.equal(calls.plans.length, 1);
-      assert.equal(calls.creates.length + calls.updates.length + calls.applies.length, 0);
-    });
-  });
-}
-
-test("saved-profile review exposes its pinned plan only after the displayed revisions are verified", async () => {
-  await withProfileWorkflow(async ({ render, calls, records }) => {
-    let finishProfiles;
-    const listedKinds = [];
-    profileApi.profiles = async (kind) => {
-      listedKinds.push(kind);
-      assert.equal(calls.plans.length, 1, "Create the immutable plan before checking the current profile revision");
-      await new Promise((resolve) => { finishProfiles = resolve; });
-      return structuredClone(records);
-    };
-    const request = { module: "acquisition", bindings: [{ slot: "acquisition.source", profile_id: savedSource.profile_id }],
-      refresh_slots: ["acquisition.source"], expected_revision: "old-revision", include_host_settings: false };
-    const reviewing = render().review(request, undefined, [structuredClone(savedSource)]);
-    for (let index = 0; index < 5; index += 1) await Promise.resolve();
-    assert.deepEqual(listedKinds, ["acquisition"]);
-    assert.equal(render().plan, null);
-    assert.equal(render().reviewing, true);
-    assert.equal(calls.creates.length + calls.updates.length + calls.applies.length, 0);
-    finishProfiles();
-    const target = await reviewing;
-    assert.equal(target.plan_id, "profile-plan-1");
-    assert.equal(render().plan, target);
-    assert.equal(render().profileReview, null, "Saved-profile review never enters the automatic-save workflow");
-    assert.equal(render().requestError, null);
-    assert.equal(await render().apply(), true);
-    assert.equal(calls.plans.length, 1);
-    assert.equal(calls.creates.length + calls.updates.length, 0);
-    assert.equal(calls.applies.length, 1);
-    assert.equal(calls.applies[0].planId, target.plan_id);
-  });
+    const restoration = render().completedRestoration;
+    assert.equal(restoration.module, "processing"); assert.equal(restoration.revision, "restored");
+    assert.notEqual(restoration.operationId, other.operation_id);
+    await render().refresh();
+    assert.deepEqual(render().completedRestoration, restoration);
+  } finally { Object.assign(runtimeConfigApi, original); }
 });

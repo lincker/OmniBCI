@@ -2,7 +2,7 @@
 Tests for /api/v1/acquisition endpoints.
 """
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from omnibci.application.events import CommandFailureKind, CommandResult
 from omnibci.application.services.command_result_service import (
@@ -50,6 +50,27 @@ class TestAcquisitionConnect:
         engine_service._engine = None
         resp = api_client.post("/api/v1/acquisition/connect")
         assert resp.status_code == 503
+
+    def test_connect_starts_only_acquisition_before_sending_connect(
+        self, api_client, engine_service, acquisition_service,
+    ):
+        calls = []
+        engine_service.start_module = AsyncMock(side_effect=lambda module: calls.append(module))
+        acquisition_service.handle_connect = MagicMock(side_effect=lambda cmd: calls.append("connect"))
+        assert api_client.post("/api/v1/acquisition/connect").status_code == 200
+        assert calls == ["acquisition", "connect"]
+
+    def test_disconnect_stops_only_acquisition_and_clears_its_projection(
+        self, api_client, mock_engine, acquisition_service,
+    ):
+        mock_engine.acquisition_worker.is_alive.return_value = True
+        mock_engine.signal_processing_worker.is_alive.return_value = True
+        acquisition_service._connected = True
+        response = api_client.post("/api/v1/acquisition/disconnect")
+        assert response.status_code == 200
+        mock_engine.stop_module.assert_awaited_once_with("acquisition")
+        assert not acquisition_service._connected
+        assert mock_engine.signal_processing_worker.is_alive()
 
 
 class TestAcquisitionStream:

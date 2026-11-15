@@ -46,7 +46,8 @@ def event_to_wire(event: Event) -> Optional[dict]:
             return None
         return {"event": "TrialCompleted", "generation": data.generation,
                 "trial_number": data.trial_number,
-                **({"config_revision": data.config_revision} if data.config_revision is not None else {}),
+                **({"processing_revision": data.processing_revision} if data.processing_revision is not None else {}),
+                **({"acquisition_revision": data.acquisition_revision} if data.acquisition_revision is not None else {}),
                 **_classification_fields(data.classification)}
 
     if etype == EventType.StimulationAck:
@@ -113,7 +114,8 @@ def payload_to_jsonable(data: Any) -> Any:
     """
     if isinstance(data, TrialOutcome):
         return {"generation": data.generation, "trial_number": data.trial_number,
-                **({"config_revision": data.config_revision} if data.config_revision is not None else {}),
+                **({"processing_revision": data.processing_revision} if data.processing_revision is not None else {}),
+                **({"acquisition_revision": data.acquisition_revision} if data.acquisition_revision is not None else {}),
                 **_classification_fields(data.classification)}
     if isinstance(data, CommandRequest):
         return {

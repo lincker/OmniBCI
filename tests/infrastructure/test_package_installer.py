@@ -27,7 +27,7 @@ def _manifest(**package_fields):
         "manifest_version": 2,
         "package": {
             "id": "device", "publisher": "acme", "version": "1.0.0",
-            "api_version": "2", **package_fields,
+            "api_version": "2", "domain": "acquisition", **package_fields,
         },
         "contributions": [{
             "id": "reader", "kind": "acquisition", "entrypoint": "driver:Driver",

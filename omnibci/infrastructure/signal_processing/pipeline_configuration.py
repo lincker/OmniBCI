@@ -33,23 +33,6 @@ def _binding_content(binding):
             binding.processing_input)
 
 
-def validate_output_context(current: dict, candidate: dict) -> dict:
-    """Update output-module metadata after a drain without replacing the pipeline."""
-    before = configured_bindings(current)
-    after = configured_bindings(candidate)
-    output_kinds = {"paradigm", "trigger", "effector"}
-    if ([_binding_content(b) for b in before if b.kind not in output_kinds]
-            != [_binding_content(b) for b in after if b.kind not in output_kinds]):
-        raise ValueError("Signal Processing or source changes require a pipeline update")
-    mirrors = {"PLUGINS.bindings", "CONFIG.revision", "STIMULATION.paradigm", "ACQUISITION.trigger", "ACTUATION.effector"}
-    if ({k: v for k, v in current.items() if k not in mirrors}
-            != {k: v for k, v in candidate.items() if k not in mirrors}):
-        raise ValueError("Host context changes require a runtime rebuild")
-    if not isinstance(candidate.get("CONFIG.revision"), str) or not candidate["CONFIG.revision"]:
-        raise ValueError("Runtime context requires a pinned revision")
-    return deepcopy(candidate)
-
-
 def _require_trial_changes(schema, before, after, inherited=None):
     if before == after:
         return
@@ -62,7 +45,7 @@ def _require_trial_changes(schema, before, after, inherited=None):
 
 
 def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int | None,
-                          baseline_duration: float, signal_plan=None) -> ConfiguredPipeline:
+                          baseline_duration: float, signal_plan=None, boundary="trial") -> ConfiguredPipeline:
     """Validate fixed context, then construct decoder and filters as one bundle.
 
     Source, detector, host settings and buffer dimensions remain fixed. Decoder
@@ -72,7 +55,7 @@ def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int | 
     if not isinstance(current, dict) or not isinstance(candidate, dict):
         raise ValueError("Pipeline updates require pinned configuration dictionaries")
     snapshot = deepcopy(candidate)
-    revision = snapshot.get("CONFIG.revision")
+    revision = snapshot.get("CONFIG.module_revisions", {}).get("processing")
     if not isinstance(revision, str) or not revision:
         raise ValueError("Pipeline update requires a configuration revision")
     previous = configured_bindings(current)
@@ -81,14 +64,27 @@ def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int | 
         raise ValueError("Processing input changes require a module restart")
 
     flexible = {"decoder", "filter"}
-    before_fixed = [_binding_content(binding) for binding in previous if binding.kind not in flexible]
-    after_fixed = [_binding_content(binding) for binding in selected if binding.kind not in flexible]
+    before_fixed = {binding.slot: _binding_content(binding) for binding in previous
+                    if binding.kind in {"acquisition", "epoch_detector"}}
+    after_fixed = {binding.slot: _binding_content(binding) for binding in selected
+                   if binding.kind in {"acquisition", "epoch_detector"}}
     if before_fixed != after_fixed:
         raise ValueError("Source or detector topology changes require a module restart")
-    mirrors = {"PLUGINS.bindings", "CONFIG.revision", "ALGORITHM.decoder", "ALGORITHM.filters"}
-    if ({key: value for key, value in current.items() if key not in mirrors}
-            != {key: value for key, value in snapshot.items() if key not in mirrors}):
-        raise ValueError("Host configuration changes require a module restart")
+    from omnibci.application.activation_settings import SECTION_SETTING_KEYS
+    fixed_keys = SECTION_SETTING_KEYS["processing"] | SECTION_SETTING_KEYS["system"] | SECTION_SETTING_KEYS["acquisition"]
+    fixed_keys = fixed_keys | {key for key in current.keys() | snapshot.keys()
+                              if key.startswith("ACQUISITION.") and key != "ACQUISITION.trigger"}
+    if (any(current.get(key) != snapshot.get(key) for key in fixed_keys)
+            or current.get("CONFIG.generation") != snapshot.get("CONFIG.generation")
+            or current.get("CONFIG.system_revision") != snapshot.get("CONFIG.system_revision")
+            or current.get("CONFIG.module_revisions", {}).get("acquisition")
+                != snapshot.get("CONFIG.module_revisions", {}).get("acquisition")):
+        raise ValueError("Source or system context changes require a runtime restart")
+    if boundary == "trial":
+        before_slots = [(b.slot, b.selection, b.configuration_version) for b in previous if b.kind in flexible]
+        after_slots = [(b.slot, b.selection, b.configuration_version) for b in selected if b.kind in flexible]
+        if before_slots != after_slots:
+            raise ValueError("Plugin topology changes require a processing module boundary")
     if signal_plan is not None:
         validate_plan_binding(snapshot, signal_plan)
         if signal_plan.source.sample_rate != sample_rate:
@@ -119,7 +115,8 @@ def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int | 
         if definition.schema is None:
             raise ValueError("Changed plugin parameters require a module restart")
         before = validate_parameters(definition.schema, old.parameters)
-        _require_trial_changes(definition.schema, before, after)
+        if boundary == "trial":
+            _require_trial_changes(definition.schema, before, after)
 
     if signal_plan is None:
         return ConfiguredPipeline(None, (), snapshot)

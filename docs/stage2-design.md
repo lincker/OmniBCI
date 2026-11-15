@@ -6,39 +6,47 @@ required to produce a decoded result.
 
 ## Configure modules
 
-1. In Acquisition, select a plugin, then select or create its Profile. Save and
-   Apply it. A file source needs a path on the backend computer. A device source
-   needs its connection parameters and any metadata the source cannot discover.
-2. In Signal Processing, select the Decoder and its Profile. Configure the input
-   channel mapping, epoch detector and filters required by the decoder. Save and
-   Apply. Signal channels can be renamed and selected; the native event row is
-   preserved separately and does not need a signal mapping entry.
-3. If stimulation is required, select its paradigm and optional trigger output
-   independently in Stimulation. Apply the selected profiles. Acquisition's
-   incoming events and stimulation's outgoing trigger plugin are separate roles.
-4. Configure Actuation only when physical outputs are required.
+1. In Acquisition, select a plugin and edit its current parameters. A file source
+   needs a path on the backend computer. A device source needs its connection
+   parameters and any metadata the source cannot discover.
+2. In Signal Processing, select the Decoder and configure its channel mapping,
+   epoch detector and ordered filters. Signal channels can be renamed and
+   selected; the native event row remains separate.
+3. In Stimulation, select the paradigm and optional trigger output. Acquisition's
+   incoming events and Stimulation's outgoing trigger are separate roles.
+4. In Actuation, select an Effector when physical outputs are required.
 
-Profiles belong to their modules. Connect does not require unrelated processing
-settings. Starting reading validates the processing configuration needed by the
-selected decoder against the connected source before starting the stream.
+Each plugin can save and load its own named Profiles. Saving is optional; each
+module's start action applies its current values. Unrelated modules do not need
+to be configured before starting one module.
 
 ## Run
 
-1. **Start engine** initializes the engine and workers.
-2. **Connect** opens the selected acquisition source.
-3. **Start reading** prepares signal processing, then reads source chunks.
-4. Incoming event values reach the epoch detector. Once enough data is available,
-   the selected filters and decoder produce a classification.
-5. **Recent results** and **Results** display completed trials immediately through
-   the live result feed. The Results page retains the latest 200 trials from the
-   current engine. There is no session to create or end.
-6. **Stop reading** stops the producer and drains processing. **Disconnect** closes
-   the source. **Stop engine** disposes the running engine resources.
+**Start engine** initializes shared infrastructure without starting any module.
+**Stop engine** stops all modules. With the foundation running, each module has
+its own controls:
 
-**Launch stimulation** starts the native stimulation process. **Trigger trial**
-requires that process to report the selected paradigm and an engine connection,
-with its controls loaded from the applied profile. This control does not create
-an EEG event in an existing replay file; file annotations provide those events.
+- **Connect** applies current Acquisition values, starts its worker, and connects
+  the source. It starts the engine if needed. **Start reading** begins source data
+  flow; **Stop reading** retains the connection. **Disconnect** stops Acquisition.
+- **Start processing** applies current Processing values and starts its worker,
+  starting the engine if needed. It can wait for source data. When reading starts,
+  active Processing validates its mapping against observed source metadata before
+  receiving chunks. **Stop processing** keeps Acquisition connected and resumes
+  its prior reading state. Source-only reading and preview remain available.
+- **Launch stimulation** starts its native process. External mode first prepares
+  the current configuration, then enables Stimulation after its node connects.
+  **Trigger trial** requires active, connected Stimulation and valid trial controls.
+  It does not create an EEG event in an existing replay file; file annotations
+  provide those events.
+- **Start actuation** applies its own current values and starts its Effector.
+  External mode first prepares the configuration, then starts Actuation after its
+  node connects. Acquisition and Processing are not startup prerequisites.
+
+When Acquisition and Processing are both running, incoming event values reach the
+Epoch Detector. Once enough data is available, Filters and Decoder produce a
+classification. Run and Results show completed trials immediately and retain the
+latest 200 trials for the current engine generation. No session is required.
 
 ## Interpret an empty results view
 

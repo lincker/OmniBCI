@@ -62,7 +62,7 @@ def test_plugin_context_copies_channels_and_round_trips_through_pickle(tmp_path)
 
     channels = ["Oz", "O1"]
     context = PluginContext(sample_rate=250, channel_names=channels,
-                            config_revision="revision-7", resource_root=str(tmp_path))
+                            module_revision="revision-7", resource_root=str(tmp_path))
     channels.append("O2")
 
     assert context.channel_names == ("Oz", "O1")
@@ -74,7 +74,7 @@ def test_plugin_context_copies_channels_and_round_trips_through_pickle(tmp_path)
 @pytest.mark.parametrize("fields", [
     {"sample_rate": 0}, {"sample_rate": True}, {"sample_rate": float("nan")},
     {"channel_names": "Oz"}, {"channel_names": [1]},
-    {"config_revision": ""}, {"resource_root": ""},
+    {"module_revision": ""}, {"resource_root": ""},
 ])
 def test_plugin_context_rejects_invalid_metadata(fields):
     from omnibci.sdk import PluginContext
@@ -107,7 +107,7 @@ def test_context_and_configuration_are_usable_in_spawned_plugin(tmp_path):
     from omnibci.sdk import PluginContext
 
     context = PluginContext(sample_rate=250, channel_names=("Oz", "O1"),
-                            config_revision="revision-7", resource_root=str(tmp_path))
+                            module_revision="revision-7", resource_root=str(tmp_path))
     spawn = mp.get_context("spawn")
     incoming, outgoing = spawn.Pipe(duplex=False)
     process = spawn.Process(target=_run_sdk_filter, args=({"gain": 2}, context, outgoing))

@@ -8,11 +8,18 @@ import { api, ApiError, type ConfigData, type ConfigEntry } from "./api/client";
 import { ConfigDialog, type ConfigDialogProps } from "./ConfigDialog";
 import { useI18n, type Translate, type TranslationKey } from "./i18n";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
-import { pluginConfigApi } from "./api/plugin-config";
+import { pluginConfigApi, type ModulesResponse } from "./api/plugin-config";
 import type { RuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
 import type { RuntimePlanRequest } from "./api/runtime-config";
 import { RuntimeConfigurationProgress, runtimeBlockReason } from "./RuntimeConfiguration";
 
+const sectionKeys = {
+  processing: ["ALGORITHM.baseline_duration"],
+  stimulation: ["STIMULATION.renderer", "STIMULATION.auto_spawn"],
+  actuation: ["ACTUATION.server_ip", "ACTUATION.server_port", "ACTUATION.watchdog_timeout_s", "ACTUATION.max_command_age_s", "ACTUATION.auto_spawn"],
+  system: ["NEUROENGINE.queue_size", "NEUROENGINE.message_server_ip", "NEUROENGINE.message_server_port", "NEUROENGINE.startup_timeout_s", "debug"],
+};
+type Section = keyof typeof sectionKeys;
 const fieldLabels: Record<string, TranslationKey> = {
   "ALGORITHM.baseline_duration": "settings.baselineDuration",
   "NEUROENGINE.queue_size": "settings.queueCapacity",
@@ -33,6 +40,8 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
   const { t } = useI18n();
   const translateRef = useRef(t);
   translateRef.current = t;
+  const [activation, setActivation] = useState<ModulesResponse | null>(null);
+  const [section, setSection] = useState<Section>("system");
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<TranslationKey | null>(null);
@@ -101,27 +110,36 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
     void run(async () => { await api.patchConfig(updates, config.revision); },
       "settings.saved");
   };
+  useEffect(() => {
+    let active = true;
+    void pluginConfigApi.modules().then((value) => { if (active) setActivation(value); })
+      .catch((cause) => { if (active) setError(String(cause)); });
+    return () => { active = false; };
+  }, [JSON.stringify(runtime.status?.accepted), config]);
+  const changedSections = (Object.keys(sectionKeys) as Section[]).filter((module) => {
+    const accepted = module === "system" ? activation?.system.settings : activation?.modules[module]?.settings;
+    return config?.entries.some((entry) => sectionKeys[module].includes(entry.key) && JSON.stringify(entry.value) !== JSON.stringify(accepted?.[entry.key]));
+  });
+  const selectedSection = changedSections.includes(section) ? section : changedSections[0];
   const reviewHostSettings = async () => {
+    if (!selectedSection) return;
     setBusy(true); setError(null);
     try {
-      const activation = await pluginConfigApi.activation();
-      if (!activation) throw new Error(t("settings.saveProfiles"));
-      const bindings: RuntimePlanRequest["bindings"] = activation.bindings.map((binding) => {
+      const current = await pluginConfigApi.modules();
+      const selected = selectedSection === "system" ? current.system : current.modules[selectedSection];
+      const bindings: RuntimePlanRequest["bindings"] = selectedSection === "system" ? [] : current.modules[selectedSection].bindings.map((binding) => {
         if (binding.profile_id) return { slot: binding.slot, profile_id: binding.profile_id };
-        if (binding.slot === "acquisition.source") return { slot: "acquisition.source" as const,
-          selection: binding.selection, parameters: binding.parameters };
-        throw new Error(t("settings.saveProfiles"));
+        return { slot: binding.slot, selection: binding.selection, parameters: binding.parameters,
+          configuration_version: binding.configuration_version,
+          ...(binding.slot === "processing.decoder" ? { processing_input: binding.processing_input } : {}) };
       });
-      await runtime.review({
-        bindings,
-        expected_revision: activation.revision, refresh_slots: [], include_host_settings: true,
-      });
+      await runtime.review({ module: selectedSection, bindings, expected_revision: selected.revision, refresh_slots: [] });
     } catch (cause) { setError(String(cause)); }
     finally { setBusy(false); }
   };
   const entries = (config?.entries ?? []).filter((entry) => fieldLabels[entry.key]);
   const reviewReason = busy ? "feedback.busy" : dirty ? "settings.saveBeforeReview"
-    : runtimeBlockReason(runtime) ?? (!config ? "settings.unavailableError" : null);
+    : runtimeBlockReason(runtime) ?? (!config || !activation ? "settings.unavailableError" : !selectedSection ? "settings.noChanges" : null);
   const renderEntry = (entry: ConfigEntry) => {
     const fieldId = `setting-${entry.key}`;
     const saved = String(entry.value ?? "");
@@ -178,6 +196,8 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
         <div className="actions">
           <button disabled={busy || !dirty} onClick={() => confirmDiscard(() => setDraft({}))}>{t("settings.discard")}</button>
           <button className="primary" disabled={busy || !dirty} aria-describedby="settings-save-help" aria-keyshortcuts="Control+s Meta+s" onClick={() => save()}>{t("settings.save")}</button>
+          {changedSections.length > 0 && <select aria-label={t("runtime.affectedModules")} value={selectedSection} disabled={busy || runtime.blocked}
+            onChange={(event) => setSection(event.target.value as Section)}>{changedSections.map((module) => <option key={module} value={module}>{module}</option>)}</select>}
           <button disabled={!!reviewReason} aria-describedby="settings-review-help"
             onClick={() => void reviewHostSettings()}>{t("settings.review")}</button>
         </div>

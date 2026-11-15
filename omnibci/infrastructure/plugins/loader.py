@@ -206,12 +206,6 @@ class PluginLoader:
                         f"{plugin_class.__name__} is not a subclass of "
                         f"{expected_base.__name__}"
                     )
-                class_plugin_type = getattr(plugin_class, "plugin_type", None)
-                if descriptor.api_version == "1" and class_plugin_type != descriptor.plugin_type:
-                    raise TypeError(
-                        f"entrypoint plugin_type {class_plugin_type!r} does not "
-                        f"match manifest plugin_type {descriptor.plugin_type!r}"
-                    )
                 return plugin_class
         except BaseException as exc:
             cls._cleanup_modules(prefix, modules_before)
@@ -235,25 +229,24 @@ class PluginLoader:
         prefix = cls._module_prefix(descriptor)
         modules_before = set(sys.modules)
         try:
-            if descriptor.api_version == "2":
-                if set(kwargs) != {"parameters", "context"}:
-                    raise ValueError("API 2 requires parameters and context keyword inputs")
-                if not isinstance(kwargs["parameters"], dict):
-                    raise ValueError("parameters must be an object")
-                if not isinstance(kwargs["context"], PluginContext):
-                    raise ValueError("context must be a PluginContext")
-                # JSON roundtrip prevents plugin mutations from reaching host state
-                # and rejects non-finite or non-serializable constructor values.
-                if descriptor.configuration_schema is not None:
-                    kwargs["parameters"] = validate_parameters(
-                        dict(descriptor.configuration_schema), kwargs["parameters"],
-                    )
-                kwargs = {
-                    "parameters": json.loads(json.dumps(kwargs["parameters"], allow_nan=False)),
-                    "context": replace(kwargs["context"], resource_root=str(descriptor.location)),
-                }
-            elif descriptor.api_version != "1":
+            if descriptor.api_version != "2":
                 raise ValueError(f"Unsupported plugin API: {descriptor.api_version}")
+            if set(kwargs) != {"parameters", "context"}:
+                raise ValueError("API 2 requires parameters and context keyword inputs")
+            if not isinstance(kwargs["parameters"], dict):
+                raise ValueError("parameters must be an object")
+            if not isinstance(kwargs["context"], PluginContext):
+                raise ValueError("context must be a PluginContext")
+            # JSON roundtrip prevents plugin mutations from reaching host state
+            # and rejects non-finite or non-serializable constructor values.
+            if descriptor.configuration_schema is not None:
+                kwargs["parameters"] = validate_parameters(
+                    dict(descriptor.configuration_schema), kwargs["parameters"],
+                )
+            kwargs = {
+                "parameters": json.loads(json.dumps(kwargs["parameters"], allow_nan=False)),
+                "context": replace(kwargs["context"], resource_root=str(descriptor.location)),
+            }
             plugin_class = cls.load_entrypoint(descriptor, expected_base)
             with isolated_registry():
                 return plugin_class(**kwargs)

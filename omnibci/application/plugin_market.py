@@ -28,6 +28,7 @@ class MarketPackage:
     sha256: str
     size: int
     contributions: tuple[MarketContribution, ...]
+    domain: str
     api_version: str | None = None
     platforms: tuple[str, ...] = ()
     host_version: str | None = None

@@ -23,19 +23,19 @@ def running(engine, snapshot):
 
 
 def test_running_publication_uses_applied_snapshot_without_reading_saved_files(engine):
-    running(engine, {"CONFIG.revision": "running", "nested": {"value": 1}})
+    running(engine, {"CONFIG.module_revisions": {'acquisition': "running", 'processing': "running", 'stimulation': "running", 'actuation': "running"}, "CONFIG.system_revision": "c" * 64, "nested": {"value": 1}})
     selected = Mock(side_effect=AssertionError("must not read saved configuration"))
     state, snapshot = engine.node_configuration_snapshot(selected)
     assert state == "running"
-    assert snapshot["CONFIG.revision"] == "running"
+    assert snapshot["CONFIG.module_revisions"]["acquisition"] == "running"
     snapshot["nested"]["value"] = 9
     assert engine._applied_snapshot["nested"]["value"] == 1
 
 
 def test_idle_publication_ignores_historical_applied_snapshot(engine):
-    engine._applied_snapshot = {"CONFIG.revision": "old", "CONFIG.generation": "old"}
-    assert engine.node_configuration_snapshot(lambda: {"CONFIG.revision": "selected"}) == (
-        "selected", {"CONFIG.revision": "selected"})
+    engine._applied_snapshot = {"CONFIG.module_revisions": {'acquisition': "old", 'processing': "old", 'stimulation': "old", 'actuation': "old"}, "CONFIG.system_revision": "c" * 64, "CONFIG.generation": "old"}
+    assert engine.node_configuration_snapshot(lambda: {"CONFIG.module_revisions": {'acquisition': "selected", 'processing': "selected", 'stimulation': "selected", 'actuation': "selected"}, "CONFIG.system_revision": "c" * 64}) == (
+        "selected", {"CONFIG.module_revisions": {'acquisition': "selected", 'processing': "selected", 'stimulation': "selected", 'actuation': "selected"}, "CONFIG.system_revision": "c" * 64})
 
 
 @pytest.mark.parametrize("phase", ["starting", "stopping", "failed_stop", "dead_thread", "apply", "recovery"])
@@ -58,8 +58,7 @@ def test_unsettled_runtime_never_publishes_a_node_configuration(engine, phase):
 @pytest.mark.parametrize(("role", "snapshot", "message"), [
     ("engine", {}, "role"),
     ("stimulation", {"STIMULATION.auto_spawn": True}, "managed"),
-    ("actuation", {"ACTUATION.enabled": False}, "disabled"),
-    ("actuation", {"ACTUATION.enabled": True, "ACTUATION.auto_spawn": True}, "managed"),
+    ("actuation", {"ACTUATION.auto_spawn": True}, "managed"),
 ])
 def test_node_endpoint_rejects_unowned_roles(role, snapshot, message):
     engine = SimpleNamespace(node_configuration_snapshot=lambda selected: ("running", snapshot))

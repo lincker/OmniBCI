@@ -103,6 +103,7 @@ async function withSettings(action, overrides = {}) {
   const cfg = { revision: "a".repeat(64), entries: [
     { key: "ALGORITHM.baseline_duration", type: "float", value: 0.5, requires: "engine_restart", description: "Duration of continuous pre-trigger data retained per epoch (s), available for baseline correction." },
     { key: "NEUROENGINE.queue_size", type: "int", value: 32, requires: "engine_restart", description: "Queue capacity" },
+    ...(overrides.extraEntries ?? []),
   ] };
   const activation = { revision: "accepted", bindings: [
     { slot: "acquisition.source", profile_id: "source", profile_revision: 3 },
@@ -120,7 +121,11 @@ async function withSettings(action, overrides = {}) {
       if (overrides.reloadError && calls.some((call) => call.method === "PATCH")) throw new Error("Settings refresh failed");
       data = cfg;
     }
-    else if (path === "/api/v1/config/activation" && method === "GET") data = activation;
+    else if (path === "/api/v1/config/modules" && method === "GET") data = {
+      modules: Object.fromEntries(["acquisition", "processing", "stimulation", "actuation"].map((module) => [module, {
+        module, revision: `${module}-accepted`, settings: {}, bindings: activation.bindings.filter((binding) => binding.slot.startsWith(`${module}.`)),
+      }])), system: { revision: "system-accepted", settings: {} },
+    };
     else if (path === "/api/v1/config" && method === "PATCH") {
       if (body.expected_revision !== cfg.revision) return { ok: false, status: 409, json: async () => ({ code: "CONFLICT", message: "Host settings changed" }) };
       if (overrides.patchError) return { ok: false, status: 422, json: async () => ({ code: "VALIDATION_ERROR", message: "Value is invalid" }) };
@@ -142,7 +147,7 @@ async function withSettings(action, overrides = {}) {
 for (const running of [false, true]) {
   test(`General exposes both host settings while the engine running=${running}`, async () => {
     await withSettings(async ({ component, calls, dirty }) => {
-      assert.deepEqual(calls, [{ path: "/api/v1/config", method: "GET", body: undefined }]);
+      assert.deepEqual(calls.filter((call) => call.path === "/api/v1/config"), [{ path: "/api/v1/config", method: "GET", body: undefined }]);
       const fields = elements(component.tree).filter((item) => item.type === "input");
       assert.deepEqual(fields.map((item) => item.props.id), ["setting-ALGORITHM.baseline_duration", "setting-NEUROENGINE.queue_size"]);
       assert.equal(input(component, "ALGORITHM.baseline_duration").props.value, "0.5");
@@ -151,7 +156,7 @@ for (const running of [false, true]) {
       assert.equal(input(component, "NEUROENGINE.queue_size").props.value, "32");
       assert.match(text(component.tree), /Console preferences/);
       assert.doesNotMatch(text(component.tree), /Advanced|Default configuration|Edit configuration|Active configuration|Save as|Delete|Category|Saved resolved/);
-      assert.equal(elements(component.tree).some((item) => item.type === "select" || item.type === "datalist"), false);
+      assert.deepEqual(elements(component.tree).filter((item) => item.type === "select").map((item) => item.props["aria-label"]), ["Affected modules"]);
       await change(component, "ALGORITHM.baseline_duration", "0.75");
       await change(component, "NEUROENGINE.queue_size", "64");
       assert.equal(dirty.at(-1), true);
@@ -246,7 +251,7 @@ test("invalid host keyboard saves do not leave a delayed focus restoration behin
   } finally { if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument; }
 });
 
-test("Save sends host updates only and Review retains every selected plugin binding", async () => {
+test("Save sends host updates only and Review only retains the selected section plugin bindings", async () => {
   await withSettings(async ({ component, calls, reviews, applied, dirty, busy }) => {
     await change(component, "ALGORITHM.baseline_duration", "0.75");
     await change(component, "NEUROENGINE.queue_size", "64");
@@ -260,42 +265,68 @@ test("Save sends host updates only and Review retains every selected plugin bind
     assert.deepEqual(busy, [true, false, true, false]);
     assert.equal(input(component, "ALGORITHM.baseline_duration").props.value, "0.75");
     await click(component, "Review and apply host settings");
-    assert.deepEqual(reviews, [{ bindings: [
-      { slot: "acquisition.source", profile_id: "source" },
-      { slot: "processing.filter.first", profile_id: "filter" },
-      { slot: "processing.filter.second", profile_id: "filter" },
-    ], expected_revision: "accepted", refresh_slots: [], include_host_settings: true }]);
+    assert.deepEqual(reviews, [{ module: "system", bindings: [], expected_revision: "system-accepted", refresh_slots: [] }]);
     assert.deepEqual(applied, [], "Only the runtime review dialog may apply the saved settings");
-    assert.deepEqual([...new Set(calls.map((call) => call.path))], ["/api/v1/config", "/api/v1/config/activation"]);
+    assert.deepEqual([...new Set(calls.map((call) => call.path))], ["/api/v1/config", "/api/v1/config/modules"]);
   });
 });
 
-test("host settings review retains an inline acquisition source without creating a profile", async () => {
+test("shared engine settings review leaves the inline source unchanged without creating a profile", async () => {
   await withSettings(async ({ component, calls, reviews, applied, activation }) => {
     const source = { slot: "acquisition.source", kind: "acquisition", profile_id: null, profile_revision: null,
       selection: { package_id: "omnibci.curry8", contribution_id: "reader", version: "1.0.0" },
-      parameters: { host: "127.0.0.1", port: 4455 } };
+      parameters: { host: "127.0.0.1", port: 4455 }, configuration_version: 2 };
     activation.bindings[0] = structuredClone(source);
     const accepted = structuredClone(activation);
     await click(component, "Review and apply host settings");
-    assert.deepEqual(reviews, [{ bindings: [
-      { slot: source.slot, selection: source.selection, parameters: source.parameters },
-      { slot: "processing.filter.first", profile_id: "filter" },
-      { slot: "processing.filter.second", profile_id: "filter" },
-    ], expected_revision: "accepted", refresh_slots: [], include_host_settings: true }]);
+    assert.deepEqual(reviews, [{ module: "system", bindings: [], expected_revision: "system-accepted", refresh_slots: [] }]);
     assert.deepEqual(activation, accepted);
     assert.deepEqual(applied, []);
     assert.equal(calls.every((call) => call.method === "GET"), true);
   });
 });
 
-test("host settings review still requires saved profiles for other modules", async () => {
-  await withSettings(async ({ component, reviews, activation }) => {
-    activation.bindings[1].profile_id = null;
-    await click(component, "Review and apply host settings");
-    assert.deepEqual(reviews, []);
-    assert.equal(elements(component.tree).some((item) => item.props.role === "alert"), true);
-  });
+test("host settings review preserves every inline role, decoder mapping and filter order without saving profiles", async () => {
+  await withSettings(async ({ component, calls, reviews, applied, activation }) => {
+    const roles = [
+      ["acquisition.source", "acquisition"], ["processing.decoder", "decoder"],
+      ["processing.epoch_detector", "epoch_detector"], ["processing.filter.second", "filter"],
+      ["processing.filter.first", "filter"], ["stimulation.paradigm", "paradigm"],
+      ["stimulation.trigger", "trigger"], ["actuation.effector", "effector"],
+    ];
+    const mapping = { schema_version: 2, outputs: [
+      { name: "C4", source_channel_index: 5, signal_type: "eeg" },
+      { name: "C3", source_channel_id: "channel-left", signal_type: "eeg" },
+    ] };
+    activation.bindings = roles.map(([slot, kind], index) => ({ slot, kind, profile_id: null, profile_revision: null,
+      selection: { package_id: `example.${kind}`, contribution_id: "main", version: "2.0.0" },
+      parameters: { gain: index + 1, calibration: [index, index + 2] }, configuration_version: index + 1,
+      ...(kind === "decoder" ? { processing_input: structuredClone(mapping) } : {}) }));
+    activation.bindings.push({ slot: "processing.filter.saved", kind: "filter", profile_id: "pinned-filter", profile_revision: 2 });
+    const accepted = structuredClone(activation);
+    for (const module of ["processing", "stimulation", "actuation", "system"]) {
+      elements(component.tree).find((item) => item.type === "select" && item.props["aria-label"] === "Affected modules")
+        .props.onChange({ target: { value: module } });
+      await component.settle();
+      await click(component, "Review and apply host settings");
+    }
+    assert.deepEqual(reviews, ["processing", "stimulation", "actuation", "system"].map((module) => ({ module,
+      bindings: accepted.bindings.filter((binding) => binding.slot.startsWith(`${module}.`)).map((binding) => binding.profile_id
+        ? { slot: binding.slot, profile_id: binding.profile_id }
+        : { slot: binding.slot, selection: binding.selection, parameters: binding.parameters, configuration_version: binding.configuration_version,
+          ...(binding.slot === "processing.decoder" ? { processing_input: binding.processing_input } : {}) }),
+      expected_revision: `${module}-accepted`, refresh_slots: [],
+    })));
+    assert.deepEqual(reviews[0].bindings.filter((binding) => binding.slot.startsWith("processing.filter.")).map((binding) => binding.slot),
+      ["processing.filter.second", "processing.filter.first", "processing.filter.saved"]);
+    assert.deepEqual(reviews[0].bindings.find((binding) => binding.slot === "processing.decoder").processing_input, mapping);
+    assert.deepEqual(activation, accepted);
+    assert.deepEqual(applied, []);
+    assert.equal(calls.every((call) => call.method === "GET"), true);
+    assert.equal(calls.some((call) => call.path.includes("plugin-profiles")), false);
+  }, { extraEntries: [
+    { key: "STIMULATION.renderer", value: "psychopy" }, { key: "ACTUATION.auto_spawn", value: true }, { key: "debug", value: false },
+  ] });
 });
 
 test("invalid numeric input stays editable without sending updates", async () => {
@@ -349,7 +380,7 @@ test("Discard confirms unsaved host changes and restores the saved values", asyn
     dialog(component).props.onConfirm(); await component.settle();
     assert.equal(input(component, "ALGORITHM.baseline_duration").props.value, "0.5");
     assert.equal(dirty.at(-1), false);
-    assert.equal(calls.length, 1);
+    assert.equal(calls.filter((call) => call.path === "/api/v1/config").length, 1);
   });
 });
 
@@ -376,7 +407,7 @@ test("a stale save preserves the draft and requires an explicit refresh", async 
     assert.equal(busy.at(-1), false);
     assert.equal(button(component.tree, "Review and apply host settings").props.disabled, true);
     assert.equal(calls.filter((call) => call.method === "PATCH").length, 1);
-    assert.equal(calls.filter((call) => call.method === "GET").length, 1);
+    assert.equal(calls.filter((call) => call.method === "GET" && call.path === "/api/v1/config").length, 1);
     assert.equal(cfg.entries.find((entry) => entry.key === "NEUROENGINE.queue_size").value, 128);
     const refresh = elements(component.tree).find((item) => item.props["aria-label"] === "Refresh settings");
     refresh.props.onClick(); await component.settle();

@@ -35,16 +35,19 @@ portable user profiles stay in the configuration repository. Future synchronizat
 can transfer profile documents and exact package identities without copying
 machine paths or executable code.
 
-Legacy user plugin directories remain supported for existing development
-workflows. Managed versions are discovered only through `state/enabled.json`.
-This enablement rule applies to managed packages; it does not disable legacy
-development plugins.
+Development package directories remain supported, using the same version 2
+manifest and API contracts. Managed versions are discovered only through
+`state/enabled.json`. Every package declares an immutable domain; installing a
+version with a different domain for the same package identity is rejected.
+Optional `engines.omnibci` requirements are checked during install and discovery.
+`requires` retains its Python-library meaning, separate from plugin identities.
 
 ## Explicit lifecycle
 
 1. Install a trusted local ZIP with a v2 root manifest.
 2. Enable its exact package/version to make contributions selectable.
-3. Create a profile, select its binding, and use the existing runtime Apply flow.
+3. Select a contribution and edit current values. Connect or launch applies the
+   relevant module; saving a named Profile remains optional.
 4. To change versions, preview a profile copy against the target version's schema.
    Existing parameters are all preserved by default. Removed or incompatible
    fields cause validation errors; users must explicitly supply replacement values.
@@ -56,8 +59,8 @@ development plugins.
    running snapshots, and in-progress Apply references prevent disable/removal.
 
 Multiple enabled versions can coexist and are resolved by exact package,
-contribution, and version. Ambiguous legacy aliases fail instead of choosing an
-arbitrary version. Enabling an exact identity already provided by another catalog
+contribution, and version. There is no registry-alias fallback or automatic latest
+version. Enabling an exact identity already provided by another catalog
 location is rejected.
 
 Plugin enablement grants execution when that contribution is used; it is not a

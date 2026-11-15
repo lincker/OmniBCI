@@ -41,6 +41,41 @@ class PeerGateway:
     def peer(self, name: str) -> PeerChannel:
         return self._channels[name]
 
+    async def replace_peer(self, name: str, config: PeerConfig | None) -> None:
+        """Replace one settled output channel without restarting unrelated peers."""
+        if config is not None and config.name != name:
+            raise ValueError("Replacement peer name does not match")
+        async with self._lifecycle_lock:
+            if not self._started or self._dirty:
+                raise RuntimeError("Peer gateway must be running and settled before replacement")
+            previous = self._channels.get(name)
+            if previous is not None:
+                await previous.stop()
+                if previous.has_lifecycle_resources:
+                    raise RuntimeError("Previous peer still owns lifecycle resources")
+            if config is None:
+                self._channels.pop(name, None)
+                return
+            candidate = PeerChannel(config, self._bus)
+            self._channels[name] = candidate
+            try:
+                await candidate.start()
+            except BaseException:
+                # Keep an uncertain candidate owned by the gateway. A later
+                # rollback may replace it only after its cleanup succeeds.
+                try:
+                    await candidate.stop()
+                except BaseException:
+                    self._dirty = True
+                    raise
+                if candidate.has_lifecycle_resources:
+                    self._dirty = True
+                elif previous is not None:
+                    self._channels[name] = previous
+                else:
+                    self._channels.pop(name, None)
+                raise
+
     async def start(self) -> None:
         async with self._lifecycle_lock:
             self._configuration_frozen = True

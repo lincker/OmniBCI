@@ -65,8 +65,12 @@ class PluginPackageDescriptor:
     source: str
     location: Path
     api_version: str
-    version: str | None = None
-    manifest_version: int = 1
+    version: str
+    domain: str
+    manifest_version: int = 2
+    engines: Mapping[str, str] = field(default_factory=dict)
+    host_version: str | None = None
+    requires: tuple[tuple[str, str], ...] = ()
     platforms: tuple[str, ...] = ()
     # Catalog metadata: lower values have higher priority.  It is intentionally
     # excluded from equality/repr because it is not plugin identity.
@@ -145,7 +149,7 @@ class PluginDescriptor:
         return self.package.api_version
 
     @property
-    def version(self) -> str | None:
+    def version(self) -> str:
         return self.package.version
 
     @property

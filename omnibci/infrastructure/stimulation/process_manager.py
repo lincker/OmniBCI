@@ -31,6 +31,7 @@ from typing import Any
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessState,
     StartupReporter,
+    module_runtime_identity,
     wait_for_startup_report,
 )
 
@@ -65,7 +66,8 @@ def _run_stimulation(
     reporter = (
         StartupReporter(
             startup_connection, component="Stimulation",
-            config_revision=(settings_snapshot or {}).get("CONFIG.revision"),
+            module_revisions={"stimulation": (settings_snapshot or {}).get("CONFIG.module_revisions", {}).get("stimulation")},
+            system_revision=(settings_snapshot or {}).get("CONFIG.system_revision"),
             generation=(settings_snapshot or {}).get("CONFIG.generation"),
         )
         if startup_connection is not None
@@ -167,7 +169,8 @@ class StimulationProcessManager:
                     process_alive
                     and self._state is ChildProcessState.READY
                     and paradigm == self._paradigm
-                    and snapshot == self._settings_snapshot
+                    and module_runtime_identity(snapshot, "stimulation")
+                    == module_runtime_identity(self._settings_snapshot, "stimulation")
                 ):
                     logger.debug(
                         "Stimulation process already running requested paradigm "
@@ -242,7 +245,8 @@ class StimulationProcessManager:
             )
             try:
                 expected_identity = ({
-                    "expected_revision": snapshot.get("CONFIG.revision"),
+                    "expected_module_revisions": {"stimulation": snapshot.get("CONFIG.module_revisions", {}).get("stimulation")},
+                    "expected_system_revision": snapshot.get("CONFIG.system_revision"),
                     "expected_generation": snapshot.get("CONFIG.generation"),
                 } if snapshot is not None else {})
                 wait_for_startup_report(

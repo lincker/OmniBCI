@@ -85,6 +85,8 @@ export const api = {
   // ---- control actions (stage 2, lock-free) ------------------------------
   engineStart: () => post("/api/v1/engine/start"),
   engineStop: () => post("/api/v1/engine/stop"),
+  moduleStart: (module: "acquisition" | "processing" | "actuation") => post(`/api/v1/engine/modules/${module}/start`),
+  moduleStop: (module: "acquisition" | "processing" | "actuation") => post(`/api/v1/engine/modules/${module}/stop`),
 
   acqConnect: () => post("/api/v1/acquisition/connect"),
   acqDisconnect: () => post("/api/v1/acquisition/disconnect"),

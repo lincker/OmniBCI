@@ -27,7 +27,7 @@ def _frame(sequence=0):
         "dtype": "int64", "row_indices": [0, 1], "sample_start": 0, "sample_count": 2,
         "trigger_row_index": 1, "values": np.array([[11, 12], [0, 7]], dtype=np.int64),
         "descriptor": None, "connection_id": "connection", "source_id": "source",
-        "config_revision": "revision",
+        "acquisition_revision": "revision", "system_revision": "system",
     })
 
 
@@ -189,19 +189,22 @@ async def test_preview_consumer_keeps_processing_final_frames_during_both_worker
     cache = PreviewCache(output, generation="generation")
     engine = _make_engine(preview_cache=cache)
 
-    def join_with_last_frame(sequence, timeout):
+    def join_with_last_frame(worker, sequence, timeout):
         assert cache.read("capture")["available"] is True
         _put_frame_with_retry(output, _frame(sequence))
         deadline = time.monotonic() + 1
         while cache.read("capture", sequence)["chunk"] is None and time.monotonic() < deadline:
             time.sleep(0.005)
         assert cache.read("capture", sequence)["chunk"] is not None
+        worker.is_alive.return_value = False
 
     for sequence, worker in enumerate((engine.acquisition_worker, engine.signal_processing_worker)):
-        worker.is_alive.return_value = False
-        worker.join.side_effect = lambda timeout, sequence=sequence: join_with_last_frame(sequence, timeout)
+        worker.is_alive.return_value = True
+        worker.join.side_effect = lambda timeout, sequence=sequence, worker=worker: join_with_last_frame(worker, sequence, timeout)
     try:
         await engine._start()
+        await engine.start_module("acquisition", {})
+        await engine.start_module("processing", {})
         await asyncio.wait_for(engine._stop(), timeout=3)
         assert engine.shutdown_complete and cache.stopped
         assert [item["sequence_id"] for item in cache.read("capture")["chunks"]] == [0, 1]
@@ -222,8 +225,15 @@ async def test_engine_start_failure_stops_preview_and_closes_its_owned_channel(f
                      else engine.peer_gateway.start)
     failing_start.side_effect = RuntimeError("startup failed")
     try:
-        with pytest.raises(RuntimeError, match="startup failed"):
+        if failure == "acquisition_start":
             await engine._start()
+            with pytest.raises(RuntimeError, match="startup failed"):
+                await engine.start_module("acquisition", {})
+            assert engine._started and not cache.stopped
+            await engine._stop()
+        else:
+            with pytest.raises(RuntimeError, match="startup failed"):
+                await engine._start()
         assert engine.shutdown_complete and cache.stopped
         assert cache.read("capture")["available"] is False
         with pytest.raises(ValueError, match="closed"):
@@ -241,21 +251,21 @@ async def test_engine_rejects_restart_after_rollback_leaves_preview_consumer_run
     output = PreviewChannel(context=mp.get_context("spawn"))
     cache = PreviewCache(output, generation="generation")
     engine = _make_engine(preview_cache=cache, owned_ipc_queues=(output,))
-    engine.acquisition_worker.start.side_effect = RuntimeError("worker startup failed")
+    engine.peer_gateway.start.side_effect = RuntimeError("gateway startup failed")
     engine.acquisition_worker.is_alive.return_value = False
     engine.signal_processing_worker.is_alive.return_value = False
     stop = cache.stop
     monkeypatch.setattr(cache, "stop", AsyncMock(side_effect=RuntimeError("consumer shutdown failed")))
     try:
-        with pytest.raises(RuntimeError, match="worker startup failed"):
+        with pytest.raises(RuntimeError, match="gateway startup failed"):
             await engine._start()
         assert not cache.stopped and not engine.shutdown_complete
-        engine.acquisition_worker.start.side_effect = None
+        engine.peer_gateway.start.side_effect = None
 
         with pytest.raises(RuntimeError, match="partial lifecycle state"):
             await engine._start()
 
-        engine.acquisition_worker.start.assert_called_once()
+        engine.acquisition_worker.start.assert_not_called()
         engine.signal_processing_worker.start.assert_not_called()
     finally:
         monkeypatch.setattr(cache, "stop", stop)
@@ -304,6 +314,7 @@ async def test_desktop_retained_worker_keeps_preview_channel_owned_until_worker_
     engine.signal_processing_worker.is_alive.return_value = False
     try:
         await engine._start()
+        await engine.start_module("acquisition", {})
         with pytest.raises(ExceptionGroup, match="shutdown failed"):
             await engine._stop()
         assert not engine.shutdown_complete
@@ -329,8 +340,8 @@ async def test_builder_owns_one_independent_bounded_preview_channel_per_graph():
         for generation in ("first", "second"):
             engines.append(NeuroEngineBuilder(settings_snapshot={"CONFIG.generation": generation}).build())
         first, second = engines
-        output = first.acquisition_worker.preview_queue
-        other_output = second.acquisition_worker.preview_queue
+        output = first.preview_cache._queue
+        other_output = second.preview_cache._queue
         assert isinstance(output, PreviewChannel)
         assert isinstance(other_output, PreviewChannel)
         assert output is not other_output
@@ -345,10 +356,9 @@ async def test_builder_owns_one_independent_bounded_preview_channel_per_graph():
             output.put_nowait(_frame())
         with pytest.raises(Empty):
             other_output.get(timeout=0.05)
+        first._processing_active.set()
         first.data_manager.put_data("processing data")
         assert first.data_manager.get_data(timeout=1) == "processing data"
     finally:
         for engine in engines:
             await engine._stop()
-            engine.acquisition_worker.close()
-            engine.signal_processing_worker.close()

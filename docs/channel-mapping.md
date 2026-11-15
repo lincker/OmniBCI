@@ -134,17 +134,15 @@ Get Metadata returns `comparison` with expected and actual values and one status
 A missing or invalid `SignalInfo` produces no comparison. Metadata reads never
 save or overwrite Profiles. New drafts display the source information without a
 comparison to an absent baseline. Their unsaved connection binding omits the
-expected dimensions; saving and applying the filled Profile establishes that
-baseline. For independently observed sources, omitted expectations use the
+expected dimensions; applying the current values establishes that baseline. For independently observed sources, omitted expectations use the
 current device/file values and do not block preparation or streaming. The
 prepared plan records those actual values without changing the saved Profile.
 Only mismatched provided expectations block preparation while keeping source
 information visible. The user can adjust the device/file and read again,
 or choose **Save observed values as new profile**, name it, and save the current
 connection parameters with the observed dimensions. This creates a separate
-Profile and preserves the original Profile and applied configuration. Connect
-then applies the new Profile. **Use observed values** remains available to
-update the current draft before saving and applying it. The applied revision
+Profile and preserves the original Profile and applied configuration. Load the saved values into Current configuration before connecting. **Use observed values** remains available to
+update the current draft before applying it; saving a Profile is optional. The applied revision
 is compared again after connection. Scan45's
 configured declarations remain editable and are never labeled device-verified.
 
@@ -152,11 +150,11 @@ configured declarations remain editable and are never labeled device-verified.
 
 `AcquisitionWorker` owns configuration and plugin construction. It pins one
 settings snapshot, loads the source, and passes only the required context to
-`AcquisitionRuntime`: `source_id`, `generation`, `config_revision`, and
+`AcquisitionRuntime`: `source_id`, `generation`, `acquisition_revision`, `system_revision`, and
 `preparation_required`.
 
 `source_id` identifies the configured source. `generation` identifies the current
-engine instance, while `config_revision` identifies its applied configuration.
+engine instance, while `acquisition_revision` identifies its applied configuration.
 `preparation_required` determines whether starting a stream requires a valid
 Signal Processing preparation receipt. Every selected decoder requires preparation,
 including when its input defaults to all source channels. The Worker derives

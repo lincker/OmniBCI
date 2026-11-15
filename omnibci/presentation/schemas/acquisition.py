@@ -123,7 +123,8 @@ class AcquisitionPreviewResponse(BaseModel):
 
     capture_id: str | None
     generation: str
-    config_revision: str | None
+    acquisition_revision: str | None
+    system_revision: str | None
     source_id: str | None
     connection_id: str | None
     status: Literal["idle", "capturing", "finished"]
@@ -151,7 +152,8 @@ class AcquisitionPreviewChunkResponse(BaseModel):
 
     capture_id: str
     generation: str
-    config_revision: str | None
+    acquisition_revision: str | None
+    system_revision: str | None
     source_id: str
     connection_id: str
     sequence_id: int

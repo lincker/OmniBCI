@@ -6,6 +6,7 @@ from omnibci.application.services.runtime_configuration_service import RuntimeCo
 from omnibci.presentation.errors import ApiError
 from omnibci.presentation.routers.plugin_config import _configuration_errors
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
+from omnibci.presentation.schemas.plugin_config import ConfigurationModule, RevertModuleRequest
 from omnibci.presentation.schemas.runtime_config import (
     RuntimeConfigurationResponse, RuntimePlanRequest, RuntimePlanResponse,
     RuntimeApplyRequest, RuntimeOperationResponse,
@@ -56,3 +57,13 @@ def configuration_operation(operation_id: str, service=Depends(get_runtime_confi
         return ApiResponse(data=service.operation(operation_id))
     except KeyError as exc:
         raise ApiError(404, ErrorCode.NOT_FOUND, "Configuration operation not found") from exc
+
+
+@router.post("/modules/{module}/revert-plan", response_model=ApiResponse[RuntimePlanResponse])
+def revert_module(module: ConfigurationModule, body: RevertModuleRequest,
+                  service=Depends(get_runtime_configuration)):
+    with _configuration_errors():
+        try:
+            return ApiResponse(data=service.revert_plan(module, body.entry_id).to_dict())
+        except KeyError as exc:
+            raise ApiError(404, ErrorCode.NOT_FOUND, "Module history entry not found") from exc

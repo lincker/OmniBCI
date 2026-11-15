@@ -25,7 +25,8 @@ class SignalProcessingWorker(mp.Process):
     def __init__(self, command_queue, data_manager=None, event_bus=None,
                  baseline_duration: float = 0.0,
                  settings_snapshot: dict | None = None,
-                 startup_reporter: StartupReporter | None = None) -> None:
+                 startup_reporter: StartupReporter | None = None,
+                 runtime_counters=None) -> None:
         super().__init__()
         self.data_manager = data_manager
         self.event_bus = event_bus
@@ -35,6 +36,7 @@ class SignalProcessingWorker(mp.Process):
         self.settings_snapshot = deepcopy(settings_snapshot)
         self.signal_processor: Optional[SignalProcessor] = None
         self.startup_reporter = startup_reporter
+        self.runtime_counters = runtime_counters
         self._startup_stage = "settings"
 
     def run(self) -> None:
@@ -68,8 +70,11 @@ class SignalProcessingWorker(mp.Process):
             baseline_duration=self.baseline_duration,
             filters=[],
             generation=(self.settings_snapshot or {}).get("CONFIG.generation"),
-            config_revision=(self.settings_snapshot or {}).get("CONFIG.revision"),
+            processing_revision=(self.settings_snapshot or {}).get("CONFIG.module_revisions", {}).get("processing"),
+            acquisition_revision=(self.settings_snapshot or {}).get("CONFIG.module_revisions", {}).get("acquisition"),
+            system_revision=(self.settings_snapshot or {}).get("CONFIG.system_revision"),
             settings_snapshot=self._snapshot(),
+            runtime_counters=self.runtime_counters,
         )
         if self.startup_reporter is not None:
             self.startup_reporter.ready()

@@ -60,10 +60,10 @@ class DirectoryPluginPackageStore:
             return PackageVersion(
                 package_id, version, first.display_name, first.description, receipt["sha256"],
                 tuple(PackageContribution(item.selection, item.kind, item.label, item.available) for item in definitions),
-                available=any(item.available for item in definitions),
+                domain=first.package.domain, available=any(item.available for item in definitions),
             )
         except (OSError, ValueError, KeyError, PluginResolutionError, PackageInstallError, PluginPackageError) as exc:
-            return PackageVersion(package_id, version, package_id, None, None, (), available=False, error=str(exc))
+            return PackageVersion(package_id, version, package_id, None, None, (), domain=None, available=False, error=str(exc))
 
     def _receipt(self, location: Path, package_id: str, version: str) -> dict:
         path = location / ".omnibci-install.json"
@@ -114,8 +114,6 @@ class DirectoryPluginPackageStore:
             raise PluginPackageStorageError(f"Cannot read installed packages: {exc}") from exc
 
     def configuration(self, kind: str, selection: PluginSelection):
-        if selection.version is None:
-            raise PluginPackageError("Installed packages require an exact version")
         location = self._path(selection.package_id, selection.version)
-        catalog = PluginCatalog({kind: lambda: [PluginRoot(location, "user", 0)]})
+        catalog = PluginCatalog({kind: lambda: [PluginRoot(location, "user", 0)]}, host_version=self.installer.host_version)
         return CatalogConfigurationAdapter(catalog).get(kind, selection)

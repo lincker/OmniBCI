@@ -31,7 +31,6 @@ class NeuroEngineConfig:
     message_server_ip: str = "127.0.0.1"    # result-push server bind host
     message_server_port: int = 8000         # result-push server bind port
     baseline_duration: float = 0.2          # seconds of pre-trigger data (0 = none)
-    actuation_enabled: bool = False          # open an actuation listen port + wiring
     actuation_server_ip: str = "127.0.0.1"  # actuation channel bind host
     actuation_server_port: int = 8001        # actuation channel bind port
     actuation_watchdog_timeout_s: float = 1.0  # silent-link → failsafe (Phase 4)
@@ -52,7 +51,6 @@ class NeuroEngineConfig:
             message_server_ip=str(_get("NEUROENGINE.message_server_ip", cls.message_server_ip)),
             message_server_port=int(_get("NEUROENGINE.message_server_port", cls.message_server_port)),
             baseline_duration=float(_get("ALGORITHM.baseline_duration", cls.baseline_duration)),
-            actuation_enabled=bool(_get("ACTUATION.enabled", cls.actuation_enabled)),
             actuation_server_ip=str(_get("ACTUATION.server_ip", cls.actuation_server_ip)),
             actuation_server_port=int(_get("ACTUATION.server_port", cls.actuation_server_port)),
             actuation_watchdog_timeout_s=float(
@@ -83,24 +81,17 @@ class NeuroEngineBuilder:
 
     def build(self) -> NeuroEngine:
         """
-        Construct and wire all components; return a ready-to-run NeuroEngine.
-
-        Build order matters:
-          1. EventBus  (needs mp.Queue before use)
-          2. DataManager  (shared buffer between acquisition and processor)
-          3. Command queues  (one per process)
-          4. Sub-processes  (receive references to shared queues/managers)
-          5. PeerGateway  (one routed channel per external peer; stimulation here)
-          6. NeuroEngine  (receives everything above)
+        Construct the foundation and defer business workers until module startup.
         """
         cfg = self._config
         snapshot = self._settings_snapshot
-        revision = snapshot.get("CONFIG.revision")
+        revisions = snapshot.get("CONFIG.module_revisions") or {}
+        system_revision = snapshot.get("CONFIG.system_revision")
         generation = snapshot.get("CONFIG.generation")
-        stimulation_identity = (PeerIdentity("stimulation", revision, generation)
+        stimulation_identity = (PeerIdentity("stimulation", revisions.get("stimulation"), system_revision, generation)
                                 if not snapshot.get("STIMULATION.auto_spawn", True) else None)
-        actuation_identity = (PeerIdentity("actuation", revision, generation)
-                              if cfg.actuation_enabled and not snapshot.get("ACTUATION.auto_spawn", True) else None)
+        actuation_identity = (PeerIdentity("actuation", revisions.get("actuation"), system_revision, generation)
+                              if not snapshot.get("ACTUATION.auto_spawn", True) else None)
 
         # 1. EventBus — event_queue must be mp.Queue for cross-process delivery
         event_queue = mp.Queue()
@@ -108,7 +99,10 @@ class NeuroEngineBuilder:
 
         # 2. Shared data buffer
         data_buffer = mp.Queue()
-        data_manager = DataManager(buffer=data_buffer)
+        processing_active = mp.Event()
+        data_manager = DataManager(buffer=data_buffer, processing_active=processing_active)
+        # Trial, epoch and source sequence counters outlive individual workers.
+        runtime_counters = mp.Array("q", (0, 0, -1))
         preview_queue = PreviewChannel()
         preview_cache = PreviewCache(preview_queue, generation=generation)
         acquisition_log_queue = mp.Queue(maxsize=256)
@@ -118,38 +112,40 @@ class NeuroEngineBuilder:
         acquisition_command_queue = mp.Queue(cfg.queue_size)
         processor_command_queue = mp.Queue(cfg.queue_size)
 
-        # 4. Sub-processes (not started yet — NeuroEngine._start() does that)
-        acquisition_receiver, acquisition_sender = mp.Pipe(duplex=False)
-        processor_receiver, processor_sender = mp.Pipe(duplex=False)
-        acquisition_reporter = StartupReporter(
-            acquisition_sender, component="Acquisition",
-            config_revision=revision, generation=generation,
-        )
-        processor_reporter = StartupReporter(
-            processor_sender, component="Signal Processing",
-            config_revision=revision, generation=generation,
-        )
-        acquisition_worker = AcquisitionWorker(
-            command_queue=acquisition_command_queue,
-            data_manager=data_manager,
-            event_bus=event_bus,
-            settings_snapshot=self._settings_snapshot,
-            startup_reporter=acquisition_reporter,
-            preview_queue=preview_queue,
-            log_queue=acquisition_log_queue,
-        )
-        signal_processing_worker = SignalProcessingWorker(
-            command_queue=processor_command_queue,
-            data_manager=data_manager,
-            event_bus=event_bus,
-            baseline_duration=cfg.baseline_duration,
-            settings_snapshot=self._settings_snapshot,
-            startup_reporter=processor_reporter,
-        )
+        # Workers are constructed only when their module starts. Shared result
+        # counters keep trial/epoch identities unique across processing restarts.
+        def worker_factory(module, runtime_snapshot):
+            receiver, sender = mp.Pipe(duplex=False)
+            component = {"acquisition": "Acquisition", "processing": "Signal Processing"}[module]
+            reporter = StartupReporter(
+                sender, component=component,
+                module_revisions={module: runtime_snapshot.get("CONFIG.module_revisions", {}).get(module)},
+                system_revision=runtime_snapshot.get("CONFIG.system_revision"),
+                generation=runtime_snapshot.get("CONFIG.generation"),
+            )
+            try:
+                if module == "acquisition":
+                    worker = AcquisitionWorker(
+                        command_queue=acquisition_command_queue, data_manager=data_manager,
+                        event_bus=event_bus, settings_snapshot=runtime_snapshot,
+                        startup_reporter=reporter, preview_queue=preview_queue,
+                        log_queue=acquisition_log_queue, processing_active=processing_active,
+                        runtime_counters=runtime_counters,
+                    )
+                else:
+                    worker = SignalProcessingWorker(
+                        command_queue=processor_command_queue, data_manager=data_manager,
+                        event_bus=event_bus, settings_snapshot=runtime_snapshot,
+                        baseline_duration=float(runtime_snapshot.get("ALGORITHM.baseline_duration", cfg.baseline_duration)),
+                        startup_reporter=reporter, runtime_counters=runtime_counters,
+                    )
+                return StartupChannel(component, worker, receiver, reporter)
+            except BaseException:
+                receiver.close()
+                reporter.close()
+                raise
 
-        # 5. Peer gateway — one routed channel per external peer (host/port
-        #    injected, no settings.get inside). Stimulation is the only peer for
-        #    now; actuation is added here later (Phase 3).
+        # Output transports share the engine's event bus.
         peer_gateway = PeerGateway(event_bus)
         peer_gateway.add_peer(
             stimulation_peer_config(
@@ -159,30 +155,26 @@ class NeuroEngineBuilder:
             )
         )
 
-        # Actuation peer (opt-in). When enabled, the engine listens on a second
-        # port for the controller to dial in, and we wire the ACL translator
-        # (decoded trial → ActuationCommand) + inbound feedback consumer.
-        actuation_translator = None
-        actuation_feedback = None
-        if cfg.actuation_enabled:
-            peer_gateway.add_peer(
-                actuation_peer_config(
-                    host=cfg.actuation_server_ip,
-                    port=cfg.actuation_server_port,
-                    watchdog_timeout_s=cfg.actuation_watchdog_timeout_s,
-                    identity=actuation_identity,
-                )
+        # The foundation owns output transports. Actuation forwarding is
+        # enabled separately by the module lifecycle.
+        peer_gateway.add_peer(
+            actuation_peer_config(
+                host=cfg.actuation_server_ip,
+                port=cfg.actuation_server_port,
+                watchdog_timeout_s=cfg.actuation_watchdog_timeout_s,
+                identity=actuation_identity,
             )
-            actuation_translator = ActuationCommandTranslator(event_bus)
-            actuation_feedback = ActuationFeedbackHandler()
+        )
+        actuation_translator = ActuationCommandTranslator(event_bus)
+        actuation_feedback = ActuationFeedbackHandler()
 
         # 6. Assemble engine
         return NeuroEngine(
             event_bus=event_bus,
             data_manager=data_manager,
-            acquisition_worker=acquisition_worker,
+            acquisition_worker=None,
             acquisition_command_queue=acquisition_command_queue,
-            signal_processing_worker=signal_processing_worker,
+            signal_processing_worker=None,
             processor_command_queue=processor_command_queue,
             peer_gateway=peer_gateway,
             owned_ipc_queues=(event_queue, data_buffer, preview_queue, acquisition_log_queue),
@@ -191,12 +183,10 @@ class NeuroEngineBuilder:
             actuation_translator=actuation_translator,
             actuation_feedback=actuation_feedback,
             debug=cfg.debug,
-            startup_channels=(
-                StartupChannel("Acquisition", acquisition_worker, acquisition_receiver, acquisition_reporter),
-                StartupChannel("Signal Processing", signal_processing_worker, processor_receiver, processor_reporter),
-            ),
+            worker_factory=worker_factory,
+            processing_active=processing_active,
             startup_timeout_s=cfg.startup_timeout_s,
-            config_revision=revision,
+            module_revisions=revisions, system_revision=system_revision,
             generation=generation,
             allow_process_termination=self._allow_process_termination,
         )

@@ -46,17 +46,19 @@ class StimulationAppService:
         self._engine          = engine
         self._process_manager = process_manager
         self._command_results = command_results
-        self._active          = False
+        self._active_identity = None
 
     @admitted
     def handle_start_stimulation(self, cmd: StartStimulationCommand, *, settings_snapshot=None) -> None:
+        if not self._engine.is_engine_ready:
+            raise RuntimeError("Start the engine before starting stimulation")
         process_ready = False
-        self._active = False
+        self._active_identity = None
+        snapshot = self._engine.applied_snapshot if settings_snapshot is None else settings_snapshot
         try:
             if self._process_manager is not None:
                 # Managed mode blocks here until IPC + renderer/paradigm setup
                 # has reported READY.  External mode remains an immediate no-op.
-                snapshot = self._engine.applied_snapshot if settings_snapshot is None else settings_snapshot
                 if isinstance(snapshot, dict):
                     self._process_manager.start(
                         paradigm=cmd.paradigm, settings_snapshot=snapshot,
@@ -87,9 +89,9 @@ class StimulationAppService:
                     logger.exception(
                         "Failed to roll back Stimulation process after dispatch error"
                     )
-            self._active = False
+            self._active_identity = None
             raise
-        self._active = True
+        self._active_identity = self._identity(snapshot)
         logger.info("StartStimulation event dispatched (paradigm=%s)", cmd.paradigm)
 
     @admitted(recovery=True)
@@ -99,7 +101,7 @@ class StimulationAppService:
                 self._command_results is not None
                 and (
                     self._process_manager is None
-                    or not self._process_manager.auto_spawn
+                    or not self._managed()
                 )
             ):
                 # An externally-managed process cannot be joined locally, so
@@ -124,18 +126,20 @@ class StimulationAppService:
                     "Failed to stop Stimulation process after dispatch error"
                 )
             finally:
-                self._active = False
+                self._active_identity = None
             raise
         else:
             try:
                 if self._process_manager is not None:
                     self._process_manager.stop()
             finally:
-                self._active = False
+                self._active_identity = None
         logger.info("StopStimulation event dispatched")
 
     @admitted
     def handle_start_trial(self, cmd: StartStimTrialCommand) -> None:
+        if not self.is_active:
+            raise RuntimeError("Start stimulation before starting a trial")
         # JSON-friendly payload: it crosses the engine→stimulation socket, where
         # body_to_event reconstructs only plain JSON (no dataclass), so the
         # stimulation side reads this dict directly.
@@ -150,9 +154,27 @@ class StimulationAppService:
 
     @property
     def is_active(self) -> bool:
-        if self._process_manager is not None and self._process_manager.auto_spawn:
-            return self._active and self._process_manager.is_alive
-        return self._active
+        if self._active_identity is None or not self._engine.is_engine_ready:
+            return False
+        if self._identity(self._engine.applied_snapshot) != self._active_identity:
+            return False
+        if self._process_manager is not None:
+            if self._managed():
+                return self._process_manager.is_alive
+            return bool(self._engine.is_peer_connected(STIMULATION_PEER))
+        return True
+
+    @staticmethod
+    def _identity(snapshot):
+        snapshot = snapshot if isinstance(snapshot, dict) else {}
+        return (snapshot.get("CONFIG.generation"),
+                snapshot.get("CONFIG.module_revisions", {}).get("stimulation"))
+
+    def _managed(self) -> bool:
+        snapshot = self._engine.applied_snapshot
+        if isinstance(snapshot, dict) and "STIMULATION.auto_spawn" in snapshot:
+            return snapshot["STIMULATION.auto_spawn"]
+        return self._process_manager is not None and self._process_manager.auto_spawn
 
     @property
     def process_alive(self) -> bool:

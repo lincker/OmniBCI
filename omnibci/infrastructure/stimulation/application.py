@@ -55,7 +55,8 @@ class Stimulation:
         self._reconnect_requested = False
         identity = None
         if self._external_node:
-            identity = PeerIdentity("stimulation", source["CONFIG.revision"], source["CONFIG.generation"])
+            identity = PeerIdentity("stimulation", source["CONFIG.module_revisions"]["stimulation"],
+                                    source["CONFIG.system_revision"], source["CONFIG.generation"])
         self.peer_channel = PeerChannel(engine_peer_config(
             host, port, identity=identity, reconnect=not self._external_node,
             on_disconnect=self._connection_lost if self._external_node else None,
@@ -439,7 +440,8 @@ class Stimulation:
                     "paused": True, "renderer_stopped": True,
                     "cancelled_trials": cancelled,
                     "generation": snapshot.get("CONFIG.generation"),
-                    "config_revision": snapshot.get("CONFIG.revision"),
+                    "module_revision": snapshot.get("CONFIG.module_revisions", {}).get("stimulation"),
+                    "system_revision": snapshot.get("CONFIG.system_revision"),
                 },
             )
         except Exception as exc:

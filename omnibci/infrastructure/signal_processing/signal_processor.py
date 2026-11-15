@@ -2,7 +2,6 @@
 
 import asyncio
 from copy import deepcopy
-from dataclasses import replace
 from datetime import datetime, timezone
 from enum import Enum
 import logging
@@ -32,7 +31,6 @@ class SignalProcessorCommand(Enum):
     should_stop = 'stream_processor_stop'
     stage_configuration = 'stage_processing_configuration'
     cancel_configuration = 'cancel_processing_configuration'
-    update_context = 'update_processing_context'
     prepare_signal = 'prepare_signal_processing'
 
 
@@ -64,8 +62,11 @@ class SignalProcessor:
         baseline_duration: float = 0.0,
         filters=None,
         generation: str | None = None,
-        config_revision: str | None = None,
+        processing_revision: str | None = None,
+        acquisition_revision: str | None = None,
+        system_revision: str | None = None,
         settings_snapshot: dict | None = None,
+        runtime_counters=None,
     ) -> None:
         self.data_manager = data_manager
         self.event_bus = event_bus
@@ -106,11 +107,15 @@ class SignalProcessor:
 
         self._should_stop = False
         self.generation = generation or (settings_snapshot or {}).get("CONFIG.generation") or str(uuid4())
-        self.completed_trials = 0
-        self._epoch_number = 0
+        self._runtime_counters = runtime_counters
+        self.completed_trials = runtime_counters[0] if runtime_counters is not None else 0
+        self._epoch_number = runtime_counters[1] if runtime_counters is not None else 0
         self._epoch_record = None
-        self.config_revision = config_revision
-        self._last_sequence = -1
+        revisions = (settings_snapshot or {}).get("CONFIG.module_revisions", {})
+        self.processing_revision = processing_revision if processing_revision is not None else revisions.get("processing")
+        self.acquisition_revision = acquisition_revision if acquisition_revision is not None else revisions.get("acquisition")
+        self.system_revision = system_revision if system_revision is not None else (settings_snapshot or {}).get("CONFIG.system_revision")
+        self._last_sequence = runtime_counters[2] if runtime_counters is not None else -1
         self._drain_failure: str | None = None
 
     def new_epoch_processor(self) -> EpochProcessor:
@@ -120,7 +125,8 @@ class SignalProcessor:
             decoder=self._decoder.for_new_epoch(),
             sample_rate=self._sample_rate,
             filters=self._filters,
-            config_revision=self.config_revision,
+            processing_revision=self.processing_revision,
+            acquisition_revision=self.acquisition_revision,
         )
 
     def complete_trial(self, classification: Classification) -> TrialOutcome:
@@ -128,8 +134,11 @@ class SignalProcessor:
         outcome = TrialOutcome(
             generation=self.generation, trial_number=self.completed_trials + 1,
             classification=classification,
-            config_revision=self.current_epoch.config_revision,
+            processing_revision=self.current_epoch.processing_revision,
+            acquisition_revision=self.current_epoch.acquisition_revision,
         )
+        if self._runtime_counters is not None:
+            self._runtime_counters[0] = outcome.trial_number
         self.event_bus.put_event(Event(EventType.TrialCompleted, outcome))
         self.completed_trials = outcome.trial_number
         return outcome
@@ -137,11 +146,14 @@ class SignalProcessor:
     def record_epoch_started(self, event_id: int, channel_count: int) -> None:
         """Capture the identity and signal metadata before collecting an epoch."""
         self._epoch_number += 1
+        if self._runtime_counters is not None:
+            self._runtime_counters[1] = self._epoch_number
         self._epoch_record = {
             "generation": self.generation,
             "epoch_number": self._epoch_number,
             "event_id": event_id,
-            "config_revision": self.config_revision,
+            "processing_revision": self.processing_revision,
+            "acquisition_revision": self.acquisition_revision,
             "sample_rate": self._sample_rate,
             "channel_count": channel_count,
             "started_at": datetime.now(timezone.utc),
@@ -201,10 +213,14 @@ class SignalProcessor:
         """Prior data and its trial events have completed on this producer."""
         processing_started = False
         try:
-            if barrier.generation != self.generation or barrier.config_revision != self.config_revision:
+            if (barrier.generation != self.generation
+                    or barrier.system_revision != self.system_revision):
                 raise ValueError("Drain barrier belongs to a different runtime generation or revision")
             if barrier.last_sequence != self._last_sequence:
                 raise ValueError("Drain barrier sequence differs from the last consumed signal chunk")
+            # Source sequences survive module restarts. The FIFO marker proves
+            # consumption even when its producer has a newer configuration;
+            # pipeline source context changes only during signal preparation.
             if self._drain_failure is not None:
                 raise RuntimeError(self._drain_failure)
             processing_started = True
@@ -223,7 +239,8 @@ class SignalProcessor:
             self.transition_to_awaiting()
             self.pretrigger.clear()
             receipt = StreamDrainReceipt(
-                generation=self.generation, config_revision=self.config_revision,
+                generation=self.generation, acquisition_revision=barrier.acquisition_revision,
+                processing_revision=self.processing_revision, system_revision=self.system_revision,
                 last_sequence=self._last_sequence, completed_trials=self.completed_trials,
                 interrupted_epoch=interrupted,
             )
@@ -295,10 +312,6 @@ class SignalProcessor:
             if request is not None:
                 self._prepare_signal(request)
             return
-        if command == SignalProcessorCommand.update_context:
-            if request is not None:
-                self._update_output_context(request)
-            return
         if command in (SignalProcessorCommand.stage_configuration, SignalProcessorCommand.cancel_configuration):
             if request is None:
                 logger.warning("Signal Processing configuration command requires a correlation envelope")
@@ -335,32 +348,59 @@ class SignalProcessor:
         from .signal_configuration import load_signal_pipeline
         try:
             payload = request.payload
-            if not isinstance(payload, dict) or set(payload) != {"plan", "receipt"}:
+            if not isinstance(payload, dict) or set(payload) not in (
+                    {"plan", "receipt"}, {"plan", "receipt", "settings_snapshot"}):
                 raise ValueError("Invalid signal preparation request")
+            snapshot = deepcopy(self._settings_snapshot or {})
+            source_snapshot = payload.get("settings_snapshot")
+            if source_snapshot is not None:
+                if (not isinstance(source_snapshot, dict)
+                        or source_snapshot.get("CONFIG.generation") != self.generation
+                        or source_snapshot.get("CONFIG.system_revision") != self.system_revision
+                        or source_snapshot.get("CONFIG.module_revisions", {}).get("processing") != self.processing_revision):
+                    raise ValueError("Signal source context belongs to a different processing runtime")
+                for key in tuple(snapshot):
+                    if key.startswith("ACQUISITION."):
+                        del snapshot[key]
+                snapshot.update({key: deepcopy(value) for key, value in source_snapshot.items()
+                                 if key.startswith("ACQUISITION.")})
+                snapshot["PLUGINS.bindings"] = [
+                    deepcopy(binding) for binding in snapshot.get("PLUGINS.bindings", ())
+                    if binding.get("slot") != "acquisition.source"
+                ] + [deepcopy(binding) for binding in source_snapshot.get("PLUGINS.bindings", ())
+                     if binding.get("slot") == "acquisition.source"]
+                snapshot.setdefault("CONFIG.module_revisions", {})["acquisition"] = source_snapshot.get(
+                    "CONFIG.module_revisions", {}).get("acquisition")
+            acquisition_revision = snapshot.get("CONFIG.module_revisions", {}).get(
+                "acquisition", self.acquisition_revision)
             plan = ResolvedSignalPlan.from_dict(payload["plan"])
             receipt = payload["receipt"]
             if (not isinstance(receipt, dict)
-                    or set(receipt) != {"generation", "config_revision", "connection_id",
+                    or set(receipt) != {"generation", "acquisition_revision", "processing_revision", "system_revision", "connection_id",
                                        "source_fingerprint", "plan_fingerprint"}
                     or receipt["generation"] != self.generation
-                    or receipt["config_revision"] != self.config_revision
+                    or receipt["processing_revision"] != self.processing_revision
+                    or receipt["acquisition_revision"] != acquisition_revision
+                    or receipt["system_revision"] != self.system_revision
                     or receipt["connection_id"] != plan.source.connection_id
                     or not receipt["connection_id"]
                     or receipt["source_fingerprint"] != plan.source.fingerprint
                     or receipt["plan_fingerprint"] != plan.fingerprint
-                    or plan.config_revision != self.config_revision):
+                    or plan.acquisition_revision != acquisition_revision):
                 raise ValueError("Signal preparation belongs to a different runtime or connection")
-            validate_plan_binding(self._settings_snapshot or {}, plan)
+            validate_plan_binding(snapshot, plan)
             if receipt != self._signal_receipt:
                 if self.current_epoch is not None or self._configuration_transactions.pending is not None:
                     raise ValueError("Drain the stream before preparing a new signal plan")
-                decoder, detector, filters = load_signal_pipeline(self._settings_snapshot, plan)
+                decoder, detector, filters = load_signal_pipeline(snapshot, plan)
                 self._decoder, self.detector, self._filters = decoder, detector, list(filters)
                 self._sample_rate = plan.source.sample_rate
                 self.pre_trigger_samples = round(self._baseline_duration * self._sample_rate)
                 self.pretrigger = PreTriggerBuffer(capacity=self.pre_trigger_samples)
                 self._signal_plan = plan
                 self._signal_receipt = deepcopy(receipt)
+                self._settings_snapshot = snapshot
+                self.acquisition_revision = acquisition_revision
             result = CommandResult(request.command_id, EventType.PrepareSignalProcessing.name,
                                    ok=True, data=deepcopy(receipt))
         except Exception as exc:
@@ -369,32 +409,13 @@ class SignalProcessor:
                                    failure_kind=CommandFailureKind.REJECTED)
         self._publish_configuration_result(result)
 
-    def _update_output_context(self, request):
-        from .pipeline_configuration import validate_output_context
-        try:
-            payload = request.payload
-            if (not isinstance(payload, dict) or payload.get("generation") != self.generation
-                    or payload.get("expected_revision") != self.config_revision):
-                raise ValueError("Runtime context command is stale")
-            if self.current_epoch is not None or self._configuration_transactions.pending is not None:
-                raise ValueError("Drain processing before updating output context")
-            snapshot = validate_output_context(self._settings_snapshot, payload.get("settings_snapshot"))
-            self._install_configuration(snapshot)
-            result = CommandResult(request.command_id, EventType.UpdateProcessingContext.name, ok=True,
-                                   data=configuration_receipt(request.command_id, "applied",
-                                                              generation=self.generation, revision=self.config_revision))
-        except Exception as exc:
-            result = CommandResult(request.command_id, EventType.UpdateProcessingContext.name, ok=False,
-                                   message=str(exc), error_code="PROCESSING_CONTEXT_FAILED",
-                                   failure_kind=CommandFailureKind.REJECTED)
-        self._publish_configuration_result(result)
-
     def _publish_configuration_result(self, result):
         self.event_bus.put_event(Event(EventType.CommandResult, result))
 
     def _stage_configuration(self, request):
         newly_staged, result = self._configuration_transactions.stage(
-            request, generation=self.generation, revision=self.config_revision,
+            request, generation=self.generation, revision=self.processing_revision,
+            system_revision=self.system_revision, drained=self.current_epoch is None,
             current_snapshot=self._settings_snapshot, sample_rate=self._sample_rate,
             baseline_duration=self._baseline_duration, signal_plan=self._signal_plan,
         )
@@ -408,11 +429,9 @@ class SignalProcessor:
             self._decoder = pipeline.decoder
             self._filters = list(pipeline.filters)
         self._settings_snapshot = snapshot
-        self.config_revision = snapshot["CONFIG.revision"]
-        if self._signal_plan is not None:
-            self._signal_plan = replace(self._signal_plan, config_revision=self.config_revision)
+        self.processing_revision = snapshot["CONFIG.module_revisions"]["processing"]
         if self._signal_receipt is not None:
-            self._signal_receipt["config_revision"] = self.config_revision
+            self._signal_receipt["processing_revision"] = self.processing_revision
 
     def _install_pending_configuration(self):
         pending = self._configuration_transactions.pending
@@ -421,20 +440,20 @@ class SignalProcessor:
         _, candidate = pending
         self._install_configuration(candidate.settings_snapshot, pipeline=candidate)
         result = self._configuration_transactions.complete_applied(
-            generation=self.generation, revision=self.config_revision,
+            generation=self.generation, revision=self.processing_revision, system_revision=self.system_revision,
         )
         self._publish_configuration_result(result)
 
     def _cancel_pending_configuration(self, message):
         result = self._configuration_transactions.cancel_pending(
-            message, generation=self.generation, revision=self.config_revision,
+            message, generation=self.generation, revision=self.processing_revision, system_revision=self.system_revision,
         )
         if result is not None:
             self._publish_configuration_result(result)
 
     def _cancel_configuration(self, request):
         for result in self._configuration_transactions.cancel(
-            request, generation=self.generation, revision=self.config_revision,
+            request, generation=self.generation, revision=self.processing_revision, system_revision=self.system_revision,
         ):
             self._publish_configuration_result(result)
 

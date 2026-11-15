@@ -2,16 +2,12 @@
 from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import replace
-import json
 from uuid import uuid4
 
-from omnibci.application.activation_settings import (
-    RUNTIME_HOST_SETTING_KEYS, activation_host_settings, backend_startup_settings,
-    is_inert_activation_setting,
-)
+from omnibci.application.activation_settings import MODULES, backend_startup_settings, section_settings
 from omnibci.application.plugin_profiles import (
-    ActivationSnapshot, PluginProfile, PluginSelection, ProfileBinding,
-    MODULE_KINDS, ProfileRevisionConflict,
+    ActivationSet, ModuleActivation, SystemSettings, PluginProfile, PluginSelection, ProfileBinding,
+    MODULE_KINDS, PluginProfileNotFoundError, ProfileRevisionConflict, plugin_kind_for_slot,
 )
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfigurationCatalog
@@ -59,10 +55,10 @@ class PluginProfileService:
 
     def create(self, kind: str, selection: PluginSelection, name: str, parameters: dict, *,
                processing_input=_UNSET):
-        """Create explicit decoder input by default; None preserves a legacy version copy."""
+        """Save an independent named profile with explicit decoder channel input."""
         with self.change_guard(False):
             definition, values = self._parameters(kind, selection, parameters)
-            if processing_input is _UNSET:
+            if processing_input is _UNSET or processing_input is None and kind == "decoder":
                 processing_input = ProcessingInput() if kind == "decoder" else None
             profile = PluginProfile(
                 profile_id=str(uuid4()), name=name, kind=kind, selection=selection,
@@ -81,96 +77,83 @@ class PluginProfileService:
             if previous.kind == "decoder" and processing_input is None:
                 channel_input = ProcessingInput()
             return self.repository.save_profile(
-                replace(previous, name=name, parameters=values, processing_input=channel_input,
-                        legacy=previous.legacy if processing_input is _UNSET and "processing_input" in previous.legacy else {}),
+                replace(previous, name=name, parameters=values, processing_input=channel_input),
                 expected_revision=expected_revision,
             )
 
     def delete(self, profile_id: str, *, expected_revision: int):
-        # Accepted bindings include independent values; retain linked profiles to
-        # make the user's active selection identifiable until it is replaced.
         with self.change_guard(False):
-            active = self.repository.get_activation()
-            if active is not None and any(b.profile_id == profile_id for b in active.bindings):
-                raise ProfileRevisionConflict("Profile is selected; replace its binding first")
             self.repository.delete_profile(profile_id, expected_revision=expected_revision)
 
-    def propose(self, selections: list[dict], *, include_host_settings: bool = False,
-                refresh_slots: list[str] | None = None, module: str | None = None) -> ActivationSnapshot:
-        """Replace owned selections while retaining other modules' pinned values."""
-        if module is not None:
-            if module not in MODULE_KINDS:
-                raise PluginSchemaError("Unsupported configuration module")
-            if include_host_settings:
-                raise PluginSchemaError("Module configuration cannot change host settings")
-            if any(not isinstance(item, dict) or not isinstance(item.get("slot"), str)
-                   or not item["slot"].startswith(f"{module}.") for item in selections):
-                raise PluginSchemaError("Selections must belong to the requested module")
-        current = self.repository.get_activation()
-        base = self.settings_source() if current is None or include_host_settings else current.settings
-        if include_host_settings:
-            self._validate_host_changes(base, current)
-        base = activation_host_settings(base)
-        if current is not None:
-            # Preserve old inert copies without allowing saved edits to change a running revision.
-            base.update({key: value for key, value in current.settings.items()
-                         if is_inert_activation_setting(key)})
+    def profile_history(self, profile_id: str):
+        return self.repository.list_profile_history(profile_id)
+
+    def revert_profile(self, profile_id: str, revision: int, *, expected_revision: int):
+        """Restore stored values as a new named-profile revision without applying them."""
+        with self.change_guard(False):
+            entry = self.repository.get_profile_revision(profile_id, revision)
+            if entry is None:
+                raise PluginProfileNotFoundError(f"{profile_id} revision {revision}")
+            return self.repository.save_profile(entry.profile, expected_revision=expected_revision)
+
+    def propose(self, module: str, bindings: list[dict], *, refresh_slots: list[str] | None = None) -> ModuleActivation:
+        """Replace one module's selections while retaining explicitly pinned profile values."""
+        if not isinstance(module, str) or module not in MODULES:
+            raise PluginSchemaError("Unsupported configuration module")
+        if not isinstance(bindings, list) or any(
+            not isinstance(item, dict) or not isinstance(item.get("slot"), str)
+            or not item["slot"].startswith(f"{module}.") for item in bindings
+        ):
+            raise PluginSchemaError("Selections must belong to the requested module")
+        current = self.repository.get_module(module)
         if refresh_slots is not None and (
             not isinstance(refresh_slots, list) or any(not isinstance(slot, str) for slot in refresh_slots)
             or len(set(refresh_slots)) != len(refresh_slots)
-            or any(slot not in {item.get("slot") for item in selections if isinstance(item, dict)}
-                   for slot in refresh_slots)
+            or any(slot not in {item["slot"] for item in bindings} for slot in refresh_slots)
         ):
             raise PluginSchemaError("refresh_slots must name unique selected slots")
         previous = {binding.slot: binding for binding in current.bindings} if current else {}
-        bindings = []
-        for item in selections:
-            if (isinstance(item, dict) and set(item) == {"slot", "selection", "parameters"}
-                    and item["slot"] == "acquisition.source"):
+        selected = []
+        for item in bindings:
+            if ({"slot", "selection", "parameters"} <= set(item)
+                    and not set(item) - {"slot", "selection", "parameters", "configuration_version", "processing_input"}):
+                kind = plugin_kind_for_slot(item["slot"])
                 selection = PluginSelection.from_dict(item["selection"])
-                definition, parameters = self._parameters("acquisition", selection, item["parameters"])
-                bindings.append(ProfileBinding(
-                    slot=item["slot"], kind="acquisition", profile_id=None,
-                    selection=selection, parameters=parameters,
-                    configuration_version=definition.configuration_version,
+                definition, parameters = self._parameters(
+                    kind, selection, item["parameters"], item.get("configuration_version"),
+                )
+                channel_input = item.get("processing_input")
+                if channel_input is not None and kind != "decoder":
+                    raise PluginSchemaError("processing_input requires a decoder binding")
+                if kind == "decoder":
+                    if channel_input is None:
+                        raise PluginSchemaError("processing.decoder requires explicit processing_input")
+                    channel_input = ProcessingInput.from_dict(channel_input)
+                selected.append(ProfileBinding(
+                    slot=item["slot"], kind=kind, profile_id=None, selection=selection, parameters=parameters,
+                    configuration_version=definition.configuration_version, processing_input=channel_input,
                 ))
                 continue
-            if not isinstance(item, dict) or set(item) != {"slot", "profile_id"}:
-                raise PluginSchemaError("Each binding requires a saved profile or an acquisition source draft")
+            if set(item) != {"slot", "profile_id"}:
+                raise PluginSchemaError("Each binding requires a saved profile or current plugin values")
             retained = previous.get(item["slot"])
             if (refresh_slots is not None and item["slot"] not in refresh_slots
                     and retained is not None and retained.profile_id == item["profile_id"]):
-                bindings.append(retained)
+                selected.append(retained)
                 continue
             profile = self.repository.get_profile(item["profile_id"])
-            definition, parameters = self._parameters(
-                profile.kind, profile.selection, profile.parameters, profile.configuration_version,
-            )
-            bindings.append(ProfileBinding(
+            _, parameters = self._parameters(profile.kind, profile.selection, profile.parameters,
+                                              profile.configuration_version)
+            selected.append(ProfileBinding(
                 slot=item["slot"], kind=profile.kind, profile_id=profile.profile_id,
                 selection=profile.selection, parameters=parameters,
-                configuration_version=profile.configuration_version,
-                profile_revision=profile.revision,
+                configuration_version=profile.configuration_version, profile_revision=profile.revision,
                 processing_input=profile.processing_input,
-                legacy={"processing_input": profile.legacy["processing_input"]} if "processing_input" in profile.legacy else {},
             ))
-        if module is not None:
-            # Keep insertion order for untouched modules and ordered filter chains.
-            merged = []
-            inserted = False
-            for binding in previous.values():
-                if binding.slot.startswith(f"{module}."):
-                    if not inserted:
-                        merged.extend(bindings)
-                        inserted = True
-                else:
-                    merged.append(binding)
-            if not inserted:
-                merged.extend(bindings)
-            bindings = merged
-        return ActivationSnapshot(bindings=tuple(bindings), settings=base)
+        return ModuleActivation(module, section_settings(self.settings_source(), module), tuple(selected))
 
-    def _validate_host_changes(self, settings: dict, current: ActivationSnapshot | None) -> None:
+    def propose_system(self) -> SystemSettings:
+        settings = self.settings_source()
         startup = self._startup_settings_resolver(settings)
         changed = sorted(key for key in startup.keys() | self._startup_settings.keys()
                          if key not in startup or key not in self._startup_settings
@@ -180,36 +163,13 @@ class PluginProfileService:
                 "Backend restart required for " + ", ".join(changed)
                 + "; an engine restart does not apply these settings"
             )
-        if current is not None:
-            before = activation_host_settings(current.settings)
-            after = activation_host_settings(settings)
-            unknown = (before.keys() | after.keys()) - RUNTIME_HOST_SETTING_KEYS
-            canonical = lambda value: json.dumps(value, sort_keys=True, separators=(",", ":"),
-                                                  ensure_ascii=False, allow_nan=False)
-            try:
-                changed = sorted(key for key in unknown
-                                 if key not in before or key not in after
-                                 or canonical(before[key]) != canonical(after[key]))
-            except (TypeError, ValueError, RecursionError) as exc:
-                raise PluginSchemaError("Unclassified host settings must contain finite JSON values") from exc
-            if changed:
-                raise PluginSchemaError(
-                    "Unclassified host settings cannot be changed: " + ", ".join(changed)
-                    + "; use a Plugin Profile or declare their host ownership first"
-                )
+        return SystemSettings(section_settings(settings, "system"))
 
-    def validate_activation(self, snapshot: ActivationSnapshot, *,
-                            active_kinds: set[str] | None = None,
-                            module: str | None = None) -> None:
-        """Validate owned selections; completeness belongs to module startup."""
-        if module is not None and module not in MODULE_KINDS:
-            raise PluginSchemaError("Unsupported configuration module")
-        owned = MODULE_KINDS[module] if module is not None else active_kinds
-        available = active_kinds if active_kinds is not None else MODULE_KINDS["acquisition"] | MODULE_KINDS["processing"]
-        for binding in snapshot.bindings:
-            if owned is not None and binding.kind not in owned:
-                continue
-            if binding.processing_input_requires_review:
+    def validate_module(self, candidate: ModuleActivation, *, active_kinds: set[str] | None = None) -> None:
+        """Validate pinned plugin values; completeness belongs to module startup."""
+        available = MODULE_KINDS["acquisition"] | MODULE_KINDS["processing"] if active_kinds is None else active_kinds
+        for binding in candidate.bindings:
+            if binding.kind == "decoder" and binding.processing_input is None:
                 raise PluginSchemaError("Configure the decoder channel mapping in Signal Processing")
             _validate_source_parameters(binding)
             definition, parameters = self._parameters(
@@ -220,30 +180,37 @@ class PluginProfileService:
             if binding.kind in available and not definition.available:
                 raise PluginSchemaError(f"{binding.slot}: unavailable on this platform")
 
-    def accept(self, snapshot: ActivationSnapshot, *, expected_revision: str | None,
-               module: str | None = None):
-        """Initially idle-only; the runtime coordinator later commits after ACK."""
+    def accept_module(self, candidate: ModuleActivation, *, expected_revision: str | None):
         with self.change_guard(True):
-            self.validate_activation(snapshot, module=module)
-            return self.repository.save_activation(snapshot, expected_revision=expected_revision)
+            self.validate_module(candidate)
+            return self.repository.save_module(candidate, expected_revision=expected_revision)
 
-    def resolve_settings(self) -> dict:
-        snapshot = self.repository.get_activation()
-        if snapshot is None:
-            raise PluginSchemaError("Plugin configuration is not selected; review and apply profiles first")
-        return self.materialize(snapshot)
+    def accept_system(self, candidate: SystemSettings, *, expected_revision: str | None):
+        with self.change_guard(True):
+            return self.repository.save_system(candidate, expected_revision=expected_revision)
 
-    def materialize(self, snapshot: ActivationSnapshot) -> dict:
-        """Publish pinned inputs; only Acquisition supplies shared source facts."""
-        result = activation_host_settings(snapshot.settings)
+    def materialize(self, activation_set: ActivationSet, generation: str | None = None) -> dict:
+        """Publish pinned sections; only Acquisition supplies shared source facts."""
+        result = activation_set.settings()
         bindings = []
-        for binding in snapshot.bindings:
+        for binding in activation_set.bindings():
             bindings.append(materialize_processing_binding(binding))
             if binding.kind == "acquisition":
-                _validate_source_parameters(binding)
-                definition = self.catalog.get(binding.kind, binding.selection)
-                result["ACQUISITION.signal_source"] = definition.plugin_type
+                # The display alias is optional for an idle source. Its module
+                # validates the pinned plugin when it is applied or started.
+                try:
+                    definition = self.catalog.get(binding.kind, binding.selection)
+                except PluginSchemaError:
+                    pass
+                else:
+                    result["ACQUISITION.signal_source"] = definition.plugin_type
                 result.update({f"ACQUISITION.{key}": value for key, value in binding.parameters.items()})
-        result["CONFIG.revision"] = snapshot.revision
+        result["CONFIG.module_revisions"] = {
+            module: (activation_set.modules[module] or ModuleActivation(module, {}, ())).revision
+            for module in MODULES
+        }
+        result["CONFIG.system_revision"] = (activation_set.system or SystemSettings({})).revision
+        if generation is not None:
+            result["CONFIG.generation"] = generation
         result["PLUGINS.bindings"] = bindings
         return result

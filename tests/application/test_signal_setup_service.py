@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from omnibci.application.config_errors import ConfigProfileValidationError
-from omnibci.application.plugin_profiles import ActivationSnapshot
+from omnibci.application.plugin_profiles import ActivationSet, ModuleActivation
 from omnibci.application.services.signal_setup_service import SignalSetupService
 from omnibci.conf import OmniBCISettings
 from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
@@ -25,7 +25,8 @@ def signal_service(tmp_path):
         ChannelDescriptor(0, "O1", unit="uV"), ChannelDescriptor(1, "M1", unit="uV"),
     ), 2, connection_id="connection")
     setup = ProcessingInput(outputs=(ChannelBinding("O1", "channel-0"),)).to_dict()
-    snapshot = { "CONFIG.revision": "a" * 64,
+    snapshot = { "CONFIG.module_revisions": {"acquisition": "a" * 64, "processing": "p" * 64},
+                "CONFIG.system_revision": "s" * 64,
                 "CONFIG.generation": "generation", "ACQUISITION.sample_rate": 500,
                 "ACQUISITION.signal_source": "source", "PLUGINS.bindings": [
                     {"slot": "processing.decoder", "processing_input": setup,
@@ -33,8 +34,9 @@ def signal_service(tmp_path):
                     {"slot": "processing.epoch_detector", "selection": {
                         "package_id": "test.detector", "contribution_id": "default", "version": "1"}}]}
     engine = SimpleNamespace(admission=None, is_engine_ready=True, applied_snapshot=snapshot,
+                             is_module_running=lambda module: module == "processing",
                              configuration_change=lambda idle: nullcontext())
-    profiles = SimpleNamespace(repository=SimpleNamespace(get_activation=lambda: ActivationSnapshot({}, ())),
+    profiles = SimpleNamespace(repository=SimpleNamespace(get_activation_set=lambda: ActivationSet({}, None)),
                                materialize=lambda activation: {},
                                catalog=SimpleNamespace(get=lambda *args: SimpleNamespace(channel_requirements=None)))
     acquisition = SimpleNamespace(lifecycle_lock=RLock(), cached_descriptor=metadata.to_dict(),
@@ -67,6 +69,7 @@ def test_preparation_uses_current_observation_and_checks_acknowledgement(signal_
     service, metadata, setup, calls = signal_service
     receipt = service.prepare()
     assert calls[0][0] is EventType.PrepareSignalProcessing
+    assert calls[0][1]["settings_snapshot"] == service.engine.applied_snapshot
     assert receipt["connection_id"] == metadata.connection_id
     assert receipt["source_fingerprint"] == metadata.fingerprint
     assert service.read()["readiness"]["ready"]
@@ -99,6 +102,26 @@ def test_known_rate_conflict_blocks_before_processor_command(signal_service):
     with pytest.raises(ConfigProfileValidationError, match="sample rate"):
         service.prepare()
     assert not calls
+
+
+def test_stopped_processing_does_not_prepare_or_report_stale_readiness(signal_service):
+    service, _, _, calls = signal_service
+    service.prepare()
+    assert service.read()["readiness"]["ready"]
+    service.engine.is_module_running = lambda module: False
+    assert service.prepare() is None
+    assert not service.read()["readiness"]["ready"]
+    assert len(calls) == 1
+
+
+def test_reset_requires_a_new_receipt_after_processing_restarts(signal_service):
+    service, _, _, calls = signal_service
+    service.prepare()
+    service.reset()
+    assert not service.read()["readiness"]["ready"]
+    service.prepare()
+    assert service.read()["readiness"]["ready"]
+    assert len(calls) == 2
 
 
 def test_invalid_preview_does_not_write_or_prepare(signal_service):
@@ -141,8 +164,8 @@ def test_decoder_input_read_uses_pinned_input_without_saved_draft(signal_service
                             processing_input=ProcessingInput(outputs=(ChannelBinding('O1', 'channel-0'),)))
     binding = ProfileBinding("processing.decoder", "decoder", profile.profile_id, selection,
                              {}, profile_revision=1, processing_input=profile.processing_input)
-    accepted = ActivationSnapshot({}, (binding,))
-    service.profiles.repository.get_activation = lambda: accepted
+    accepted = ActivationSet({"processing": ModuleActivation("processing", {}, (binding,))}, None)
+    service.profiles.repository.get_activation_set = lambda: accepted
     service.profiles.repository.get_profile = lambda profile_id: profile
     service.profiles.materialize = lambda activation: {        "PLUGINS.bindings": [binding.to_dict()], "ACQUISITION.signal_source": "source"}
     service.engine.applied_snapshot["PLUGINS.bindings"] = [binding.to_dict()]
@@ -229,7 +252,8 @@ def test_source_switch_waits_for_connected_metadata_and_recompiles_mapping(signa
     reordered = replace(metadata, connection_id="new", channels=(
         replace(metadata.channels[1], index=0), replace(metadata.channels[0], index=1)))
     selected["PLUGINS.bindings"][0]["profile_id"] = "source-b"
-    selected["CONFIG.revision"] = "b" * 64
+    selected["PLUGINS.bindings"][0]["parameters"]["data_file_path"] = "another-recording.cnt"
+    selected["CONFIG.module_revisions"]["processing"] = "b" * 64
     after = service.read()
     assert after["source_binding"]["profile_id"] == "source-b"
     assert after["source_binding"]["state"] == "selected"
@@ -248,6 +272,28 @@ def test_source_switch_waits_for_connected_metadata_and_recompiles_mapping(signa
     service.prepare()
     assert calls[-1][1]["plan"]["source_indices"] == [1]
     assert service.read()["readiness"]["ready"]
+
+
+def test_current_source_with_unchanged_values_preserves_metadata_and_preparation(signal_service):
+    from omnibci.application.processing_source import acquisition_binding_key
+    service, metadata, _, calls = signal_service
+    selected = modern_binding(service, metadata)
+    owner = acquisition_binding_key(selected["PLUGINS.bindings"][0])
+    service.acquisition.cached_descriptor_for = lambda binding: (
+        deepcopy(service.acquisition.cached_descriptor) if acquisition_binding_key(binding) == owner else None)
+    service.prepare()
+    before = service.read()
+    selected["PLUGINS.bindings"][0].pop("profile_id")
+    selected["PLUGINS.bindings"][0]["profile_revision"] = 0
+    current = service.read()
+    assert service.engine.applied_snapshot["PLUGINS.bindings"][0]["profile_id"] == "source-a"
+    assert current["source_binding"]["profile_id"] is None
+    assert current["source_binding"]["state"] == "active"
+    assert current["acquisition_descriptor"] == metadata.to_dict()
+    assert current["source_revision"] == before["source_revision"]
+    assert current["readiness"] == before["readiness"]
+    assert current["readiness"]["ready"]
+    assert len(calls) == 1
 
 
 def test_stale_preview_revision_rejected_after_reconnect(signal_service):
@@ -333,32 +379,6 @@ def test_stopped_engine_discards_source_facts_even_if_old_cache_survives(signal_
     assert not context["readiness"]["ready"]
 
 
-def test_legacy_selected_input_remains_readable_and_can_preview_a_replacement(signal_service):
-    from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
-    service, metadata, _, calls = signal_service
-    source = ProfileBinding("acquisition.source", "acquisition", None,
-                            PluginSelection("test.source", "default", "1"), {})
-    decoder = ProfileBinding("processing.decoder", "decoder", None,
-                             PluginSelection("test.decoder", "default", "1"), {},
-                             legacy={"processing_input": {"schema_version": 1,
-                                 "reference": {"mode": "single", "channels": ["M1"]}}})
-    accepted = ActivationSnapshot({}, (source, decoder))
-    service.profiles.repository.get_activation = lambda: accepted
-    service.profiles.materialize = lambda _: (_ for _ in ()).throw(ValueError("Reconfigure legacy mapping"))
-    service.profiles.catalog.get = lambda *args: SimpleNamespace(plugin_type="source", channel_requirements=None)
-
-    context = service.read()
-    assert context["selected_source_id"] == "source"
-    assert context["processing_input"] is None
-    assert context["accepted_input"] is None
-    assert context["source_error"] == "Reconfigure legacy mapping"
-    assert context["acquisition_descriptor"] == metadata.to_dict()
-    assert not context["readiness"]["ready"]
-    preview = service.preview_input({"outputs": [{"source_channel_id": "channel-0", "name": "Oz"}]})
-    assert preview["plan"]["source_indices"] == [0]
-    assert not calls
-
-
 @pytest.mark.parametrize("value", [
     {"schema_version": 1, "outputs": ["O1"]},
     {"schema_version": 2, "outputs": "invalid"},
@@ -414,31 +434,9 @@ def test_prepare_uses_observed_metadata_when_expectations_are_optional(signal_se
     assert service.read()["readiness"]["ready"]
 
 
-def test_no_explicit_mapping_still_prepares_using_observed_signal(signal_service):
+def test_identity_mapping_prepares_using_observed_signal(signal_service):
     service, metadata, _, calls = signal_service
-    service.engine.applied_snapshot["PLUGINS.bindings"][0].pop("processing_input")
+    service.engine.applied_snapshot["PLUGINS.bindings"][0]["processing_input"] = ProcessingInput().to_dict()
     service.prepare()
     assert calls[0][1]["plan"]["source_indices"] == [0, 1]
     assert calls[0][1]["plan"]["source"]["sample_rate"] == metadata.sample_rate
-
-
-@pytest.mark.parametrize("active_legacy", [True, False])
-def test_legacy_default_selected_input_matches_equivalent_running_input(signal_service, active_legacy):
-    service, metadata, _, _ = signal_service
-    selected = modern_binding(service, metadata, outputs=())
-    selected["PLUGINS.bindings"][1]["processing_input"] = {
-        "schema_version": 1, "outputs": [], "excluded_channels": [],
-        "reference": {"mode": "original", "channels": []},
-    }
-    original = deepcopy(selected)
-    if active_legacy:
-        service.engine.applied_snapshot = deepcopy(selected)
-
-    service.prepare()
-    context = service.read()
-
-    assert context["accepted_input"] == ProcessingInput().to_dict()
-    assert context["active_input"] == context["accepted_input"]
-    assert context["source_error"] is None
-    assert context["readiness"]["ready"]
-    assert selected == original

@@ -125,6 +125,8 @@ class TestStimulationUsesPort:
     def test_start_trial_dispatches_spec(self):
         port = FakeEnginePort()
         svc = StimulationAppService(port)
+        svc.handle_start_stimulation(StartStimulationCommand())
+        port.dispatched.clear()
         svc.handle_start_trial(StartStimTrialCommand(n_trials=1, trial_params=[7]))
         assert port.dispatched[0].type == EventType.StartStimTrial
         assert port.dispatched[0].data == {"n_trials": 1, "trial_params": [7]}

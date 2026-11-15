@@ -23,7 +23,6 @@ message_server_port = 8765   # must differ from uvicorn HTTP port (8000)
 # Actuation (external-device control) subsystem. The engine listens on
 # server_ip:server_port; the actuation controller dials in (same topology as
 # stimulation) and loads the selected Effector profile to carry out commands.
-enabled = false
 server_ip = '127.0.0.1'
 server_port = 8001
 watchdog_timeout_s = 1.0
@@ -31,7 +30,7 @@ watchdog_timeout_s = 1.0
 # (default). Requires engine/device clocks roughly in sync (LAN + NTP is
 # plenty); leave 0 if clocks are not trustworthy.
 max_command_age_s = 0.0
-# Spawn the actuation subprocess automatically when signal processing is prepared
+# Spawn the actuation subprocess when the Actuation module starts
 # (single-machine). false = start it manually: python scripts/run_actuation.py
 auto_spawn = true
 

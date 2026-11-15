@@ -41,7 +41,7 @@ class PluginContext:
     """Immutable metadata that can cross a multiprocessing spawn boundary.
 
     ``sample_rate`` describes the acquired signal and can be absent before a
-    source connects. ``config_revision`` identifies the host's applied snapshot.
+    source connects. ``module_revision`` identifies the module that loaded the plugin.
     ``resource_root`` is the trusted asset directory of the selected package,
     supplied as an absolute string path by the host; no filesystem access occurs
     while creating this context.
@@ -59,7 +59,7 @@ class PluginContext:
 
     sample_rate: float | None = None
     channel_names: tuple[str, ...] = ()
-    config_revision: str | None = None
+    module_revision: str | None = None
     resource_root: str | None = None
     acquired_signal: SignalInfo | None = None
     input_signal: SignalInfo | None = None
@@ -85,7 +85,7 @@ class PluginContext:
         if any(not isinstance(name, str) or not name for name in names):
             raise ValueError("channel_names must contain non-empty strings")
         object.__setattr__(self, "channel_names", names)
-        for field in ("config_revision", "resource_root"):
+        for field in ("module_revision", "resource_root"):
             value = getattr(self, field)
             if value is not None and (not isinstance(value, str) or not value.strip()):
                 raise ValueError(f"{field} must be a non-empty string or None")

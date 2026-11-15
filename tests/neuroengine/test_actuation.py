@@ -133,14 +133,15 @@ class TestActuationPeerConfig:
         assert cfg.name == ACTUATION
         assert isinstance(cfg.transport, ListenTransport)
         assert cfg.transport._server.max_clients == 1
-        assert cfg.routes.outbound == frozenset({EventType.ActuationCommand, EventType.SettleActuation})
+        assert cfg.routes.outbound == frozenset({EventType.ActuationCommand, EventType.SettleActuation,
+                                                EventType.ResumeActuation})
         assert cfg.routes.inbound == frozenset({
             EventType.ActuationAck, EventType.ActuationState, EventType.ActuationFault,
             EventType.CommandResult,
         })
 
 
-class TestBuilderActuationOptIn:
+class TestBuilderActuationFoundation:
     def _build(self, **cfg_kwargs):
         from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder, NeuroEngineConfig
         with (
@@ -149,15 +150,15 @@ class TestBuilderActuationOptIn:
         ):
             return NeuroEngineBuilder(NeuroEngineConfig(**cfg_kwargs), settings_snapshot={}).build()
 
-    def test_disabled_by_default(self):
-        eng = self._build(actuation_enabled=False)
-        assert eng.actuation_translator is None
-        assert eng.actuation_feedback is None
-        # only the stimulation peer is registered
-        assert ACTUATION not in eng.peer_gateway._channels
+    def test_transport_ready_but_commands_disabled_by_default(self):
+        eng = self._build()
+        assert isinstance(eng.actuation_translator, ActuationCommandTranslator)
+        assert isinstance(eng.actuation_feedback, ActuationFeedbackHandler)
+        assert ACTUATION in eng.peer_gateway._channels
+        assert not eng._actuation_active
 
     def test_enabled_wires_channel_and_components(self):
-        eng = self._build(actuation_enabled=True, actuation_server_port=8042)
+        eng = self._build(actuation_server_port=8042)
         assert isinstance(eng.actuation_translator, ActuationCommandTranslator)
         assert isinstance(eng.actuation_feedback, ActuationFeedbackHandler)
         ch = eng.peer_gateway.peer(ACTUATION)

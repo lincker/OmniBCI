@@ -1,10 +1,8 @@
 """HTTP contracts for exact plugin profiles and accepted activation snapshots."""
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
-from omnibci.application.plugin_profiles import is_default_legacy_processing_input
-from omnibci.domain.channel_mapping import ProcessingInput
 from omnibci.presentation.schemas.plugin_selection import PluginSelectionResponse
 from omnibci.presentation.schemas.signal_setup import ProcessingInputModel
 
@@ -22,6 +20,7 @@ class DecoderChannelRequirementsResponse(BaseModel):
 
 
 class PluginConfigurationResponse(BaseModel):
+    domain: ConfigurationModule
     selection: PluginSelectionResponse
     kind: PluginKind
     plugin_type: str
@@ -34,23 +33,7 @@ class PluginConfigurationResponse(BaseModel):
     channel_requirements: DecoderChannelRequirementsResponse | None = None
 
 
-def _visible_processing_input(value):
-    if isinstance(value, dict):
-        data = dict(value)
-        saved = data.get("processing_input")
-        if is_default_legacy_processing_input(saved):
-            data["processing_input"] = ProcessingInput().to_dict()
-            data["processing_input_requires_review"] = False
-        elif isinstance(saved, dict) and saved.get("schema_version", 1) != 2:
-            data["processing_input"] = None
-            data["processing_input_requires_review"] = True
-        return data
-    return value
-
-
 class PluginProfileResponse(BaseModel):
-    _visible_input = model_validator(mode="before")(_visible_processing_input)
-    processing_input_requires_review: bool = False
     format_version: Literal[2] = 2
     profile_id: str
     name: str
@@ -80,8 +63,6 @@ class UpdatePluginProfileRequest(BaseModel):
 
 
 class ProfileBindingResponse(BaseModel):
-    _visible_input = model_validator(mode="before")(_visible_processing_input)
-    processing_input_requires_review: bool = False
     slot: str
     kind: PluginKind
     profile_id: str | None = None
@@ -99,23 +80,50 @@ class ProfileBindingResponse(BaseModel):
         return data
 
 
-class ActivationResponse(BaseModel):
-    format_version: Literal[2] = 2
-    revision: str
+class ModuleActivationResponse(BaseModel):
+    module: ConfigurationModule
+    revision: str | None
     settings: dict[str, Any]
     bindings: list[ProfileBindingResponse]
+
+
+class SystemSettingsResponse(BaseModel):
+    revision: str | None
+    settings: dict[str, Any]
+
+
+class ModulesResponse(BaseModel):
+    modules: dict[ConfigurationModule, ModuleActivationResponse]
+    system: SystemSettingsResponse
+
+
+class ModuleHistoryResponse(BaseModel):
+    entry_id: str
+    revision: str
+    saved_at: str
+    restored_from: str | None = None
+    binding_summary: list[str]
+
+
+class ProfileHistoryResponse(BaseModel):
+    profile_id: str
+    revision: int
+    saved_at: str
+    profile: PluginProfileResponse
+
+
+class RevertModuleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    entry_id: str
+
+
+class RevertProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    revision: int = Field(ge=1)
+    expected_revision: int = Field(ge=1)
 
 
 class SelectProfileBindingRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     slot: str
     profile_id: str
-
-
-class AcceptActivationRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-    bindings: list[SelectProfileBindingRequest]
-    expected_revision: str | None = None
-    refresh_slots: list[str] | None = None
-    include_host_settings: bool = False
-    module: ConfigurationModule | None = None

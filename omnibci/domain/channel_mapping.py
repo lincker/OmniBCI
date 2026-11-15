@@ -81,7 +81,7 @@ class ResolvedSignalPlan:
     output_channels: tuple[ChannelDescriptor, ...]
     source_indices: tuple[int, ...]
     processing_input: ProcessingInput
-    config_revision: str = ""
+    acquisition_revision: str = ""
     requires_data_mapping: bool = field(init=False)
 
     def __post_init__(self) -> None:
@@ -103,8 +103,8 @@ class ResolvedSignalPlan:
             raise ValueError("Source indices must be unique")
         if self.processing_input.outputs and len({c.name for c in outputs}) != len(outputs):
             raise ValueError("Mapped output names must be unique")
-        if not isinstance(self.config_revision, str):
-            raise ValueError("config_revision must be a string")
+        if not isinstance(self.acquisition_revision, str):
+            raise ValueError("acquisition_revision must be a string")
         object.__setattr__(self, "output_channels", outputs)
         object.__setattr__(self, "source_indices", indices)
         object.__setattr__(self, "requires_data_mapping", indices != tuple(range(self.source.signal_channel_count)))
@@ -113,7 +113,7 @@ class ResolvedSignalPlan:
     def fingerprint(self) -> str:
         data = self.to_dict(include_fingerprint=False)
         data["source"].pop("connection_id")
-        data.pop("config_revision")
+        data.pop("acquisition_revision")
         return fingerprint(data)
 
     @property
@@ -129,7 +129,7 @@ class ResolvedSignalPlan:
         result = {
             "source": self.source.to_dict(), "output_channels": [c.to_dict() for c in self.output_channels],
             "source_indices": list(self.source_indices), "processing_input": self.processing_input.to_dict(),
-            "config_revision": self.config_revision,
+            "acquisition_revision": self.acquisition_revision,
         }
         if include_fingerprint:
             result["fingerprint"] = self.fingerprint
@@ -148,7 +148,7 @@ class ResolvedSignalPlan:
         result = cls(**data)
         if expected_fingerprint is not None and expected_fingerprint != result.fingerprint:
             raise ValueError("Signal plan fingerprint does not match its contents")
-        expected = compile_processing_plan(result.source, result.processing_input, result.config_revision)
+        expected = compile_processing_plan(result.source, result.processing_input, result.acquisition_revision)
         if result != expected:
             raise ValueError("Signal plan does not match its compiled acquisition descriptor and mapping")
         return result
@@ -157,7 +157,7 @@ class ResolvedSignalPlan:
 def compile_processing_plan(
     descriptor: SignalInfo,
     processing_input: ProcessingInput,
-    config_revision: str = "",
+    acquisition_revision: str = "",
 ) -> ResolvedSignalPlan:
     if not isinstance(descriptor, SignalInfo) or not isinstance(processing_input, ProcessingInput):
         raise ValueError("Channel mapping requires an acquisition descriptor and processing input")
@@ -184,4 +184,4 @@ def compile_processing_plan(
         channels.append(replace(channel, index=len(channels), name=binding.name,
                                 signal_type=binding.signal_type or channel.signal_type,
                                 name_provenance=channel.name_provenance if channel.name == binding.name else None))
-    return ResolvedSignalPlan(descriptor, tuple(channels), tuple(indices), processing_input, config_revision)
+    return ResolvedSignalPlan(descriptor, tuple(channels), tuple(indices), processing_input, acquisition_revision)

@@ -130,9 +130,13 @@ class CommandResultBroker:
 
         deadline = time.monotonic() + wait_s
         engine_stopped = False
+        module_stopped = False
         while not pending.done.wait(min(max(deadline - time.monotonic(), 0), 0.1)):
             if not self._engine.is_engine_ready:
                 engine_stopped = True
+                break
+            if not self._engine.is_command_ready(event_type):
+                module_stopped = True
                 break
             if time.monotonic() >= deadline:
                 break
@@ -147,6 +151,12 @@ class CommandResultBroker:
                 command_id=command_id, command=command_name, ok=False,
                 message="Engine stopped before confirming command execution",
                 error_code="ENGINE_STOPPED", failure_kind=CommandFailureKind.EXECUTION_FAILED,
+            ))
+        if result is None and module_stopped:
+            raise CommandExecutionError(CommandResult(
+                command_id=command_id, command=command_name, ok=False,
+                message="Module stopped before confirming command execution",
+                error_code="MODULE_STOPPED", failure_kind=CommandFailureKind.EXECUTION_FAILED,
             ))
         if result is None:
             raise CommandTimeoutError(command_id, command_name, wait_s)

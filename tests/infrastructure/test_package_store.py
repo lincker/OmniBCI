@@ -15,7 +15,7 @@ def package_archive(tmp_path, version="1.0.0", *, properties=None, schema_versio
     publisher, name = package_id.split(".")
     manifest = {
         "manifest_version": 2,
-        "package": {"id": name, "publisher": publisher, "version": version, "api_version": "2"},
+        "package": {"id": name, "publisher": publisher, "version": version, "api_version": "2", "domain": "actuation"},
         "contributions": [{"id": "output", "kind": "effector", "plugin_type": "test_output",
                            "entrypoint": "driver:Driver", "display_name": "Test output",
                            "configuration": {"schema": "configuration.schema.json", "schema_version": schema_version}}],

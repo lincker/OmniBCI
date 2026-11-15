@@ -4,6 +4,7 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from omnibci.application.activation_settings import MODULES
 from omnibci.application.config_errors import ConfigProfileConflictError
 from omnibci.application.plugin_profiles import (
     PluginProfileNotFoundError, PluginProfileStorageError, PluginProfileValidationError,
@@ -15,7 +16,8 @@ from omnibci.application.services.plugin_profile_service import PluginProfileSer
 from omnibci.presentation.errors import ApiError
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.plugin_config import (
-    AcceptActivationRequest, ActivationResponse, CreatePluginProfileRequest,
+    ConfigurationModule, ModuleActivationResponse, ModulesResponse, SystemSettingsResponse,
+    ModuleHistoryResponse, ProfileHistoryResponse, RevertProfileRequest, CreatePluginProfileRequest,
     PluginConfigurationResponse, PluginKind, PluginProfileResponse, UpdatePluginProfileRequest,
 )
 
@@ -97,19 +99,65 @@ def delete_profile(profile_id: str, expected_revision: int = Query(ge=1),
         return ApiResponse(message="Profile deleted")
 
 
-@router.get("/activation", response_model=ApiResponse[ActivationResponse])
-def get_activation(svc: PluginProfileService = Depends(get_plugin_profile_service)):
-    with _configuration_errors():
-        snapshot = svc.repository.get_activation()
-        return ApiResponse(data=snapshot.to_dict() if snapshot is not None else None)
+def _module_response(module, activation):
+    return activation.to_dict() if activation is not None else {
+        "module": module, "revision": None, "settings": {}, "bindings": [],
+    }
 
 
-@router.put("/activation", response_model=ApiResponse[ActivationResponse])
-def accept_activation(body: AcceptActivationRequest,
-                      svc: PluginProfileService = Depends(get_plugin_profile_service)):
+def _system_response(system):
+    return system.to_dict() if system is not None else {"revision": None, "settings": {}}
+
+
+@router.get("/modules", response_model=ApiResponse[ModulesResponse])
+def get_modules(svc: PluginProfileService = Depends(get_plugin_profile_service)):
     with _configuration_errors():
-        snapshot = svc.propose([item.model_dump() for item in body.bindings],
-                               include_host_settings=body.include_host_settings,
-                               refresh_slots=body.refresh_slots, module=body.module)
-        accepted = svc.accept(snapshot, expected_revision=body.expected_revision, module=body.module)
-        return ApiResponse(message="Configuration selected for the next start", data=accepted.to_dict())
+        selected = svc.repository.get_activation_set()
+        return ApiResponse(data={"modules": {module: _module_response(module, selected.modules[module]) for module in MODULES},
+                                 "system": _system_response(selected.system)})
+
+
+@router.get("/modules/{module}", response_model=ApiResponse[ModuleActivationResponse])
+def get_module(module: ConfigurationModule, svc: PluginProfileService = Depends(get_plugin_profile_service)):
+    with _configuration_errors():
+        return ApiResponse(data=_module_response(module, svc.repository.get_module(module)))
+
+
+@router.get("/modules/{module}/history", response_model=ApiResponse[list[ModuleHistoryResponse]])
+def module_history(module: ConfigurationModule, svc: PluginProfileService = Depends(get_plugin_profile_service)):
+    with _configuration_errors():
+        return ApiResponse(data=[{
+            "entry_id": entry.entry_id, "revision": entry.revision, "saved_at": entry.saved_at,
+            "restored_from": entry.restored_from,
+            "binding_summary": [f"{b.slot}: {b.selection.package_id}@{b.selection.version}/{b.selection.contribution_id}" for b in entry.activation.bindings],
+        } for entry in svc.repository.list_module_history(module)])
+
+
+@router.get("/modules/{module}/history/{entry_id}", response_model=ApiResponse[ModuleActivationResponse])
+def module_history_entry(module: ConfigurationModule, entry_id: str,
+                         svc: PluginProfileService = Depends(get_plugin_profile_service)):
+    with _configuration_errors():
+        entry = svc.repository.get_module_history_entry(module, entry_id)
+        if entry is None:
+            raise ApiError(404, ErrorCode.NOT_FOUND, "Module history entry not found")
+        return ApiResponse(data=entry.activation.to_dict())
+
+
+@router.get("/system", response_model=ApiResponse[SystemSettingsResponse])
+def get_system(svc: PluginProfileService = Depends(get_plugin_profile_service)):
+    with _configuration_errors():
+        return ApiResponse(data=_system_response(svc.repository.get_system()))
+
+
+@router.get("/plugin-profiles/{profile_id}/history", response_model=ApiResponse[list[ProfileHistoryResponse]])
+def profile_history(profile_id: str, svc: PluginProfileService = Depends(get_plugin_profile_service)):
+    with _configuration_errors():
+        return ApiResponse(data=[entry.to_dict() for entry in svc.profile_history(profile_id)])
+
+
+@router.post("/plugin-profiles/{profile_id}/revert", response_model=ApiResponse[PluginProfileResponse])
+def revert_profile(profile_id: str, body: RevertProfileRequest,
+                   svc: PluginProfileService = Depends(get_plugin_profile_service)):
+    with _configuration_errors():
+        profile = svc.revert_profile(profile_id, body.revision, expected_revision=body.expected_revision)
+        return ApiResponse(data=profile.to_dict(), message="Profile restored as a new revision")

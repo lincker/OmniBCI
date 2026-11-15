@@ -60,9 +60,21 @@ def mock_engine():
     engine.event_bus.put_event = MagicMock()
     engine.event_bus.register_event_listener = MagicMock()
     engine.acquisition_worker = MagicMock()
-    engine.acquisition_worker.is_alive.return_value = True
+    engine.acquisition_worker.is_alive.return_value = False
     engine.signal_processing_worker = MagicMock()
-    engine.signal_processing_worker.is_alive.return_value = True
+    engine.signal_processing_worker.is_alive.return_value = False
+    workers = {"acquisition": engine.acquisition_worker, "processing": engine.signal_processing_worker}
+    engine.is_module_running.side_effect = lambda module: workers[module].is_alive()
+
+    async def start_module(module, snapshot):
+        workers[module].is_alive.return_value = True
+
+    async def stop_module(module):
+        workers[module].is_alive.return_value = False
+
+    engine.start_module = AsyncMock(side_effect=start_module)
+    engine.stop_module = AsyncMock(side_effect=stop_module)
+    engine.set_actuation_active = AsyncMock()
     engine.should_stop = False
     return engine
 

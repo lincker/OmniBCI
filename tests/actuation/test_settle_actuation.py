@@ -22,7 +22,8 @@ def app(actuator):
     instance._settlement_tasks = set()
     instance._settlement_lock = asyncio.Lock()
     instance._max_command_age = 0
-    instance._runtime_snapshot = {"CONFIG.revision": "revision", "CONFIG.generation": "generation"}
+    instance._runtime_snapshot = {"CONFIG.module_revisions": {"actuation": "revision"}, "CONFIG.system_revision": "system", "CONFIG.generation": "generation"}
+    instance.should_stop = False
     return instance
 
 
@@ -74,7 +75,7 @@ def test_settlement_joins_execution_cancels_pending_and_keeps_dispatch_nonblocki
         assert result.data == {
             "paused": True, "pending_cancelled": 1,
             "execution_complete": True, "outputs_settled": True,
-            "generation": "generation", "config_revision": "revision",
+            "generation": "generation", "module_revision": "revision", "system_revision": "system",
         }
         cancelled = [call.args[0].data["seq"] for call in instance.event_bus.put_event.call_args_list
                      if call.args[0].type == EventType.ActuationAck
@@ -113,5 +114,49 @@ def test_logger_explicitly_confirms_quiescence():
         await instance._settle_actuation(Event(EventType.SettleActuation, CommandRequest("settle")))
         assert receipts(instance)[0].ok
         assert receipts(instance)[0].data["outputs_settled"]
+
+    asyncio.run(scenario())
+
+
+def test_resume_allows_new_commands_without_replaying_cancelled_intents():
+    async def scenario():
+        instance = app(Mock())
+        instance._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 1, "seq": 1}))
+        await instance._settle_actuation(Event(EventType.SettleActuation, CommandRequest("settle")))
+        assert instance._paused
+        assert instance.command_queue.empty()
+        await instance._resume_actuation(Event(EventType.ResumeActuation, CommandRequest("resume")))
+        result = receipts(instance)[-1]
+        assert result.ok
+        assert result.command == "ResumeActuation"
+        assert result.data == {"resumed": True, "paused": False, "generation": "generation",
+                               "module_revision": "revision", "system_revision": "system"}
+        assert instance.command_queue.empty()
+        instance._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 2, "seq": 2}))
+        await instance.execute_command()
+        instance.actuator.execute.assert_called_once()
+        assert instance.actuator.execute.call_args.args[0]["target_id"] == 2
+
+    asyncio.run(scenario())
+
+
+def test_resume_waits_for_settlement_and_cannot_reactivate_a_stopping_node():
+    async def scenario():
+        instance = app(Mock())
+        instance._paused = True
+        await instance._settlement_lock.acquire()
+        resume = asyncio.create_task(instance._resume_actuation(
+            Event(EventType.ResumeActuation, CommandRequest("resume")),
+        ))
+        await asyncio.sleep(0)
+        assert not resume.done()
+        assert instance._paused
+        instance.should_stop = True
+        instance._settlement_lock.release()
+        await resume
+        result = receipts(instance)[-1]
+        assert not result.ok
+        assert result.error_code == "ACTUATION_STOPPING"
+        assert instance._paused
 
     asyncio.run(scenario())

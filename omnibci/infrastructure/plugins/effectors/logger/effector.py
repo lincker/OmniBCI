@@ -19,7 +19,7 @@ class LogEffector(Effector):
 
     def __init__(self, *, parameters: PluginParameters | None = None,
                  context: PluginContext | None = None):
-        self.config_revision = context.config_revision if context is not None else None
+        self.module_revision = context.module_revision if context is not None else None
 
     def setup(self):
         logger.info("[LogEffector] setup — ready (no hardware)")

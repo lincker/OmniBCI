@@ -11,7 +11,7 @@ const { api } = await server.ssrLoadModule("/src/api/client.ts");
 const { translate } = await server.ssrLoadModule("/src/i18n.tsx");
 const english = { language: "en", t: (key, params) => translate("en", key, params) };
 const epoch = (epoch_number, changes = {}) => ({
-  generation: "engine-1", epoch_number, event_id: 8, config_revision: "revision-1",
+  generation: "engine-1", epoch_number, event_id: 8, acquisition_revision: "revision-1",
   status: "no_result", reason: "next_start", sample_rate: 250, channel_count: 2,
   sample_count: 128, pre_trigger_samples: 25, started_at: "2026-01-01T00:00:00Z",
   completed_at: "2026-01-01T00:00:01Z", trial_number: null, result: null, error: null,

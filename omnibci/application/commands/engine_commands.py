@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class StartEngineCommand:
-    """Start the NeuroEngine processing pipeline."""
+    """Start the NeuroEngine runtime infrastructure."""
 
 
 @dataclass(frozen=True)

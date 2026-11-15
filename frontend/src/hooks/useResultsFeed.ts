@@ -108,7 +108,8 @@ export function useResultsFeed(): ResultsFeed {
             currentTrials.set(msg.trial_number, {
               generation: msg.generation,
               trial_number: msg.trial_number,
-              config_revision: msg.config_revision ?? null,
+              processing_revision: msg.processing_revision ?? null,
+              acquisition_revision: msg.acquisition_revision ?? null,
               target_id: msg.target_id,
               event_id: msg.event_id,
               confidence: msg.confidence,

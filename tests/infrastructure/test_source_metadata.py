@@ -114,7 +114,7 @@ def _worker(*, preparation_required=True):
     bus = MagicMock()
     worker = AcquisitionRuntime(source, MagicMock(), MagicMock(), event_bus=bus,
                                 source_id="test_source", preparation_required=preparation_required,
-                                generation="generation", config_revision="revision")
+                                generation="generation", acquisition_revision="revision", system_revision="system")
     return worker, source, bus
 
 
@@ -260,10 +260,10 @@ async def test_invalid_or_stale_output_descriptor_is_not_used(descriptor):
 async def test_prepared_start_rejects_missing_or_stale_receipt_before_starting_source():
     worker, source, bus = _worker()
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
-    receipt = {"generation": worker.generation, "config_revision": worker.config_revision,
+    receipt = {"generation": worker.generation, "acquisition_revision": worker.acquisition_revision, "processing_revision": "processing", "system_revision": worker.system_revision,
                "connection_id": worker.connection_id, "source_fingerprint": worker._descriptor.fingerprint,
                "plan_fingerprint": "a" * 64}
-    for payload in (None, {**receipt, "connection_id": "old"}, {**receipt, "config_revision": "old"},
+    for payload in (None, {**receipt, "connection_id": "old"}, {**receipt, "acquisition_revision": "old"},
                     {**receipt, "source_fingerprint": "old"}, {**receipt, "generation": "old"}):
         await worker.execute((AcquisitionCommand.start_stream, CommandRequest("start", payload)))
         assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
@@ -291,20 +291,12 @@ async def test_explicit_preparation_requirement_controls_start(preparation_requi
 
 
 @pytest.mark.asyncio
-async def test_prepared_start_accepts_receipt_after_revision_change_and_reconnection():
+async def test_prepared_start_accepts_receipt_after_reconnection():
     worker, source, bus = _worker()
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
-    old_receipt = {"generation": worker.generation, "config_revision": worker.config_revision,
+    old_receipt = {"generation": worker.generation, "acquisition_revision": worker.acquisition_revision, "processing_revision": "processing", "system_revision": worker.system_revision,
                    "connection_id": worker.connection_id, "source_fingerprint": worker._descriptor.fingerprint,
                    "plan_fingerprint": "a" * 64}
-    await worker.execute((AcquisitionCommand.update_revision, CommandRequest("revision", {
-        "generation": worker.generation, "expected_revision": worker.config_revision, "target_revision": "b" * 64,
-    })))
-    assert _result(bus).ok
-    await worker.execute((AcquisitionCommand.start_stream, CommandRequest("stale-revision", old_receipt)))
-    assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
-    source.start_stream.assert_not_awaited()
-
     async def disconnect():
         source.is_connected = False
     async def connect():
@@ -314,7 +306,7 @@ async def test_prepared_start_accepts_receipt_after_revision_change_and_reconnec
     await worker._on_disconnect()
     await worker._on_connect()
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("reconnected-metadata")))
-    stale_connection = {**old_receipt, "config_revision": worker.config_revision}
+    stale_connection = {**old_receipt, "acquisition_revision": worker.acquisition_revision}
     await worker.execute((AcquisitionCommand.start_stream, CommandRequest("stale-connection", stale_connection)))
     assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
     source.start_stream.assert_not_awaited()
