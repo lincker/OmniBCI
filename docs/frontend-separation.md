@@ -56,6 +56,13 @@ The API prefix is `/api/v1`. Successful responses use
 on the error code and show the reported detail without inventing a runtime state.
 `GET /healthz` is the health endpoint and returns its own small JSON response.
 
+Plugin discovery uses `GET /config/plugin-catalog/{kind}` for Acquisition,
+Decoder, Epoch Detector, Filter, Paradigm, Trigger and Effector. Setup and Run
+consume the same `PluginConfigurationResponse` list, including exact selections,
+parameter schemas, platform availability and trial controls. The removed
+`/plugins/{category}` and `/stimulation/paradigms` routes return 404 without
+redirects or compatibility aliases.
+
 The complete contract is generated in [openapi.json](openapi.json). Principal Run
 operations are:
 

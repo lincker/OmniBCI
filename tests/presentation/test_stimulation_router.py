@@ -1,25 +1,12 @@
 """
 Tests for /api/v1/stimulation endpoints.
 """
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from omnibci.application.queries.plugin_queries import PluginInfo
 from omnibci.application.events import CommandResult
 from omnibci.application.services.command_result_service import CommandRejectedError
-
-_FAKE_PARADIGM = PluginInfo(
-    id="classic40SSVEP",
-    plugin_type="STIMULATION_THUBCI_SSVEP_classic40",
-    display_name="Classic 40-target SSVEP",
-    source="builtin",
-    params={"targets": 40, "refresh_rate_hz": 60},
-)
-
-# Patch at the use site: the router imports list_plugins at module top level.
-_PATCH_TARGET = "omnibci.presentation.routers.stimulation.list_plugins"
-
 
 @pytest.fixture(autouse=True)
 def _running_engine(engine_service):
@@ -27,37 +14,6 @@ def _running_engine(engine_service):
     engine_service._accepting_commands = True
     engine_service._engine_thread = MagicMock()
     engine_service._engine_thread.is_alive.return_value = True
-
-
-class TestParadigms:
-    @pytest.fixture(autouse=True)
-    def mock_list_paradigms(self):
-        with patch(_PATCH_TARGET, return_value=[_FAKE_PARADIGM]):
-            yield
-
-    def test_list_paradigms_returns_200(self, api_client):
-        resp = api_client.get("/api/v1/stimulation/paradigms")
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert "paradigms" in data
-        assert len(data["paradigms"]) >= 1
-
-    def test_paradigm_has_name_field(self, api_client):
-        resp = api_client.get("/api/v1/stimulation/paradigms")
-        paradigm = resp.json()["data"]["paradigms"][0]
-        assert "name" in paradigm
-
-    def test_paradigm_exposes_manifest_params(self, api_client):
-        resp = api_client.get("/api/v1/stimulation/paradigms")
-        paradigm = resp.json()["data"]["paradigms"][0]
-        assert paradigm["params"] == {"targets": 40, "refresh_rate_hz": 60}
-
-    def test_builtin_paradigm_present(self, api_client):
-        resp = api_client.get("/api/v1/stimulation/paradigms")
-        plugin_types = [p["plugin_type"] for p in resp.json()["data"]["paradigms"]]
-        assert "STIMULATION_THUBCI_SSVEP_classic40" in plugin_types
-
-
 
 
 class TestStimulationStop:

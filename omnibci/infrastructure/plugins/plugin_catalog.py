@@ -2,8 +2,8 @@
 
 This is the single read-only entry point for plugin metadata.  It resolves
 trusted user/builtin roots, parses manifest.toml without importing plugin
-Python code, applies precedence and identity rules, and exposes a path-free
-application DTO adapter for HTTP/config queries.
+Python code, applies precedence and identity rules, and exposes exact package
+contributions for configuration and runtime resolution.
 
 Executable loading remains isolated in :mod:`plugins.loader`.
 """
@@ -17,7 +17,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Iterable, Literal, Optional
+from typing import Callable, Iterable, Literal, Optional
 
 import omnibci
 import tomlkit
@@ -33,9 +33,6 @@ from omnibci.infrastructure.plugins.descriptors import (
     PluginPackageDescriptor,
     PluginSelection,
 )
-
-if TYPE_CHECKING:
-    from omnibci.application.queries.plugin_queries import PluginInfo
 
 log = logging.getLogger(__name__)
 
@@ -678,30 +675,3 @@ class PluginCatalog:
             except PluginResolutionError as exc:
                 log.error("Omitting unavailable contribution: %s", exc)
         return tuple(resolved)
-
-    def list(self, category: str) -> tuple[PluginDescriptor, ...]:
-        """Return all exact executable contributions without alias precedence."""
-        return self.list_contributions(category)
-
-
-def list_plugins(category: str) -> list["PluginInfo"]:
-    """Return path-free exact contributions for UI/config queries."""
-    # Keep the application DTO out of the runtime catalog's import path.
-    from omnibci.application.queries.plugin_queries import PluginInfo
-
-    return [
-        PluginInfo(
-            id=descriptor.name,
-            plugin_type=descriptor.plugin_type,
-            display_name=descriptor.display_name,
-            description=descriptor.description,
-            version=descriptor.version,
-            source=descriptor.source,
-            params=dict(descriptor.params),
-            controls={
-                key: dict(value)
-                for key, value in descriptor.controls.items()
-            },
-        )
-        for descriptor in PluginCatalog().list(category)
-    ]

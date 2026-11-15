@@ -1,7 +1,6 @@
 """Runtime descriptors for discovered OmniBCI plugins.
 
-``PluginInfo`` is the application/query DTO exposed to the UI.  This module
-contains the infrastructure-only contract used to resolve and execute a
+This module contains the infrastructure-only contract used to resolve and execute a
 plugin.  In particular, filesystem locations and Python entrypoints must never
 be reconstructed later from a plugin id.
 """

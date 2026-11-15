@@ -275,6 +275,7 @@ All routes use the normal `/api/v1` prefix and response envelope.
 
 | Route | Purpose |
 | --- | --- |
+| `GET /config/plugin-catalog/{kind}` | Plugin selections, schemas, availability and trial controls for one kind |
 | `POST /engine/start` | Start shared infrastructure only |
 | `POST /engine/stop` | Stop every module and shared infrastructure |
 | `POST /engine/modules/{module}/start` | Apply current Processing or Actuation and start/prepare that module |

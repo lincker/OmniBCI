@@ -16,8 +16,7 @@ Endpoints:
     POST /api/v1/acquisition/stream/stop   Stop data stream
     GET  /api/v1/acquisition/status        Acquisition status
 
-    GET  /api/v1/stimulation/paradigms     List paradigms (legacy)
-    GET  /api/v1/plugins/{category}        List plugins by category
+    GET  /api/v1/config/plugin-catalog/{kind}  List configurable plugins
     POST /api/v1/stimulation/start         Start stimulation
     POST /api/v1/stimulation/stop          Stop stimulation
     POST /api/v1/stimulation/trial/start   Trigger a trial
@@ -34,7 +33,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
-from omnibci.presentation.routers import engine, acquisition, stimulation, results, config, plugins
+from omnibci.presentation.routers import engine, acquisition, stimulation, results, config
 from omnibci.presentation.routers import plugin_config, runtime_config, plugin_packages
 from omnibci.presentation.routers import plugin_package_lifecycle, plugin_market
 from omnibci.presentation.routers import signal_setup
@@ -183,7 +182,6 @@ def create_app(*, api_token: str | None = None, desktop: bool = False) -> FastAP
     app.include_router(plugin_packages.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(plugin_package_lifecycle.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(plugin_market.router, prefix=prefix, responses=ERROR_RESPONSES)
-    app.include_router(plugins.router, prefix=prefix, responses=ERROR_RESPONSES)
 
     @app.websocket("/api/v1/ws/results")
     async def ws_results(websocket: WebSocket):

@@ -49,6 +49,8 @@ files as fixtures.
 The current regression suite checks:
 
 - Independent module configuration, plugin Profiles, history and revision conflicts.
+- One plugin catalog endpoint for all seven plugin kinds; retired discovery routes
+  return 404 without redirects, and stimulation trial controls remain available.
 - Engine and Server fields sharing one user settings file without lost updates,
   including failed writes and rollback after a concurrent Server save.
 - Direct application of current values, without requiring a saved Profile or a

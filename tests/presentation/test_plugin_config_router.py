@@ -250,6 +250,46 @@ def test_catalog_exposes_exact_identity_and_plugin_owned_schema(client):
     assert http.get(f"{PREFIX}/plugin-catalog/unknown").status_code == 422
 
 
+@pytest.mark.parametrize("kind,alias", [
+    ("acquisition", "file_reader"),
+    ("decoder", "THUBCI_SSVEP_classic40CCA"),
+    ("epoch_detector", "DEFAULT_EPOCH_DETECTOR"),
+    ("filter", "BASELINE_CORRECTION"),
+    ("paradigm", "STIMULATION_THUBCI_SSVEP_classic40"),
+    ("trigger", "neuroscan_scan45_trigger"),
+    ("effector", "logger"),
+])
+def test_catalog_lists_each_plugin_kind_without_applying_configuration(client, kind, alias):
+    http, service, _ = client
+    response = http.get(f"{PREFIX}/plugin-catalog/{kind}")
+    assert response.status_code == 200
+    plugins = response.json()["data"]
+    assert all(plugin["kind"] == kind for plugin in plugins)
+    plugin = next(plugin for plugin in plugins if plugin["plugin_type"] == alias)
+    assert plugin["selection"] == builtin_selection(kind, alias).to_dict()
+    assert plugin["label"]
+    assert plugin["schema"]["type"] == "object"
+    assert isinstance(plugin["available"], bool)
+    assert not {"id", "name", "display_name", "params", "location", "entrypoint"}.intersection(plugin)
+    assert service.repository.list_profiles() == []
+    assert all(module is None for module in service.repository.get_activation_set().modules.values())
+
+
+def test_catalog_exposes_stimulation_trial_controls(client):
+    http, _, _ = client
+    response = http.get(f"{PREFIX}/plugin-catalog/paradigm")
+    assert response.status_code == 200
+    paradigm = next(plugin for plugin in response.json()["data"]
+                    if plugin["plugin_type"] == "STIMULATION_THUBCI_SSVEP_classic40")
+    assert paradigm["controls"]["n_trials"] == {
+        "label": "Trial count", "type": "int", "default": 1, "min": 1, "field": "n_trials",
+    }
+    cue = paradigm["controls"]["target_cue"]
+    assert cue["field"] == "trial_params"
+    assert cue["default_sequence"] == "1-40"
+    assert cue["max"] == 40
+
+
 def test_catalog_exposes_read_only_decoder_channel_requirements(client):
     http, _, _ = client
     response = http.get(f"{PREFIX}/plugin-catalog/decoder")

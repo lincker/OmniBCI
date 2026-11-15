@@ -23,8 +23,6 @@ export type EpochList = S["EpochListResponse"];
 export type ConfigEntry = S["ConfigEntry"];
 export type ConfigData = S["ConfigResponse"];
 export type PatchConfigResult = S["PatchConfigResponse"];
-export type ParadigmInfo = S["ParadigmInfo"];
-export type ParadigmsResponse = S["ParadigmsResponse"];
 export interface StimulationStatus {
   active: boolean;
   process_alive: boolean;
@@ -109,10 +107,6 @@ export const api = {
 
   acqStreamStart: (body: StartReadingRequest) => post("/api/v1/acquisition/stream/start", body),
   acqStreamStop: () => post("/api/v1/acquisition/stream/stop"),
-
-  // ---- plugin discovery ----------------------------------------------------
-  /** List plugins by category: "paradigm" | "decoder" | "acquisition" | "effector" */
-  listPlugins: (category: string) => get<ParadigmsResponse>(`/api/v1/plugins/${encodeURIComponent(category)}`),
 
   // ---- host settings ------------------------------------------------------
   getConfig: () => get<ConfigData>("/api/v1/config"),

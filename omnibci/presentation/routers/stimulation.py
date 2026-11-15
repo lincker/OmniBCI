@@ -15,8 +15,6 @@ from omnibci.presentation.errors import (
 )
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.stimulation import (
-    ParadigmsResponse,
-    ParadigmInfo,
     StartTrialRequest,
     StimulationStatusResponse,
 )
@@ -31,7 +29,6 @@ from omnibci.application.services.command_result_service import (
     CommandRejectedError,
     CommandTimeoutError,
 )
-from omnibci.infrastructure.plugins.plugin_catalog import list_plugins
 from omnibci.application.ports.engine_port import STIMULATION_PEER
 
 router = APIRouter(prefix="/stimulation", tags=["Stimulation"])
@@ -53,17 +50,6 @@ def stimulation_status(
         engine_connected=engine_service.is_peer_connected(STIMULATION_PEER),
         paradigm=svc.current_paradigm,
     ))
-
-
-@router.get(
-    "/paradigms",
-    response_model=ApiResponse[ParadigmsResponse],
-    summary="List available stimulation paradigms",
-)
-def list_paradigms():
-    # Dual-root manifest-based discovery (pure filesystem + TOML, no OpenGL import).
-    paradigms = [ParadigmInfo.from_plugin_info(p) for p in list_plugins("paradigm")]
-    return ApiResponse(data=ParadigmsResponse(paradigms=paradigms))
 
 
 @router.post("/start", response_model=ApiResponse[RuntimeOperationResponse], summary="Apply current stimulation and prepare or start it")

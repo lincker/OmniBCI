@@ -12,7 +12,7 @@ import pytest
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.infrastructure.plugins.loader import PluginLoader
 from omnibci.sdk import PluginContext
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, list_plugins
+from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 
 
 @pytest.mark.parametrize(
@@ -25,7 +25,7 @@ def test_neuroscan_driver_is_discoverable_and_loadable(
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "no-user-plugins"))
     plugin_type = f"neuroscan_{driver}_reader"
 
-    plugins = {plugin.plugin_type: plugin for plugin in list_plugins("acquisition")}
+    plugins = {plugin.plugin_type: plugin for plugin in PluginCatalog().list_contributions("acquisition")}
     descriptor = PluginCatalog().resolve_selection("acquisition", builtin_selection("acquisition", plugin_type))
     instance = PluginLoader.instantiate(descriptor, SignalSource, parameters={}, context=PluginContext())
 

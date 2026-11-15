@@ -1,4 +1,4 @@
-"""Engine configuration and Server diagnostics expose no legacy aliases."""
+"""Configuration, plugin discovery and diagnostics expose no legacy aliases."""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,12 +11,17 @@ from omnibci.presentation.schemas.runtime_config import NodeConfigurationRespons
 
 @pytest.mark.parametrize("path", [
     "/config/system", "/system/info", "/system/logs", "/backend/info", "/backend/logs",
+    "/stimulation/paradigms",
+    *[f"/plugins/{kind}" for kind in (
+        "acquisition", "decoder", "epoch_detector", "filter", "paradigm", "trigger", "effector", "unknown",
+    )],
 ])
-def test_retired_configuration_and_diagnostic_routes_are_absent(path):
+def test_retired_routes_are_absent(path):
     client = TestClient(create_app(api_token=""))
-    response = client.get(f"/api/v1{path}")
+    response = client.get(f"/api/v1{path}", follow_redirects=False)
     assert response.status_code == 404
     assert response.json()["code"] == "NOT_FOUND"
+    assert "location" not in response.headers
 
 
 def test_retired_configuration_scope_is_rejected():

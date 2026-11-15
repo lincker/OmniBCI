@@ -344,23 +344,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/stimulation/paradigms": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List available stimulation paradigms */
-        get: operations["list_paradigms_api_v1_stimulation_paradigms_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/stimulation/start": {
         parameters: {
             query?: never;
@@ -909,29 +892,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/plugins/{category}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List plugins by category
-         * @description Return discovered plugins for *category*.
-         *
-         *     Valid categories: ``paradigm``, ``decoder``, ``acquisition``, ``effector``,
-         *     ``trigger``, ``filter``, ``epoch_detector``.
-         */
-        get: operations["list_plugins_by_category_api_v1_plugins__category__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -1339,20 +1299,6 @@ export interface components {
              */
             message: string;
             data?: components["schemas"]["PackageVersionResponse"] | null;
-        };
-        /** ApiResponse[ParadigmsResponse] */
-        ApiResponse_ParadigmsResponse_: {
-            /**
-             * Success
-             * @default true
-             */
-            success: boolean;
-            /**
-             * Message
-             * @default ok
-             */
-            message: string;
-            data?: components["schemas"]["ParadigmsResponse"] | null;
         };
         /** ApiResponse[PatchConfigResponse] */
         ApiResponse_PatchConfigResponse_: {
@@ -2062,60 +2008,6 @@ export interface components {
             error: string | null;
             /** References */
             references?: components["schemas"]["PackageReferenceResponse"][];
-        };
-        /**
-         * ParadigmInfo
-         * @description Metadata for a discovered stimulation paradigm.
-         *
-         *     Fields
-         *     ------
-         *     id           Machine identifier; unique per plugin (= manifest package.id).
-         *     plugin_type  Registry key used to actually start the paradigm.
-         *     display_name Human-readable label shown in the UI.
-         *     description  Optional long description.
-         *     version      Semver string from the manifest, if present.
-         *     source       "builtin" (ships with app) or "user" (downloaded / self-written).
-         *
-         *     Deprecated
-         *     ----------
-         *     name         Alias for ``display_name``; kept for one release cycle.
-         */
-        ParadigmInfo: {
-            /** Id */
-            id: string;
-            /** Plugin Type */
-            plugin_type: string;
-            /** Display Name */
-            display_name: string;
-            /** Description */
-            description?: string | null;
-            /** Version */
-            version?: string | null;
-            /**
-             * Source
-             * @default user
-             */
-            source: string;
-            /** Params */
-            params?: {
-                [key: string]: unknown;
-            };
-            /** Controls */
-            controls?: {
-                [key: string]: {
-                    [key: string]: unknown;
-                };
-            };
-            /**
-             * Name
-             * @description Deprecated alias for display_name.
-             */
-            readonly name: string;
-        };
-        /** ParadigmsResponse */
-        ParadigmsResponse: {
-            /** Paradigms */
-            paradigms: components["schemas"]["ParadigmInfo"][];
         };
         /** PatchConfigRequest */
         PatchConfigRequest: {
@@ -4441,89 +4333,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_StimulationStatusResponse_"];
-                };
-            };
-            /** @description Bad request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description API token required or invalid */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Service unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    list_paradigms_api_v1_stimulation_paradigms_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiResponse_ParadigmsResponse_"];
                 };
             };
             /** @description Bad request */
@@ -7629,91 +7438,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_PackageInstallationResponse_"];
-                };
-            };
-            /** @description Bad request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description API token required or invalid */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Service unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    list_plugins_by_category_api_v1_plugins__category__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                category: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiResponse_ParadigmsResponse_"];
                 };
             };
             /** @description Bad request */
