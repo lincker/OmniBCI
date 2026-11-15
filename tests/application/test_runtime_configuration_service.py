@@ -372,7 +372,7 @@ async def test_operation_idempotency_owns_one_execution_and_pins_plan(runtime):
     assert service.submit(plan.plan_id, operation_id)["status"] == "applying"
     with pytest.raises(ProfileRevisionConflict, match="already"):
         service.submit("different-plan", operation_id)
-    with pytest.raises(ProfileRevisionConflict, match="progress"):
+    with pytest.raises(ProfileRevisionConflict, match="owns"):
         service.submit(plan.plan_id, str(uuid4()))
     release.set()
     await service.wait_for_idle()
@@ -392,9 +392,88 @@ async def test_failed_operation_keeps_recovery_state_and_rejects_new_apply(runti
     await service.wait_for_idle()
     operation = service.operation(operation_id)
     assert operation["status"] == "recovery_required"
-    assert service.status()["operation"] == operation
+    assert service.status()["operations"]["processing"] == operation
     with pytest.raises(ProfileRevisionConflict, match="uncertain"):
         service.submit(plan.plan_id, str(uuid4()))
+
+
+@pytest.mark.asyncio
+async def test_modules_apply_concurrently_and_queued_work_owns_its_scope(runtime):
+    service, _, _ = runtime
+    entered = {module: asyncio.Event() for module in ("processing", "stimulation")}
+    release = {module: asyncio.Event() for module in entered}
+
+    async def execute(stored, progress, *, operation_id):
+        module = stored.plan.module
+        entered[module].set()
+        await release[module].wait()
+        return {"outcome": "applied"}
+
+    service.executor = SimpleNamespace(execute=execute)
+    plans = {module: request(runtime, module) for module in entered}
+    operations = {module: service.submit(plan.plan_id, str(uuid4())) for module, plan in plans.items()}
+    with pytest.raises(ProfileRevisionConflict):
+        with service.engine.admission.command("processing"):
+            pass
+    await asyncio.gather(*(event.wait() for event in entered.values()))
+    release["stimulation"].set()
+    await asyncio.sleep(0)
+    assert service.operation(operations["stimulation"]["operation_id"])["status"] == "succeeded"
+    assert service.operation(operations["processing"]["operation_id"])["status"] == "applying"
+    assert len(service.pending_package_snapshots) == 1
+    release["processing"].set()
+    await service.wait_for_idle()
+    assert service.pending_package_snapshots == ()
+
+
+@pytest.mark.asyncio
+async def test_module_recovery_preserves_candidate_packages_until_confirmed_stop(runtime):
+    from omnibci.application.services.runtime_apply_service import RuntimeApplyFailure
+    service, _, _ = runtime
+    service.executor = SimpleNamespace(execute=AsyncMock(side_effect=RuntimeApplyFailure(
+        "Pipeline outcome unknown", recovery_required=True)))
+    plan = request(runtime)
+    service.submit(plan.plan_id, str(uuid4()))
+    await service.wait_for_idle()
+    assert service.status()["recovery"] == {"processing": "Pipeline outcome unknown"}
+    assert service.pending_package_snapshots
+    service.executor = SimpleNamespace(execute=AsyncMock(return_value={"outcome": "no_change"}))
+    independent = request(runtime, "stimulation")
+    service.submit(independent.plan_id, str(uuid4()))
+    await service.wait_for_idle()
+    assert service.pending_package_snapshots
+    service.engine.admission.clear_quarantine("processing")
+    assert service.pending_package_snapshots == ()
+
+
+def test_unrelated_corrupt_configuration_is_reported_without_blocking_module_plan(runtime, monkeypatch):
+    service, _, _ = runtime
+    get_module = service.profiles.repository.get_module
+
+    def read(module):
+        if module == "processing":
+            raise ValueError("Invalid Processing configuration")
+        return get_module(module)
+
+    monkeypatch.setattr(service.profiles.repository, "get_module", read)
+    plan = request(runtime, "stimulation")
+    assert service.resolve_plan(plan.plan_id).plan == plan
+    assert service.status()["errors"] == {"processing": "Invalid Processing configuration"}
+
+
+@pytest.mark.parametrize("module,strategy", [("acquisition", "select_on_start"),
+                                             ("processing", "select_on_start"),
+                                             ("stimulation", "module"), ("actuation", "module")])
+def test_saved_module_can_be_prepared_after_foundation_only_start(runtime, module, strategy):
+    service, _, _ = runtime
+    service.engine.applied_revisions[module] = None
+    service.engine.applied_snapshot["CONFIG.module_revisions"][module] = None
+    service.engine.is_module_running = lambda selected: selected != module
+    plan = request(runtime, module)
+    assert not plan.errors
+    assert plan.strategy == strategy
+    assert plan.applied_revisions[module] is None
+    assert service.resolve_plan(plan.plan_id).plan == plan
 
 
 def test_nonfilter_binding_reorder_never_claims_no_change_for_different_revision(runtime):

@@ -1,12 +1,14 @@
 /** Real load effects distinguish a first-use configuration from failed requests. */
 import assert from "node:assert/strict";
-import { moduleConfiguration, revisionMap } from "./module-fixtures.mjs";
+import { moduleConfiguration, revisionMap, runtimeController, currentController } from "./module-fixtures.mjs";
 import { after, test } from "node:test";
 import React from "react";
 import { createServer } from "vite";
 
 const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
 after(() => server.close());
+const { useCurrentConfiguration } = await server.ssrLoadModule("/src/hooks/useCurrentConfiguration.ts");
+const { useRuntimeControls } = await server.ssrLoadModule("/src/hooks/useRuntimeControls.ts");
 const { RunConsole } = await server.ssrLoadModule("/src/RunConsole.tsx");
 const { api } = await server.ssrLoadModule("/src/api/client.ts");
 const { pluginConfigApi } = await server.ssrLoadModule("/src/api/plugin-config.ts");
@@ -99,12 +101,22 @@ function componentHarness(props) {
     const internal = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
     const previous = internal.current;
     internal.current = dispatcher; cursor = 0; dirty = false;
-    try { tree = RunConsole(props); } finally { internal.current = previous; }
+    try {
+      const loaded = useCurrentConfiguration(props.runtime.status.accepted);
+      const overrides = props.current;
+      const current = { ...loaded, ...overrides, modules: Object.fromEntries(Object.entries(loaded.modules).map(([module, state]) => [module, {
+        ...state, ...(overrides?.ready === undefined ? {} : { ready: overrides.ready }), ...(overrides?.error === undefined ? {} : { error: overrides.error }),
+      }])) };
+      const runtime = runtimeController(props.runtime);
+      const runtimeControls = useRuntimeControls(runtime, current, props.acquisition, props.engine.refresh);
+      tree = RunConsole({ ...props, current, runtime, runtimeControls });
+    } finally { internal.current = previous; }
     const pending = effects; effects = [];
     pending.forEach((effect) => effect());
   }
   return {
     get tree() { return tree; }, render,
+    updateRuntimeState(value) { Object.assign(props.runtime, value); dirty = true; },
     updateRuntime(status) { props.runtime = { ...props.runtime, status: { ...props.runtime.status, ...status } }; dirty = true; },
     async settle() {
       for (let round = 0; round < 80; round++) {
@@ -118,45 +130,44 @@ function componentHarness(props) {
 }
 
 async function withScenario({ activation = async () => null, acceptedRevision = null,
-  profiles = async () => [], catalog = async () => [paradigm], running = false,
+  profiles = async () => [], catalog = async () => [paradigm], running = false, appliedRevisions,
   current, applyCurrentSelection, processingRunning = running, actuationRunning = false, actuationConnected = false,
   sourceStatus = { connected: false, streaming: false },
   stimulationStatus = { active: false, process_alive: false, engine_connected: false, paradigm: null } } = {}, action) {
   const original = { api: { ...api }, plugin: { ...pluginConfigApi }, signal: { ...signalConfigApi },
     runtime: { ...runtimeConfigApi }, document: globalThis.document };
   const calls = [];
-  const backendStatus = { accepted: revisionMap(acceptedRevision), applied: running ? revisionMap(acceptedRevision) : null,
-    running, recovery_required: false, generation: running ? "generation-1" : null, operation: null };
+  const backendStatus = { accepted: revisionMap(acceptedRevision), applied: appliedRevisions ?? (running ? revisionMap(acceptedRevision) : null),
+    running, recovery: {}, generation: running ? "generation-1" : null, operations: {} };
   globalThis.document = { hidden: false };
   api.stimulationStatus = async () => stimulationStatus;
   signalConfigApi.get = async () => ({ readiness: { ready: true }, active_input: null });
   pluginConfigApi.modules = async () => moduleConfiguration(await activation() ?? {});
+  pluginConfigApi.module = async (module) => (await pluginConfigApi.modules()).modules[module];
   pluginConfigApi.profiles = profiles;
   pluginConfigApi.catalog = catalog;
   runtimeConfigApi.status = async () => structuredClone(backendStatus);
-  for (const name of ["engineStart", "engineStop", "acqConnect", "acqDisconnect", "acqStreamStart", "acqStreamStop", "stimStart", "stimStop", "trialStart", "moduleStart", "moduleStop"]) {
+  for (const name of ["engineStart", "engineStop", "acqConnect", "acqDisconnect", "acqStreamStart", "acqStreamStop", "stimStart", "stimStop", "trialStart", "moduleStart", "moduleStop", "modulePrepare"]) {
     api[name] = async (...args) => { calls.push([name, ...args]); };
   }
   const props = {
     engine: { data: { running, acquisition_alive: running, processor_alive: processingRunning, actuation_alive: actuationRunning, actuation_connected: actuationConnected }, error: null, refresh: async () => {} },
-    acquisition: { data: sourceStatus, error: null, pending: false, refresh: async () => {},
+    acquisition: { data: sourceStatus, error: null, pending: false, refresh: async () => { props.runtime.status = structuredClone(backendStatus); }, cancelPending: noop,
       ...Object.fromEntries(["connect", "disconnect", "read", "stopRead"].map((name) => [name,
         { pending: false, error: null, run: async (...args) => { calls.push([name, ...args]); } }])) },
-    runtime: { status: structuredClone(backendStatus), blocked: false, inProgress: false, refresh: async () => {},
+    runtime: { status: structuredClone(backendStatus), blocked: false, inProgress: false, refresh: async () => { props.runtime.status = structuredClone(backendStatus); },
       applyCurrentSelection: async (request) => {
         calls.push(["applyCurrentSelection", structuredClone(request)]);
         assert.ok(applyCurrentSelection, "Unexpected current configuration application");
         return applyCurrentSelection(request, backendStatus);
       } },
-    current: current ?? { ready: true, error: null, entries: {}, filterOrder: [], hasChanges: () => false,
-      validationError: () => null, request: (module, accepted) => ({ module, expected_revision: accepted?.modules?.[module]?.revision ?? null,
-        bindings: currentBindings(module, {}, [], accepted) }) },
+    current,
     feed: { generation: null, trials: [], acks: [] }, onBusyChange: noop,
     onEditSetup: () => calls.push(["editSetup"]), onResults: noop,
   };
   api.engineStatus = async () => ({ ...props.engine.data });
   const harness = componentHarness(props);
-  try { harness.render(); await action({ harness, calls, backendStatus }); }
+  try { harness.render(); await action({ harness, calls, backendStatus, acquisitionController: props.acquisition }); }
   finally {
     harness.dispose();
     Object.assign(api, original.api); Object.assign(pluginConfigApi, original.plugin); Object.assign(signalConfigApi, original.signal);
@@ -305,7 +316,7 @@ test("retrying a failed configuration load can recover to the normal first-use s
     const retry = button(harness.tree, "Retry loading configuration");
     assert.equal(!!retry.props.disabled, false);
     retry.props.onClick(); await harness.settle();
-    assert.equal(requests, 2);
+    assert.equal(requests, 5);
     assert.equal(alerts(harness.tree), "");
     assert.match(text(harness.tree), /No data source configured/);
     assert.equal(preparation(harness.tree), "Signal preparationSignal processing not enabled");
@@ -318,14 +329,14 @@ test("reloading configuration cannot temporarily bypass a missing epoch detector
   const pending = deferred();
   let requests = 0;
   const missingDetector = { ...complete, bindings: complete.bindings.filter((item) => item.slot !== "processing.epoch_detector") };
-  await withScenario({ activation: () => ++requests === 1 ? Promise.resolve(missingDetector) : pending.promise,
+  await withScenario({ activation: () => ++requests <= 4 ? Promise.resolve(missingDetector) : pending.promise,
     acceptedRevision: missingDetector.revision, running: true, processingRunning: false, sourceStatus: { connected: true, streaming: false },
     catalog: async () => { throw new Error("Trial catalog temporarily unavailable"); } }, async ({ harness, calls }) => {
     await harness.settle();
     assert.match(preparation(harness.tree), /Epoch detector missing/);
     assert.equal(button(harness.tree, "Start processing").props.disabled, true);
     button(harness.tree, "Retry loading configuration").props.onClick(); await harness.settle();
-    assert.match(text(region(harness.tree, "Module configurations")), /Loading/);
+    assert.match(preparation(harness.tree), /Epoch detector missing/);
     const read = button(harness.tree, "Start processing");
     assert.equal(read.props.disabled, true, "Loading cannot bypass decoder prerequisites from the accepted configuration");
     await read.props.onClick();
@@ -341,7 +352,7 @@ test("retrying invalid trial controls keeps trial submission blocked and stop co
   const pending = deferred();
   let requests = 0;
   const invalidParadigm = { ...paradigm, controls: { invalid: { field: "unsupported", type: "int" } } };
-  await withScenario({ activation: () => ++requests === 1 ? Promise.resolve(complete) : pending.promise,
+  await withScenario({ activation: () => ++requests <= 4 ? Promise.resolve(complete) : pending.promise,
     acceptedRevision: complete.revision, running: true, sourceStatus: { connected: true, streaming: true },
     stimulationStatus: { active: true, process_alive: true, engine_connected: true, paradigm: paradigm.plugin_type },
     catalog: async () => [invalidParadigm] }, async ({ harness, calls }) => {
@@ -349,7 +360,7 @@ test("retrying invalid trial controls keeps trial submission blocked and stop co
     assert.match(alerts(harness.tree), /Unsupported trial control/);
     assert.equal(button(harness.tree, "Trigger trial").props.disabled, true);
     button(harness.tree, "Retry loading configuration").props.onClick(); await harness.settle();
-    assert.match(text(region(harness.tree, "Module configurations")), /Loading/);
+    assert.doesNotMatch(text(region(harness.tree, "Module configurations")), /Loading/);
     assert.equal(button(harness.tree, "Trigger trial").props.disabled, true,
       "Clearing the old error during retry cannot enable controls that have not reloaded");
     const trialForm = elements(harness.tree).find((item) => item.type === "form" && item.props.className?.includes("trial-controls"));
@@ -369,12 +380,12 @@ function currentConfiguration(changes = {}, pending = Object.keys(changes), erro
     ready: true, error: null,
     entries: Object.fromEntries(Object.values(changes).flat().map((binding) => [binding.slot, currentFromBinding(binding)])),
     filterOrder: Object.values(changes).flat().filter((binding) => binding.slot.startsWith("processing.filter.")).map((binding) => binding.slot),
-    hasChanges: (module) => pending.includes(module),
+    hasChanges: (module, accepted) => pending.includes(module) && !accepted?.revision?.startsWith("applied-"),
     validationError: (module) => errors[module] ?? null,
     request: (module, accepted) => {
       if (errors[module]) throw new Error(errors[module]);
-      return { module, expected_revision: accepted?.modules?.[module]?.revision ?? null,
-        bindings: structuredClone(changes[module] ?? accepted?.modules[module]?.bindings ?? [])
+      return { module, expected_revision: accepted?.revision ?? null,
+        bindings: structuredClone(changes[module] ?? accepted?.bindings ?? [])
           .map(({ slot, selection, parameters, processing_input }) => ({ slot, selection, parameters,
             ...(processing_input === undefined ? {} : { processing_input }) })),
       };
@@ -458,7 +469,7 @@ test("a rejected current processing configuration never starts processing with t
     sourceStatus: { connected: true, streaming: false }, applyCurrentSelection: async () => null }, async ({ harness, calls }) => {
     await harness.settle();
     await button(harness.tree, "Start processing").props.onClick();
-    assert.deepEqual(calls, [["applyCurrentSelection", current.request("processing", moduleConfiguration(complete))]]);
+    assert.deepEqual(calls, [["applyCurrentSelection", current.request("processing", moduleConfiguration(complete).modules.processing)]]);
   });
 });
 
@@ -492,7 +503,7 @@ test("Launch stimulation applies only the current stimulation configuration", as
     assert.equal(launch.props.disabled, false);
     launch.props.onClick();
     await harness.settle();
-    assert.deepEqual(calls, [["applyCurrentSelection", current.request("stimulation", moduleConfiguration(complete))], ["stimStart"]]);
+    assert.deepEqual(calls, [["applyCurrentSelection", current.request("stimulation", moduleConfiguration(complete).modules.stimulation)], ["stimStart"]]);
   });
 });
 
@@ -564,7 +575,7 @@ for (const connected of [false, true]) test(`a pending legacy decoder mapping do
       const connect = button(harness.tree, "Connect");
       assert.equal(connect.props.disabled, false);
       await connect.props.onClick();
-      assert.deepEqual(calls, [["connect", current.request("acquisition", moduleConfiguration(complete))]]);
+      assert.deepEqual(calls, [["connect", current.request("acquisition", moduleConfiguration(complete).modules.acquisition)]]);
     }
   });
 });
@@ -606,7 +617,7 @@ test("Start reading rechecks current source values against the fresh accepted mo
   let accepted = complete;
   const current = currentConfiguration({ acquisition: [source], processing: [decoder, detector] }, ["processing"]);
   current.hasChanges = (module, value) => module === "acquisition"
-    ? !!value && value.modules.acquisition.revision !== complete.revision : module === "processing";
+    ? !!value && value.revision !== complete.revision : module === "processing";
   await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, current, running: true,
     sourceStatus: { connected: true, streaming: false } }, async ({ harness, calls, backendStatus }) => {
     await harness.settle();
@@ -708,7 +719,7 @@ for (const connected of [false, true]) test(`external actuation ${connected ? "s
     const start = button(harness.tree, connected ? "Start actuation" : "Prepare external actuation");
     assert.equal(start.props.disabled, false);
     await start.props.onClick(); await harness.settle();
-    assert.deepEqual(calls.map(([name]) => name), connected ? ["applyCurrentSelection", "moduleStart"] : ["applyCurrentSelection"]);
+    assert.deepEqual(calls.map(([name]) => name), connected ? ["applyCurrentSelection", "moduleStart"] : ["applyCurrentSelection", "modulePrepare"]);
     if (!connected) assert.match(text(harness.tree), /Actuation configuration is prepared/);
   });
 });
@@ -739,3 +750,217 @@ test("stimulation can apply and start while acquisition is reading", async () =>
     assert.deepEqual(calls.map(([name]) => name), ["applyCurrentSelection", "stimStart"]);
   });
 });
+
+test("Stop processing cancels the pending start continuation without blocking stimulation", async () => {
+  let accepted = complete;
+  const finish = deferred();
+  const current = currentConfiguration({ processing: [decoder, detector], stimulation: [{ slot: "stimulation.paradigm", selection: paradigm.selection, parameters: { frequency: 12 } }] });
+  await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, current, running: true, processingRunning: false,
+    applyCurrentSelection: async (request, status) => {
+      if (request.module === "processing") await finish.promise;
+      accepted = appliedConfiguration(accepted, request, status);
+      return { [request.module]: status.accepted[request.module], system: status.accepted.system };
+    } }, async ({ harness, calls }) => {
+    await harness.settle();
+    const starting = button(harness.tree, "Start processing").props.onClick();
+    await harness.settle();
+    assert.equal(button(harness.tree, "Stop processing").props.disabled, false);
+    assert.equal(button(harness.tree, "Launch stimulation").props.disabled, false);
+    await button(harness.tree, "Launch stimulation").props.onClick();
+    await harness.settle();
+    await button(harness.tree, "Stop processing").props.onClick();
+    finish.resolve(); await starting; await harness.settle();
+    assert.ok(calls.some(([name]) => name === "stimStart"));
+    assert.ok(calls.some(([name, module]) => name === "moduleStop" && module === "processing"));
+    assert.equal(calls.some(([name, module]) => name === "moduleStart" && module === "processing"), false);
+  });
+});
+
+test("unrelated module revisions preserve edited trial controls", async () => {
+  let accepted = complete;
+  const controls = { trials: { field: "n_trials", type: "int", default: 1 }, cue: { field: "trial_params", type: "int", default_sequence: "1-3", min: 1, max: 10 } };
+  await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, running: true,
+    stimulationStatus: { active: true, process_alive: true, engine_connected: true, paradigm: paradigm.plugin_type },
+    catalog: async () => [{ ...paradigm, controls }] }, async ({ harness, backendStatus }) => {
+    await harness.settle();
+    const input = () => elements(harness.tree).find((item) => item.type === "input" && item.props["aria-describedby"] === "trial-sequence-help");
+    input().props.onChange({ target: { value: "4, 5, 6" } }); await harness.settle();
+    for (const module of ["acquisition", "processing", "actuation"]) {
+      backendStatus.accepted[module] = `${module}-changed`;
+      backendStatus.applied[module] = `${module}-changed`;
+      accepted = { ...accepted, revisions: { ...backendStatus.accepted } };
+      harness.updateRuntime({ accepted: { ...backendStatus.accepted }, applied: { ...backendStatus.applied } });
+      await harness.settle();
+      assert.equal(input().props.value, "4, 5, 6", module);
+    }
+  });
+});
+
+test("Stop reading prevents a pending read validation from restarting the stream", async () => {
+  const pending = deferred();
+  let delay = false;
+  await withScenario({ activation: async () => { if (delay) await pending.promise; return complete; },
+    acceptedRevision: complete.revision, running: true, sourceStatus: { connected: true, streaming: false } },
+  async ({ harness, calls }) => {
+    await harness.settle(); delay = true;
+    const reading = button(harness.tree, "Start reading").props.onClick();
+    await harness.settle();
+    const stop = button(harness.tree, "Stop reading");
+    assert.equal(stop.props.disabled, false);
+    await stop.props.onClick();
+    pending.resolve(); await reading; await harness.settle();
+    assert.deepEqual(calls, [["stopRead"]]);
+  });
+});
+
+for (const [label, command, module] of [["Start processing", "moduleStart", "processing"],
+  ["Launch stimulation", "stimStart", "stimulation"], ["Start actuation", "moduleStart", "actuation"]]) {
+  test(`${label} prepares its saved configuration on a foundation with no prepared business modules`, async () => {
+    const saved = { ...complete, bindings: complete.bindings.map((binding) => binding.slot === "processing.decoder"
+      ? { ...binding, processing_input: { schema_version: 2, outputs: [] } } : binding) };
+    await withScenario({ activation: async () => saved, acceptedRevision: saved.revision, running: true,
+      processingRunning: false, appliedRevisions: { system: "system-revision" } }, async ({ harness, calls }) => {
+      await harness.settle();
+      const start = button(harness.tree, label);
+      assert.equal(start.props.disabled, false);
+      await start.props.onClick(); await harness.settle();
+      assert.deepEqual(calls, command === "stimStart" ? [[command]] : [[command, module]]);
+      assert.equal(button(harness.tree, "Trigger trial").props.disabled, true, "Trial requires the applied stimulation acknowledgement");
+    });
+  });
+}
+
+test("stimulation command completion does not wait for acquisition or processing status", async () => {
+  await withScenario({ activation: async () => complete, acceptedRevision: complete.revision, running: true },
+  async ({ harness, calls, acquisitionController }) => {
+    await harness.settle();
+    acquisitionController.refresh = async () => assert.fail("Stimulation must not refresh acquisition");
+    signalConfigApi.get = async () => assert.fail("Stimulation must not refresh processing");
+    await button(harness.tree, "Launch stimulation").props.onClick(); await harness.settle();
+    assert.deepEqual(calls, [["stimStart"]]);
+    assert.equal(alerts(harness.tree), "");
+  });
+});
+
+for (const origin of ["engine", "processing"]) test(`Stop engine remains available while ${origin} is starting the foundation`, async () => {
+  const finish = deferred();
+  await withScenario({ activation: async () => complete, acceptedRevision: complete.revision,
+    current: currentConfiguration({}, []), running: false }, async ({ harness, calls }) => {
+    api.engineStart = async () => { calls.push(["engineStart"]); await finish.promise; };
+    await harness.settle();
+    const starting = button(harness.tree, origin === "engine" ? "Start engine" : "Start processing").props.onClick();
+    await harness.settle();
+    assert.deepEqual(calls, [["engineStart"]]);
+    const stop = button(harness.tree, "Stop engine");
+    assert.equal(stop.props.disabled, false);
+    stop.props.onClick(); await harness.settle();
+    finish.resolve(); await starting; await harness.settle();
+    assert.deepEqual(calls, [["engineStart"], ["engineStop"]]);
+    assert.equal(alerts(harness.tree), "");
+  });
+});
+
+for (const [module, label] of [["processing", "Start processing"], ["stimulation", "Launch stimulation"], ["actuation", "Start actuation"]]) {
+  test(`Stop engine cancels ${module} application continuation before any start command`, async () => {
+    const finish = deferred();
+    let accepted = complete;
+    const current = currentConfiguration({ [module]: complete.bindings.filter((item) => item.slot.startsWith(`${module}.`)) });
+    await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, current,
+      running: module !== "processing", processingRunning: false,
+      applyCurrentSelection: async (request, status) => {
+        await finish.promise;
+        accepted = appliedConfiguration(accepted, request, status);
+        return { [module]: status.accepted[module], system: status.accepted.system };
+      } }, async ({ harness, calls }) => {
+      await harness.settle();
+      const starting = button(harness.tree, label).props.onClick(); await harness.settle();
+      assert.equal(calls[0][0], "applyCurrentSelection");
+      const stop = button(harness.tree, "Stop engine");
+      assert.equal(stop.props.disabled, false);
+      stop.props.onClick(); await harness.settle();
+      finish.resolve(); await starting; await harness.settle();
+      assert.deepEqual(calls.map(([name]) => name), ["applyCurrentSelection", "engineStop"]);
+    });
+  });
+}
+
+for (const [module, label, command] of [["acquisition", "Disconnect", "disconnect"], ["processing", "Stop processing", "moduleStop"],
+  ["stimulation", "Stop stimulation", "stimStop"], ["actuation", "Stop actuation", "moduleStop"]]) {
+  test(`${label} recovers only its module even when the foundation and worker are stopped`, async () => {
+    await withScenario({ activation: async () => complete, acceptedRevision: complete.revision }, async ({ harness, calls, backendStatus }) => {
+      backendStatus.recovery = { [module]: "The module needs recovery" };
+      harness.updateRuntimeState({ scopes: { [module]: { blocked: true, recoveryRequired: true } } });
+      harness.updateRuntime({ recovery: { ...backendStatus.recovery } }); await harness.settle();
+      const stop = button(harness.tree, label);
+      assert.equal(stop.props.disabled, false);
+      stop.props.onClick(); await harness.settle();
+      assert.deepEqual(calls, command === "moduleStop" ? [[command, module]] : [[command]]);
+      for (const [other, otherLabel] of [["acquisition", "Disconnect"], ["processing", "Stop processing"],
+        ["stimulation", "Stop stimulation"], ["actuation", "Stop actuation"]]) {
+        if (other !== module) assert.equal(button(harness.tree, otherLabel).props.disabled, true, other);
+      }
+    });
+  });
+}
+
+test("Stop engine is available while acquisition is preparing an automatic startup", async () => {
+  await withScenario({}, async ({ harness, calls, acquisitionController }) => {
+    let cancelled = 0;
+    acquisitionController.pending = true;
+    acquisitionController.connect.pending = true;
+    acquisitionController.cancelPending = () => { cancelled++; };
+    harness.render(); await harness.settle();
+    const stop = button(harness.tree, "Stop engine");
+    assert.equal(stop.props.disabled, false);
+    stop.props.onClick(); await harness.settle();
+    assert.deepEqual(calls, [["engineStop"]]);
+    assert.equal(cancelled, 1);
+  });
+});
+
+for (const module of ["acquisition", "processing", "stimulation", "actuation", "system"]) {
+  test(`Engine Start ${module === "system" ? "waits for" : "preserves"} ${module} recovery`, async () => {
+    await withScenario({}, async ({ harness, calls, backendStatus }) => {
+      backendStatus.recovery = { [module]: "Recovery required" };
+      harness.updateRuntime({ recovery: backendStatus.recovery });
+      harness.updateRuntimeState({ scopes: { system: { blocked: true, recoveryRequired: true } } });
+      await harness.settle();
+      const start = button(harness.tree, "Start engine");
+      assert.equal(start.props.disabled, module === "system");
+      await start.props.onClick(); await harness.settle();
+      assert.deepEqual(calls, module === "system" ? [] : [["engineStart"]]);
+    });
+  });
+}
+
+for (const [module, setting, prepareLabel, startLabel] of [["stimulation", "STIMULATION.auto_spawn", "Prepare external stimulation", "Enable stimulation"],
+  ["actuation", "ACTUATION.auto_spawn", "Prepare external actuation", "Start actuation"]]) {
+  test(`external ${module} recovery prepares its retained listener without applying edited values`, async () => {
+    const accepted = { ...complete, settings: { [setting]: false } };
+    const current = currentConfiguration({ [module]: complete.bindings.filter((item) => item.slot.startsWith(`${module}.`)) });
+    await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, current, running: true },
+      async ({ harness, calls, backendStatus }) => {
+        backendStatus.recovery = { [module]: "External state unknown" };
+        harness.updateRuntime({ recovery: backendStatus.recovery });
+        harness.updateRuntimeState({ scopes: { [module]: { blocked: true, recoveryRequired: true } } });
+        await harness.settle();
+        const prepare = button(harness.tree, prepareLabel);
+        assert.equal(prepare.props.disabled, false);
+        prepare.props.onClick(); await harness.settle();
+        assert.deepEqual(calls, [["modulePrepare", module]]);
+      });
+  });
+  test(`connected external ${module} cannot start until Stop confirms recovery`, async () => {
+    const accepted = { ...complete, settings: { [setting]: false } };
+    await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, running: true,
+      actuationConnected: true, stimulationStatus: { active: false, process_alive: false, engine_connected: true, paradigm: null } },
+      async ({ harness, backendStatus }) => {
+        backendStatus.recovery = { [module]: "External state unknown" };
+        harness.updateRuntime({ recovery: backendStatus.recovery });
+        harness.updateRuntimeState({ scopes: { [module]: { blocked: true, recoveryRequired: true } } });
+        await harness.settle();
+        assert.equal(button(harness.tree, startLabel).props.disabled, true);
+        assert.equal(button(harness.tree, module === "stimulation" ? "Stop stimulation" : "Stop actuation").props.disabled, false);
+      });
+  });
+}

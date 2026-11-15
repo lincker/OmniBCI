@@ -325,7 +325,7 @@ def test_spawned_configured_worker_reports_real_plugin_initialization(kind, brok
                                     connection_id="connection")
                 plan = compile_processing_plan(source, ProcessingInput(), acquisition_revision="r")
                 receipt = {"generation": "g", "acquisition_revision": "r", "processing_revision": "r", "system_revision": "system", "connection_id": "connection",
-                           "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint}
+                           "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input"}
                 commands.put((SignalProcessorCommand.prepare_signal, CommandRequest("prepare", {
                     "plan": plan.to_dict(), "receipt": receipt,
                 })))

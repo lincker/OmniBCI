@@ -1,6 +1,7 @@
 """Plan configuration changes against pinned, acknowledged runtime state."""
 from collections import OrderedDict
 import asyncio
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from threading import RLock
@@ -13,6 +14,21 @@ from omnibci.application.plugin_profiles import (
 )
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.processing_source import processing_input
+
+
+def read_configuration(repository, sections):
+    """Read only the persisted inputs owned or consumed by this operation."""
+    return ActivationSet({module: repository.get_module(module) for module in MODULES if module in sections},
+                         repository.get_system())
+
+
+def operation_scopes(stored):
+    plan = stored.plan
+    if plan.module == "system" or stored.system is not None:
+        return tuple(MODULES)
+    if plan.module == "acquisition" and plan.running and plan.strategy not in ("select_on_start", "no_change"):
+        return ("acquisition", "processing")
+    return (plan.module,)
 
 
 def validate_external_peers(engine, activation_set, candidates, strategy):
@@ -69,26 +85,52 @@ class RuntimeConfigurationService:
     _PLAN_TTL_S = 300
     _MAX_PLANS = 32
 
-    def __init__(self, profiles, engine, *, executor=None):
+    def __init__(self, profiles, engine, *, executor=None, reference_guard=None):
         self.profiles = profiles
         self.engine = engine
         self.executor = executor
+        self.reference_guard = reference_guard or nullcontext
         self._plans: OrderedDict[str, PlannedConfiguration] = OrderedDict()
         self._operations: OrderedDict[str, dict] = OrderedDict()
-        self._active_operation: str | None = None
-        self._task: asyncio.Task | None = None
+        self._active_operations: dict[str, str] = {}
+        self._tasks: dict[str, asyncio.Task] = {}
+        self._pending_packages: dict[str, tuple] = {}
         self._lock = RLock()
 
+    @property
+    def _admission(self):
+        return self.engine.admission
+
+    @property
+    def pending_package_snapshots(self):
+        with self._lock:
+            for identifier, (scopes, _) in tuple(self._pending_packages.items()):
+                if identifier not in self._tasks and not self._admission.requires_recovery(scopes):
+                    self._pending_packages.pop(identifier)
+            return tuple(deepcopy(snapshot) for _, snapshot in self._pending_packages.values())
+
     def status(self) -> dict:
-        accepted = self.profiles.repository.get_activation_set()
+        accepted, errors = {}, {}
+        for section in SECTIONS:
+            try:
+                value = (self.profiles.repository.get_system() if section == "system"
+                         else self.profiles.repository.get_module(section))
+                accepted[section] = value.revision if value is not None else None
+            except (ValueError, KeyError, RuntimeError, OSError) as exc:
+                accepted[section] = None
+                errors[section] = str(exc)
         running = self.engine.is_engine_ready
+        with self._lock:
+            operations = {section: self.operation(self._active_operations[section])
+                          if section in self._active_operations else None for section in SECTIONS}
         return {
             "running": running,
-            "recovery_required": getattr(getattr(self.engine, "admission", None), "recovery_required", False) is True,
-            "accepted": accepted.revisions(),
+            "recovery": self._admission.recovery_status,
+            "accepted": accepted,
             "applied": self.engine.applied_revisions if running else None,
             "generation": self.engine.generation if running else None,
-            "operation": self.operation(self._active_operation) if self._active_operation else None,
+            "operations": operations,
+            "errors": errors,
         }
 
     def plan(self, module: str, bindings: list[dict], *, expected_revision: str | None,
@@ -114,7 +156,14 @@ class RuntimeConfigurationService:
                           restored_from=entry_id)
 
     def _plan(self, module, candidate, expected_revision, *, restored_from=None):
-        current = self.profiles.repository.get_activation_set()
+        dependencies = {module, "system"}
+        if module == "processing":
+            dependencies.add("acquisition")
+        if module == "acquisition" and self.engine.is_module_running("processing"):
+            dependencies.add("processing")
+        if module == "system":
+            dependencies.update(SECTIONS)
+        current = read_configuration(self.profiles.repository, dependencies)
         revisions = current.revisions()
         if revisions[module] != expected_revision:
             raise ProfileRevisionConflict("The module configuration changed; reload before planning")
@@ -138,25 +187,24 @@ class RuntimeConfigurationService:
                                         if old_settings.get(k) != candidate.settings.get(k)))
         changed = any(revisions[k] != v for k, v in targets.items())
         running = self.engine.is_engine_ready
+        applied = self.engine.applied_revisions if running else None
         strategy = self._strategy(module, slots, changed_settings, old, new) if changed else "no_change"
         if changed and system is not None and system.revision != revisions["system"]:
             strategy = "rebuild"
         if changed and (not running or module in ("acquisition", "processing")
                         and not self.engine.is_module_running(module)):
             strategy = "select_on_start"
-        dependencies = {module, "system"}
-        if module == "processing":
-            dependencies.add("acquisition")
-        if strategy == "rebuild" and module == "system":
-            dependencies.update(SECTIONS)
+        if (running and module != "system" and not self.engine.is_module_running(module)
+                and applied.get(module) != candidate.revision):
+            strategy = "select_on_start" if module in ("acquisition", "processing") else "module"
         expected = {key: revisions[key] for key in SECTIONS if key in dependencies}
-        applied = self.engine.applied_revisions if running else None
         errors = []
         try:
             self._validate_runtime(combined, candidates, strategy)
         except (ValueError, KeyError) as exc:
             errors.append(str(exc))
-        if running and any(applied.get(key) != revision for key, revision in expected.items() if revision is not None):
+        if running and any(applied.get(key) != revision for key, revision in expected.items()
+                           if revision is not None and (key == "system" or self.engine.is_module_running(key))):
             errors.append("Applied and selected module revisions differ; reconcile the runtime before applying")
         projection = {"PLUGINS.bindings": [b.to_dict() for b in combined.bindings()]}
         plan = ConfigurationPlan(
@@ -200,7 +248,7 @@ class RuntimeConfigurationService:
         plan = stored.plan
         if plan.errors:
             raise PluginSchemaError("; ".join(plan.errors))
-        current = self.profiles.repository.get_activation_set()
+        current = read_configuration(self.profiles.repository, plan.expected_revisions)
         revisions = current.revisions()
         applied = self.engine.applied_revisions or {}
         if (any(revisions[k] != v for k, v in plan.expected_revisions.items())
@@ -243,32 +291,45 @@ class RuntimeConfigurationService:
                 raise ValueError
         except (ValueError, AttributeError) as exc:
             raise PluginSchemaError("operation_id must be a canonical UUID") from exc
-        with self._lock:
+        with self.reference_guard(), self._lock:
             if operation_id in self._operations:
                 operation = self._operations[operation_id]
                 if operation["plan_id"] != plan_id:
                     raise ProfileRevisionConflict("Operation ID was already used for a different plan")
                 return deepcopy(operation)
-            if getattr(getattr(self.engine, "admission", None), "recovery_required", False) is True:
-                raise ProfileRevisionConflict("Resolve or stop the uncertain runtime before applying again")
-            if self._active_operation is not None:
-                active = self._operations[self._active_operation]
-                if active["status"] in ("queued", "applying"):
-                    raise ProfileRevisionConflict("A configuration operation is already in progress")
             stored = self.resolve_plan(plan_id)
+            scopes = operation_scopes(stored)
+            if self._admission.requires_recovery(scopes):
+                raise ProfileRevisionConflict("Resolve or stop the uncertain runtime modules before applying again")
             if self.executor is None:
                 raise RuntimeError("Runtime configuration executor is unavailable")
+            reservation = self._admission.reserve_transition(scopes)
             operation = dict(operation_id=operation_id, plan_id=plan_id,
+                             module=stored.plan.module, affected_modules=list(scopes),
                              target_revisions=stored.plan.target_revisions, status="queued", stage="queued",
                              error=None, rolled_back=False, result=None)
             self._operations[operation_id] = operation
-            self._active_operation = operation_id
-            while len(self._operations) > 32:
-                self._operations.popitem(last=False)
-            self._task = asyncio.create_task(self._execute(operation_id, stored))
+            self._active_operations[stored.plan.module] = operation_id
+            self._pending_packages[operation_id] = scopes, {
+                "PLUGINS.bindings": [binding.to_dict() for candidate in stored.candidates.values()
+                                     for binding in candidate.bindings],
+            }
+            for identifier in tuple(self._operations):
+                if len(self._operations) <= 32:
+                    break
+                if identifier not in self._active_operations.values() and identifier not in self._tasks:
+                    self._operations.pop(identifier)
+            try:
+                self._tasks[operation_id] = asyncio.create_task(self._execute(operation_id, stored, reservation))
+            except BaseException:
+                self._admission.release_reservation(reservation)
+                self._operations.pop(operation_id)
+                self._active_operations.pop(stored.plan.module)
+                self._pending_packages.pop(operation_id)
+                raise
             return deepcopy(operation)
 
-    async def _execute(self, operation_id, stored):
+    async def _execute(self, operation_id, stored, reservation):
         operation = self._operations[operation_id]
 
         def progress(stage):
@@ -276,11 +337,10 @@ class RuntimeConfigurationService:
                 operation.update(status="applying", stage=stage)
 
         try:
-            progress("validating")
-            result = await self.executor.execute(stored, progress, operation_id=operation_id)
+            with self._admission.transition(operation_scopes(stored), reservation=reservation):
+                progress("validating")
+                result = await self.executor.execute(stored, progress, operation_id=operation_id)
         except BaseException as exc:
-            if getattr(exc, "recovery_required", False):
-                self.engine.admission.quarantine(str(exc))
             with self._lock:
                 operation.update(
                     status="recovery_required" if getattr(exc, "recovery_required", False) else "failed",
@@ -289,11 +349,20 @@ class RuntimeConfigurationService:
         else:
             with self._lock:
                 operation.update(status="succeeded", stage="complete", result=result)
+        finally:
+            with self._lock:
+                self._tasks.pop(operation_id, None)
+                if operation["status"] != "recovery_required":
+                    self._pending_packages.pop(operation_id, None)
 
     async def wait_for_idle(self):
         """Shutdown waits for the owned operation; HTTP disconnect never cancels it."""
-        if self._task is not None:
-            await asyncio.shield(self._task)
+        while True:
+            with self._lock:
+                tasks = tuple(self._tasks.values())
+            if not tasks:
+                return
+            await asyncio.shield(asyncio.gather(*tasks))
 
     @staticmethod
     def _binding_values(binding):

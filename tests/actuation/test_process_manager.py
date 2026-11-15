@@ -446,6 +446,7 @@ class TestEngineLifecycleHook:
         manager = MagicMock()
         engine = MagicMock()
         engine.set_actuation_active = AsyncMock()
+        engine.ensure_output_ready = AsyncMock()
         engine.is_module_running.return_value = False
         engine.peer_gateway.peer.return_value.is_connected = False
         stopped = threading.Event()

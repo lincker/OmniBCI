@@ -33,6 +33,20 @@ from omnibci.shared.events import Event, EventType
 logger = logging.getLogger(__name__)
 
 
+def command_scopes(event_type):
+    """Protect the affected module, independently of the command's transport."""
+    if event_type in {EventType.GetSourceMetadata, EventType.GetAcquisitionPreview}:
+        return ()
+    if event_type in {EventType.AttachProcessingInput, EventType.DetachProcessingInput}:
+        return ("processing",)
+    if event_type is not None:
+        for lower, module in ((100, "acquisition"), (200, "processing"),
+                              (300, "stimulation"), (400, "actuation")):
+            if lower <= int(event_type) < lower + 100:
+                return (module,)
+    return ("system",)
+
+
 class CommandExecutor(Protocol):
     """Application port for commands that require a terminal worker result."""
 
@@ -95,7 +109,7 @@ class CommandResultBroker:
         self._pending: dict[str, _PendingCommand] = {}
         self._lock = threading.Lock()
 
-    @admitted
+    @admitted(scopes=lambda self, event_type, *args, **kwargs: command_scopes(event_type))
     def request(
         self,
         event_type: EventType,

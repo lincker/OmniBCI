@@ -63,6 +63,21 @@ async def start_module(
         raise ApiError(status.HTTP_409_CONFLICT, ErrorCode.ENGINE_NOT_READY, str(exc))
 
 
+@router.post("/modules/{module}/prepare", response_model=ApiResponse,
+             summary="Prepare an output module for an external connection")
+async def prepare_module(
+    module: Literal["stimulation", "actuation"],
+    svc: NeuroEngineService = Depends(get_engine_service),
+):
+    try:
+        await svc.prepare_output(module)
+        return ApiResponse(message=f"{module.title()} ready for a connection")
+    except ProfileRevisionConflict:
+        raise
+    except RuntimeError as exc:
+        raise ApiError(status.HTTP_409_CONFLICT, ErrorCode.ENGINE_NOT_READY, str(exc))
+
+
 @router.post("/modules/{module}/stop", response_model=ApiResponse,
              responses=COMMAND_EXECUTION_RESPONSES, summary="Stop an independent engine module")
 async def stop_module(

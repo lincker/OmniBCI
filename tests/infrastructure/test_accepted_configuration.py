@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from omnibci.application.plugin_profiles import ModuleActivation, ProfileBinding
+from omnibci.application.plugin_profiles import ActivationSet, ModuleActivation, ProfileBinding
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
@@ -48,9 +48,12 @@ def test_standalone_and_managed_projection_match_after_saved_profile_edit(profil
 
     standalone = accepted_runtime_settings(profiles=profiles, active_kinds={"effector"})
 
-    assert standalone == profiles.materialize(accepted)
-    assert standalone["ACQUISITION.sample_rate"] == 500
-    assert standalone["CONFIG.module_revisions"]["acquisition"] == accepted.modules["acquisition"].revision
+    assert standalone == profiles.materialize(ActivationSet(
+        {"actuation": accepted.modules["actuation"]}, accepted.system,
+    ))
+    assert "ACQUISITION.sample_rate" not in standalone
+    assert standalone["CONFIG.module_revisions"]["acquisition"] is None
+    assert standalone["CONFIG.module_revisions"]["actuation"] == accepted.modules["actuation"].revision
     assert standalone["ACTUATION.server_ip"] == "192.0.2.3"
     assert {path: path.read_bytes() for path in profiles.repository.root.rglob("*.toml")} == before
 
@@ -84,9 +87,21 @@ def test_actuation_requires_its_own_effector_selection(profiles):
 def test_stimulation_accepts_an_explicit_configuration_without_trigger(profiles):
     accepted = profiles.repository.get_activation_set()
     snapshot = accepted_runtime_settings(profiles=profiles, active_kinds={"paradigm", "trigger"})
-    assert snapshot == profiles.materialize(accepted)
+    assert snapshot == profiles.materialize(ActivationSet(
+        {"stimulation": accepted.modules["stimulation"]}, accepted.system,
+    ))
     assert not any(binding["slot"] == "stimulation.trigger" for binding in snapshot["PLUGINS.bindings"])
     assert profiles.repository.get_activation_set() == accepted
+
+
+@pytest.mark.parametrize("module,kind", [("stimulation", "paradigm"), ("actuation", "effector")])
+def test_output_configuration_ignores_corrupt_acquisition(profiles, module, kind):
+    path = profiles.repository.root / "activation" / "acquisition.toml"
+    path.write_text('revision = "unterminated', encoding="utf-8")
+    snapshot = accepted_runtime_settings(profiles=profiles, active_kinds={kind})
+    assert snapshot["CONFIG.module_revisions"][module] is not None
+    assert snapshot["CONFIG.module_revisions"]["acquisition"] is None
+    assert all(binding["slot"].startswith(module + ".") for binding in snapshot["PLUGINS.bindings"])
 
 
 def test_missing_selected_version_cannot_use_legacy_alias(profiles):

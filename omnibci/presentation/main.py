@@ -103,10 +103,6 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
     app.state.plugin_market_service = container.plugin_market_service
     app.state.shutdown_service = BackendShutdownService(
         engine=container.engine_service,
-        stimulation=container.stimulation_service,
-        stimulation_process=container.stimulation_process_manager,
-        actuation_process=container.actuation_process_manager,
-        acquisition=container.acquisition_service,
         configuration=container.runtime_configuration,
     )
 

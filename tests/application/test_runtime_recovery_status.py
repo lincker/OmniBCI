@@ -16,10 +16,11 @@ from tests.application.test_runtime_configuration_service import runtime
 def failed_history(service, revision):
     identifier = str(uuid4())
     operation = dict(operation_id=identifier, plan_id=str(uuid4()), target_revisions={"processing": revision},
+                     module="processing", affected_modules=["processing"],
                      status="recovery_required", stage="starting", error="Startup outcome unknown",
                      rolled_back=False, result=None)
     service._operations[identifier] = operation
-    service._active_operation = identifier
+    service._active_operations["processing"] = identifier
     return operation
 
 
@@ -31,8 +32,8 @@ def test_recovery_flag_reflects_quarantine_even_when_engine_is_not_ready(runtime
     gate.quarantine("Unknown startup outcome")
     status = RuntimeConfigurationResponse.model_validate(service.status())
     assert status.running is False
-    assert status.recovery_required is True
-    assert status.operation.model_dump() == failed
+    assert status.recovery == {"system": "Unknown startup outcome"}
+    assert status.operations["processing"].model_dump() == failed
     plan = service.plan("processing", [item for item in bindings if item["slot"].startswith("processing.")], expected_revision=snapshot.modules["processing"].revision)
     with pytest.raises(ProfileRevisionConflict, match="uncertain runtime"):
         service.submit(plan.plan_id, str(uuid4()))
@@ -45,12 +46,12 @@ async def test_confirmed_stop_clears_current_recovery_and_allows_apply_with_fail
     service.engine = NeuroEngineService(lambda: None, admission=gate)
     failed = failed_history(service, snapshot.modules["processing"].revision)
     gate.quarantine("Unknown startup outcome")
-    assert service.status()["recovery_required"] is True
+    assert service.status()["recovery"] == {"system": "Unknown startup outcome"}
     await service.engine.handle_stop_engine(StopEngineCommand())
     status = RuntimeConfigurationResponse.model_validate(service.status())
     assert status.running is False
-    assert status.recovery_required is False
-    assert status.operation.model_dump() == failed
+    assert status.recovery == {}
+    assert status.operations["processing"].model_dump() == failed
     with gate.command():
         pass
     service.executor = SimpleNamespace(supported_strategies={"select_on_start", "no_change"},

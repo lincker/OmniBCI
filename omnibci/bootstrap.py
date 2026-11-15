@@ -1,6 +1,8 @@
 """Composition root for application services and infrastructure adapters."""
 
 import logging
+from contextlib import contextmanager
+from threading import RLock
 from dataclasses import dataclass
 from typing import Callable, Iterable, Tuple
 
@@ -20,6 +22,7 @@ from omnibci.application.services.plugin_installation_service import PluginInsta
 from omnibci.application.services.plugin_package_service import PluginPackageService
 from omnibci.application.services.plugin_market_service import PluginMarketService
 from omnibci.application.plugin_packages import package_references_from_settings
+from omnibci.application.plugin_profiles import ActivationSet
 from omnibci.infrastructure.backend_logging import BackendLogging
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
@@ -156,10 +159,10 @@ async def _build_container_services(host_settings, allow_process_termination):
     # Processes are single-use, so every restart requires a fresh engine graph.
     def startup_snapshot():
         try:
-            accepted = plugin_profiles.repository.get_activation_set()
+            system = plugin_profiles.repository.get_system()
         except (ValueError, KeyError, RuntimeError, OSError) as exc:
             raise RuntimeError(f"Plugin configuration is invalid: {exc}") from exc
-        if accepted.system is None:
+        if system is None:
             plugin_profiles.repository.save_system(plugin_profiles.propose_system(), expected_revision=None)
         return accepted_runtime_settings(profiles=plugin_profiles, active_kinds=set())
 
@@ -171,6 +174,17 @@ async def _build_container_services(host_settings, allow_process_termination):
         actuation_process_manager=actuation_manager,
         stimulation_process_manager=stimulation_manager,
     )
+    package_references_lock = RLock()
+
+    @contextmanager
+    def profile_change(requires_idle):
+        with package_references_lock:
+            if requires_idle:
+                with engine_service.configuration_change(True):
+                    yield
+            else:
+                yield
+
     config_service = ConfigService(
         settings,
         change_guard=engine_service.configuration_change,
@@ -178,7 +192,7 @@ async def _build_container_services(host_settings, allow_process_termination):
     plugin_profiles = PluginProfileService(
         TomlPluginProfileRepository(), CatalogConfigurationAdapter(),
         settings_source=settings.saved_snapshot,
-        change_guard=engine_service.configuration_change,
+        change_guard=profile_change,
         startup_settings_resolver=_effective_backend_startup_settings,
         loaded_startup_settings=host_settings,
     )
@@ -197,33 +211,37 @@ async def _build_container_services(host_settings, allow_process_termination):
         settings, plugin_profiles, engine_service, container.acquisition_service,
         container.command_results,
     )
-    container.acquisition_service.set_signal_preparer(container.signal_setup_service.prepare)
+    container.acquisition_service.set_signal_preparer(container.signal_setup_service.try_prepare)
     from omnibci.application.plugin_profiles import MODULE_KINDS
     engine_service.configure_modules(
         container.acquisition_service, container.command_results, container.signal_setup_service,
         lambda module: accepted_runtime_settings(profiles=plugin_profiles, active_kinds=MODULE_KINDS[module]),
+        stimulation=container.stimulation_service,
     )
     container.node_configuration = NodeConfigurationService(engine_service, plugin_profiles)
     container.runtime_configuration = RuntimeConfigurationService(
         plugin_profiles, engine_service,
+        reference_guard=lambda: package_references_lock,
         executor=RuntimeApplyCoordinator(engine_service, plugin_profiles, container.acquisition_service,
                                           container.stimulation_service,
                                           container.command_results,
-                                          signal_preparer=container.signal_setup_service.prepare),
+                                          signal_preparer=container.signal_setup_service.prepare,
+                                          signal_detacher=container.signal_setup_service.detach),
     )
     packages = PluginPackageService(
         ManagedPluginPackageStore(), plugin_profiles,
         runtime_references=lambda: tuple(
             reference
-            for snapshot in engine_service.runtime_package_snapshots
+            for snapshot in (*engine_service.runtime_package_snapshots,
+                             *container.runtime_configuration.pending_package_snapshots)
             for reference in package_references_from_settings(snapshot)
         ),
-        admission_guard=engine_service.admission.transition,
+        admission_guard=lambda: package_references_lock,
     )
     container.plugin_installation_service = packages
     container.plugin_package_service = packages
     container.plugin_market_service = configured_market_service(
-        packages.store, admission_guard=engine_service.admission.transition,
+        packages.store, admission_guard=lambda: package_references_lock,
     )
     return container
 
@@ -245,7 +263,8 @@ class _RuntimeSettings:
         snapshot = self.engine.applied_snapshot
         if snapshot is None or not self.engine.is_engine_ready:
             try:
-                accepted = self.profiles.repository.get_activation_set()
+                accepted = ActivationSet({"acquisition": self.profiles.repository.get_module("acquisition")},
+                                         self.profiles.repository.get_system())
                 snapshot = self.profiles.materialize(accepted)
             except (ValueError, KeyError, RuntimeError, OSError):
                 # Optional status metadata must not block configuration repair.
@@ -286,6 +305,11 @@ def register_engine_listeners(
         (EventType.TrialCompleted, container.results_service.on_trial_completed),
         (EventType.EpochProcessed, container.results_service.on_epoch_processed),
         (EventType.AcquisitionState, container.acquisition_service.on_acquisition_state),
+        *(
+            ((EventType.ProcessingInputFault, container.signal_setup_service.on_input_fault),)
+            if container.signal_setup_service is not None
+            else ()
+        ),
         *extra_subscriptions,
     ]
     for event_type, handler in subscriptions:

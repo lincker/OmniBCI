@@ -61,7 +61,7 @@ async def test_failed_candidate_cleanup_stays_owned_until_gateway_stop():
     with pytest.raises(BaseExceptionGroup, match="cleanup failed"):
         await gateway.replace_peer("stimulation", config("stimulation", broken))
     assert gateway.peer("stimulation").has_lifecycle_resources
-    with pytest.raises(RuntimeError, match="settled"):
+    with pytest.raises(BaseExceptionGroup, match="cleanup failed"):
         await gateway.replace_peer("stimulation", config("stimulation", FakeTransport()))
     broken.fail_stop = False
     await gateway.stop()

@@ -52,7 +52,7 @@ class TestStimulationStart:
                 StartStimulationCommand(paradigm="classic40SSVEP")
             )
 
-        manager.start.assert_called_once_with(paradigm="classic40SSVEP")
+        manager.start.assert_called_once_with(paradigm="classic40SSVEP", settings_snapshot={})
         manager.stop.assert_called_once_with()
         assert stimulation_service.is_active is False
 
@@ -175,13 +175,47 @@ class TestStimulationStop:
         manager.stop.side_effect = RuntimeError("cleanup also failed")
         stimulation_service._process_manager = manager
         stimulation_service._active_identity = (None, None)
-        engine_service._running = False
+        engine_service.dispatch = MagicMock(side_effect=RuntimeError("dispatch failed"))
 
-        with pytest.raises(RuntimeError, match="NeuroEngine is not running"):
+        with pytest.raises(RuntimeError, match="dispatch failed"):
             stimulation_service.handle_stop_stimulation(StopStimulationCommand())
 
         manager.stop.assert_called_once_with()
         assert stimulation_service.is_active is False
+
+    def test_managed_stop_can_recover_after_foundation_stops(
+        self, stimulation_service, engine_service,
+    ):
+        manager = MagicMock(auto_spawn=True)
+        stimulation_service._process_manager = manager
+        stimulation_service._admission = engine_service.admission
+        engine_service.admission.quarantine("managed stop failed", "stimulation")
+        engine_service._running = False
+        stimulation_service.handle_stop_stimulation(StopStimulationCommand())
+        manager.stop.assert_called_once_with()
+        assert not engine_service.admission.requires_recovery("stimulation")
+
+    def test_unconfirmed_external_stop_keeps_its_mode_after_foundation_restart(
+        self, stimulation_service, engine_service,
+    ):
+        manager = MagicMock(auto_spawn=True)
+        broker = MagicMock()
+        broker.request.side_effect = CommandTimeoutError("stop", "StopStimulation", 0.1)
+        stimulation_service._process_manager = manager
+        stimulation_service._command_results = broker
+        stimulation_service._admission = engine_service.admission
+        engine_service._applied_snapshot = {"STIMULATION.auto_spawn": False}
+        with pytest.raises(CommandTimeoutError):
+            stimulation_service.handle_stop_stimulation(StopStimulationCommand())
+        engine_service._applied_snapshot = {}
+        with pytest.raises(CommandTimeoutError):
+            stimulation_service.handle_stop_stimulation(StopStimulationCommand())
+        assert engine_service.admission.requires_recovery("stimulation")
+        assert broker.request.call_count == 2
+        manager.stop.assert_not_called()
+        broker.request.side_effect = None
+        stimulation_service.handle_stop_stimulation(StopStimulationCommand())
+        assert not engine_service.admission.requires_recovery("stimulation")
 
     def test_external_stop_timeout_preserves_unknown_active_state(
         self, stimulation_service
@@ -216,6 +250,27 @@ class TestStimulationStop:
         broker.request.assert_called_once_with(EventType.StopStimulation)
         manager.stop.assert_not_called()
         mock_engine.event_bus.put_event.assert_not_called()
+
+    def test_failed_stop_quarantines_only_stimulation_until_confirmed_retry(
+        self, stimulation_service, engine_service,
+    ):
+        admission = engine_service.admission
+        stimulation_service._admission = admission
+        stimulation_service._process_manager = MagicMock(auto_spawn=False)
+        broker = MagicMock()
+        broker.request.side_effect = CommandTimeoutError("stop", "StopStimulation", 0.1)
+        stimulation_service._command_results = broker
+
+        with pytest.raises(CommandTimeoutError):
+            stimulation_service.handle_stop_stimulation(StopStimulationCommand())
+        assert admission.requires_recovery("stimulation")
+        assert not admission.requires_recovery("actuation")
+        with admission.command("actuation"):
+            pass
+
+        broker.request.side_effect = None
+        stimulation_service.handle_stop_stimulation(StopStimulationCommand())
+        assert not admission.requires_recovery("stimulation")
 
 
 class TestStimulationTrial:

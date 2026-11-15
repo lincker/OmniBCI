@@ -69,7 +69,7 @@ async def test_source_only_read_does_not_accumulate_processing_data_and_confirms
     events = []
     acquisition = AcquisitionRuntime(
         source, Queue(), data, SimpleNamespace(put_event=events.append),
-        source_id="source", preparation_required=True, processing_active=active,
+        source_id="source", processing_active=active,
         runtime_counters=counters, generation="run", acquisition_revision="source-v1",
         system_revision="system",
     )

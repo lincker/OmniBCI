@@ -123,6 +123,10 @@ _COMMAND_ROUTES = [
 
 _EXPECTED_EVENT_TYPES = {
     *(route[0] for route in _COMMAND_ROUTES),
+    EventType.AttachProcessingInput,
+    EventType.DetachProcessingInput,
+    EventType.ResetProcessingInput,
+    EventType.ProcessingInputFault,
     EventType.CloseAllNeuroEngineProcessSystem,
     EventType.StimulationAck,
 }

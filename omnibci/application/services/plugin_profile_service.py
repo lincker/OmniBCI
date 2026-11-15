@@ -206,7 +206,7 @@ class PluginProfileService:
                     result["ACQUISITION.signal_source"] = definition.plugin_type
                 result.update({f"ACQUISITION.{key}": value for key, value in binding.parameters.items()})
         result["CONFIG.module_revisions"] = {
-            module: (activation_set.modules[module] or ModuleActivation(module, {}, ())).revision
+            module: activation_set.modules[module].revision if activation_set.modules[module] else None
             for module in MODULES
         }
         result["CONFIG.system_revision"] = (activation_set.system or SystemSettings({})).revision

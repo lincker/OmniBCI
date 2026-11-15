@@ -1,13 +1,13 @@
 """Package reference checks cannot race profile validation and persistence."""
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import contextmanager
-from threading import Event
+from threading import Event, RLock
 from unittest.mock import Mock
 
 import pytest
 
 from omnibci.application.plugin_packages import PluginPackageConflictError, package_references_from_settings
-from omnibci.application.plugin_profiles import ModuleActivation, ProfileBinding, ProfileRevisionConflict
+from omnibci.application.plugin_profiles import ModuleActivation, ProfileBinding
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.plugin_package_service import PluginPackageService
 from omnibci.application.services.plugin_profile_service import PluginProfileService
@@ -21,13 +21,24 @@ from tests.infrastructure.test_package_store import package_archive
 def services(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
     engine = NeuroEngineService(Mock())
+    references = RLock()
+
+    @contextmanager
+    def profile_guard(requires_idle):
+        with references:
+            if requires_idle:
+                with engine.configuration_change(True):
+                    yield
+            else:
+                yield
+
     profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
                                     CatalogConfigurationAdapter(), settings_source=lambda: {},
-                                    change_guard=engine.configuration_change)
+                                    change_guard=profile_guard)
     packages = PluginPackageService(ManagedPluginPackageStore(), profiles,
         runtime_references=lambda: tuple(reference for snapshot in engine.runtime_package_snapshots
                                         for reference in package_references_from_settings(snapshot)),
-        admission_guard=engine.admission.transition)
+        admission_guard=lambda: references)
     installed = packages.install(package_archive(tmp_path)).package
     packages.set_enabled(installed.package_id, installed.version, True)
     return engine, profiles, packages, installed.contributions[0].selection
@@ -41,9 +52,10 @@ def test_entire_profile_validation_and_write_uses_matching_guard(services, monke
         {"slot": "actuation.effector", "profile_id": profile.profile_id},
     ])
     state = {"held": False, "idle": None, "calls": []}
+    change_guard = profiles.change_guard
     @contextmanager
     def guard(requires_idle):
-        with engine.configuration_change(requires_idle):
+        with change_guard(requires_idle):
             state["held"] = True
             state["idle"] = requires_idle
             try:
@@ -87,40 +99,46 @@ def test_in_flight_validation_blocks_disable_until_reference_is_committed(servic
     monkeypatch.setattr(profiles.catalog, "get", delayed)
     action = (lambda: profiles.create("effector", selection, "New", {})) if operation == "create" else (
         lambda: profiles.accept_module(snapshot, expected_revision=None))
-    with ThreadPoolExecutor(max_workers=1) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         pending = executor.submit(action)
         try:
             assert entered.wait(2)
-            with pytest.raises(ProfileRevisionConflict, match="in progress"):
-                packages.set_enabled("acme.device", "1.0.0", False)
+            disabling = executor.submit(packages.set_enabled, "acme.device", "1.0.0", False)
+            with pytest.raises(TimeoutError):
+                disabling.result(timeout=.05)
         finally:
             release.set()
         pending.result(timeout=3)
+        with pytest.raises(PluginPackageConflictError, match="referenced"):
+            disabling.result(timeout=3)
     with pytest.raises(PluginPackageConflictError, match="referenced"):
         packages.set_enabled("acme.device", "1.0.0", False)
     assert packages.store.get_package("acme.device", "1.0.0").enabled
 
 
-def test_other_thread_package_transition_rejects_profile_before_schema_lookup(services, monkeypatch):
-    engine, profiles, _, selection = services
+def test_package_reference_write_delays_profile_validation_until_it_finishes(services, monkeypatch):
+    _, profiles, packages, selection = services
     entered, release = Event(), Event()
-    get = Mock(side_effect=AssertionError("Schema lookup must wait for admission"))
+    get = Mock(wraps=profiles.catalog.get)
     monkeypatch.setattr(profiles.catalog, "get", get)
     def transition():
-        with engine.admission.transition():
+        with packages.admission_guard():
             entered.set()
             assert release.wait(3)
-    with ThreadPoolExecutor(max_workers=1) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         pending = executor.submit(transition)
         try:
             assert entered.wait(2)
-            with pytest.raises(ProfileRevisionConflict, match="in progress"):
-                profiles.create("effector", selection, "Blocked", {})
+            creating = executor.submit(profiles.create, "effector", selection, "Pending", {})
+            with pytest.raises(TimeoutError):
+                creating.result(timeout=.05)
+            get.assert_not_called()
         finally:
             release.set()
         pending.result(timeout=3)
-    get.assert_not_called()
-    assert profiles.repository.list_profiles() == []
+        created = creating.result(timeout=3)
+    get.assert_called()
+    assert profiles.repository.list_profiles() == [created]
 
 
 def test_new_version_profile_can_nest_profile_guard_inside_package_transition(services, tmp_path):

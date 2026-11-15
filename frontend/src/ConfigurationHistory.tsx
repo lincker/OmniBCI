@@ -10,6 +10,7 @@ export function ConfigurationHistory({ module, profile, runtime, onProfileRestor
   onProfileRestored: (profile: PluginProfile) => void;
 }) {
   const { t } = useI18n();
+  const runtimeState = runtime.state(module);
   const [open, setOpen] = useState(false);
   const [entries, setEntries] = useState<ModuleHistory[]>([]);
   const [versions, setVersions] = useState<ProfileHistory[]>([]);
@@ -26,7 +27,7 @@ export function ConfigurationHistory({ module, profile, runtime, onProfileRestor
       .catch((cause) => { if (active) setError(String(cause)); })
       .finally(() => { if (active) setBusy(false); });
     return () => { active = false; };
-  }, [open, module, profile?.profile_id, profile?.revision, runtime.status?.accepted[module], runtime.completedOperation?.operation_id, refresh]);
+  }, [open, module, profile?.profile_id, profile?.revision, runtime.status?.accepted[module], runtimeState.completedOperation?.operation_id, refresh]);
   const run = async (action: () => Promise<void>) => {
     setBusy(true); setError("");
     try { await action(); } catch (cause) { setError(String(cause)); }
@@ -44,7 +45,7 @@ export function ConfigurationHistory({ module, profile, runtime, onProfileRestor
         <time dateTime={entry.saved_at}>{entry.saved_at}</time> · <code>{entry.revision.slice(0, 12)}</code>
         <p>{entry.binding_summary.join(", ")}</p>
         <div className="actions"><button disabled={busy} onClick={() => void run(async () => setDetail(await api.moduleRevision(module, entry.entry_id)))}>{t("profiles.viewHistory")}</button>
-          <button disabled={busy || runtime.blocked} onClick={() => void run(async () => runtime.reviewPlan(await api.moduleRevertPlan(module, entry.entry_id), module))}>{t("profiles.revertHistory")}</button></div>
+          <button disabled={busy || runtimeState.blocked} onClick={() => void run(async () => runtime.reviewPlan(await api.moduleRevertPlan(module, entry.entry_id), module))}>{t("profiles.revertHistory")}</button></div>
       </li>)}</ol>
       {detail && <pre tabIndex={0}>{JSON.stringify(detail, null, 2)}</pre>}
       {profile && <>

@@ -12,14 +12,9 @@ from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
 from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
 from omnibci.infrastructure.neuroengine.gateway import PeerGateway
-from omnibci.infrastructure.neuroengine.gateway.peers import (
-    stimulation_peer_config,
-    actuation_peer_config,
-)
 from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
 from omnibci.infrastructure.neuroengine.actuation_feedback import ActuationFeedbackHandler
 from omnibci.infrastructure.process_lifecycle import StartupChannel, StartupReporter
-from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
 
 
 @dataclass
@@ -28,12 +23,6 @@ class NeuroEngineConfig:
     Host controls for NeuroEngineBuilder, resolved from its runtime snapshot.
     """
     queue_size: int = 100                    # max items in each mp.Queue
-    message_server_ip: str = "127.0.0.1"    # result-push server bind host
-    message_server_port: int = 8000         # result-push server bind port
-    baseline_duration: float = 0.2          # seconds of pre-trigger data (0 = none)
-    actuation_server_ip: str = "127.0.0.1"  # actuation channel bind host
-    actuation_server_port: int = 8001        # actuation channel bind port
-    actuation_watchdog_timeout_s: float = 1.0  # silent-link → failsafe (Phase 4)
     debug: bool = False                     # asyncio debug mode for the engine loop
     startup_timeout_s: float = 5.0          # configured worker initialization deadline
 
@@ -48,13 +37,6 @@ class NeuroEngineConfig:
 
         return cls(
             queue_size=int(_get("NEUROENGINE.queue_size", cls.queue_size)),
-            message_server_ip=str(_get("NEUROENGINE.message_server_ip", cls.message_server_ip)),
-            message_server_port=int(_get("NEUROENGINE.message_server_port", cls.message_server_port)),
-            baseline_duration=float(_get("ALGORITHM.baseline_duration", cls.baseline_duration)),
-            actuation_server_ip=str(_get("ACTUATION.server_ip", cls.actuation_server_ip)),
-            actuation_server_port=int(_get("ACTUATION.server_port", cls.actuation_server_port)),
-            actuation_watchdog_timeout_s=float(
-                _get("ACTUATION.watchdog_timeout_s", cls.actuation_watchdog_timeout_s)),
             debug=bool(_get("debug", cls.debug)),
             startup_timeout_s=float(_get("NEUROENGINE.startup_timeout_s", cls.startup_timeout_s)),
         )
@@ -88,11 +70,6 @@ class NeuroEngineBuilder:
         revisions = snapshot.get("CONFIG.module_revisions") or {}
         system_revision = snapshot.get("CONFIG.system_revision")
         generation = snapshot.get("CONFIG.generation")
-        stimulation_identity = (PeerIdentity("stimulation", revisions.get("stimulation"), system_revision, generation)
-                                if not snapshot.get("STIMULATION.auto_spawn", True) else None)
-        actuation_identity = (PeerIdentity("actuation", revisions.get("actuation"), system_revision, generation)
-                              if not snapshot.get("ACTUATION.auto_spawn", True) else None)
-
         # 1. EventBus — event_queue must be mp.Queue for cross-process delivery
         event_queue = mp.Queue()
         event_bus = EventBus(event_queue)
@@ -136,7 +113,7 @@ class NeuroEngineBuilder:
                     worker = SignalProcessingWorker(
                         command_queue=processor_command_queue, data_manager=data_manager,
                         event_bus=event_bus, settings_snapshot=runtime_snapshot,
-                        baseline_duration=float(runtime_snapshot.get("ALGORITHM.baseline_duration", cfg.baseline_duration)),
+                        baseline_duration=float(runtime_snapshot.get("ALGORITHM.baseline_duration", 0.2)),
                         startup_reporter=reporter, runtime_counters=runtime_counters,
                     )
                 return StartupChannel(component, worker, receiver, reporter)
@@ -145,26 +122,8 @@ class NeuroEngineBuilder:
                 reporter.close()
                 raise
 
-        # Output transports share the engine's event bus.
+        # Output transports are prepared per module after the foundation starts.
         peer_gateway = PeerGateway(event_bus)
-        peer_gateway.add_peer(
-            stimulation_peer_config(
-                host=cfg.message_server_ip,
-                port=cfg.message_server_port,
-                identity=stimulation_identity,
-            )
-        )
-
-        # The foundation owns output transports. Actuation forwarding is
-        # enabled separately by the module lifecycle.
-        peer_gateway.add_peer(
-            actuation_peer_config(
-                host=cfg.actuation_server_ip,
-                port=cfg.actuation_server_port,
-                watchdog_timeout_s=cfg.actuation_watchdog_timeout_s,
-                identity=actuation_identity,
-            )
-        )
         actuation_translator = ActuationCommandTranslator(event_bus)
         actuation_feedback = ActuationFeedbackHandler()
 

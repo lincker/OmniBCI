@@ -103,7 +103,7 @@ async def test_acquisition_joins_producer_before_in_band_marker_and_defers_succe
     bus = _Bus()
     acquisition = AcquisitionRuntime(
         _Source(), queue.Queue(), data, bus,
-        source_id="test-source", preparation_required=False,
+        source_id="test-source",
         generation="generation-1", acquisition_revision="revision-1", system_revision="system",
     )
     started = asyncio.Event()
@@ -111,6 +111,7 @@ async def test_acquisition_joins_producer_before_in_band_marker_and_defers_succe
     async def producer():
         data.put_data(_chunk(0))
         acquisition._last_sequence = 0
+        acquisition._last_processing_sequence = 0
         started.set()
         try:
             await asyncio.Event().wait()
@@ -118,6 +119,7 @@ async def test_acquisition_joins_producer_before_in_band_marker_and_defers_succe
             # Even a producer's final cleanup write must precede the barrier.
             data.put_data(_chunk(1))
             acquisition._last_sequence = 1
+            acquisition._last_processing_sequence = 1
 
     acquisition.fetch_task = asyncio.create_task(producer())
     await started.wait()
@@ -143,7 +145,7 @@ async def test_stop_failure_joins_fetch_and_emits_failure_without_barrier():
     bus = _Bus()
     acquisition = AcquisitionRuntime(
         Source(), queue.Queue(), data, bus,
-        source_id="test-source", preparation_required=False,
+        source_id="test-source",
     )
     acquisition.fetch_task = asyncio.create_task(asyncio.Event().wait())
     task = acquisition.fetch_task
@@ -171,7 +173,7 @@ async def test_acquisition_shutdown_cancellation_emits_failure_not_success():
     bus = _Bus()
     acquisition = AcquisitionRuntime(
         Source(), queue.Queue(), data, bus,
-        source_id="test-source", preparation_required=False,
+        source_id="test-source",
     )
     task = asyncio.create_task(acquisition.execute((AcquisitionCommand.stop_and_drain, CommandRequest("cancelled"))))
     await entered.wait()
@@ -365,7 +367,7 @@ async def test_acquisition_sequence_remains_monotonic_across_stream_restarts():
     data = DataManager(queue.Queue())
     acquisition = AcquisitionRuntime(
         source, queue.Queue(), data,
-        source_id="test-source", preparation_required=False,
+        source_id="test-source",
     )
     for _ in range(2):
         source.pending = np.zeros((2, 2))
@@ -407,10 +409,11 @@ async def test_stop_waits_for_slow_backlog_and_publishes_trial_before_receipt():
     processor = _processor(decoder=_Decoder(delay=0.4), bus=event_bus, data=data)
     acquisition = AcquisitionRuntime(
         _Source(), queue.Queue(), data, event_bus,
-        source_id="test-source", preparation_required=False,
+        source_id="test-source",
         generation="generation-1", acquisition_revision="revision-1", system_revision="system",
     )
     acquisition._last_sequence = 1
+    acquisition._last_processing_sequence = 1
     data.put_data(_chunk(0, start=True))
     data.put_data(_chunk(1))
     broker = CommandResultBroker(SimpleNamespace(

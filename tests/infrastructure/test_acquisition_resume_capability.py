@@ -29,7 +29,7 @@ def test_checkpoint_receipt_exposes_only_explicit_live_resume_guarantee(declared
     events = []
     acquisition = AcquisitionRuntime(
         source, Queue(), DataManager(Queue()), SimpleNamespace(put_event=events.append),
-        source_id="test-source", preparation_required=False,
+        source_id="test-source",
         generation="run", acquisition_revision="revision", system_revision="system",
     )
     acquisition._configuration_command(AcquisitionCommand.get_checkpoint, CommandRequest("inspect", {

@@ -24,6 +24,13 @@ def thread_factory(monkeypatch):
     return factory
 
 
+def _graph():
+    graph = MagicMock(shutdown_complete=True)
+    graph.set_actuation_active = AsyncMock()
+    graph.ensure_output_ready = AsyncMock()
+    return graph
+
+
 def _snapshot(revision="revision-1"):
     return {
         "CONFIG.module_revisions": {"acquisition": revision, "processing": revision,
@@ -32,7 +39,7 @@ def _snapshot(revision="revision-1"):
         "ACQUISITION.sample_rate": 250,
         "STIMULATION.paradigm": "selected-paradigm",
         "ACTUATION.effector": "selected-effector",
-        "PLUGINS.bindings": [{"parameters": {"window_duration": 3.0}}],
+        "PLUGINS.bindings": [{"slot": "processing.decoder", "parameters": {"window_duration": 3.0}}],
     }
 
 
@@ -40,7 +47,7 @@ def _snapshot(revision="revision-1"):
 async def test_graph_and_late_stimulation_ignore_saved_edits(thread_factory):
     saved = _snapshot()
     provider = Mock(return_value=saved)
-    graph = MagicMock(shutdown_complete=True)
+    graph = _graph()
     graph.set_actuation_active = AsyncMock()
     factory = Mock(return_value=graph)
     actuation = Mock()
@@ -75,7 +82,7 @@ async def test_factory_cannot_mutate_pinned_snapshot(thread_factory):
 
     def build(snapshot):
         snapshot["PLUGINS.bindings"][0]["parameters"]["window_duration"] = 99
-        return MagicMock(shutdown_complete=True)
+        return _graph()
 
     service = NeuroEngineService(build, snapshot_provider=lambda: saved)
     await service.startup()
@@ -87,7 +94,7 @@ async def test_factory_cannot_mutate_pinned_snapshot(thread_factory):
 @pytest.mark.asyncio
 async def test_restart_resolves_once_and_explicit_rollback_does_not_resolve(thread_factory):
     provider = Mock(side_effect=[_snapshot("first"), _snapshot("second")])
-    factory = Mock(side_effect=lambda snapshot: MagicMock(shutdown_complete=True))
+    factory = Mock(side_effect=lambda snapshot: _graph())
     service = NeuroEngineService(factory, snapshot_provider=provider)
     await service.startup()
     await service.handle_start_engine(StartEngineCommand())
@@ -123,9 +130,9 @@ async def test_factory_type_error_is_not_retried_as_legacy(thread_factory):
 
 @pytest.mark.asyncio
 async def test_failed_candidate_keeps_last_successful_revision(thread_factory):
-    failed_graph = MagicMock(shutdown_complete=True)
+    failed_graph = _graph()
     failed_graph.wait_until_started.side_effect = RuntimeError("initialization failed")
-    factory = Mock(side_effect=[MagicMock(shutdown_complete=True), failed_graph])
+    factory = Mock(side_effect=[_graph(), failed_graph])
     provider = Mock(side_effect=[_snapshot("first"), _snapshot("failed")])
     service = NeuroEngineService(factory, snapshot_provider=provider)
     await service.startup()

@@ -6,6 +6,33 @@ the amendments below and the executable contracts; use current symbols when revi
 
 ## Approved implementation amendments
 
+- Independent runtime operations use module scopes, including operation tracking,
+  recovery, worker locks, and output-channel locks. Engine/System changes retain
+  global scope. Module acknowledgements and rollbacks merge only owned values.
+- Engine startup reads only System and does not bind Stimulation/Actuation ports.
+  Each output prepares its listener on its own Prepare/Start action. Module Stop
+  retains the listener; Engine Stop closes all listeners.
+- Processing attaches/detaches its input at FIFO boundaries without pausing or
+  checkpointing Acquisition. Detached samples are not buffered or replayed,
+  including file input. EOF/disconnect finish the prior input boundary. P can
+  remain waiting for source metadata; P preparation errors do not prevent A reading.
+- A full Processing input queue closes that input and marks Processing for
+  recovery; Acquisition continues reading and previewing. Faults from an old
+  input cannot reset a newer attachment.
+- Stop accepts ownership and waits for overlapping operations to settle before
+  cleanup. Unrelated modules remain available. History-only write failure is
+  reported separately from uncertain runtime state.
+- Backend shutdown uses the same Engine Stop path. Module Stop/Disconnect remains
+  available for recovery even after its process exits. Cancelled HTTP requests
+  do not abandon owned starts, prepares, or stops; Engine Stop also invalidates
+  frontend starts that have not yet been sent.
+- An unconfirmed external output Stop retains that module's recovery and pinned
+  inputs without blocking foundation restart after local resources are released.
+  Its existing Prepare action restores the retained listener configuration for
+  the new generation; reconnect and confirm Stop before enabling output again.
+- Runtime status uses module-keyed `operations`, `recovery`, and section read
+  `errors`. Current frontend drafts and pending operations are tracked per module;
+  unrelated revisions do not reset Stimulation Trial inputs.
 - Keep semantic SHA-256 module revisions, but identify each history entry with
   the existing apply operation UUID. Successful A → B → A changes retain three
   snapshots; the first and third share a hash but have different entry IDs.

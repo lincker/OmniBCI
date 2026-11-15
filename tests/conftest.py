@@ -75,6 +75,7 @@ def mock_engine():
     engine.start_module = AsyncMock(side_effect=start_module)
     engine.stop_module = AsyncMock(side_effect=stop_module)
     engine.set_actuation_active = AsyncMock()
+    engine.ensure_output_ready = AsyncMock()
     engine.should_stop = False
     return engine
 

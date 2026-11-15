@@ -10,7 +10,7 @@ import pytest
 
 import omnibci.conf as conf_module
 import omnibci.infrastructure.signal_processing.worker as worker_module
-from omnibci.application.events import CommandRequest
+from omnibci.application.events import CommandRequest, ProcessingInputStart
 from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
 from omnibci.domain.channel_mapping import ProcessingInput, compile_processing_plan
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter, Prediction
@@ -143,7 +143,7 @@ class TestProcessorWiring:
         receipt = {
             "generation": "test-run", "acquisition_revision": "test-revision", "processing_revision": "test-revision", "system_revision": "system",
             "connection_id": source.connection_id,
-            "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint,
+            "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
         }
         snapshot = {
             "CONFIG.module_revisions": {"acquisition": "test-revision", "processing": "test-revision", "stimulation": "test-revision", "actuation": "test-revision"}, "CONFIG.system_revision": "system", "CONFIG.generation": "test-run",
@@ -158,7 +158,6 @@ class TestProcessorWiring:
             "plan": plan.to_dict(), "receipt": receipt,
         })))
         # If validation regresses, the loop exits instead of hanging the test.
-        commands.put(SignalProcessorCommand.should_stop)
         data_manager = DataManager(buffer=Queue())
         worker = _worker(
             command_queue=commands, data_manager=data_manager, startup_reporter=reporter,
@@ -168,9 +167,18 @@ class TestProcessorWiring:
             if event.type is EventType.CommandResult:
                 assert event.data.ok, event.data.message
                 if event.data.command_id == "prepare":
+                    data_manager.put_data(ProcessingInputStart("attach", receipt, 0))
+                elif event.data.command_id == "attach":
                     data_manager.put_data(SignalChunk(1.0, 1, np.array([[1., 2., 3.], [7., 0., 9.]])))
 
         worker.event_bus.put_event.side_effect = feed_after_preparation
+        next_data = data_manager.get_data
+        def stop_after_sample(*args, **kwargs):
+            item = next_data(*args, **kwargs)
+            if isinstance(item, SignalChunk):
+                commands.put(SignalProcessorCommand.should_stop)
+            return item
+        data_manager.get_data = stop_after_sample
         monkeypatch.setattr(conf_module.settings, "use_snapshot", lambda snapshot: None)
         monkeypatch.setattr(signal_configuration, "load_signal_pipeline", lambda snapshot, plan: (
             InvalidTargetDecoder(), DefaultEpochDetector(parameters={}, context=PluginContext(sample_rate=250)), [],

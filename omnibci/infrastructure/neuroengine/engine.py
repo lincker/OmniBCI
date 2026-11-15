@@ -3,8 +3,10 @@ import asyncio
 import logging
 import multiprocessing as mp
 import threading
+from contextlib import AsyncExitStack
 from copy import deepcopy
 from queue import Empty, Full
+from uuid import uuid4
 
 from omnibci.application.events import AcquisitionSnapshot, CommandFailureKind, CommandRequest, CommandResult
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
@@ -90,7 +92,9 @@ class NeuroEngine:
         self._worker_factory = worker_factory
         self._processing_active = processing_active
         self._ready_modules = set()
-        self._module_lock = asyncio.Lock()
+        self._module_locks = {module: asyncio.Lock() for module in ("acquisition", "processing")}
+        self._output_locks = {module: asyncio.Lock() for module in ("stimulation", "actuation")}
+        self._output_configurations = {}
         self.peer_gateway = peer_gateway
         # Queues constructed by the composition builder but not otherwise
         # exposed as command queues (EventBus input + DataManager buffer).
@@ -254,7 +258,9 @@ class NeuroEngine:
         await self._on_engine_loop(self._change_module(module, None))
 
     async def _change_module(self, module, snapshot):
-        async with self._module_lock:
+        if module not in self._module_locks:
+            raise ValueError("Unknown worker module")
+        async with self._module_locks[module]:
             if snapshot is None:
                 await self._stop_module(module)
             else:
@@ -302,11 +308,11 @@ class NeuroEngine:
             setattr(self, flag, True)
             self._close_parent_startup_sender(worker)
             await self._wait_for_workers(channels)
+            if not self._started:
+                raise RuntimeError("NeuroEngine is stopping")
             if not worker.is_alive():
                 raise ChildProcessStartupError(f"{module} subprocess exited before becoming ready")
             self._ready_modules.add(module)
-            if module == "processing" and self._processing_active is not None:
-                self._processing_active.set()
         except BaseException:
             self._close_startup_channels(channels)
             await self._stop_module(module)
@@ -330,8 +336,6 @@ class NeuroEngine:
         setattr(self, flag, False)
         if self._worker_factory is not None:
             self._discard_queued(queue)
-            if module == "processing":
-                self._discard_queued(self.data_manager.buffer)
         if module == "acquisition":
             self.event_bus.put_event(Event(EventType.AcquisitionState, AcquisitionSnapshot(False, False)))
 
@@ -397,13 +401,27 @@ class NeuroEngine:
     async def _main_loop(self) -> None:
         # The timeout also bounds detection of a worker that exits after READY.
         while not self.should_stop:
-            async with self._module_lock:
-                for started, process, module in (
-                    (self._acquisition_started, self.acquisition_worker, "acquisition"),
-                    (self._processor_started, self.signal_processing_worker, "processing"),
-                ):
+            for started, process, module in (
+                (self._acquisition_started, self.acquisition_worker, "acquisition"),
+                (self._processor_started, self.signal_processing_worker, "processing"),
+            ):
+                lock = self._module_locks[module]
+                if lock.locked():
+                    continue
+                async with lock:
                     if started and not process.is_alive():
                         logger.error("%s subprocess exited unexpectedly (exit code %s)", module, process.exitcode)
+                        if module == "acquisition":
+                            if self._processing_active is not None:
+                                self._processing_active.clear()
+                            if self.is_module_running("processing"):
+                                self._make_command_router(
+                                    self.processor_command_queue, SignalProcessorCommand.reset_input, True,
+                                    event_bus=self.event_bus,
+                                )(Event(EventType.ResetProcessingInput, CommandRequest(uuid4().hex, {
+                                    "generation": self._generation, "system_revision": self._system_revision,
+                                    "expected_acquisition_revision": (self._module_revisions or {}).get("acquisition"),
+                                })))
                         try:
                             await self._stop_module(module)
                         except Exception:
@@ -422,7 +440,9 @@ class NeuroEngine:
 
     async def _shutdown_resources(self) -> None:
         self._started = False
-        async with self._module_lock:
+        async with AsyncExitStack() as locks:
+            for lock in (*self._module_locks.values(), *self._output_locks.values()):
+                await locks.enter_async_context(lock)
             await self._release_resources()
 
     async def _release_resources(self) -> None:
@@ -588,11 +608,14 @@ class NeuroEngine:
             EventType.GetSourceMetadata:              (acq, AcquisitionCommand.get_metadata, True),
             EventType.StopStream:                     (acq, AcquisitionCommand.stop_stream, True),
             EventType.StopAndDrain:                   (acq, AcquisitionCommand.stop_and_drain, True),
+            EventType.AttachProcessingInput:          (acq, AcquisitionCommand.attach_processing, True),
+            EventType.DetachProcessingInput:          (acq, AcquisitionCommand.detach_processing, True),
             EventType.GetSourceCheckpoint:            (acq, AcquisitionCommand.get_checkpoint, True),
             EventType.RestoreSourceCheckpoint:        (acq, AcquisitionCommand.restore_checkpoint, True),
             EventType.StageProcessingConfiguration:   (proc, SignalProcessorCommand.stage_configuration, True),
             EventType.CancelProcessingConfiguration:  (proc, SignalProcessorCommand.cancel_configuration, True),
             EventType.PrepareSignalProcessing:        (proc, SignalProcessorCommand.prepare_signal, True),
+            EventType.ResetProcessingInput:           (proc, SignalProcessorCommand.reset_input, True),
         }
 
     def read_acquisition_preview(self, capture_id: str | None, sequence_id: int | None = None) -> dict:
@@ -604,37 +627,76 @@ class NeuroEngine:
         """Replace selected output listeners on the engine loop, preserving workers."""
         await self._on_engine_loop(self._reconfigure_output_modules(deepcopy(snapshot), tuple(modules)))
 
-    async def _reconfigure_output_modules(self, snapshot, modules):
-        from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
-        from omnibci.infrastructure.neuroengine.gateway.peers import stimulation_peer_config, actuation_peer_config
+    async def ensure_output_ready(self, module: str, snapshot: dict) -> None:
+        """Prepare only the requested output listener, without enabling output."""
+        await self._on_engine_loop(self._reconfigure_output_modules(deepcopy(snapshot), (module,), ensure=True))
 
+    def ensure_output_ready_sync(self, module: str, snapshot: dict) -> None:
+        """Bridge synchronous application services to the engine-owned loop."""
+        if self._loop is None or not self._loop.is_running():
+            raise RuntimeError("NeuroEngine loop is unavailable")
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        if current is self._loop:
+            raise RuntimeError("Synchronous output preparation cannot run on the NeuroEngine loop")
+        future = asyncio.run_coroutine_threadsafe(
+            self._reconfigure_output_modules(deepcopy(snapshot), (module,), ensure=True), self._loop)
+        try:
+            future.result(timeout=self._startup_timeout_s)
+        except TimeoutError:
+            future.cancel()
+            raise
+
+    async def _reconfigure_output_modules(self, snapshot, modules, *, ensure=False):
         if (snapshot.get("CONFIG.generation") != self._generation
                 or snapshot.get("CONFIG.system_revision") != self._system_revision):
             raise ValueError("Output replacement belongs to a different engine or system configuration")
         if set(modules) - {"stimulation", "actuation"}:
             raise ValueError("Only output modules can replace peer listeners")
-        revisions = snapshot["CONFIG.module_revisions"]
+        revisions = snapshot.get("CONFIG.module_revisions") or {}
         for module in modules:
-            if module == "actuation":
-                self._set_actuation_active(False)
-            identity = None
-            if not snapshot.get(f"{module.upper()}.auto_spawn", True):
-                identity = PeerIdentity(module, revisions[module], self._system_revision, self._generation)
-            if module == "stimulation":
-                config = stimulation_peer_config(
-                    host=snapshot.get("NEUROENGINE.message_server_ip", "127.0.0.1"),
-                    port=int(snapshot.get("NEUROENGINE.message_server_port", 8000)), identity=identity,
+            async with self._output_locks[module]:
+                if ensure and not self._started:
+                    raise RuntimeError("Start NeuroEngine before preparing an output")
+                identity_key = (
+                    revisions.get(module), snapshot.get(f"{module.upper()}.auto_spawn", True),
+                    snapshot.get("NEUROENGINE.message_server_ip", "127.0.0.1") if module == "stimulation" else snapshot.get("ACTUATION.server_ip", "127.0.0.1"),
+                    snapshot.get("NEUROENGINE.message_server_port", 8000) if module == "stimulation" else snapshot.get("ACTUATION.server_port", 8001),
+                    snapshot.get("ACTUATION.watchdog_timeout_s", 1.0) if module == "actuation" else None,
                 )
-            else:
-                config = actuation_peer_config(
-                    host=snapshot.get("ACTUATION.server_ip", "127.0.0.1"),
-                    port=int(snapshot.get("ACTUATION.server_port", 8001)),
-                    watchdog_timeout_s=float(snapshot.get("ACTUATION.watchdog_timeout_s", 1.0)),
-                    identity=identity,
-                )
-            await self.peer_gateway.replace_peer(module, config)
-            if module == "actuation":
-                self._configure_actuation_listeners()
+                if (ensure and self._output_configurations.get(module) == identity_key
+                        and self.peer_gateway.is_peer_ready(module)):
+                    continue
+                self._output_configurations.pop(module, None)
+                await self._replace_output(module, snapshot, revisions)
+                self._output_configurations[module] = identity_key
+
+    async def _replace_output(self, module, snapshot, revisions):
+        from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
+        from omnibci.infrastructure.neuroengine.gateway.peers import stimulation_peer_config, actuation_peer_config
+
+        identity = None
+        if not snapshot.get(f"{module.upper()}.auto_spawn", True):
+            identity = PeerIdentity(module, revisions.get(module), self._system_revision, self._generation)
+        if module == "stimulation":
+            config = stimulation_peer_config(
+                host=snapshot.get("NEUROENGINE.message_server_ip", "127.0.0.1"),
+                port=int(snapshot.get("NEUROENGINE.message_server_port", 8000)), identity=identity,
+            )
+        else:
+            config = actuation_peer_config(
+                host=snapshot.get("ACTUATION.server_ip", "127.0.0.1"),
+                port=int(snapshot.get("ACTUATION.server_port", 8001)),
+                watchdog_timeout_s=float(snapshot.get("ACTUATION.watchdog_timeout_s", 1.0)),
+                identity=identity,
+            )
+        if module == "actuation":
+            self._set_actuation_active(False)
+        await self.peer_gateway.replace_peer(module, config)
+        if module == "actuation":
+            self._configure_actuation_listeners()
 
     async def set_actuation_active(self, active: bool) -> None:
         async def apply():
@@ -659,6 +721,23 @@ class NeuroEngine:
             for event_type in (EventType.ActuationAck, EventType.ActuationState, EventType.ActuationFault):
                 self.event_bus.register_event_listener(event_type, self.actuation_feedback.on_feedback)
 
+    def _on_processing_input_fault(self, event):
+        fault = event.data
+        if (not isinstance(fault, dict)
+                or fault.get("generation") != self._generation
+                or fault.get("system_revision") != self._system_revision
+                or fault.get("acquisition_revision") != (self._module_revisions or {}).get("acquisition")
+                or not isinstance(fault.get("input_id"), str)
+                or not fault["input_id"]
+                or not self.is_module_running("processing")):
+            return
+        self._make_command_router(
+            self.processor_command_queue, SignalProcessorCommand.reset_input, True, event_bus=self.event_bus,
+        )(Event(EventType.ResetProcessingInput, CommandRequest(uuid4().hex, {
+            "generation": self._generation, "system_revision": self._system_revision,
+            "expected_acquisition_revision": fault["acquisition_revision"], "input_id": fault["input_id"],
+        })))
+
     def _register_event_listeners(self) -> None:
         for event_type, (queue, command, carry_data) in self._command_routes().items():
             module = "acquisition" if queue is self.acquisition_command_queue else "processing"
@@ -672,6 +751,7 @@ class NeuroEngine:
         self.event_bus.register_event_listener(
             EventType.CloseAllNeuroEngineProcessSystem, self._stop_neuro_engine_system
         )
+        self.event_bus.register_event_listener(EventType.ProcessingInputFault, self._on_processing_input_fault)
         # Stimulation → engine inbound feedback (routed in by the stimulation
         # PeerChannel). The engine now consumes acks, not just the UI.
         self.event_bus.register_event_listener(

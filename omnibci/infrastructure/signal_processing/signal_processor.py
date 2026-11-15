@@ -15,7 +15,7 @@ from omnibci.domain.classification import Classification
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector
 from omnibci.application.events import (
     CommandFailureKind, CommandRequest, CommandResult, EpochProcessed,
-    StreamBarrier, StreamDrainReceipt, TrialOutcome,
+    ProcessingInputStart, StreamBarrier, StreamDrainReceipt, TrialOutcome,
 )
 from omnibci.application.processing_source import requires_signal_preparation, validate_plan_binding
 from omnibci.shared.events import Event, EventType
@@ -32,6 +32,7 @@ class SignalProcessorCommand(Enum):
     stage_configuration = 'stage_processing_configuration'
     cancel_configuration = 'cancel_processing_configuration'
     prepare_signal = 'prepare_signal_processing'
+    reset_input = 'reset_processing_input'
 
 
 class SignalProcessor:
@@ -87,6 +88,7 @@ class SignalProcessor:
         self._settings_snapshot = deepcopy(settings_snapshot)
         self._signal_plan = None
         self._signal_receipt = None
+        self._input_attached = False
         self._configuration_transactions = ConfigurationTransactions()
         # The legacy baseline_duration setting controls pre-trigger capture,
         # independently of whether a baseline-correction filter is configured.
@@ -197,10 +199,15 @@ class SignalProcessor:
                 self._emit_drain_result(item, ok=False, error_code="PROCESSOR_CANCELLED",
                                         message="Signal Processing stopped before completing the drain")
             raise
+        if isinstance(item, ProcessingInputStart):
+            self._on_input_start(item)
+            return None
         if isinstance(item, StreamBarrier):
             self._on_stream_barrier(item)
             return None
         if isinstance(item, SignalChunk):
+            if not self._input_attached:
+                return None
             if requires_signal_preparation(self._settings_snapshot or {}):
                 if self._signal_plan is None:
                     raise RuntimeError("Signal processing has not been prepared")
@@ -209,6 +216,24 @@ class SignalProcessor:
             self._last_sequence = item.sequence_id
         return item
 
+    def _on_input_start(self, marker: ProcessingInputStart) -> None:
+        try:
+            if not self._signal_receipt or marker.receipt != self._signal_receipt:
+                raise ValueError("Processing input does not match the prepared signal plan")
+            if self._input_attached and self.current_epoch is not None:
+                raise ValueError("Detach the previous input before attaching a new one")
+            self._last_sequence = marker.last_sequence
+            self._input_attached = True
+            self._drain_failure = None
+            result = CommandResult(marker.command_id, EventType.AttachProcessingInput.name,
+                                   ok=True, data={**marker.receipt, "last_sequence": marker.last_sequence,
+                                                  "attached": True})
+        except Exception as exc:
+            result = CommandResult(marker.command_id, EventType.AttachProcessingInput.name,
+                                   ok=False, message=str(exc), error_code="PROCESSING_INPUT_REJECTED",
+                                   failure_kind=CommandFailureKind.REJECTED)
+        self.event_bus.put_event(Event(EventType.CommandResult, result))
+
     def _on_stream_barrier(self, barrier: StreamBarrier) -> None:
         """Prior data and its trial events have completed on this producer."""
         processing_started = False
@@ -216,6 +241,8 @@ class SignalProcessor:
             if (barrier.generation != self.generation
                     or barrier.system_revision != self.system_revision):
                 raise ValueError("Drain barrier belongs to a different runtime generation or revision")
+            if barrier.input_id is not None and barrier.input_id != (self._signal_receipt or {}).get("input_id"):
+                raise ValueError("Drain barrier belongs to a previous processing input")
             if barrier.last_sequence != self._last_sequence:
                 raise ValueError("Drain barrier sequence differs from the last consumed signal chunk")
             # Source sequences survive module restarts. The FIFO marker proves
@@ -224,20 +251,23 @@ class SignalProcessor:
             if self._drain_failure is not None:
                 raise RuntimeError(self._drain_failure)
             processing_started = True
+            reason = "processing_detached" if barrier.command == EventType.DetachProcessingInput.name else "stream_stop"
             interrupted = self.current_epoch is not None
             if self.current_epoch is not None:
                 complete, classification = self.current_epoch.decode_if_ready()
                 if complete and classification is not None:
                     outcome = self.complete_trial(classification)
                     self.record_epoch_processed(
-                        "decoded", "stream_stop", classification=classification,
+                        "decoded", reason, classification=classification,
                         trial_number=outcome.trial_number,
                     )
                     interrupted = False
                 else:
-                    self.record_epoch_processed("interrupted", "stream_stop")
+                    self.record_epoch_processed("interrupted", reason)
             self.transition_to_awaiting()
             self.pretrigger.clear()
+            if barrier.command == EventType.DetachProcessingInput.name:
+                self._input_attached = False
             receipt = StreamDrainReceipt(
                 generation=self.generation, acquisition_revision=barrier.acquisition_revision,
                 processing_revision=self.processing_revision, system_revision=self.system_revision,
@@ -256,8 +286,10 @@ class SignalProcessor:
 
     def _emit_drain_result(self, barrier: StreamBarrier, *, ok: bool, data=None,
                            error_code=None, message=None) -> None:
+        if barrier.command_id is None:
+            return
         self.event_bus.put_event(Event(EventType.CommandResult, CommandResult(
-            command_id=barrier.command_id, command=EventType.StopAndDrain.name,
+            command_id=barrier.command_id, command=barrier.command,
             ok=ok, message=message, error_code=error_code, data=data,
             failure_kind=None if ok else CommandFailureKind.EXECUTION_FAILED,
         )))
@@ -292,6 +324,9 @@ class SignalProcessor:
             self.record_epoch_processed("error", "error", error=str(exc))
             raise
         finally:
+            gate = getattr(self.data_manager, "processing_active", None)
+            if gate is not None:
+                gate.clear()
             self.record_epoch_processed("interrupted", "processor_stop")
             self._cancel_pending_configuration("Signal Processing stopped before the trial boundary")
 
@@ -308,6 +343,10 @@ class SignalProcessor:
         else:
             command, raw_payload = item, None
         request = CommandRequest.from_value(raw_payload)
+        if command == SignalProcessorCommand.reset_input:
+            if request is not None:
+                self._reset_input(request)
+            return
         if command == SignalProcessorCommand.prepare_signal:
             if request is not None:
                 self._prepare_signal(request)
@@ -377,7 +416,8 @@ class SignalProcessor:
             receipt = payload["receipt"]
             if (not isinstance(receipt, dict)
                     or set(receipt) != {"generation", "acquisition_revision", "processing_revision", "system_revision", "connection_id",
-                                       "source_fingerprint", "plan_fingerprint"}
+                                       "source_fingerprint", "plan_fingerprint", "input_id"}
+                    or not isinstance(receipt["input_id"], str) or not receipt["input_id"]
                     or receipt["generation"] != self.generation
                     or receipt["processing_revision"] != self.processing_revision
                     or receipt["acquisition_revision"] != acquisition_revision
@@ -399,6 +439,7 @@ class SignalProcessor:
                 self.pretrigger = PreTriggerBuffer(capacity=self.pre_trigger_samples)
                 self._signal_plan = plan
                 self._signal_receipt = deepcopy(receipt)
+                self._input_attached = False
                 self._settings_snapshot = snapshot
                 self.acquisition_revision = acquisition_revision
             result = CommandResult(request.command_id, EventType.PrepareSignalProcessing.name,
@@ -407,6 +448,36 @@ class SignalProcessor:
             result = CommandResult(request.command_id, EventType.PrepareSignalProcessing.name,
                                    ok=False, message=str(exc), error_code="SIGNAL_PREPARATION_FAILED",
                                    failure_kind=CommandFailureKind.REJECTED)
+        self._publish_configuration_result(result)
+
+    def _reset_input(self, request):
+        """Invalidate an input whose producer is gone; never claim it drained."""
+        expected = {"generation": self.generation, "system_revision": self.system_revision,
+                    **({"expected_acquisition_revision": self.acquisition_revision}
+                       if isinstance(request.payload, dict) and "expected_acquisition_revision" in request.payload
+                       else {"expected_revision": self.processing_revision})}
+        if (not isinstance(request.payload, dict)
+                or any(request.payload.get(key) != value for key, value in expected.items())
+                or "input_id" in request.payload
+                and request.payload["input_id"] != (self._signal_receipt or {}).get("input_id")):
+            result = CommandResult(request.command_id, EventType.ResetProcessingInput.name,
+                                   ok=False, message="Input reset belongs to another processing runtime",
+                                   error_code="PROCESSING_INPUT_REJECTED", failure_kind=CommandFailureKind.REJECTED)
+        else:
+            gate = getattr(self.data_manager, "processing_active", None)
+            if gate is not None:
+                gate.clear()
+            self.record_epoch_processed("interrupted", "processing_detached" if "input_id" in request.payload else "source_unavailable")
+            self.transition_to_awaiting()
+            self.pretrigger.clear()
+            self._cancel_pending_configuration("Processing input became unavailable")
+            self._input_attached = False
+            self._signal_receipt = None
+            self._signal_plan = None
+            self._drain_failure = None
+            result = CommandResult(request.command_id, EventType.ResetProcessingInput.name, ok=True,
+                                   data={"generation": self.generation, "system_revision": self.system_revision,
+                                         "processing_revision": self.processing_revision, "attached": False})
         self._publish_configuration_result(result)
 
     def _publish_configuration_result(self, result):

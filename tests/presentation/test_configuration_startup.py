@@ -28,6 +28,7 @@ class MemoryEngine:
         self.event_bus = SimpleNamespace(register_event_listener=lambda *args: None)
         self.modules = set()
         self.module_snapshots = {}
+        self.actuation_active = False
         self.acquisition_worker = SimpleNamespace(is_alive=lambda: "acquisition" in self.modules)
         self.signal_processing_worker = SimpleNamespace(is_alive=lambda: "processing" in self.modules)
         self.peer_gateway = SimpleNamespace(peer=lambda name: SimpleNamespace(is_connected=False))
@@ -41,6 +42,9 @@ class MemoryEngine:
 
     async def stop_module(self, module):
         self.modules.discard(module)
+
+    async def set_actuation_active(self, active):
+        self.actuation_active = active
 
     @property
     def should_stop(self):

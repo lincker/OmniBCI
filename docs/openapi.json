@@ -487,6 +487,112 @@
         }
       }
     },
+    "/api/v1/engine/modules/{module}/prepare": {
+      "post": {
+        "tags": [
+          "Engine"
+        ],
+        "summary": "Prepare an output module for an external connection",
+        "operationId": "prepare_module_api_v1_engine_modules__module__prepare_post",
+        "parameters": [
+          {
+            "name": "module",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "stimulation",
+                "actuation"
+              ],
+              "type": "string",
+              "title": "Module"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/engine/modules/{module}/stop": {
       "post": {
         "tags": [
@@ -7947,6 +8053,8 @@
               "next_start",
               "stream_stop",
               "processor_stop",
+              "processing_detached",
+              "source_unavailable",
               "error"
             ],
             "title": "Reason"
@@ -8358,7 +8466,21 @@
             "title": "Modules"
           },
           "system": {
-            "$ref": "#/components/schemas/SystemSettingsResponse"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SystemSettingsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "errors": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Errors"
           }
         },
         "type": "object",
@@ -9375,9 +9497,12 @@
             "type": "boolean",
             "title": "Running"
           },
-          "recovery_required": {
-            "type": "boolean",
-            "title": "Recovery Required"
+          "recovery": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Recovery"
           },
           "accepted": {
             "additionalProperties": {
@@ -9425,30 +9550,59 @@
             ],
             "title": "Generation"
           },
-          "operation": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/RuntimeOperationResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "operations": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RuntimeOperationResponse"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Operations"
+          },
+          "errors": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Errors"
           }
         },
         "type": "object",
         "required": [
           "running",
-          "recovery_required",
+          "recovery",
           "accepted",
           "applied",
           "generation",
-          "operation"
+          "operations"
         ],
         "title": "RuntimeConfigurationResponse"
       },
       "RuntimeOperationResponse": {
         "properties": {
+          "module": {
+            "type": "string",
+            "enum": [
+              "acquisition",
+              "processing",
+              "stimulation",
+              "actuation",
+              "system"
+            ],
+            "title": "Module"
+          },
+          "affected_modules": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Affected Modules"
+          },
           "operation_id": {
             "type": "string",
             "title": "Operation Id"
@@ -9509,6 +9663,8 @@
         },
         "type": "object",
         "required": [
+          "module",
+          "affected_modules",
           "operation_id",
           "plan_id",
           "target_revisions",

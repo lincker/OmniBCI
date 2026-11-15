@@ -34,8 +34,10 @@ values, then starts the engine if needed and establishes its connection. It does
 not require or save a Profile. An unsuccessful application prevents connecting;
 an unsuccessful connection leaves the current values available for correction.
 Acquisition setup and Run share one frontend controller for backend-reported connection status
-and pending commands. **Disconnect** requires stopped reading. Metadata inspection
-is explicit through **Get Metadata**; it is not part of connecting. Run's **Start reading**
+and pending commands. **Disconnect** normally requires stopped reading; module
+recovery permits it to release the failed worker directly. Connect attempts to
+capture source metadata for later Processing attachment; metadata failure does
+not undo the connection. **Get Metadata** remains available for inspection. Run's **Start reading**
 requires an existing connection, and **Stop reading** retains that connection.
 Setup and Run share current values across page navigation. Start engine starts
 shared infrastructure without applying module edits or starting workers. Each
@@ -505,7 +507,7 @@ adapters remain available for isolated tests and embedding.
 
 ### Step 6: explicit configuration at every launch
 
-Backend engine startup reads accepted module snapshots and shared settings,
+Backend engine startup reads only accepted shared settings,
 accepting initial system settings if absent. It starts the shared runtime without
 requiring or loading plugins. Starting a module validates its own pinned selections
 and parameters; missing, corrupt, unavailable, or unsupported required selections
@@ -532,7 +534,10 @@ does not parse another module's plugin parameters or decoder input.
 `GET /api/v1/config/nodes/{role}` publishes configuration for external
 `stimulation` and `actuation` nodes. While idle it reports `selected` with no
 generation; while running it projects the actual applied snapshot. Startup,
-shutdown, configuration transition, and recovery states reject publication.
+shutdown, and the requested role's configuration transition reject publication.
+During output recovery, publication requires the retained external configuration
+to be prepared on the running engine; draft edits remain excluded until recovery
+is confirmed by the module's Stop.
 Publication never treats a historical stopped snapshot or saved Profile edits
 as current runtime inputs. Backend-managed roles reject external node requests.
 External outputs can obtain and use their own configuration without any selected

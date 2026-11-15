@@ -63,6 +63,7 @@ class HardwareFreeGraph:
     def __init__(self, snapshot):
         self._started = ThreadEvent()
         self._stopped = ThreadEvent()
+        self.prepared_outputs = {}
         self.acquisition_worker = SimpleNamespace(
             is_alive=lambda: self._started.is_set() and not self._stopped.is_set(),
         )
@@ -76,6 +77,12 @@ class HardwareFreeGraph:
     def should_stop(self, value):
         if value:
             self._stopped.set()
+
+    async def ensure_output_ready(self, role, snapshot):
+        self.prepared_outputs[role] = snapshot
+
+    async def set_actuation_active(self, active):
+        assert active is False
 
     def run(self):
         self._started.set()
@@ -128,6 +135,7 @@ def test_restarted_engine_rejects_cached_node_configuration_and_accepts_fresh_fe
         try:
             await engine.startup()
             await engine.handle_start_engine(StartEngineCommand())
+            await engine.prepare_output(role)
             first = publication.configuration(role)
             assert first["state"] == "running"
             cached = materialize_node_configuration(
@@ -158,6 +166,7 @@ def test_restarted_engine_rejects_cached_node_configuration_and_accepts_fresh_fe
             await asyncio.wait_for(old_task, 2)
             await engine.handle_stop_engine(StopEngineCommand())
             await engine.handle_start_engine(StartEngineCommand())
+            await engine.prepare_output(role)
 
             fresh = materialize_node_configuration(NodeConfiguration.from_dict(
                 json.loads(json.dumps(publication.configuration(role)["configuration"]))), node_catalog)

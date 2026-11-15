@@ -72,6 +72,27 @@ class TestAcquisitionConnect:
         assert not acquisition_service._connected
         assert mock_engine.signal_processing_worker.is_alive()
 
+    def test_disconnect_recovers_an_already_exited_acquisition(
+        self, api_client, engine_service, mock_engine,
+    ):
+        mock_engine.acquisition_worker.is_alive.return_value = False
+        engine_service.admission.quarantine("source exited", "acquisition")
+        response = api_client.post("/api/v1/acquisition/disconnect")
+        assert response.status_code == 200
+        assert not engine_service.admission.requires_recovery("acquisition")
+        mock_engine.stop_module.assert_awaited_once_with("acquisition")
+
+    def test_disconnect_failure_still_releases_acquisition_worker(
+        self, api_client, acquisition_service, mock_engine,
+    ):
+        mock_engine.acquisition_worker.is_alive.return_value = True
+        acquisition_service._connected = True
+        acquisition_service.handle_disconnect = MagicMock(side_effect=_rejected("DisconnectDataProvider"))
+        response = api_client.post("/api/v1/acquisition/disconnect")
+        assert response.status_code == 409
+        mock_engine.stop_module.assert_awaited_once_with("acquisition")
+        assert not acquisition_service._connected
+
 
 class TestAcquisitionStream:
     def test_start_stream_returns_confirmed_success(self, api_client, mock_engine):
@@ -107,7 +128,7 @@ class TestAcquisitionStream:
             "error_code": "DATA_SOURCE_NOT_CONNECTED",
         }
 
-    def test_continuity_failure_blocks_restart_before_preparation_and_returns_409(
+    def test_source_continuity_failure_returns_409_without_preparing_processing(
         self, api_client, acquisition_service, command_executor, monkeypatch
     ):
         from omnibci.shared.events import EventType
@@ -119,7 +140,7 @@ class TestAcquisitionStream:
         )
         request = MagicMock(side_effect=CommandRejectedError(CommandResult(
             command_id="cmd-continuity-lost",
-            command="StopAndDrain",
+            command="StartStream",
             ok=False,
             message=message,
             error_code="ACQUISITION_STREAM_CONTINUITY_LOST",
@@ -136,10 +157,12 @@ class TestAcquisitionStream:
         assert response.json()["message"] == message
         assert response.json()["detail"] == {
             "command_id": "cmd-continuity-lost",
-            "command": "StopAndDrain",
+            "command": "StartStream",
             "error_code": "ACQUISITION_STREAM_CONTINUITY_LOST",
         }
-        request.assert_called_once_with(EventType.StopAndDrain, timeout_s=None)
+        assert [item.args[0] for item in request.call_args_list] == [
+            EventType.GetSourceMetadata, EventType.StartStream,
+        ]
         prepare.assert_not_called()
 
     def test_missing_terminal_result_returns_504(

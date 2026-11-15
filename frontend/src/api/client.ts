@@ -86,6 +86,7 @@ export const api = {
   engineStart: () => post("/api/v1/engine/start"),
   engineStop: () => post("/api/v1/engine/stop"),
   moduleStart: (module: "acquisition" | "processing" | "actuation") => post(`/api/v1/engine/modules/${module}/start`),
+  modulePrepare: (module: "stimulation" | "actuation") => post(`/api/v1/engine/modules/${module}/prepare`),
   moduleStop: (module: "acquisition" | "processing" | "actuation") => post(`/api/v1/engine/modules/${module}/stop`),
 
   acqConnect: () => post("/api/v1/acquisition/connect"),

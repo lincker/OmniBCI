@@ -1,3 +1,4 @@
+import { runtimeController, currentController, controlsController } from "./module-fixtures.mjs";
 /** Static render contracts; browser interactions still need browser verification. */
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
@@ -17,12 +18,12 @@ globalThis.window = { localStorage: { getItem: () => "en" }, navigator: { langua
 const noop = () => {};
 const current = { ready: true, error: null, entries: {}, filterOrder: [], hasChanges: () => false, validationError: () => null };
 const revisions = { acquisition: "a", processing: "selected-previous", stimulation: "s", actuation: "e", system: "sys" };
-const status = { running: true, accepted: revisions, applied: revisions, generation: "generation-1", operation: null };
+const status = { running: true, accepted: revisions, applied: revisions, generation: "generation-1", operations: {}, recovery: {}, errors: {} };
 const plan = { plan_id: "plan-1", module: "processing", expected_revision: revisions.processing, expected_revisions: { processing: revisions.processing, system: revisions.system }, target_revisions: { processing: "selected-next" }, applied_revisions: status.applied,
   generation: status.generation, running: true, strategy: "trial_boundary", changed_slots: ["processing.decoder"], changed_settings: [], errors: [] };
 const baseRuntime = { status, plan, operation: null, blocked: false, inProgress: false, recoveryRequired: false, submitting: false,
   uncertain: false, error: null, requestError: null, review: noop, apply: noop, dismissPlan: noop, refresh: noop, retryUnconfirmed: noop };
-const render = (component, props) => renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(component, props)));
+const render = (component, props) => renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(component, { ...props, runtime: runtimeController(props.runtime) })));
 function buttonDisabled(html, label) {
   const tag = [...html.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)]
     .find(([, , body]) => body.replace(/<[^>]*>/g, "") === label);
@@ -71,7 +72,7 @@ test("blocked reviews explain whether to wait, reconnect, or recover", () => {
     [{ status: null }, "feedback.runtimeUnavailable"],
   ]) {
     const runtime = { ...baseRuntime, blocked: true, ...overrides };
-    assert.equal(runtimeBlockReason(runtime), expected);
+    assert.equal(runtimeBlockReason(runtimeController(runtime)), expected);
     const html = render(RuntimeConfigurationReview, { runtime });
     assert.match(html, /id="configuration-review-blocked"/);
     assert.equal(buttonDisabled(html, "Apply configuration"), true);
@@ -124,23 +125,23 @@ test("routine configuration states render no status bar or revision details", ()
   }
 });
 
-test("Run preserves independent module controls and permits stopping only after an operation settles", () => {
+test("Run preserves independent module controls and permits Stop while configuration operations are pending", () => {
   const props = { engine: { data: { running: true, acquisition_alive: true, processor_alive: true }, error: null, refresh: noop },
     acquisition: { data: { connected: true, streaming: true, sample_rate: 250, channel_count: 8 }, error: null, refresh: noop, pending: false,
       ...Object.fromEntries(["connect", "disconnect", "read", "stopRead"].map((name) => [name, { run: noop, pending: false, error: null }])) },
     feed: { generation: "engine-1", trials: [], acks: [] }, current, onBusyChange: noop, onEditSetup: noop, onResults: noop };
   const run = (runtime, streaming) => renderToStaticMarkup(React.createElement(I18nProvider, null,
-    React.createElement(RunConsole, { ...props, runtime,
+    React.createElement(RunConsole, { ...props, runtime: runtimeController(runtime), current: currentController(null, current), runtimeControls: controlsController(),
       acquisition: { ...props.acquisition, data: { ...props.acquisition.data, streaming } } })));
   for (const streaming of [false, true]) {
     const pending = run({ ...baseRuntime, blocked: true, inProgress: true }, streaming);
     assert.doesNotMatch(pending, /aria-label="System progress"/);
     assert.match(pending, /Start processing/);
     assert.match(pending, /Start actuation/);
-    for (const label of ["Start engine", "Stop engine", "Connect", "Disconnect", "Start reading", "Stop reading", "Launch stimulation", "Trigger trial"]) {
+    for (const label of ["Start engine", "Connect", "Disconnect", "Start reading", "Launch stimulation", "Trigger trial"]) {
       assert.equal(buttonDisabled(pending, label), true, label);
     }
-    const recovery = run({ ...baseRuntime, blocked: true, recoveryRequired: true }, streaming);
+    const recovery = run({ ...baseRuntime, status: { ...status, recovery: { system: "Foundation state unknown" } }, blocked: true, recoveryRequired: true }, streaming);
     assert.equal(buttonDisabled(recovery, "Stop engine"), false);
     assert.equal(buttonDisabled(recovery, "Stop reading"), !streaming);
     assert.equal(buttonDisabled(recovery, "Start reading"), true);
@@ -201,7 +202,7 @@ for (const [name, activeInput, expected] of [
   let stateIndex = 0;
   // Active mapping is meaningful only after the matching decoder configuration has loaded.
   const seeded = {
-    2: { active_input: activeInput, readiness: { ready: true } },
+    99: { active_input: activeInput, readiness: { ready: true } },
     4: { modules: { processing: { revision: revisions.processing, bindings: [{ slot: "processing.decoder", kind: "decoder",
       selection: { package_id: "example.decoder", contribution_id: "main", version: "1.0.0" }, parameters: {} }] } }, system: { revision: revisions.system } },
     31: { status: "ready", revision: JSON.stringify(revisions) },
@@ -219,7 +220,8 @@ for (const [name, activeInput, expected] of [
     tree = RunConsole({ engine: { data: { running: true, processor_alive: true }, error: null, refresh: noop },
       acquisition: { data: { connected: true, streaming: false }, error: null, refresh: noop, pending: false,
         ...Object.fromEntries(["connect", "disconnect", "read", "stopRead"].map((name) => [name, { run: noop, pending: false, error: null }])) },
-      feed: { generation: null, trials: [], acks: [] }, runtime: baseRuntime, current,
+      feed: { generation: null, trials: [], acks: [] }, runtime: runtimeController(baseRuntime), current: currentController({ revision: revisions.processing, bindings: seeded[4].modules.processing.bindings }, current),
+      runtimeControls: controlsController({ signal: { data: { active_input: activeInput, readiness: { ready: true } }, error: null } }),
       onBusyChange: noop, onEditSetup: noop, onResults: noop });
   } finally { dispatcher.current = previous; }
   const html = renderToStaticMarkup(React.createElement(I18nProvider, null, tree));
@@ -241,4 +243,12 @@ test("shared system changes invalidate a module review", () => {
     accepted: { ...revisions, system: "next-system" },
   } } });
   assert.equal(buttonDisabled(html, "Apply configuration"), true);
+});
+
+test("an applied configuration reports a failed history write without calling the application failed", () => {
+  const html = render(RuntimeConfigurationStatus, { runtime: { ...baseRuntime,
+    operation: { module: "processing", status: "succeeded", result: { applied: true, history_saved: false,
+      warning: "Configuration applied, but its history could not be saved." } } } });
+  assert.match(html, /Configuration applied, but its history could not be saved/);
+  assert.doesNotMatch(html, /Recovery is required|Update failed/);
 });

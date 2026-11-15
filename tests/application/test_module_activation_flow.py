@@ -113,6 +113,24 @@ async def test_failed_first_selection_restores_missing_system_without_history(fl
 
 
 @pytest.mark.asyncio
+async def test_history_write_failure_reports_applied_values_without_quarantining_runtime(flow, monkeypatch):
+    plan = source_plan(flow)
+
+    def fail(*args, **kwargs):
+        raise OSError("History storage unavailable")
+
+    monkeypatch.setattr(flow.profiles.repository, "record_module_history", fail)
+    operation = await execute(flow, plan)
+    assert operation["status"] == "succeeded"
+    assert operation["result"]["applied"] is True
+    assert operation["result"]["history_saved"] is False
+    assert "History storage unavailable" in operation["result"]["warning"]
+    assert flow.profiles.repository.get_module("acquisition").revision == plan.target_revisions["acquisition"]
+    assert flow.runtime.status()["recovery"] == {}
+    assert flow.profiles.repository.list_module_history("acquisition") == []
+
+
+@pytest.mark.asyncio
 async def test_changed_system_rejects_pending_module_plan(flow):
     await execute(flow, source_plan(flow))
     plan = source_plan(flow)

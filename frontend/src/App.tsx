@@ -4,6 +4,7 @@ import { usePoll } from "./hooks/usePoll";
 import { useAcquisition } from "./hooks/useAcquisition";
 import { useResultsFeed } from "./hooks/useResultsFeed";
 import { useRuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
+import { useRuntimeControls } from "./hooks/useRuntimeControls";
 import { useCurrentConfiguration } from "./hooks/useCurrentConfiguration";
 import { RuntimeConfigurationStatus, RuntimeConfigurationReview } from "./RuntimeConfiguration";
 import { ConfigCard } from "./ConfigCard";
@@ -59,8 +60,9 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
   const feed = useResultsFeed();
   const engine = usePoll(api.engineStatus);
   const runtime = useRuntimeConfiguration();
-  const current = useCurrentConfiguration(runtime.status?.accepted, runtime.completedRestoration);
+  const current = useCurrentConfiguration(runtime.status?.accepted, runtime.completedRestorations);
   const acquisition = useAcquisition(runtime, engine.refresh);
+  const runtimeControls = useRuntimeControls(runtime, current, acquisition, engine.refresh);
   const engineRunning = engine.data?.running ?? false;
   const isSetup = setupPages.some(([page]) => page === view);
   const isSettings = settingsPages.some(([page]) => page === view);
@@ -76,21 +78,21 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
     if (previousView.current !== view) { previousView.current = view; focusEditor(); }
   }, [view]);
   useEffect(() => {
-    if (desktopBridge() || (!dirty && !current.dirty && !busy && !runtime.inProgress)) return;
+    if (desktopBridge() || (!dirty && !current.dirty && !busy && !runtimeControls.busy && !runtime.inProgress)) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty, current.dirty, busy, runtime.inProgress]);
+  }, [dirty, current.dirty, busy, runtimeControls.busy, runtime.inProgress]);
 
   useEffect(() => {
-    desktopBridge()?.setEditorState({ dirty: dirty || current.dirty, busy: busy || runtime.inProgress });
-  }, [dirty, current.dirty, busy, runtime.inProgress]);
+    desktopBridge()?.setEditorState({ dirty: dirty || current.dirty, busy: busy || runtimeControls.busy || runtime.inProgress });
+  }, [dirty, current.dirty, busy, runtimeControls.busy, runtime.inProgress]);
 
   const navigate = useCallback((next: View) => {
-    if (next === view || busy || acquisition.pending) return;
+    if (next === view) return;
     if (dirty) { setPendingView(next); return; }
     setDirty(false); setView(next);
-  }, [view, busy, dirty, acquisition.pending]);
+  }, [view, dirty]);
   useEffect(() => {
     const onHashChange = () => {
       const next = initialView();
@@ -105,7 +107,7 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
     <nav className="workspace-navigation" aria-label={isSetup ? t("app.setupModules") : t("app.settingsPages")}>
       {(isSetup ? setupPages : settingsPages).map(([page, label, icon]) => <button key={page}
         className={`explorer-item ${view === page ? "selected" : ""}`} aria-current={view === page ? "page" : undefined}
-        disabled={busy} onClick={() => navigate(page)}><Icon name={icon} /><span>{t(label)}</span></button>)}
+        onClick={() => navigate(page)}><Icon name={icon} /><span>{t(label)}</span></button>)}
     </nav>
   </>;
   const preferences = <div className="setting-group"><h2>{t("app.interface")}</h2>
@@ -135,9 +137,9 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
       <nav className="activity-bar" aria-label={t("app.workspaces")}>
         {([[lastSetup, "app.setup", "settings"], ["run", "app.run", "play"], ["results", "app.results", "results"], ["extensions", "app.extensions", "plug"]] as const).map(([page, label, icon]) =>
           <button key={page} className={`activity-item ${space === label ? "selected" : ""}`} aria-label={t(label)} title={t(label)}
-            aria-current={space === label ? "page" : undefined} disabled={busy} onClick={() => navigate(page)}><Icon name={icon} /></button>)}
+            aria-current={space === label ? "page" : undefined} onClick={() => navigate(page)}><Icon name={icon} /></button>)}
         <div className="activity-bottom"><button className={`activity-item ${isSettings ? "selected" : ""}`}
-          aria-label={t("app.settings")} title={t("app.settings")} aria-current={isSettings ? "page" : undefined} disabled={busy}
+          aria-label={t("app.settings")} title={t("app.settings")} aria-current={isSettings ? "page" : undefined}
           onClick={() => navigate("general")}><Icon name="gear" /></button></div>
       </nav>
       <main className="editor-workspace" ref={main} id="editor-content" tabIndex={-1}>
@@ -150,7 +152,7 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
             : view === "extensions" ? <PluginMarket runtimeBusy={runtime.blocked}
               onBusyChange={setBusy} onDirtyChange={setDirty} onOpenSetup={() => navigate(lastSetup)} />
             : view === "run" ? <RunConsole engine={engine} acquisition={acquisition} feed={feed}
-              runtime={runtime} current={current} onBusyChange={setBusy} onEditSetup={() => navigate("acquisition")}
+              runtime={runtime} current={current} runtimeControls={runtimeControls} onEditSetup={() => navigate("acquisition")}
               onEditProcessing={() => navigate("processing")}
               onResults={() => navigate("results")} />
             : view === "results" ? <div className="runtime-content">

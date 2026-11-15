@@ -64,6 +64,11 @@ class PeerChannel:
         )
 
     @property
+    def is_ready(self) -> bool:
+        """The transport is prepared, even when no external node is connected."""
+        return self._started and not self._dirty and self._monitor_fault is None
+
+    @property
     def is_dirty(self) -> bool:
         """Whether a failed lifecycle operation still needs explicit cleanup."""
         return self._dirty

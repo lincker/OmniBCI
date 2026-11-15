@@ -45,6 +45,8 @@ class RuntimePlanResponse(BaseModel):
 
 
 class RuntimeOperationResponse(BaseModel):
+    module: Literal["acquisition", "processing", "stimulation", "actuation", "system"]
+    affected_modules: list[str]
     operation_id: str
     plan_id: str
     target_revisions: dict[str, str]
@@ -63,11 +65,12 @@ class RuntimeApplyRequest(BaseModel):
 
 class RuntimeConfigurationResponse(BaseModel):
     running: bool
-    recovery_required: bool
+    recovery: dict[str, str]
     accepted: dict[str, str | None]
     applied: dict[str, str | None] | None
     generation: str | None
-    operation: RuntimeOperationResponse | None
+    operations: dict[str, RuntimeOperationResponse | None]
+    errors: dict[str, str] = Field(default_factory=dict)
 
 
 class NodeConfigurationResponse(BaseModel):

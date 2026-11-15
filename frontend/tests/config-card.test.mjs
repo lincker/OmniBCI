@@ -1,3 +1,4 @@
+import { runtimeController, currentController } from "./module-fixtures.mjs";
 /** Host settings save independently of plugin profiles and runtime application. */
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
@@ -48,7 +49,7 @@ function harness(props) {
           const current = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
           const previous = current.current;
           cursor = 0; pending = false; current.current = dispatcher;
-          try { tree = ConfigCard(props); } finally { current.current = previous; }
+          try { tree = ConfigCard({ ...props, runtime: runtimeController(props.runtime) }); } finally { current.current = previous; }
           const queued = effects; effects = []; queued.forEach((effect) => effect());
         }
         await Promise.resolve();
@@ -126,6 +127,11 @@ async function withSettings(action, overrides = {}) {
         module, revision: `${module}-accepted`, settings: {}, bindings: activation.bindings.filter((binding) => binding.slot.startsWith(`${module}.`)),
       }])), system: { revision: "system-accepted", settings: {} },
     };
+    else if (path === "/api/v1/config/system" && method === "GET") data = { revision: "system-accepted", settings: {} };
+    else if (path.startsWith("/api/v1/config/modules/") && method === "GET") {
+      const module = path.split("/").at(-1);
+      data = { module, revision: `${module}-accepted`, settings: {}, bindings: activation.bindings.filter((binding) => binding.slot.startsWith(`${module}.`)) };
+    }
     else if (path === "/api/v1/config" && method === "PATCH") {
       if (body.expected_revision !== cfg.revision) return { ok: false, status: 409, json: async () => ({ code: "CONFLICT", message: "Host settings changed" }) };
       if (overrides.patchError) return { ok: false, status: 422, json: async () => ({ code: "VALIDATION_ERROR", message: "Value is invalid" }) };
@@ -267,7 +273,7 @@ test("Save sends host updates only and Review only retains the selected section 
     await click(component, "Review and apply host settings");
     assert.deepEqual(reviews, [{ module: "system", bindings: [], expected_revision: "system-accepted", refresh_slots: [] }]);
     assert.deepEqual(applied, [], "Only the runtime review dialog may apply the saved settings");
-    assert.deepEqual([...new Set(calls.map((call) => call.path))], ["/api/v1/config", "/api/v1/config/modules"]);
+    assert.deepEqual([...new Set(calls.map((call) => call.path))], ["/api/v1/config", "/api/v1/config/modules", "/api/v1/config/system"]);
   });
 });
 

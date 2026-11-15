@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import numpy as np
 import pytest
 
-from omnibci.application.events import CommandRequest, TrialOutcome
+from omnibci.application.events import CommandRequest, ProcessingInputStart, TrialOutcome
 from omnibci.application.plugin_profiles import ProfileBinding
 from omnibci.application.services.results_service import ResultsService
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
@@ -63,7 +63,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
     receipt = {
         "generation": generation, "acquisition_revision": revision, "processing_revision": revision, "system_revision": "system",
         "connection_id": source.connection_id,
-        "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint,
+        "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
     }
     bus = EventBus(Queue())
     data = DataManager(Queue())
@@ -104,6 +104,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         confirmation = await asyncio.wait_for(prepared, timeout=2)
         assert confirmation.ok, confirmation.message
         assert confirmation.data == receipt
+        processor._on_input_start(ProcessingInputStart("attach", receipt, -1))
         assert processor.detector.plugin_type == "DEFAULT_EPOCH_DETECTOR"
         assert processor._decoder.plugin_type == "THUBCI_SSVEP_classic40CCA"
 
@@ -135,7 +136,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         monkeypatch.setattr(reader, "stop_stream", AsyncMock())
         acquisition = AcquisitionRuntime(
             reader, Queue(), data, bus, source_id=reader.plugin_type,
-            preparation_required=False, generation=generation, acquisition_revision=revision, system_revision="system",
+            generation=generation, acquisition_revision=revision, system_revision="system",
         )
         await acquisition.fetch()
         assert acquisition._fetch_failure is None

@@ -86,7 +86,6 @@ def test_connect_round_trips_through_event_bus_worker_and_broker() -> None:
             data_manager=_DataManager(),
             event_bus=bus,
             source_id="test-source",
-            preparation_required=False,
         )
         broker = CommandResultBroker(_BusEngine(bus), timeout_s=1.0)
         observed_states: list[AcquisitionSnapshot] = []

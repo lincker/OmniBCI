@@ -1,3 +1,4 @@
+import { runtimeController, currentController } from "./module-fixtures.mjs";
 /** Histories identify applications by entry ID and never apply a profile restore. */
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
@@ -35,7 +36,7 @@ function harness(props) {
         if (changed) {
           const internal = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
           const previous = internal.current; internal.current = dispatcher; cursor = 0; changed = false;
-          try { tree = ConfigurationHistory(props); } finally { internal.current = previous; }
+          try { tree = ConfigurationHistory({ ...props, runtime: runtimeController(props.runtime) }); } finally { internal.current = previous; }
           const pending = effects; effects = []; pending.forEach((effect) => effect());
         }
         await Promise.resolve();

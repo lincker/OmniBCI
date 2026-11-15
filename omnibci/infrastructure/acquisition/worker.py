@@ -8,7 +8,6 @@ from contextlib import nullcontext
 from copy import deepcopy
 from typing import Optional
 
-from omnibci.application.processing_source import requires_signal_preparation
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.infrastructure.process_lifecycle import StartupReporter
 from omnibci.infrastructure.acquisition.logging import AcquisitionLogForwarder
@@ -81,7 +80,6 @@ class AcquisitionWorker(mp.Process):
             event_bus=self.event_bus,
             source_id=snapshot.get("ACQUISITION.signal_source") or getattr(
                 self.data_source, "plugin_type", type(self.data_source).__name__),
-            preparation_required=requires_signal_preparation(snapshot),
             generation=snapshot.get("CONFIG.generation"),
             acquisition_revision=snapshot.get("CONFIG.module_revisions", {}).get("acquisition"),
             system_revision=snapshot.get("CONFIG.system_revision"),

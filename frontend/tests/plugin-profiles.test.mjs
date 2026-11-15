@@ -1,3 +1,4 @@
+import { runtimeController, currentController } from "./module-fixtures.mjs";
 /** Exercise profile browsing and explicit activation through component events. */
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
@@ -112,7 +113,7 @@ function componentHarness(props) {
     const previous = internals.current;
     internals.current = dispatcher;
     cursor = 0; needsRender = false;
-    try { props.current = useCurrentConfiguration(props.runtime.status.accepted, props.runtime.completedRestoration); tree = PluginProfiles(props); } finally { internals.current = previous; }
+    try { props.current = useCurrentConfiguration(props.runtime.status.accepted, props.runtime.completedRestorations); tree = PluginProfiles({ ...props, runtime: runtimeController(props.runtime) }); } finally { internals.current = previous; }
     const effects = pendingEffects; pendingEffects = [];
     effects.forEach((effect) => effect());
   }
@@ -210,7 +211,7 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
     module, revision: data.revisions[module], settings: {},
     bindings: clone((data.activation?.bindings ?? []).filter((binding) => binding.slot.startsWith(`${module}.`))),
   }])), system: { revision: data.revisions.system, settings: {} } });
-  const runtimeStatus = { recovery_required: false, operation: null, running: engineRunning, accepted: clone(data.revisions),
+  const runtimeStatus = { recovery: {}, operations: {}, running: engineRunning, accepted: clone(data.revisions),
     applied: engineRunning ? clone(data.revisions) : null, generation: engineRunning ? "generation-a" : null };
   const calls = { create: [], apply: [] };
   api.catalog = async (kind) => clone(data.definitions.filter((item) => item.kind === kind));
@@ -318,7 +319,7 @@ for (const [module, slot, profileId] of [
     await withProfiles(module, async (h, calls, data) => {
       assert.equal(form(h).props.value.gain, 2);
       assert.equal(control(h, "Load saved profile").props.value, "");
-      assert.equal(data.current().hasChanges(module, data.modules()), false);
+      assert.equal(data.current().hasChanges(module, data.modules().modules[module]), false);
       assert.deepEqual(calls.create, []);
     }, { configure: (data) => {
       const saved = data.profiles.find((item) => item.profile_id === profileId);
@@ -336,12 +337,12 @@ for (const [module, slot, profileId] of [
       assert.ok(!labels.includes("Apply current configuration"));
       assert.ok(!labels.includes("Update saved profile"));
       assert.equal(dialog(h), undefined);
-      const request = data.current().request(module, data.modules());
+      const request = data.current().request(module, data.modules().modules[module]);
       assert.equal(request.module, module);
       assert.ok(request.bindings.every((item) => item.slot.startsWith(`${module}.`) && !item.profile_id));
       assert.equal(request.bindings.find((item) => item.slot === slot).parameters.gain, 23);
       assert.deepEqual(data.profiles, saved);
-      assert.equal(data.current().hasChanges(module, data.modules()), true);
+      assert.equal(data.current().hasChanges(module, data.modules().modules[module]), true);
       assert.deepEqual(calls, { create: [], apply: [] });
     });
   });
@@ -377,7 +378,7 @@ test("failed application retains current edits and stops before connecting", asy
     await click(h, "Connect");
     assert.deepEqual(data.events, ["apply"]);
     assert.equal(form(h).props.value.gain, 9);
-    assert.equal(data.current().hasChanges("acquisition", data.modules()), true);
+    assert.equal(data.current().hasChanges("acquisition", data.modules().modules.acquisition), true);
     assert.equal(calls.create.length, 0);
   }, { applySucceeds: false });
 });
@@ -449,7 +450,7 @@ test("switching processing stages retains decoder values and mapping without dis
     await click(h, "Decoder");
     assert.equal(form(h).props.value.gain, 12);
     assert.deepEqual(input(h).props.value.outputs.map((item) => item.name), ["P3", "P4"]);
-    const request = data.current().request("processing", data.modules());
+    const request = data.current().request("processing", data.modules().modules.processing);
     assert.equal(request.bindings.find((item) => item.slot === "processing.epoch_detector").parameters.gain, 8);
     assert.equal(request.bindings.find((item) => item.slot === "processing.decoder").processing_input.outputs[0].name, "P3");
     assert.equal(data.current().dirty, true);
@@ -464,7 +465,7 @@ test("Open Run retains current edits in the shared controller without a save pro
     assert.equal(data.openRunCalls, 1);
     assert.equal(dialog(h), undefined);
     assert.equal(data.current().dirty, true);
-    assert.equal(data.current().request("acquisition", data.modules()).bindings[0].parameters.gain, 12);
+    assert.equal(data.current().request("acquisition", data.modules().modules.acquisition).bindings[0].parameters.gain, 12);
     assert.equal(calls.create.length + calls.apply.length, 0);
   });
 });
@@ -485,7 +486,7 @@ test("filter instances retain independent values and order without saved profile
     assert.equal(data.current().entries[added].profile, null);
     await click(h, "Move up", filterRows(h).at(-1));
     assert.ok(!elements(h.tree).some((item) => item.type === "button" && text(item) === "Apply current filter chain"));
-    const filters = data.current().request("processing", data.modules()).bindings.filter((item) => item.slot.startsWith("processing.filter."));
+    const filters = data.current().request("processing", data.modules().modules.processing).bindings.filter((item) => item.slot.startsWith("processing.filter."));
     assert.deepEqual(filters.map((item) => item.slot), data.current().filterOrder);
     assert.equal(filters.at(-2).parameters.gain, 23);
     assert.equal(filters.at(-1).parameters.gain, 12);
@@ -503,7 +504,7 @@ test("adding a valid filter edits current configuration while runtime or decoder
     assert.equal(button(h, "Add filter instance").props.disabled, false);
     await click(h, "Add filter instance");
     assert.equal(data.current().entries[data.current().filterOrder.at(-1)].parameters.gain, 12);
-    assert.throws(() => data.current().request("processing", data.modules()), /Configure the decoder input/);
+    assert.throws(() => data.current().request("processing", data.modules().modules.processing), /Configure the decoder input/);
     assert.equal(data.activation.bindings.filter((item) => item.kind === "filter").length, 2);
     assert.deepEqual(calls, { create: [], apply: [] });
   }, { configure: (data) => {
@@ -519,7 +520,7 @@ test("editing one filter cannot mutate another instance with the same profile", 
     form(h).props.onChange({ gain: 44, calibration: [1, 2] }); await h.settle();
     assert.equal(data.current().entries["processing.filter.first"].parameters.gain, 44);
     assert.equal(data.current().entries["processing.filter.second"].parameters.gain, 6);
-    const request = data.current().request("processing", data.modules());
+    const request = data.current().request("processing", data.modules().modules.processing);
     assert.equal(request.bindings.find((item) => item.slot === "processing.filter.first").parameters.gain, 44);
     assert.equal(calls.apply.length, 0);
   }, { configure: (data) => {
@@ -533,7 +534,7 @@ test("removing filters leaves the runtime unchanged until application", async ()
   await withProfiles("processing", async (h, calls, data) => {
     await click(h, "Filters"); await click(h, "Remove", filterRows(h)[0]);
     assert.equal(data.activation.bindings.filter((item) => item.kind === "filter").length, 2);
-    const request = data.current().request("processing", data.modules());
+    const request = data.current().request("processing", data.modules().modules.processing);
     assert.deepEqual(request.bindings.filter((item) => item.slot.startsWith("processing.filter.")).map((item) => item.slot), ["processing.filter.second"]);
     assert.equal(calls.apply.length, 0);
   });
@@ -542,7 +543,7 @@ test("removing filters leaves the runtime unchanged until application", async ()
 test("no trigger removes only the current trigger binding until the next runtime action", async () => {
   await withProfiles("stimulation", async (h, calls, data) => {
     await click(h, "Trigger"); await change(h, "Plugin and version", "");
-    const request = data.current().request("stimulation", data.modules());
+    const request = data.current().request("stimulation", data.modules().modules.stimulation);
     assert.equal(request.module, "stimulation");
     assert.ok(!request.bindings.some((item) => item.slot === "stimulation.trigger"));
     assert.deepEqual(calls, { create: [], apply: [] });
@@ -857,6 +858,17 @@ test("source controls disconnect the shared current source while browsing anothe
   }, { engineRunning: true, streaming: true });
 });
 
+for (const streaming of [false, true]) test(`source recovery allows Disconnect with stale streaming=${streaming}`, async () => {
+  await withProfiles("acquisition", async (harness, _calls, data) => {
+    data.runtime.status.recovery = { acquisition: "Worker state unknown" };
+    data.runtime.scopes = { acquisition: { blocked: true, recoveryRequired: true } };
+    harness.updateProps({ runtime: data.runtime }); await harness.settle();
+    assert.equal(button(harness, "Connect").props.disabled, true);
+    await click(harness, "Disconnect");
+    assert.deepEqual(data.events, ["disconnect"]);
+  }, { streaming });
+});
+
 test("shared connection updates immediately enable or disable metadata and connection actions", async () => {
   await withProfiles("acquisition", async (harness, _, data) => {
     assert.equal(button(harness, "Connect").props.disabled, false);
@@ -929,13 +941,13 @@ test("invalid decoder mappings require explicit configuration before a processin
     assert.equal(input(h).props.value, null);
     assert.equal(button(h, "Save as profile").props.disabled, true);
     assert.match(data.current().validationError("processing"), /Configure the decoder input/);
-    assert.throws(() => data.current().request("processing", data.modules()), /Configure the decoder input/);
+    assert.throws(() => data.current().request("processing", data.modules().modules.processing), /Configure the decoder input/);
     await click(h, "Filters");
-    assert.throws(() => data.current().request("processing", data.modules()), /Configure the decoder input/);
+    assert.throws(() => data.current().request("processing", data.modules().modules.processing), /Configure the decoder input/);
     await click(h, "Decoder");
     input(h).props.onChange({ schema_version: 2, outputs: [] }); await h.settle();
     assert.equal(data.current().validationError("processing"), null);
-    const request = data.current().request("processing", data.modules());
+    const request = data.current().request("processing", data.modules().modules.processing);
     assert.deepEqual(request.bindings.find((binding) => binding.slot === "processing.decoder").processing_input,
       { schema_version: 2, outputs: [] });
     assert.equal(calls.apply.length, 0);
@@ -949,7 +961,7 @@ test("loading a invalid decoder profile cannot silently select all channels", as
   await withProfiles("processing", async (h, _, data) => {
     await change(h, "Load saved profile", "decoder-b");
     assert.equal(input(h).props.value, null);
-    assert.throws(() => data.current().request("processing", data.modules()), /Configure the decoder input/);
+    assert.throws(() => data.current().request("processing", data.modules().modules.processing), /Configure the decoder input/);
     assert.equal(button(h, "Save as profile").props.disabled, true);
   }, { configure: (data) => { data.profiles.find((item) => item.profile_id === "decoder-b").processing_input = null; } });
 });
@@ -960,7 +972,7 @@ test("Connect normalizes schema defaults for application and comparison", async 
     await click(h, "Connect");
     assert.deepEqual(calls.apply[0].bindings[0].parameters, { gain: 9, calibration: [1, 2] });
     assert.equal(data.current().dirty, false);
-    assert.equal(data.current().hasChanges("acquisition", data.modules()), false);
+    assert.equal(data.current().hasChanges("acquisition", data.modules().modules.acquisition), false);
     assert.equal(metadata(h).props.canRead, true);
     assert.equal(form(h).props.value.calibration, undefined, "Normalization does not mutate the editable object");
   }, { configure: (data) => {
@@ -971,16 +983,16 @@ test("Connect normalizes schema defaults for application and comparison", async 
 test("reloading after an activation read fails blocks further commands until retry succeeds", async () => {
   await withProfiles("acquisition", async (h, calls, data) => {
     form(h).props.onChange({ gain: 9, calibration: [1, 2] }); await h.settle();
-    const activation = api.modules;
-    api.modules = async () => { throw new Error("Configuration unavailable"); };
+    const activation = api.module;
+    api.module = async () => { throw new Error("Configuration unavailable"); };
     await click(h, "Reload");
-    assert.equal(data.current().ready, false);
+    assert.equal(data.current().modules.acquisition.ready, false);
     assert.match(text(h.tree), /Configuration unavailable/);
     assert.equal(button(h, "Connect").props.disabled, true);
     assert.equal(form(h).props.value.gain, 9);
-    api.modules = activation;
+    api.module = activation;
     await click(h, "Reload");
-    assert.equal(data.current().ready, true);
+    assert.equal(data.current().modules.acquisition.ready, true);
     assert.equal(button(h, "Connect").props.disabled, false);
     assert.equal(form(h).props.value.gain, 9);
     assert.equal(calls.apply.length, 0);
@@ -1029,26 +1041,26 @@ test("an unavailable inline plugin remains visible without a saved profile", asy
   } });
 });
 
-test("a pending baseline refresh permits the next module request but a failed refresh blocks it", async () => {
+test("a failed processing refresh leaves unrelated module requests available", async () => {
   await withProfiles("processing", async (h, calls, data) => {
     const current = data.current();
-    assert.equal(current.ready, true);
+    assert.equal(current.modules.processing.ready, true);
     let rejectRefresh;
     const pending = new Promise((resolve, reject) => { rejectRefresh = reject; });
-    api.modules = () => pending;
-    const refresh = current.reload();
+    api.module = () => pending;
+    const refresh = current.reload("processing");
     await h.settle();
-    assert.equal(data.current().ready, true);
+    assert.equal(data.current().modules.acquisition.ready, true);
     const latest = data.modules();
     latest.modules.actuation.revision = "after-processing-apply";
-    const request = data.current().request("actuation", latest);
+    const request = data.current().request("actuation", latest.modules.actuation);
     assert.equal(request.module, "actuation");
     assert.equal(request.expected_revision, "after-processing-apply");
     rejectRefresh(new Error("Baseline refresh failed"));
     await refresh; await h.settle();
-    assert.equal(data.current().ready, false);
-    assert.match(data.current().error, /Baseline refresh failed/);
-    assert.throws(() => data.current().request("actuation", latest), /Current configuration is unavailable/);
+    assert.equal(data.current().modules.processing.ready, false);
+    assert.match(data.current().modules.processing.error, /Baseline refresh failed/);
+    assert.doesNotThrow(() => data.current().request("actuation", latest.modules.actuation));
     assert.equal(calls.apply.length, 0);
   });
 });
@@ -1065,7 +1077,7 @@ test("unrelated module revisions do not invalidate a connected source or replace
     h.updateProps({ runtime: data.runtime }); await h.settle();
     assert.equal(metadata(h).props.canRead, true);
     assert.equal(data.current().get("processing.decoder").parameters.gain, 91);
-    assert.equal(data.current().request("acquisition", data.modules()).expected_revision, "acquisition-accepted");
+    assert.equal(data.current().request("acquisition", data.modules().modules.acquisition).expected_revision, "acquisition-accepted");
   }, { engineRunning: true });
 });
 
@@ -1078,13 +1090,13 @@ test("a successful history revert replaces only that module current values and f
     data.activation.bindings = [...data.activation.bindings.filter((binding) => binding.kind !== "filter"), ...filters.reverse()];
     data.revisions.processing = "restored-processing";
     data.runtime.status.accepted = clone(data.revisions);
-    data.runtime.completedRestoration = { module: "processing", operationId: "restore-operation", revision: "restored-processing" };
+    data.runtime.completedRestorations = { processing: { module: "processing", operationId: "restore-operation", revision: "restored-processing" } };
     h.updateProps({ runtime: data.runtime }); await h.settle();
     assert.equal(data.current().get("processing.decoder").parameters.gain, 44);
     assert.deepEqual(data.current().filterOrder, filters.map((binding) => binding.slot));
     assert.equal(form(h).props.value.gain, 91);
-    assert.equal(data.current().hasChanges("processing", data.modules()), false);
-    assert.equal(data.current().hasChanges("acquisition", data.modules()), true);
+    assert.equal(data.current().hasChanges("processing", data.modules().modules.processing), false);
+    assert.equal(data.current().hasChanges("acquisition", data.modules().modules.acquisition), true);
   });
 });
 
@@ -1103,13 +1115,14 @@ test("an intervening module change after revert preserves current edits and allo
     form(h).props.onChange({ gain: 91, calibration: [1, 2] }); await h.settle();
     data.revisions.processing = "newer-than-restore";
     data.runtime.status.accepted = clone(data.revisions);
-    data.runtime.completedRestoration = { module: "processing", operationId: "restore-operation", revision: "restored-processing" };
+    data.runtime.completedRestorations = { processing: { module: "processing", operationId: "restore-operation", revision: "restored-processing" } };
     h.updateProps({ runtime: data.runtime }); await h.settle();
-    assert.equal(data.current().ready, false);
-    assert.match(data.current().error, /restored module changed again/);
+    assert.equal(data.current().modules.processing.ready, false);
+    assert.equal(data.current().modules.acquisition.ready, true);
+    assert.match(data.current().modules.processing.error, /restored module changed again/);
     assert.equal(form(h).props.value.gain, 91);
-    await data.current().reload(); await h.settle();
-    assert.equal(data.current().ready, true);
+    await data.current().reload("processing"); await h.settle();
+    assert.equal(data.current().modules.acquisition.ready, true);
     assert.equal(form(h).props.value.gain, 91);
   });
 });

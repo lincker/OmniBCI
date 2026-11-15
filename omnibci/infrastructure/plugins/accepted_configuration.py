@@ -1,6 +1,6 @@
 """Resolve the persisted activation once at a standalone process boundary."""
 from omnibci.application.plugin_schema import PluginSchemaError
-from omnibci.application.plugin_profiles import MODULE_KINDS
+from omnibci.application.plugin_profiles import ActivationSet, MODULE_KINDS
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
@@ -13,10 +13,16 @@ def accepted_runtime_settings(*, profiles=None, active_kinds=None) -> dict:
             TomlPluginProfileRepository(), CatalogConfigurationAdapter(), settings_source=lambda: {},
         )
     try:
-        accepted = profiles.repository.get_activation_set()
+        kinds = {"acquisition"} if active_kinds is None else active_kinds
+        modules = {module for module, supported in MODULE_KINDS.items() if supported & kinds}
+        if "processing" in modules:
+            modules.add("acquisition")
+        accepted = ActivationSet(
+            {module: profiles.repository.get_module(module) for module in modules},
+            profiles.repository.get_system(),
+        )
         if accepted.system is None:
             raise PluginSchemaError("System settings are not selected; apply module configuration before starting")
-        kinds = {"acquisition"} if active_kinds is None else active_kinds
         required = {
             "acquisition": "acquisition.source", "decoder": "processing.decoder",
             "epoch_detector": "processing.epoch_detector", "paradigm": "stimulation.paradigm",

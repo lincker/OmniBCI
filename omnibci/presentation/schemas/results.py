@@ -36,7 +36,8 @@ class EpochSummary(BaseModel):
     processing_revision: str | None
     acquisition_revision: str | None
     status: Literal["decoded", "no_result", "interrupted", "error"]
-    reason: Literal["prediction", "end_marker", "next_start", "stream_stop", "processor_stop", "error"]
+    reason: Literal["prediction", "end_marker", "next_start", "stream_stop", "processor_stop",
+                    "processing_detached", "source_unavailable", "error"]
     sample_rate: int | None
     channel_count: int
     sample_count: int

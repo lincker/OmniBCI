@@ -116,7 +116,6 @@ def _acq(data_source=None, queue=None, data_manager=None) -> AcquisitionRuntime:
         command_queue=queue or _FakeQueue(),
         data_manager=data_manager or _FakeDataManager(),
         source_id="test-source",
-        preparation_required=False,
     )
 
 
@@ -198,7 +197,6 @@ class TestAcquisitionCommandDispatch:
             data_manager=_FakeDataManager(),
             event_bus=bus,
             source_id="test-source",
-            preparation_required=False,
         )
 
         _run(a.execute((
@@ -224,7 +222,6 @@ class TestAcquisitionCommandDispatch:
             data_manager=_FakeDataManager(),
             event_bus=bus,
             source_id="test-source",
-            preparation_required=False,
         )
 
         _run(a.execute((
@@ -252,7 +249,6 @@ class TestAcquisitionCommandDispatch:
             data_manager=_FakeDataManager(),
             event_bus=bus,
             source_id="test-source",
-            preparation_required=False,
         )
 
         _run(a.execute((
@@ -382,7 +378,6 @@ class TestStateProjectionEmission:
             data_manager=_FakeDataManager(),
             event_bus=bus,
             source_id="test-source",
-            preparation_required=False,
         )
         return acq, bus
 
@@ -458,6 +453,5 @@ class TestStateProjectionEmission:
             command_queue=_FakeQueue(),
             data_manager=_FakeDataManager(),
             source_id="test-source",
-            preparation_required=False,
         )
         _run(acq._on_connect())   # must not raise despite event_bus=None

@@ -1,10 +1,11 @@
 """Source metadata stays opaque text; processing receives a typed description."""
 from copy import deepcopy
+from threading import Event as ThreadEvent
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from omnibci.application.events import CommandRequest
+from omnibci.application.events import CommandRequest, ProcessingInputStart
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime, AcquisitionCommand
 from omnibci.infrastructure.acquisition.metadata import signal_info
 from omnibci.shared.events import EventType
@@ -106,14 +107,14 @@ def test_invalid_processing_description_is_rejected(fields, message):
         signal_info(**fields, source_id="test_source", connection_id="connected")
 
 
-def _worker(*, preparation_required=True):
+def _worker():
     source = MagicMock(is_connected=True, is_streaming=False, plugin_type="plugin-implementation")
     source.get_metadata = AsyncMock(return_value=TEXT)
     source.describe_output = MagicMock(side_effect=lambda **identity: signal_info(**FIELDS, **identity))
     source.start_stream = AsyncMock()
     bus = MagicMock()
     worker = AcquisitionRuntime(source, MagicMock(), MagicMock(), event_bus=bus,
-                                source_id="test_source", preparation_required=preparation_required,
+                                source_id="test_source", processing_active=ThreadEvent(),
                                 generation="generation", acquisition_revision="revision", system_revision="system")
     return worker, source, bus
 
@@ -174,7 +175,7 @@ async def test_unusable_processing_description_does_not_hide_or_reread_metadata_
     assert _result(bus).ok and _result(bus).data["metadata"] == TEXT
     source.get_metadata.assert_awaited_once()
     await worker.execute((AcquisitionCommand.start_stream, CommandRequest("start", {})))
-    assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
+    assert _result(bus).ok
 
 
 @pytest.mark.asyncio
@@ -257,46 +258,41 @@ async def test_invalid_or_stale_output_descriptor_is_not_used(descriptor):
 
 
 @pytest.mark.asyncio
-async def test_prepared_start_rejects_missing_or_stale_receipt_before_starting_source():
+async def test_input_attachment_rejects_missing_or_stale_receipt_without_starting_source():
     worker, source, bus = _worker()
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
     receipt = {"generation": worker.generation, "acquisition_revision": worker.acquisition_revision, "processing_revision": "processing", "system_revision": worker.system_revision,
                "connection_id": worker.connection_id, "source_fingerprint": worker._descriptor.fingerprint,
-               "plan_fingerprint": "a" * 64}
+               "plan_fingerprint": "a" * 64, "input_id": "input"}
     for payload in (None, {**receipt, "connection_id": "old"}, {**receipt, "acquisition_revision": "old"},
                     {**receipt, "source_fingerprint": "old"}, {**receipt, "generation": "old"}):
-        await worker.execute((AcquisitionCommand.start_stream, CommandRequest("start", payload)))
-        assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
+        await worker.execute((AcquisitionCommand.attach_processing, CommandRequest("start", payload)))
+        assert _result(bus).error_code == "PROCESSING_INPUT_REJECTED"
     source.start_stream.assert_not_awaited()
     worker._validate_signal_receipt(receipt)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("preparation_required", [False, True])
-async def test_explicit_preparation_requirement_controls_start(preparation_required):
-    worker, source, bus = _worker(preparation_required=preparation_required)
+async def test_source_starts_without_a_prepared_processing_plan():
+    worker, source, bus = _worker()
     async def start():
         source.is_streaming = True
     source.start_stream.side_effect = start
     source.read_chunk = AsyncMock(return_value=None)
     source.stop_stream = AsyncMock()
     await worker.execute((AcquisitionCommand.start_stream, CommandRequest("start")))
-    if preparation_required:
-        assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
-        source.start_stream.assert_not_awaited()
-    else:
-        assert _result(bus).ok
-        source.start_stream.assert_awaited_once()
-        await worker.fetch_task
+    assert _result(bus).ok
+    source.start_stream.assert_awaited_once()
+    await worker.fetch_task
 
 
 @pytest.mark.asyncio
-async def test_prepared_start_accepts_receipt_after_reconnection():
+async def test_input_attachment_uses_new_connection_after_reconnection():
     worker, source, bus = _worker()
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
     old_receipt = {"generation": worker.generation, "acquisition_revision": worker.acquisition_revision, "processing_revision": "processing", "system_revision": worker.system_revision,
                    "connection_id": worker.connection_id, "source_fingerprint": worker._descriptor.fingerprint,
-                   "plan_fingerprint": "a" * 64}
+                   "plan_fingerprint": "a" * 64, "input_id": "input"}
     async def disconnect():
         source.is_connected = False
     async def connect():
@@ -307,21 +303,18 @@ async def test_prepared_start_accepts_receipt_after_reconnection():
     await worker._on_connect()
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("reconnected-metadata")))
     stale_connection = {**old_receipt, "acquisition_revision": worker.acquisition_revision}
-    await worker.execute((AcquisitionCommand.start_stream, CommandRequest("stale-connection", stale_connection)))
-    assert _result(bus).error_code == "SIGNAL_NOT_PREPARED"
+    await worker.execute((AcquisitionCommand.attach_processing, CommandRequest("stale-connection", stale_connection)))
+    assert _result(bus).error_code == "PROCESSING_INPUT_REJECTED"
     source.start_stream.assert_not_awaited()
 
-    async def start():
-        source.is_streaming = True
-    source.start_stream.side_effect = start
-    source.read_chunk = AsyncMock(return_value=None)
-    source.stop_stream = AsyncMock()
     receipt = {**stale_connection, "connection_id": worker.connection_id,
                "source_fingerprint": worker._descriptor.fingerprint}
-    await worker.execute((AcquisitionCommand.start_stream, CommandRequest("prepared-start", receipt)))
-    assert _result(bus).ok
-    source.start_stream.assert_awaited_once()
-    await worker.fetch_task
+    await worker.execute((AcquisitionCommand.attach_processing, CommandRequest("prepared-input", receipt)))
+    marker = worker.data_manager.put_data.call_args.args[0]
+    assert isinstance(marker, ProcessingInputStart)
+    assert marker.receipt == receipt
+    assert worker.processing_active.is_set()
+    source.start_stream.assert_not_awaited()
 
 
 @pytest.mark.asyncio

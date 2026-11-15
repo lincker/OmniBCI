@@ -72,7 +72,6 @@ def test_connect_does_not_require_decoder_configuration(bindings):
                   if call.args[0].type is EventType.CommandResult)
     assert result.ok
     source.get_metadata.assert_not_called()
-    assert worker.runtime.preparation_required is bool(bindings)
 
 
 @pytest.mark.parametrize("decoder", [
@@ -141,7 +140,6 @@ def test_run_constructs_runtime_with_explicit_context(processing_input):
         data_manager=data_manager,
         event_bus=event_bus,
         source_id="selected-source",
-        preparation_required=True,
         generation="generation",
         acquisition_revision="revision", system_revision="system",
         processing_active=None, runtime_counters=None,
@@ -163,7 +161,6 @@ def test_runtime_source_identity_falls_back_to_plugin_type_or_class_name(plugin_
         worker._run()
 
     assert runtime_class.call_args.kwargs["source_id"] == (plugin_type or "Source")
-    assert runtime_class.call_args.kwargs["preparation_required"] is False
 
 
 def test_global_settings_are_pinned_once_for_source_and_runtime():
@@ -187,7 +184,7 @@ def test_global_settings_are_pinned_once_for_source_and_runtime():
     load_source.assert_called_once_with(snapshot, "acquisition.source", "acquisition", SignalSource)
     runtime_class.assert_called_once_with(
         data_source=load_source.return_value, command_queue=worker.command_queue,
-        data_manager=None, event_bus=None, source_id="global-source", preparation_required=True,
+        data_manager=None, event_bus=None, source_id="global-source",
         generation="global-generation", acquisition_revision="global-revision", system_revision="system",
         processing_active=None, runtime_counters=None,
     )
@@ -207,7 +204,6 @@ def test_historical_decoder_projection_requires_preparation():
     with patch("omnibci.infrastructure.acquisition.worker.AcquisitionRuntime") as runtime_class:
         worker._run()
 
-    assert runtime_class.call_args.kwargs["preparation_required"] is True
     assert binding.processing_input is None
 
 

@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 import omnibci.conf as conf
 from omnibci.application.plugin_profiles import PluginProfileStorageError
+from omnibci.application.plugin_packages import PluginPackageConflictError
 from omnibci.bootstrap import build_container
 from omnibci.presentation.main import create_app
 from tests.infrastructure.test_market_repository import _NOW, _URL, _DOWNLOAD, _Opener, _index, _signed
@@ -53,24 +54,50 @@ def _configure_market(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_actual_container_shares_package_store_profiles_and_runtime_gate(tmp_path):
+async def test_actual_container_shares_package_references_without_runtime_gate(tmp_path):
     container = await build_container()
     try:
         packages = container.plugin_package_service
         assert container.plugin_installation_service is packages
         assert packages.profiles is container.plugin_profile_service
         assert packages.store.plugin_dir == tmp_path / "plugins"
-        assert packages.admission_guard.__self__ is container.engine_service.admission
-        assert packages.profiles.change_guard.__self__ is container.engine_service
+        assert packages.admission_guard() is container.runtime_configuration.reference_guard()
         assert container.plugin_market_service is None
         assert container.engine_service.is_initialized and not container.engine_service.is_engine_ready
         assert container.engine_service._engine is None
 
         installed = packages.install(package_archive(tmp_path)).package
         assert not installed.enabled and packages.list() == [installed]
-        with container.engine_service.admission.command():
-            with pytest.raises(RuntimeError, match="in progress"):
-                packages.set_enabled(installed.package_id, installed.version, True)
+        with container.engine_service.admission.command("processing"):
+            enabled = packages.set_enabled(installed.package_id, installed.version, True)
+        assert enabled.enabled
+    finally:
+        await container.engine_service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_queued_current_configuration_pins_its_package_before_execution(tmp_path):
+    container = await build_container()
+    try:
+        packages = container.plugin_package_service
+        installed = packages.install(package_archive(tmp_path)).package
+        packages.set_enabled(installed.package_id, installed.version, True)
+        selection = installed.contributions[0].selection
+        profiles = container.plugin_profile_service
+        runtime = container.runtime_configuration
+        assert profiles.repository.list_profiles() == []
+        assert profiles.repository.get_module("actuation") is None
+        plan = runtime.plan("actuation", [{"slot": "actuation.effector", "selection": selection.to_dict(),
+                                           "parameters": {"gain": 2.0}}], expected_revision=None)
+        operation = runtime.submit(plan.plan_id, str(uuid4()))
+        assert operation["status"] == "queued"
+        assert runtime.pending_package_snapshots
+        with pytest.raises(PluginPackageConflictError, match="referenced"):
+            packages.set_enabled(installed.package_id, installed.version, False)
+        await runtime.wait_for_idle()
+        assert runtime.operation(operation["operation_id"])["status"] == "succeeded"
+        assert runtime.pending_package_snapshots == ()
+        assert profiles.repository.get_module("actuation") is not None
     finally:
         await container.engine_service.shutdown()
 
@@ -84,7 +111,7 @@ async def test_operator_configured_market_uses_same_installer_and_admission(monk
         packages = container.plugin_package_service
         assert market.repository.store is packages.store
         assert market.repository.repository.installer is packages.store.installer
-        assert market.admission_guard.__self__ is container.engine_service.admission
+        assert market.admission_guard() is packages.admission_guard()
         assert market.repository.repository.expected_repository_id == "example.plugins"
         assert market.repository.repository.cache_dir == tmp_path / "cache"
         assert not (tmp_path / "cache").exists()
@@ -157,7 +184,7 @@ def test_real_lifespan_routes_install_enable_save_references_and_remove(tmp_path
         assert container.engine_service._engine is None
 
 
-def test_lifespan_http_mutations_share_apply_gate_and_keep_inventory_readable(tmp_path):
+def test_lifespan_package_and_profile_mutations_remain_available_during_processing_apply(tmp_path):
     app = create_app()
     with TestClient(app) as client:
         content = package_archive(tmp_path).read_bytes()
@@ -166,7 +193,7 @@ def test_lifespan_http_mutations_share_apply_gate_and_keep_inventory_readable(tm
         selection = installed.json()["data"]["package"]["contributions"][0]["selection"]
         entered, release = Event(), Event()
         def occupied():
-            with app.state.container.engine_service.admission.transition():
+            with app.state.container.engine_service.admission.transition("processing"):
                 entered.set()
                 assert release.wait(5)
         with ThreadPoolExecutor(max_workers=1) as executor:
@@ -174,12 +201,12 @@ def test_lifespan_http_mutations_share_apply_gate_and_keep_inventory_readable(tm
             try:
                 assert entered.wait(2)
                 assert client.get("/api/v1/plugin-packages").status_code == 200
-                assert client.post("/api/v1/plugin-packages/install", content=content, headers={"Content-Type": "application/zip"}).status_code == 409
-                assert client.put("/api/v1/plugin-packages/acme.device/1.0.0/enabled", json={"enabled": True}).status_code == 409
-                assert client.delete("/api/v1/plugin-packages/acme.device/1.0.0").status_code == 409
+                assert client.post("/api/v1/plugin-packages/install", content=content, headers={"Content-Type": "application/zip"}).status_code == 201
+                assert client.put("/api/v1/plugin-packages/acme.device/1.0.0/enabled", json={"enabled": True}).status_code == 200
                 assert client.post("/api/v1/config/plugin-profiles", json={
-                    "kind": "effector", "selection": selection, "name": "Blocked", "parameters": {},
-                }).status_code == 409
+                    "kind": "effector", "selection": selection, "name": "Independent output", "parameters": {},
+                }).status_code == 201
+                assert client.delete("/api/v1/plugin-packages/acme.device/1.0.0").status_code == 409
             finally:
                 release.set()
             operation.result(timeout=2)

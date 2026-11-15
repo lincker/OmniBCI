@@ -49,13 +49,24 @@ class AcquisitionSnapshot:
 
 @dataclass(frozen=True)
 class StreamBarrier:
-    """In-band marker written by acquisition after its producer has stopped."""
+    """Ordered completion marker after acquisition stops downstream delivery."""
 
-    command_id: str
+    command_id: str | None
     generation: str | None
     acquisition_revision: str | None
     last_sequence: int
     system_revision: str | None = None
+    command: str = "StopAndDrain"
+    input_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ProcessingInputStart:
+    """First message of one prepared input attachment, before its samples."""
+
+    command_id: str
+    receipt: dict
+    last_sequence: int
 
 
 @dataclass(frozen=True)

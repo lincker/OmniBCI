@@ -5,7 +5,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
-from omnibci.application.plugin_profiles import ActivationSet
 from omnibci.application.services.signal_setup_service import SignalSetupService
 from omnibci.conf import OmniBCISettings
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
@@ -18,7 +17,7 @@ def signal_client(tmp_path):
     path = tmp_path / "settings.toml"
     path.write_text('[NEUROENGINE]\nqueue_size = 100\n', encoding="utf-8")
     service = SignalSetupService(
-        OmniBCISettings(path), SimpleNamespace(repository=SimpleNamespace(get_activation_set=lambda: ActivationSet({}, None)), materialize=lambda _: {}),
+        OmniBCISettings(path), SimpleNamespace(repository=SimpleNamespace(get_module=lambda module: None, get_system=lambda: None), materialize=lambda _: {}),
         SimpleNamespace(admission=None, applied_snapshot=None, is_engine_ready=False,
                         is_module_running=lambda module: False),
         SimpleNamespace(cached_descriptor_for=lambda binding: None), None,

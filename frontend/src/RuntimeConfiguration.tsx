@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { RuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
+import { configurationSections, type ConfigurationSection, type RuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
 import { useI18n, type TranslationKey } from "./i18n";
 import "./RuntimeConfiguration.css";
 
@@ -11,39 +11,49 @@ const strategies: Record<string, TranslationKey> = {
   rebuild: "runtime.strategy.rebuild",
 };
 
-export function runtimeBlockReason(runtime: RuntimeConfiguration): TranslationKey | null {
-  if (!runtime.blocked) return null;
-  if (runtime.uncertain) return "feedback.confirming";
-  if (runtime.inProgress) return "feedback.applying";
-  if (runtime.recoveryRequired) return "feedback.recovery";
+export function runtimeBlockReason(runtime: RuntimeConfiguration, module: ConfigurationSection = "system"): TranslationKey | null {
+  const state = runtime.state(module);
+  if (!state.blocked) return null;
+  if (state.uncertain) return "feedback.confirming";
+  if (state.inProgress) return "feedback.applying";
+  if (state.recoveryRequired) return "feedback.recovery";
   return "feedback.runtimeUnavailable";
 }
 
 /** Routine feedback stays beside the editor actions; failures use the global status. */
-export function RuntimeConfigurationProgress({ runtime }: { runtime: RuntimeConfiguration }) {
+export function RuntimeConfigurationProgress({ runtime, module = "system" }: { runtime: RuntimeConfiguration; module?: ConfigurationSection }) {
   const { t } = useI18n();
-  const operation = runtime.operation;
-  const key = runtime.uncertain ? "feedback.confirming"
-    : runtime.submitting ? "feedback.submitting"
+  const state = runtime.state(module);
+  const operation = state.operation;
+  const key = state.uncertain ? "feedback.confirming"
+    : state.submitting ? "feedback.submitting"
     : operation?.status === "queued" ? "feedback.queued"
     : operation?.status === "applying" ? operation.stage === "waiting_for_trial_boundary"
       ? "feedback.waitingForTrial" : "feedback.applying"
-    : runtime.reviewing ? "feedback.reviewing" : null;
+    : state.reviewing ? "feedback.reviewing" : null;
   return key ? <p className="action-help" role="status">{t(key)}</p> : null;
 }
 
 export function RuntimeConfigurationStatus({ runtime }: { runtime: RuntimeConfiguration }) {
   const { t } = useI18n();
-  const operation = runtime.operation;
-  if (!operation?.error && !runtime.recoveryRequired && !runtime.error
-      && !runtime.requestError && !runtime.uncertain) return null;
+  const labels: Record<ConfigurationSection, TranslationKey> = {
+    acquisition: "run.acquisition", processing: "run.signalProcessing", stimulation: "run.stimulation", actuation: "run.actuation", system: "run.engine",
+  };
+  const states = configurationSections.map((module) => ({ module, ...runtime.state(module) }))
+    .filter((state) => state.operation?.error || state.recoveryError || state.requestError || state.ownUncertain
+      || typeof state.operation?.result?.warning === "string");
+  if (!states.length && !runtime.error) return null;
   return <section className="configuration-status" aria-label={t("runtime.configurationStatus")} aria-live="polite">
-    {runtime.uncertain && <p>{t("runtime.confirming")}</p>}
-    {operation?.error && <p role="alert">{operation.error}{operation.rolled_back && t("runtime.previousRestored")}</p>}
-    {runtime.recoveryRequired && <p role="alert">{t("runtime.recoveryRequired")}</p>}
-    {(runtime.error || runtime.requestError) && <p role="alert">{runtime.requestError ?? runtime.error}</p>}
-    {runtime.uncertain ? <button disabled={runtime.submitting} onClick={() => void runtime.retryUnconfirmed()}>{t("runtime.checkOrRetry")}</button>
-      : runtime.error && <button onClick={() => void runtime.refresh()}>{t("runtime.refreshStatus")}</button>}
+    {states.map((state) => <div key={state.module}>
+      <strong>{t(labels[state.module])}</strong>
+      {state.ownUncertain && <p>{t("runtime.confirming")}</p>}
+      {state.operation?.error && <p role="alert">{state.operation.error}{state.operation.rolled_back && t("runtime.previousRestored")}</p>}
+      {typeof state.operation?.result?.warning === "string" && <p role="status">{state.operation.result.warning}</p>}
+      {state.recoveryError && <p role="alert">{t("runtime.recoveryRequired")} {state.recoveryError}</p>}
+      {state.requestError && <p role="alert">{state.requestError}</p>}
+      {state.ownUncertain && <button disabled={state.submitting} onClick={() => void runtime.retryUnconfirmed(state.module)}>{t("runtime.checkOrRetry")}</button>}
+    </div>)}
+    {runtime.error && <><p role="alert">{runtime.error}</p><button onClick={() => void runtime.refresh()}>{t("runtime.refreshStatus")}</button></>}
   </section>;
 }
 
@@ -57,7 +67,8 @@ export function RuntimeConfigurationReview({ runtime }: { runtime: RuntimeConfig
     || plan.running !== runtime.status.running
     || Object.keys(plan.expected_revisions).some((module) => plan.applied_revisions?.[module] !== runtime.status!.applied?.[module])
     || plan.generation !== runtime.status.generation);
-  const blockedReason = runtimeBlockReason(runtime);
+  const state = runtime.state(plan.module);
+  const blockedReason = runtimeBlockReason(runtime, plan.module);
   const impact: Record<string, TranslationKey> = {
     select_on_start: "feedback.impactNextStart", no_change: "feedback.impactNoChange",
     trial_boundary: "feedback.impactTrial", module: "feedback.impactModule", rebuild: "feedback.impactRebuild",
@@ -70,7 +81,7 @@ export function RuntimeConfigurationReview({ runtime }: { runtime: RuntimeConfig
     : Object.prototype.hasOwnProperty.call(impact, plan.strategy) ? impact[plan.strategy] : "feedback.impactUnknown";
   return <dialog ref={dialog} className="config-dialog configuration-review" aria-labelledby="configuration-review-title"
     aria-describedby="configuration-review-impact"
-    onCancel={(event) => { event.preventDefault(); if (!runtime.submitting) runtime.dismissPlan(); }}>
+    onCancel={(event) => { event.preventDefault(); if (!state.submitting) runtime.dismissPlan(); }}>
     <div className="configuration-review-content">
     <h3 id="configuration-review-title">{t("runtime.reviewTitle")}</h3>
     <p id="configuration-review-impact">{t(applyImpact)}</p>
@@ -81,14 +92,14 @@ export function RuntimeConfigurationReview({ runtime }: { runtime: RuntimeConfig
       {plan.signal_summary && <><dt>{t("runtime.channelSetup")}</dt><dd>{plan.signal_summary}</dd></>}
       <dt>{t("runtime.targetRevision")}</dt><dd><code>{Object.entries(plan.target_revisions).map(([module, revision]) => `${module}: ${revision.slice(0, 12)}`).join(", ") || t("run.none")}</code></dd>
     </dl>
-    {runtime.requestError && <p className="error" role="alert">{runtime.requestError}</p>}
+    {state.requestError && <p className="error" role="alert">{state.requestError}</p>}
     {plan.errors.length > 0 && <ul className="error" role="alert">{plan.errors.map((error) => <li key={error}>{error}</li>)}</ul>}
     {stale && <p className="error" role="alert">{t("runtime.stalePlan")}</p>}
     {blockedReason && <p id="configuration-review-blocked" role="status">{t(blockedReason)}</p>}
     </div>
-    <div className="actions"><button disabled={runtime.submitting} onClick={runtime.dismissPlan}>{t("runtime.cancel")}</button>
-      <button className="primary" disabled={runtime.blocked || runtime.submitting || stale || plan.errors.length > 0}
+    <div className="actions"><button disabled={state.submitting} onClick={runtime.dismissPlan}>{t("runtime.cancel")}</button>
+      <button className="primary" disabled={state.blocked || state.submitting || stale || plan.errors.length > 0}
         aria-describedby={blockedReason ? "configuration-review-blocked" : "configuration-review-impact"}
-        onClick={() => void runtime.apply()}>{runtime.submitting ? t("runtime.submitting") : t("runtime.applyConfiguration")}</button></div>
+        onClick={() => void runtime.apply()}>{state.submitting ? t("runtime.submitting") : t("runtime.applyConfiguration")}</button></div>
   </dialog>;
 }

@@ -97,6 +97,15 @@ class TestAssemble:
 # ---------------------------------------------------------------------------
 
 class TestRegisterListeners:
+    def test_processing_input_fault_updates_its_read_model(self):
+        from unittest.mock import Mock
+
+        engine = FakeEngine(initialized=True)
+        container = _container(engine)
+        container.signal_setup_service = Mock()
+        register_engine_listeners(container)
+        assert (EventType.ProcessingInputFault, container.signal_setup_service.on_input_fault) in engine.subscriptions
+
     def test_registers_readmodel_then_extra_in_order(self):
         # Listener wiring is valid after graph construction and deliberately
         # does not require the runtime-ready state.

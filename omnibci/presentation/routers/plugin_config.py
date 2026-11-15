@@ -111,10 +111,18 @@ def _system_response(system):
 
 @router.get("/modules", response_model=ApiResponse[ModulesResponse])
 def get_modules(svc: PluginProfileService = Depends(get_plugin_profile_service)):
-    with _configuration_errors():
-        selected = svc.repository.get_activation_set()
-        return ApiResponse(data={"modules": {module: _module_response(module, selected.modules[module]) for module in MODULES},
-                                 "system": _system_response(selected.system)})
+    modules, errors = {}, {}
+    for module in MODULES:
+        try:
+            modules[module] = _module_response(module, svc.repository.get_module(module))
+        except (ValueError, KeyError, RuntimeError, OSError) as exc:
+            errors[module] = str(exc)
+    try:
+        system = _system_response(svc.repository.get_system())
+    except (ValueError, KeyError, RuntimeError, OSError) as exc:
+        system = None
+        errors["system"] = str(exc)
+    return ApiResponse(data={"modules": modules, "system": system, "errors": errors})
 
 
 @router.get("/modules/{module}", response_model=ApiResponse[ModuleActivationResponse])

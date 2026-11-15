@@ -16,8 +16,9 @@ from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.signal_processing.signal_processor import (
-    SignalProcessor, SignalProcessorCommand,
+    SignalProcessorCommand,
 )
+from tests.processing_helpers import make_processor as SignalProcessor
 from omnibci.shared.events import EventType
 
 

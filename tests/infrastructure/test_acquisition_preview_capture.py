@@ -162,7 +162,7 @@ def runtime(source=None, frames=None):
     events, main = [], Queue()
     acquisition = AcquisitionRuntime(
         source or Source(), Queue(), DataManager(main), SimpleNamespace(put_event=events.append),
-        source_id="source", preparation_required=False, generation="run", acquisition_revision="revision", system_revision="system",
+        source_id="source", generation="run", acquisition_revision="revision", system_revision="system",
         preview_queue=Queue() if frames is None else frames,
     )
     acquisition.connection_id = "connection"

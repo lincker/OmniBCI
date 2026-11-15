@@ -49,16 +49,14 @@ class Bus:
         self.events.append(event)
 
 
-@pytest.mark.parametrize("failure", ["queue_full", "malformed_chunk", "read"])
+@pytest.mark.parametrize("failure", ["malformed_chunk", "read"])
 def test_terminal_fetch_failure_blocks_drain_checkpoint_and_manual_restart(failure):
     async def scenario():
         source, bus = Source(malformed_chunk=failure == "malformed_chunk"), Bus()
         data = DataManager(queue.Queue(maxsize=1))
-        if failure == "queue_full":
-            data.put_data("existing-chunk")
         acquisition = AcquisitionRuntime(
             source, queue.Queue(), data, bus,
-            source_id="test-source", preparation_required=False,
+            source_id="test-source",
             generation="generation", acquisition_revision="revision", system_revision="system",
         )
         if failure == "read":
@@ -105,7 +103,7 @@ def test_fresh_graph_has_no_stale_failure_latch():
     async def scenario():
         acquisition = AcquisitionRuntime(
             Source(), queue.Queue(), DataManager(queue.Queue()), Bus(),
-            source_id="test-source", preparation_required=False,
+            source_id="test-source",
         )
         await acquisition._on_stop_stream()
         acquisition._require_healthy_stream()

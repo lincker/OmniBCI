@@ -35,6 +35,12 @@ class FakeEnginePort(EnginePort):
     def dispatch(self, event: Event) -> None:
         self.dispatched.append(event)
 
+    def prepare_output_sync(self, module):
+        return {}
+
+    def ensure_output_ready_sync(self, module, snapshot):
+        pass
+
 
 class RaisingEnginePort(EnginePort):
     """Port that always rejects dispatch (engine not ready)."""
@@ -95,14 +101,14 @@ class TestAcquisitionUsesPort:
         port = FakeEnginePort()
         svc = _acquisition_service(port)
         svc.handle_connect(ConnectDataProviderCommand())
-        assert len(port.dispatched) == 1
+        assert len(port.dispatched) == 2
         assert port.dispatched[0].type == EventType.ConnectDataProvider
 
     def test_start_stream_dispatches_via_port(self):
         port = FakeEnginePort()
         svc = _acquisition_service(port)
         svc.handle_start_stream(StartStreamCommand())
-        assert [event.type for event in port.dispatched] == [EventType.StopAndDrain, EventType.StartStream]
+        assert [event.type for event in port.dispatched] == [EventType.GetSourceMetadata, EventType.StartStream]
 
     def test_propagates_engine_not_ready(self):
         svc = _acquisition_service(RaisingEnginePort())

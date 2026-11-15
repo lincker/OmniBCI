@@ -6,6 +6,7 @@ Manages stimulation paradigm lifecycle through domain events.
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 from omnibci.application.runtime_admission import admitted
 from typing import TYPE_CHECKING
 
@@ -47,15 +48,22 @@ class StimulationAppService:
         self._process_manager = process_manager
         self._command_results = command_results
         self._active_identity = None
+        self._stop_managed = None
 
-    @admitted
     def handle_start_stimulation(self, cmd: StartStimulationCommand, *, settings_snapshot=None) -> None:
+        with self._admission.transition("stimulation") if self._admission is not None else nullcontext():
+            if settings_snapshot is None:
+                settings_snapshot = self._engine.prepare_output_sync("stimulation")
+            self._start_stimulation(cmd, settings_snapshot=settings_snapshot)
+
+    def _start_stimulation(self, cmd: StartStimulationCommand, *, settings_snapshot=None) -> None:
         if not self._engine.is_engine_ready:
             raise RuntimeError("Start the engine before starting stimulation")
         process_ready = False
         self._active_identity = None
         snapshot = self._engine.applied_snapshot if settings_snapshot is None else settings_snapshot
         try:
+            self._engine.ensure_output_ready_sync("stimulation", snapshot)
             if self._process_manager is not None:
                 # Managed mode blocks here until IPC + renderer/paradigm setup
                 # has reported READY.  External mode remains an immediate no-op.
@@ -94,8 +102,25 @@ class StimulationAppService:
         self._active_identity = self._identity(snapshot)
         logger.info("StartStimulation event dispatched (paradigm=%s)", cmd.paradigm)
 
-    @admitted(recovery=True)
     def handle_stop_stimulation(self, cmd: StopStimulationCommand) -> None:
+        with self._admission.stop_transition_sync("stimulation") if self._admission is not None else nullcontext():
+            if self._stop_managed is None:
+                self._stop_managed = self._managed()
+            try:
+                self._stop_stimulation(cmd)
+            except Exception as exc:
+                if self._admission is not None:
+                    self._admission.quarantine(str(exc), "stimulation")
+                raise
+            self._stop_managed = None
+            if self._admission is not None:
+                self._admission.clear_quarantine("stimulation")
+
+    def _stop_stimulation(self, cmd: StopStimulationCommand) -> None:
+        if not self._engine.is_engine_ready and self._managed() and self._process_manager is not None:
+            self._process_manager.stop()
+            self._active_identity = None
+            return
         try:
             if (
                 self._command_results is not None
@@ -136,7 +161,7 @@ class StimulationAppService:
                 self._active_identity = None
         logger.info("StopStimulation event dispatched")
 
-    @admitted
+    @admitted(scopes="stimulation")
     def handle_start_trial(self, cmd: StartStimTrialCommand) -> None:
         if not self.is_active:
             raise RuntimeError("Start stimulation before starting a trial")
@@ -171,6 +196,8 @@ class StimulationAppService:
                 snapshot.get("CONFIG.module_revisions", {}).get("stimulation"))
 
     def _managed(self) -> bool:
+        if self._stop_managed is not None:
+            return self._stop_managed
         snapshot = self._engine.applied_snapshot
         if isinstance(snapshot, dict) and "STIMULATION.auto_spawn" in snapshot:
             return snapshot["STIMULATION.auto_spawn"]

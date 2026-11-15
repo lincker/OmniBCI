@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from tests.processing_helpers import make_processor
-from omnibci.application.events import CommandRequest
+from omnibci.application.events import CommandRequest, ProcessingInputStart
 from omnibci.application.plugin_profiles import ProfileBinding
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 from omnibci.domain.ports.acquisition import SignalSource
@@ -131,7 +131,7 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
 
     monkeypatch.setattr(data, "put_data", capture)
     acquisition = AcquisitionRuntime(
-        source, Queue(), data, bus, source_id=source.plugin_type, preparation_required=True,
+        source, Queue(), data, bus, source_id=source.plugin_type,
         generation="curry-generation", acquisition_revision="curry-revision", system_revision="system",
     )
     processor = make_processor(
@@ -167,12 +167,13 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
         receipt = {
             "generation": "curry-generation", "acquisition_revision": "curry-revision", "processing_revision": "curry-revision", "system_revision": "system",
             "connection_id": descriptor.connection_id,
-            "source_fingerprint": descriptor.fingerprint, "plan_fingerprint": plan.fingerprint,
+            "source_fingerprint": descriptor.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
         }
         processing_command(SignalProcessorCommand.prepare_signal, "prepare", {
             "plan": plan.to_dict(), "receipt": receipt,
         })
-        await acquisition_command(AcquisitionCommand.start_stream, "stream", receipt)
+        processor._on_input_start(ProcessingInputStart("attach", receipt, -1))
+        await acquisition_command(AcquisitionCommand.start_stream, "stream")
         async with asyncio.timeout(5):
             while processor._last_sequence < len(blocks) - 1:
                 await processor._current_state.run()

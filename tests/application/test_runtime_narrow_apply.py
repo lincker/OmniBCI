@@ -1,10 +1,9 @@
 """Narrow updates preserve workers and reconcile uncertain receipts."""
-from copy import deepcopy
 from dataclasses import replace
 
 import pytest
 
-from omnibci.application.events import CommandResult
+from omnibci.application.events import CommandResult, StreamDrainReceipt
 from omnibci.application.plugin_profiles import ActivationSet, ModuleActivation, ProfileRevisionConflict
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.services.command_result_service import CommandTimeoutError
@@ -28,7 +27,12 @@ class NarrowCommands(Commands):
 
     def request(self, event_type, payload=None, **kwargs):
         identity = {"generation": self.engine.generation, "system_revision": self.engine.applied_revisions["system"]}
-        if event_type is EventType.StageProcessingConfiguration:
+        if event_type is EventType.DetachProcessingInput:
+            assert payload["expected_revision"] == self.acquisition_revision
+            data = StreamDrainReceipt(self.engine.generation, self.acquisition_revision, 9, 1, True,
+                                      processing_revision=self.processing_revision,
+                                      system_revision=self.engine.applied_revisions["system"]).to_dict()
+        elif event_type is EventType.StageProcessingConfiguration:
             assert payload["expected_revision"] == self.processing_revision
             target = payload["settings_snapshot"]["CONFIG.module_revisions"]["processing"]
             self.stage_targets.append(target)
@@ -63,8 +67,8 @@ def narrow(rebuild_harness):
         h.runtime.executor.commands = h.commands
         h.output_restarts = []
 
-        def acknowledge(snapshot):
-            h.engine.applied_snapshot = deepcopy(snapshot)
+        def prepare():
+            h.log.append(("attach_processing", h.engine.applied_revisions["processing"]))
 
         start_module = h.engine.start_module_for_configuration
 
@@ -73,7 +77,7 @@ def narrow(rebuild_harness):
                 h.output_restarts.append(snapshot["CONFIG.module_revisions"]["actuation"])
             await start_module(module, snapshot)
 
-        h.engine.acknowledge_configuration = acknowledge
+        h.runtime.executor.signal_preparer = prepare
         h.engine.start_module_for_configuration = start_module_observed
         h.module = "processing"
         bindings = [{"slot": item.slot, "profile_id": item.profile_id}
@@ -112,6 +116,28 @@ async def test_trial_update_changes_revisions_without_pausing_or_replacing_worke
     assert h.commands.restores == h.acquisition.starts == []
     assert not any(item[0] == "drain" for item in h.log)
     assert_preserved(h)
+
+
+@pytest.mark.asyncio
+async def test_applied_pipeline_history_failure_is_visible_and_does_not_block_outputs(narrow, monkeypatch):
+    h = narrow("trial_boundary")
+
+    def unavailable_history(*args, **kwargs):
+        raise OSError("History disk unavailable")
+
+    monkeypatch.setattr(h.profiles.repository, "record_module_history", unavailable_history)
+    operation = await apply(h)
+    assert operation["status"] == "succeeded"
+    assert operation["result"]["applied"] is True
+    assert operation["result"]["history_saved"] is False
+    assert "History disk unavailable" in operation["result"]["warning"]
+    assert h.engine.applied_revisions["processing"] == h.plan.target_revisions["processing"]
+    assert h.runtime.status()["recovery"] == {}
+    with h.engine.admission.command("stimulation"):
+        pass
+    with h.engine.admission.command("actuation"):
+        pass
+    assert h.acquisition.streaming
 
 
 @pytest.mark.asyncio
@@ -177,7 +203,7 @@ async def test_trial_receipt_mismatch_does_not_guess_rollback(narrow, fault):
 async def test_pipeline_engine_acknowledgement_failure_requires_recovery(narrow, monkeypatch, strategy):
     h = narrow(strategy)
 
-    def fail_acknowledgement(snapshot):
+    def fail_acknowledgement(snapshot, *, modules=None):
         assert h.commands.processing_revision == snapshot["CONFIG.module_revisions"]["processing"]
         h.engine.is_engine_ready = False
         raise RuntimeError("Engine lost readiness after Processing applied")
@@ -199,7 +225,7 @@ async def test_pipeline_engine_acknowledgement_failure_requires_recovery(narrow,
     assert h.profiles.repository.list_module_history("processing") == []
     assert h.commands.restores == h.acquisition.starts == h.output_restarts == []
     if strategy == "module":
-        assert not h.acquisition.streaming
+        assert h.acquisition.streaming
     assert_quarantined(h)
     assert_preserved(h)
 
@@ -235,21 +261,35 @@ async def test_trial_persistence_failure_checks_selection_before_rollback(narrow
 
 
 @pytest.mark.asyncio
-async def test_module_update_drains_restores_cursor_and_preserves_workers(narrow):
+async def test_module_update_detaches_input_and_preserves_source_streaming(narrow):
     h = narrow("module")
     operation = await apply(h)
     assert operation["status"] == "succeeded"
     assert h.output_restarts == []
     assert h.commands.context_targets == []
-    assert h.commands.restores == h.acquisition.starts == [(h.previous.modules["acquisition"].revision, 100)]
+    assert h.commands.restores == h.acquisition.starts == []
+    assert h.acquisition.streaming
     assert h.commands.stage_targets == [h.plan.target_revisions[h.module]]
     names = [item[0] for item in h.log]
-    assert names.index("drain") < names.index("StageProcessingConfiguration") < names.index("RestoreSourceCheckpoint")
+    assert names.index("DetachProcessingInput") < names.index("StageProcessingConfiguration") < names.index("attach_processing")
+    assert "GetSourceCheckpoint" not in names
     assert_preserved(h)
 
 
 @pytest.mark.asyncio
-async def test_module_save_failure_restores_old_context_and_cursor_without_rebuilding(narrow, monkeypatch):
+async def test_processing_can_change_before_any_input_has_been_attached(narrow):
+    h = narrow("module")
+    h.runtime.executor.signal_detacher = lambda: StreamDrainReceipt(
+        h.engine.generation, h.engine.applied_revisions["acquisition"], -1, 0, False,
+        system_revision=h.engine.applied_revisions["system"])
+    operation = await apply(h)
+    assert operation["status"] == "succeeded", operation
+    assert h.acquisition.streaming
+    assert h.acquisition.starts == h.commands.restores == []
+
+
+@pytest.mark.asyncio
+async def test_module_save_failure_restores_old_pipeline_without_stopping_source(narrow, monkeypatch):
     h = narrow("module")
 
     def fail_save(*args, **kwargs):
@@ -262,19 +302,25 @@ async def test_module_save_failure_restores_old_context_and_cursor_without_rebui
     assert h.commands.context_targets == []
     assert h.commands.processing_revision == h.previous.modules[h.module].revision
     assert h.commands.acquisition_revision == h.previous.modules["acquisition"].revision
-    assert h.commands.restores == h.acquisition.starts == [(h.previous.modules["acquisition"].revision, 100)]
+    assert h.commands.restores == h.acquisition.starts == []
+    assert h.acquisition.streaming
     assert_preserved(h)
 
 
 @pytest.mark.asyncio
-async def test_module_unknown_resume_never_recreates_outputs_or_rewinds(narrow):
+async def test_module_unknown_attachment_never_recreates_outputs_or_rewinds(narrow):
     h = narrow("module")
-    h.acquisition.unknown_start = True
+
+    def unknown_attachment():
+        raise CommandTimeoutError("attach-unknown", "AttachProcessingInput", .01)
+
+    h.runtime.executor.signal_preparer = unknown_attachment
     operation = await apply(h)
     assert operation["status"] == "recovery_required"
     assert not operation["rolled_back"]
     assert h.output_restarts == []
-    assert h.commands.restores == h.acquisition.starts == [(h.previous.modules["acquisition"].revision, 100)]
+    assert h.commands.restores == h.acquisition.starts == []
+    assert h.acquisition.streaming
     assert h.engine.applied_revisions[h.module] == h.profiles.repository.get_module(h.module).revision == h.plan.target_revisions[h.module]
     assert_quarantined(h)
     assert_preserved(h)
@@ -306,6 +352,13 @@ async def test_streaming_source_without_confirmed_checkpoint_is_not_automaticall
 
     monkeypatch.setattr(h.commands, "request", source_receipt)
     operation = await apply(h)
+    if strategy == "module":
+        assert operation["status"] == "succeeded"
+        assert h.acquisition.streaming
+        assert h.acquisition.starts == h.commands.restores == []
+        assert not any(item[0] == "GetSourceCheckpoint" for item in h.log)
+        assert_preserved(h)
+        return
     assert operation["status"] == "recovery_required"
     assert not operation["rolled_back"]
     assert h.acquisition.starts == h.commands.restores == []
@@ -337,8 +390,10 @@ async def test_declared_live_source_resumes_without_replay_checkpoint(narrow, re
     operation = await apply(h)
     assert operation["status"] == "succeeded"
     assert h.commands.restores == []
-    assert len(h.acquisition.starts) == 1
-    assert h.acquisition.starts[0][0] == (h.plan.target_revisions[h.module] if h.module == "acquisition" else h.previous.modules["acquisition"].revision)
+    if strategy == "rebuild":
+        assert h.acquisition.starts == [(h.plan.target_revisions[h.module], 0)]
+    else:
+        assert h.acquisition.starts == []
     assert h.engine.applied_revisions[h.module] == h.profiles.repository.get_module(h.module).revision == h.plan.target_revisions[h.module]
     if strategy == "module":
         assert h.output_restarts == []
@@ -575,7 +630,8 @@ schema_version=1
     register_engine_listeners(container)
     coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
                                           container.stimulation_service,
-                                          container.command_results, signal_preparer=signal.prepare)
+                                          container.command_results, signal_preparer=signal.prepare,
+                                          signal_detacher=signal.detach)
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
     try:
         await engine.handle_start_engine(StartEngineCommand())
@@ -632,7 +688,9 @@ async def test_processing_module_stage_failure_restores_only_confirmed_old_pipel
         assert_quarantined(h)
     else:
         assert operation["status"] == "failed" and operation["rolled_back"]
-        assert h.acquisition.starts == [(h.previous.modules["acquisition"].revision, 100)]
+        assert h.acquisition.starts == []
+        assert h.acquisition.streaming
+        assert ("attach_processing", h.previous.modules["processing"].revision) in h.log
         assert h.commands.processing_revision == h.previous.modules["processing"].revision
         with h.engine.admission.command():
             pass
@@ -644,7 +702,6 @@ def output_update(rebuild_harness):
     h.module = "actuation"
     h.output_events = []
     h.fail_output_start = False
-    h.engine.acknowledge_configuration = lambda snapshot: setattr(h.engine, "applied_snapshot", deepcopy(snapshot))
 
     async def stop_output():
         h.output_events.append(("stop", h.engine.applied_revisions["actuation"]))

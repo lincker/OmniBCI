@@ -18,7 +18,7 @@ from omnibci.application.queries.engine_queries import GetEngineStatusQuery
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.events import CommandResult
 from omnibci.application.plugin_profiles import ProfileRevisionConflict
-from omnibci.application.services.command_result_service import CommandExecutionError, CommandResultBroker
+from omnibci.application.services.command_result_service import CommandExecutionError, CommandResultBroker, CommandTimeoutError
 from omnibci.shared.events import Event, EventType
 
 
@@ -34,7 +34,7 @@ class TestNeuroEngineServiceStatus:
 class TestNeuroEngineServicePortState:
     @pytest.mark.parametrize("alive", [None, False, True])
     def test_actuation_process_liveness_is_independent_of_engine_readiness(self, engine_service, alive):
-        engine_service._actuation_manager = None if alive is None else MagicMock(is_alive=alive)
+        engine_service._actuation.process_manager = None if alive is None else MagicMock(is_alive=alive)
         assert engine_service.actuation_process_alive is (alive is True)
         assert not engine_service.is_engine_ready
 
@@ -55,7 +55,7 @@ class TestNeuroEngineServicePortState:
     def test_dispatch_rejects_initialised_but_stopped_engine(
         self, engine_service, mock_engine
     ):
-        with pytest.raises(RuntimeError, match="not running"):
+        with pytest.raises(RuntimeError, match="not running|stop is in progress"):
             engine_service.dispatch(Event(EventType.StartStream))
 
         mock_engine.event_bus.put_event.assert_not_called()
@@ -176,7 +176,7 @@ class TestNeuroEngineServicePortState:
         assert await asyncio.to_thread(join_entered.wait, 1.0)
 
         assert engine_service.is_engine_ready is False
-        with pytest.raises(RuntimeError, match="not running"):
+        with pytest.raises(RuntimeError, match="not running|stop is in progress"):
             engine_service.dispatch(Event(EventType.StartStream))
         mock_engine.event_bus.put_event.assert_not_called()
 
@@ -344,9 +344,9 @@ class TestNeuroEngineServiceStart:
     async def test_actuation_failure_does_not_block_acquisition(
         self, engine_service
     ):
-        manager = MagicMock()
+        manager = MagicMock(is_alive=False)
         manager.start.side_effect = RuntimeError("effector unavailable")
-        engine_service._actuation_manager = manager
+        engine_service._actuation.process_manager = manager
         engine_service._graph_snapshot = {"ACTUATION.auto_spawn": True}
         thread = MagicMock()
         thread.is_alive.return_value = True
@@ -361,7 +361,8 @@ class TestNeuroEngineServiceStart:
         with pytest.raises(RuntimeError, match="effector unavailable"):
             await engine_service.start_module("actuation")
         manager.start.assert_called_once_with(settings_snapshot=engine_service.applied_snapshot)
-        manager.stop.assert_not_called()
+        manager.stop.assert_called_once()
+        assert not engine_service.admission.recovery_required
         assert engine_service.is_engine_ready
 
 class TestNeuroEngineServiceStop:
@@ -476,7 +477,9 @@ async def test_processing_lifecycle_preserves_a_reading_source_and_foundation(ru
     graph.signal_processing_worker.is_alive.return_value = action == "stop"
     acquisition.handle_get_status.return_value.streaming = True
     await getattr(engine, f"{action}_module")("processing")
-    assert calls == ["drain", "GetSourceCheckpoint", f"{action} processing", "RestoreSourceCheckpoint", "read"]
+    assert calls == [f"{action} processing"]
+    acquisition.handle_stop_and_drain.assert_not_called()
+    acquisition.handle_start_stream.assert_not_called()
     assert engine.is_module_running("acquisition")
     assert engine.is_module_running("processing") is (action == "start")
     assert engine.is_engine_ready
@@ -486,7 +489,7 @@ async def test_processing_lifecycle_preserves_a_reading_source_and_foundation(ru
 
 
 @pytest.mark.asyncio
-async def test_processing_start_failure_resumes_source_with_previous_configuration(running_modules):
+async def test_processing_start_failure_leaves_source_reading_with_previous_configuration(running_modules):
     engine, graph, acquisition, _, _, calls = running_modules
     graph.acquisition_worker.is_alive.return_value = True
     acquisition.handle_get_status.return_value.streaming = True
@@ -494,7 +497,9 @@ async def test_processing_start_failure_resumes_source_with_previous_configurati
     before = engine.applied_snapshot
     with pytest.raises(RuntimeError, match="decoder failed"):
         await engine.start_module("processing")
-    assert calls == ["drain", "GetSourceCheckpoint", "RestoreSourceCheckpoint", "read"]
+    assert calls == []
+    acquisition.handle_stop_and_drain.assert_not_called()
+    acquisition.handle_start_stream.assert_not_called()
     assert engine.applied_snapshot == before
     assert not engine.is_module_running("processing")
     assert engine.is_module_running("acquisition")
@@ -502,7 +507,7 @@ async def test_processing_start_failure_resumes_source_with_previous_configurati
 
 
 @pytest.mark.asyncio
-async def test_processing_change_does_not_guess_resume_when_source_has_no_checkpoint(running_modules):
+async def test_processing_start_does_not_require_source_checkpoint(running_modules):
     engine, graph, acquisition, commands, _, calls = running_modules
     graph.acquisition_worker.is_alive.return_value = True
     acquisition.handle_get_status.return_value.streaming = True
@@ -512,11 +517,12 @@ async def test_processing_change_does_not_guess_resume_when_source_has_no_checkp
         "acquisition_revision": "acquisition", "supported": False,
         "resume_without_checkpoint_safe": False,
     })
-    with pytest.raises(RuntimeError, match="does not support resuming"):
-        await engine.start_module("processing")
-    graph.start_module.assert_not_awaited()
+    await engine.start_module("processing")
+    graph.start_module.assert_awaited_once()
+    commands.request.assert_not_called()
+    acquisition.handle_stop_and_drain.assert_not_called()
     acquisition.handle_start_stream.assert_not_called()
-    assert calls == ["drain"]
+    assert calls == ["start processing"]
     assert engine.is_engine_ready
 
 
@@ -560,7 +566,7 @@ async def test_external_actuation_can_stop_and_resume_without_acquisition_or_pro
 async def test_module_start_cannot_bypass_runtime_recovery(running_modules, module, already_running):
     engine, graph, _, commands, _, calls = running_modules
     if module == "actuation":
-        engine._actuation_active = already_running
+        engine._actuation.active = already_running
         graph.peer_gateway.peer.return_value.is_connected = already_running
     else:
         worker = graph.acquisition_worker if module == "acquisition" else graph.signal_processing_worker
@@ -591,8 +597,8 @@ async def test_module_stop_remains_available_during_runtime_recovery(running_mod
 async def test_confirmed_actuation_replacement_does_not_repeat_settlement(running_modules):
     engine, graph, _, commands, _, calls = running_modules
     manager = MagicMock()
-    engine._actuation_manager = manager
-    engine._actuation_active = True
+    engine._actuation.process_manager = manager
+    engine._actuation.active = True
     graph.peer_gateway.peer.return_value.is_connected = True
     async with engine.runtime_transition():
         await engine.stop_actuation_for_configuration()
@@ -601,3 +607,326 @@ async def test_confirmed_actuation_replacement_does_not_repeat_settlement(runnin
     manager.stop.assert_called_once()
     assert not engine.is_module_running("actuation")
     assert not calls
+
+
+@pytest.mark.asyncio
+async def test_cancelled_start_caller_does_not_release_actuator_until_spawn_finishes(running_modules):
+    engine, graph, _, _, _, _ = running_modules
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    manager = MagicMock(is_alive=False)
+
+    def start(**kwargs):
+        entered.set()
+        assert release.wait(3)
+        manager.is_alive = True
+        finished.set()
+
+    manager.start.side_effect = start
+    manager.stop.side_effect = lambda: setattr(manager, "is_alive", False)
+    engine._actuation.process_manager = manager
+    caller = asyncio.create_task(engine.start_module("actuation"))
+    stop = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        stop = asyncio.create_task(engine.stop_module("actuation"))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert not stop.done()
+        manager.stop.assert_not_called()
+        release.set()
+        await asyncio.wait_for(stop, 2)
+        manager.start.assert_called_once()
+        manager.stop.assert_called_once()
+        assert not manager.is_alive
+        assert not engine.is_module_running("actuation")
+    finally:
+        release.set()
+        await asyncio.to_thread(finished.wait, 1)
+        if stop is not None:
+            await asyncio.gather(stop, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_prepare_caller_keeps_foundation_stop_waiting_for_listener(running_modules):
+    engine, graph, _, _, _, _ = running_modules
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    order = []
+
+    def listener_ready():
+        entered.set()
+        assert release.wait(3)
+        order.append("listener ready")
+        finished.set()
+
+    async def prepare(*args):
+        await asyncio.to_thread(listener_ready)
+
+    def stopped(_timeout):
+        order.append("foundation stopped")
+        engine._engine_thread.is_alive.return_value = False
+
+    graph.ensure_output_ready.side_effect = prepare
+    engine._engine_thread.join.side_effect = stopped
+    caller = asyncio.create_task(engine.prepare_output("stimulation"))
+    stop = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        stop = asyncio.create_task(engine.handle_stop_engine(StopEngineCommand()))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert not stop.done()
+        assert order == []
+        release.set()
+        await asyncio.wait_for(stop, 2)
+        assert order == ["listener ready", "foundation stopped"]
+        assert not engine.is_engine_ready
+    finally:
+        release.set()
+        await asyncio.to_thread(finished.wait, 1)
+        if stop is not None:
+            await asyncio.gather(stop, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_actuation_settlement_failure_still_cleans_managed_process_and_requires_recovery(running_modules):
+    engine, graph, _, commands, _, _ = running_modules
+    manager = MagicMock(is_alive=True)
+    manager.stop.side_effect = lambda: setattr(manager, "is_alive", False)
+    engine._actuation.process_manager = manager
+    engine._actuation.active = True
+    graph.peer_gateway.peer.return_value.is_connected = True
+    commands.request.side_effect = CommandTimeoutError("settle", "SettleActuation", .01)
+    with pytest.raises(CommandTimeoutError):
+        await engine.stop_module("actuation")
+    manager.stop.assert_called_once()
+    assert not manager.is_alive
+    assert engine.admission.requires_recovery("actuation")
+    assert not engine.admission.requires_recovery("processing")
+
+
+@pytest.mark.asyncio
+async def test_acquisition_stop_releases_worker_when_processing_cannot_confirm_drain(running_modules):
+    engine, graph, acquisition, _, _, calls = running_modules
+    graph.acquisition_worker.is_alive.return_value = True
+    graph.signal_processing_worker.is_alive.return_value = True
+    acquisition.handle_stop_and_drain.side_effect = CommandTimeoutError("drain", "StopAndDrain", .01)
+    await engine.stop_module("acquisition")
+    assert calls == ["stop acquisition"]
+    assert not engine.is_module_running("acquisition")
+    assert engine.is_module_running("processing")
+    assert engine.admission.requires_recovery("processing")
+    assert not engine.admission.requires_recovery("acquisition")
+
+
+@pytest.mark.asyncio
+async def test_processing_stop_releases_worker_but_retains_failed_input_boundary(running_modules):
+    engine, graph, _, _, signal, calls = running_modules
+    graph.acquisition_worker.is_alive.return_value = True
+    graph.signal_processing_worker.is_alive.return_value = True
+    signal.detach.side_effect = CommandTimeoutError("detach", "DetachProcessingInput", .01)
+    with pytest.raises(CommandTimeoutError):
+        await engine.stop_module("processing")
+    assert calls == ["stop processing"]
+    assert not engine.is_module_running("processing")
+    assert engine.is_module_running("acquisition")
+    assert engine.admission.requires_recovery("processing")
+    assert not engine.admission.requires_recovery("acquisition")
+
+
+@pytest.mark.asyncio
+async def test_failed_external_resume_remains_recoverable_before_active_flag_is_set(running_modules):
+    engine, graph, _, commands, _, _ = running_modules
+    engine._applied_snapshot["ACTUATION.auto_spawn"] = False
+    graph.peer_gateway.peer.return_value.is_connected = True
+    request = commands.request.side_effect
+    commands.request.side_effect = CommandTimeoutError("resume", "ResumeActuation", .01)
+    with pytest.raises(CommandTimeoutError):
+        await engine.start_module("actuation")
+    assert not engine._actuation.active
+    assert engine.admission.requires_recovery("actuation")
+    commands.request.side_effect = request
+    await engine.stop_module("actuation")
+    assert commands.request.call_args.args[0] is EventType.SettleActuation
+    assert not engine.admission.requires_recovery("actuation")
+    graph.peer_gateway.replace_peer.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_backend_shutdown_waits_for_a_foundation_start_that_is_not_ready_yet(engine_service):
+    entered, release = asyncio.Event(), asyncio.Event()
+    order = []
+
+    async def start(command):
+        entered.set()
+        await release.wait()
+        order.append("start complete")
+
+    async def stop(command):
+        order.append("stop complete")
+
+    engine_service._start_engine_locked = start
+    engine_service._stop_engine_locked = stop
+    starting = asyncio.create_task(engine_service.handle_start_engine(StartEngineCommand()))
+    await entered.wait()
+    stopping = asyncio.create_task(engine_service.shutdown())
+    await asyncio.sleep(0)
+    assert not stopping.done()
+    release.set()
+    await asyncio.gather(starting, stopping)
+    assert order == ["start complete", "stop complete"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["start_output", "stop_output", "replace_output", "release_output",
+                                      "start_foundation", "stop_foundation"])
+async def test_module_owner_cannot_execute_another_modules_lifecycle(running_modules, operation):
+    engine, graph, _, _, _, _ = running_modules
+    operations = {
+        "start_output": lambda: engine.start_module_for_configuration("actuation", engine.applied_snapshot),
+        "stop_output": lambda: engine.stop_module_for_configuration("actuation"),
+        "replace_output": lambda: engine.reconfigure_output_modules(engine.applied_snapshot, ("actuation",)),
+        "release_output": engine.stop_actuation_for_configuration,
+        "start_foundation": lambda: engine.start_for_configuration(engine.applied_snapshot),
+        "stop_foundation": engine.stop_for_configuration,
+    }
+    async with engine.runtime_transition("processing"):
+        with pytest.raises(RuntimeError, match="own"):
+            await operations[operation]()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("module", ["stimulation", "actuation"])
+async def test_external_recovery_can_rebuild_foundation_and_publish_only_retained_configuration(running_modules, module):
+    from omnibci.application.services.stimulation_service import StimulationAppService
+    from omnibci.application.commands.stimulation_commands import StopStimulationCommand
+
+    engine, graph, _, commands, _, _ = running_modules
+    old = engine.applied_snapshot
+    old[f"{module.upper()}.auto_spawn"] = False
+    setting = "STIMULATION.renderer" if module == "stimulation" else "ACTUATION.server_ip"
+    old[setting] = "original"
+    old["PLUGINS.bindings"] = [{"slot": f"{module}.main", "plugin_id": "retained"},
+                               {"slot": "processing.decoder", "plugin_id": "unrelated"}]
+    engine._applied_snapshot = deepcopy(old)
+    graph.peer_gateway.peer.return_value.is_connected = True
+    if module == "actuation":
+        engine._actuation.active = True
+        engine._actuation._snapshot = deepcopy(old)
+    else:
+        engine._stimulation = StimulationAppService(engine, command_results=commands, admission=engine.admission)
+        engine._stimulation._active_identity = engine._stimulation._identity(old)
+    commands.request.side_effect = CommandTimeoutError("stop", "StopOutput", .01)
+    engine._engine_thread.join.side_effect = lambda _: setattr(engine._engine_thread.is_alive, "return_value", False)
+
+    with pytest.raises(RuntimeError, match="not confirmed"):
+        await engine.handle_stop_engine(StopEngineCommand())
+    assert not engine.restart_blocked
+    assert engine.admission.recovery_status.keys() == {module}
+    assert any(snapshot.get(setting) == "original"
+               for snapshot in engine.runtime_package_snapshots)
+    assert [binding["plugin_id"] for snapshot in engine.runtime_package_snapshots
+            for binding in snapshot.get("PLUGINS.bindings", [])] == ["retained"]
+
+    engine._snapshot_provider = lambda: {"CONFIG.system_revision": "system", "CONFIG.module_revisions": {}, "PLUGINS.bindings": []}
+    engine._engine_factory = lambda snapshot: graph
+    engine._module_snapshot_provider = MagicMock(side_effect=AssertionError("Recovery must not read selected values"))
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    with patch("omnibci.application.services.engine_service.Thread", return_value=thread):
+        await engine.handle_start_engine(StartEngineCommand())
+    assert engine.admission.recovery_status.keys() == {module}
+    with pytest.raises(ProfileRevisionConflict, match="[Pp]repar"):
+        engine.node_configuration_snapshot(lambda: {}, module=module)
+
+    commands.request.reset_mock()
+    await engine.prepare_output(module)
+    restored = graph.ensure_output_ready.await_args.args[1]
+    assert restored[setting] == "original"
+    assert restored["CONFIG.generation"] != old["CONFIG.generation"]
+    assert restored["CONFIG.module_revisions"][module] == old["CONFIG.module_revisions"][module]
+    commands.request.assert_not_called()
+    engine._module_snapshot_provider.assert_not_called()
+    state, publication = engine.node_configuration_snapshot(lambda: {}, module=module)
+    assert state == "running" and publication == engine.applied_snapshot
+    assert engine.admission.recovery_status.keys() == {module}
+
+    def stopped(event):
+        return SimpleNamespace(data={"generation": engine.generation, "system_revision": "system",
+                                     "module_revision": module, "paused": True,
+                                     "execution_complete": True, "outputs_settled": True})
+    commands.request.side_effect = stopped
+    if module == "actuation":
+        with pytest.raises(ProfileRevisionConflict, match="recovery"):
+            await engine.start_module(module)
+        await engine.stop_module(module)
+    else:
+        engine._stimulation.handle_stop_stimulation(StopStimulationCommand())
+    assert not engine.admission.requires_recovery(module)
+
+
+@pytest.mark.asyncio
+async def test_foundation_start_still_rejects_system_recovery(engine_service):
+    engine_service.admission.quarantine("Unknown foundation ownership", "system")
+    with pytest.raises(ProfileRevisionConflict, match="recovery"):
+        await engine_service.handle_start_engine(StartEngineCommand())
+
+
+@pytest.mark.asyncio
+async def test_unreleased_managed_output_still_blocks_foundation_restart(running_modules):
+    engine, graph, _, _, _, _ = running_modules
+    manager = MagicMock(is_alive=True)
+    manager.stop.side_effect = RuntimeError("Process did not exit")
+    engine._actuation.process_manager = manager
+    engine._actuation.active = True
+    engine._actuation._snapshot = engine.applied_snapshot
+    engine._engine_thread.join.side_effect = lambda _: setattr(engine._engine_thread.is_alive, "return_value", False)
+    with pytest.raises(RuntimeError, match="not confirmed"):
+        await engine.handle_stop_engine(StopEngineCommand())
+    assert engine.restart_blocked
+    assert engine.admission.recovery_status.keys() == {"system", "actuation"}
+    with pytest.raises(ProfileRevisionConflict, match="recovery"):
+        await engine.handle_start_engine(StartEngineCommand())
+    manager.stop.side_effect = lambda: setattr(manager, "is_alive", False)
+    await engine.handle_stop_engine(StopEngineCommand())
+    assert not engine.restart_blocked
+    assert not engine.admission.recovery_required
+
+
+@pytest.mark.asyncio
+async def test_external_recovery_stop_requires_receipt_even_before_enable(running_modules):
+    engine, graph, _, commands, _, _ = running_modules
+    engine._applied_snapshot["ACTUATION.auto_spawn"] = False
+    engine.admission.quarantine("Configuration settlement was not confirmed", "actuation")
+    graph.peer_gateway.peer.return_value.is_connected = True
+    request = commands.request.side_effect
+    commands.request.side_effect = CommandTimeoutError("settle", "SettleActuation", .01)
+    with pytest.raises(CommandTimeoutError):
+        await engine.stop_module("actuation")
+    assert engine.admission.requires_recovery("actuation")
+    assert engine._actuation.owned_snapshot["ACTUATION.auto_spawn"] is False
+    commands.request.side_effect = request
+    await engine.stop_module("actuation")
+    assert not engine.admission.requires_recovery("actuation")
+
+
+@pytest.mark.asyncio
+async def test_a_later_stimulation_recovery_uses_its_current_configuration(running_modules):
+    engine, graph, _, _, _, _ = running_modules
+    previous = engine.applied_snapshot
+    previous["STIMULATION.auto_spawn"] = False
+    previous["STIMULATION.renderer"] = "previous"
+    engine._recovery_snapshots["stimulation"] = previous
+    engine._applied_snapshot["STIMULATION.auto_spawn"] = False
+    engine._applied_snapshot["STIMULATION.renderer"] = "current"
+    engine._applied_snapshot["CONFIG.module_revisions"]["stimulation"] = "current-revision"
+    engine.admission.quarantine("A later external stop was not confirmed", "stimulation")
+    await engine.prepare_output("stimulation")
+    prepared = graph.ensure_output_ready.await_args.args[1]
+    assert prepared["STIMULATION.renderer"] == "current"
+    assert prepared["CONFIG.module_revisions"]["stimulation"] == "current-revision"

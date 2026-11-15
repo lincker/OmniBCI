@@ -1,6 +1,6 @@
 /** Editable plugin values live independently of saved profiles and mounted pages. */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { pluginConfigApi, selectionKey, moduleBindings, type ModulesResponse, type ModuleActivation, type RevisionMap, type PluginProfile, type PluginSelection } from "../api/plugin-config";
+import { pluginConfigApi, selectionKey, configurationModules, type ModuleActivation, type RevisionMap, type PluginProfile, type PluginSelection } from "../api/plugin-config";
 import type { ProcessingInput } from "../api/signal-config";
 import type { RuntimePlanRequest } from "../api/runtime-config";
 import { sameParameters, normalizedParameters, type ConfigurationSchema } from "../SchemaForm";
@@ -31,9 +31,9 @@ export function currentFromBinding(binding: ModuleActivation["bindings"][number]
 }
 
 export function currentBindings(module: ConfigurationModule, entries: Record<string, CurrentPluginConfiguration>,
-  filterOrder: string[], activation: ModulesResponse | null): RuntimePlanRequest["bindings"] {
+  filterOrder: string[], activation: ModuleActivation | null): RuntimePlanRequest["bindings"] {
   const values: Record<string, CurrentPluginConfiguration> = Object.fromEntries(
-    (activation?.modules[module]?.bindings ?? [])
+    (activation?.bindings ?? [])
       .map((binding) => [binding.slot, currentFromBinding(binding)]));
   for (const [slot, value] of Object.entries(entries)) {
     if (slot.startsWith(`${module}.`) && slot !== "processing.filters") values[slot] = value;
@@ -49,26 +49,28 @@ export function currentBindings(module: ConfigurationModule, entries: Record<str
   });
 }
 
-export function useCurrentConfiguration(acceptedRevisions?: RevisionMap, restoration?: { module: ConfigurationModule; operationId: string; revision: string } | null) {
+export type ModuleCurrentState = { activation: ModuleActivation | null; ready: boolean; error: string | null };
+export type ModuleRestoration = { module: ConfigurationModule; operationId: string; revision: string };
+const emptyModule = (): ModuleCurrentState => ({ activation: null, ready: false, error: null });
+
+export function useCurrentConfiguration(acceptedRevisions?: RevisionMap,
+  restorations: Partial<Record<ConfigurationModule, ModuleRestoration>> = {}) {
   const [entries, setEntries] = useState<Record<string, CurrentPluginConfiguration>>({});
   const [filterOrder, updateFilterOrder] = useState<string[]>([]);
-  const [ready, setReady] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [baseline, setBaseline] = useState<ModulesResponse | null>(null);
-  const loadGeneration = useRef(0);
-  const initialized = useRef(false);
-  const restoredOperation = useRef<string | null>(null);
-  const available = useRef(false);
+  const [modules, setModules] = useState<Record<ConfigurationModule, ModuleCurrentState>>(() =>
+    Object.fromEntries(configurationModules.map((module) => [module, emptyModule()])) as Record<ConfigurationModule, ModuleCurrentState>);
+  const states = useRef(modules);
+  const loadGeneration = useRef<Partial<Record<ConfigurationModule, number>>>({});
+  const initialized = useRef(new Set<ConfigurationModule>());
+  const restoredOperation = useRef<Partial<Record<ConfigurationModule, string>>>({});
+  const observed = useRef<Partial<Record<ConfigurationModule, string>>>({});
+  const restorationRef = useRef(restorations);
+  restorationRef.current = restorations;
   const values = useRef(entries);
   const order = useRef(filterOrder);
-  const initialize = useCallback((activation: ModulesResponse | null) => {
-    available.current = true;
-    setBaseline(activation); setReady(true); setError(null);
-    if (initialized.current) return;
-    initialized.current = true;
-    values.current = Object.fromEntries(moduleBindings(activation).map((binding) => [binding.slot, currentFromBinding(binding)]));
-    order.current = moduleBindings(activation).filter((binding) => binding.slot.startsWith("processing.filter.")).map((binding) => binding.slot);
-    setEntries(values.current); updateFilterOrder(order.current);
+  const updateModule = useCallback((module: ConfigurationModule, state: ModuleCurrentState) => {
+    states.current = { ...states.current, [module]: state };
+    setModules(states.current);
   }, []);
   const restoreModule = useCallback((activation: ModuleActivation) => {
     const module = activation.module;
@@ -79,27 +81,37 @@ export function useCurrentConfiguration(acceptedRevisions?: RevisionMap, restora
       order.current = activation.bindings.filter((binding) => binding.kind === "filter").map((binding) => binding.slot);
       updateFilterOrder(order.current);
     }
-    setBaseline((previous) => previous ? { ...previous, modules: { ...previous.modules, [module]: activation } } : previous);
-  }, []);
-  const reload = useCallback(async () => {
-    const generation = ++loadGeneration.current;
+    updateModule(module, { activation, ready: true, error: null });
+  }, [updateModule]);
+  const reload = useCallback(async (module: ConfigurationModule) => {
+    const generation = (loadGeneration.current[module] ?? 0) + 1;
+    loadGeneration.current[module] = generation;
     try {
-      const activation = await pluginConfigApi.modules();
-      if (generation !== loadGeneration.current) return;
-      initialize(activation); setError(null);
-      if (restoration && restoredOperation.current !== restoration.operationId) {
-        const restored = activation.modules[restoration.module];
-        restoredOperation.current = restoration.operationId;
-        if (restored.revision !== restoration.revision) throw new Error("The restored module changed again. Refresh and inspect its current values before continuing.");
-        restoreModule(restored);
-      }
+      const activation = await pluginConfigApi.module(module);
+      if (generation !== loadGeneration.current[module]) return;
+      const restoration = restorationRef.current[module];
+      if (restoration && restoredOperation.current[module] !== restoration.operationId) {
+        restoredOperation.current[module] = restoration.operationId;
+        if (activation.revision !== restoration.revision) throw new Error("The restored module changed again. Refresh and inspect its current values before continuing.");
+        restoreModule(activation);
+      } else if (!initialized.current.has(module)) restoreModule(activation);
+      initialized.current.add(module);
+      updateModule(module, { activation, ready: true, error: null });
     } catch (cause) {
-      if (generation === loadGeneration.current) {
-        available.current = false; setReady(false); setError(cause instanceof Error ? cause.message : String(cause));
-      }
+      if (generation === loadGeneration.current[module]) updateModule(module, {
+        ...states.current[module], ready: false, error: cause instanceof Error ? cause.message : String(cause),
+      });
     }
-  }, [initialize, restoreModule, restoration?.operationId]);
-  useEffect(() => { void reload(); return () => { loadGeneration.current += 1; }; }, [reload, JSON.stringify(acceptedRevisions)]);
+  }, [restoreModule, updateModule]);
+  useEffect(() => {
+    for (const module of configurationModules) {
+      const key = JSON.stringify([acceptedRevisions?.[module], restorations[module]?.operationId]);
+      if (observed.current[module] !== key) { observed.current[module] = key; void reload(module); }
+    }
+  }, [reload, JSON.stringify(acceptedRevisions), JSON.stringify(restorations)]);
+  useEffect(() => () => {
+    for (const module of configurationModules) loadGeneration.current[module] = (loadGeneration.current[module] ?? 0) + 1;
+  }, []);
   const get = useCallback((slot: string) => values.current[slot], []);
   const set = useCallback((slot: string, value: CurrentPluginConfiguration) => {
     values.current = { ...values.current, [slot]: structuredClone(value) };
@@ -113,16 +125,16 @@ export function useCurrentConfiguration(acceptedRevisions?: RevisionMap, restora
     return module === "processing" && decoder?.selection && (decoder.requiresProcessingInputReview || !decoder.processingInput)
       ? "Configure the decoder input before applying or starting processing." : null;
   }, []);
-  const request = useCallback((module: ConfigurationModule, activation: ModulesResponse | null): RuntimePlanRequest => {
-    if (!available.current) throw new Error("Current configuration is unavailable. Refresh before continuing.");
+  const request = useCallback((module: ConfigurationModule, activation: ModuleActivation | null): RuntimePlanRequest => {
+    if (!states.current[module].ready) throw new Error("Current configuration is unavailable. Refresh before continuing.");
     const validation = validationError(module);
     if (validation) throw new Error(validation);
     return { module, bindings: currentBindings(module, values.current, order.current, activation),
-      expected_revision: activation?.modules[module]?.revision ?? null };
+      expected_revision: activation?.revision ?? null };
   }, [validationError]);
-  const hasChanges = useCallback((module: ConfigurationModule, activation: ModulesResponse | null) => {
-    if (!initialized.current) return false;
-    const previousOrder = moduleBindings(activation).filter((binding) => binding.slot.startsWith("processing.filter.")).map((binding) => binding.slot);
+  const hasChanges = useCallback((module: ConfigurationModule, activation: ModuleActivation | null) => {
+    if (!initialized.current.has(module)) return false;
+    const previousOrder = (activation?.bindings ?? []).filter((binding) => binding.slot.startsWith("processing.filter.")).map((binding) => binding.slot);
     const before = currentBindings(module, {}, previousOrder, activation);
     const after = currentBindings(module, values.current, order.current, activation);
     const normalized = (bindings: RuntimePlanRequest["bindings"]) => [...bindings].sort((a, b) => {
@@ -131,8 +143,8 @@ export function useCurrentConfiguration(acceptedRevisions?: RevisionMap, restora
     });
     return !sameParameters(normalized(before), normalized(after));
   }, []);
-  const dirty = (["acquisition", "processing", "stimulation", "actuation"] as const).some((module) => hasChanges(module, baseline));
-  return { entries, filterOrder, ready, error, dirty, baseline, restoreModule, get, set, setFilterOrder, request, hasChanges, validationError, reload };
+  const dirty = (["acquisition", "processing", "stimulation", "actuation"] as const).some((module) => hasChanges(module, modules[module].activation));
+  return { entries, filterOrder, modules, dirty, restoreModule, get, set, setFilterOrder, request, hasChanges, validationError, reload };
 }
 
 export type CurrentConfigurationController = ReturnType<typeof useCurrentConfiguration>;

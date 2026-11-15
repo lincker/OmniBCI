@@ -4,14 +4,17 @@ from dataclasses import dataclass
 
 from omnibci.application.commands.acquisition_commands import ConnectDataProviderCommand, StartStreamCommand
 from omnibci.application.commands.stimulation_commands import StartStimulationCommand, StopStimulationCommand
-from omnibci.application.activation_settings import MODULES, section_settings
+from omnibci.application.activation_settings import merge_module_settings
+from omnibci.application.events import StreamDrainReceipt
 from omnibci.application.plugin_profiles import (
-    ActivationSet, ModuleActivation, ProfileBinding, ProfileRevisionConflict, SystemSettings,
+    ActivationSet, ProfileRevisionConflict,
 )
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 from omnibci.application.source_checkpoint import checkpoint_for_restore
 from omnibci.application.services.command_result_service import CommandRejectedError, CommandTimeoutError
-from omnibci.application.services.runtime_configuration_service import validate_external_peers
+from omnibci.application.services.runtime_configuration_service import (
+    operation_scopes, read_configuration, validate_external_peers,
+)
 from omnibci.shared.events import EventType
 
 
@@ -37,13 +40,14 @@ class RuntimeApplyCoordinator:
     supported_strategies = {"select_on_start", "no_change", "rebuild", "trial_boundary", "module"}
 
     def __init__(self, engine, profiles, acquisition, stimulation, commands, *,
-                 signal_preparer=None):
+                 signal_preparer=None, signal_detacher=None):
         self.engine = engine
         self.profiles = profiles
         self.acquisition = acquisition
         self.stimulation = stimulation
         self.commands = commands
         self.signal_preparer = signal_preparer
+        self.signal_detacher = signal_detacher
 
     def active_kinds(self, activation_set):
         kinds = set()
@@ -68,8 +72,8 @@ class RuntimeApplyCoordinator:
 
     async def execute(self, stored, progress, *, operation_id):
         plan = stored.plan
-        async with self.engine.runtime_transition():
-            previous = self.profiles.repository.get_activation_set()
+        async with self.engine.runtime_transition(operation_scopes(stored)):
+            previous = read_configuration(self.profiles.repository, plan.expected_revisions)
             revisions = previous.revisions()
             applied = self.engine.applied_revisions or {}
             if (any(revisions[k] != v for k, v in plan.expected_revisions.items())
@@ -96,11 +100,11 @@ class RuntimeApplyCoordinator:
                 written = self._persist(stored, previous)
                 if plan.running and plan.strategy == "select_on_start":
                     try:
-                        self.engine.acknowledge_configuration(target)
+                        self.engine.acknowledge_configuration(target, modules=tuple(stored.candidates))
                     except Exception as exc:
                         try:
                             self._rollback_saved(stored, previous, written)
-                            self.engine.acknowledge_configuration(before)
+                            self.engine.acknowledge_configuration(before, modules=tuple(stored.candidates))
                         except Exception as recovery:
                             raise RuntimeApplyFailure(f"Configuration selection failed: {exc}; restoration failed: {recovery}",
                                                       recovery_required=True) from recovery
@@ -116,13 +120,14 @@ class RuntimeApplyCoordinator:
             else:
                 result = await self._rebuild(stored, previous, progress)
             if plan.strategy != "no_change":
+                result.update(applied=True, history_saved=True)
                 try:
                     for candidate in stored.candidates.values():
                         self.profiles.repository.record_module_history(
                             candidate, operation_id, restored_from=stored.restored_from)
                 except Exception as exc:
-                    raise RuntimeApplyFailure("Configuration applied, but its history could not be saved",
-                                              recovery_required=True) from exc
+                    result.update(history_saved=False,
+                                  warning=f"Configuration applied, but its history could not be saved: {exc}")
             return result
 
     def _persist(self, stored, previous):
@@ -161,19 +166,14 @@ class RuntimeApplyCoordinator:
                 repository.save_module(previous.modules[module], expected_revision=target_revision)
 
     def _check_selected(self, previous, keys):
-        revisions = self.profiles.repository.get_activation_set().revisions()
+        revisions = read_configuration(self.profiles.repository, keys).revisions()
         if any(revisions[key] != previous.revisions()[key] for key in keys):
             raise ProfileRevisionConflict("Selected module configuration was changed by another writer")
 
     def _runtime_target(self, stored):
         before = self.engine.applied_snapshot
-        bindings = tuple(ProfileBinding.from_dict(item) for item in before["PLUGINS.bindings"])
-        running = ActivationSet({
-            module: ModuleActivation(module, section_settings(before, module),
-                                     tuple(binding for binding in bindings if binding.slot.startswith(f"{module}.")))
-            for module in MODULES
-        }, SystemSettings(section_settings(before, "system")))
-        return self.profiles.materialize(stored.activation_set(running), self.engine.generation)
+        selected = self.profiles.materialize(ActivationSet(stored.candidates, stored.system), self.engine.generation)
+        return merge_module_settings(before, selected, stored.candidates)
 
     async def _stage_pipeline(self, snapshot, expected_revision, *, boundary="trial"):
         identity = {"generation": snapshot["CONFIG.generation"],
@@ -211,12 +211,10 @@ class RuntimeApplyCoordinator:
         before = self.engine.applied_snapshot
         target = self._runtime_target(stored)
         boundary = "module" if stored.plan.strategy == "module" else "trial"
-        state = None
         if boundary == "module":
-            source = self.acquisition.handle_get_status(GetAcquisitionStatusQuery())
-            state = _RestoreState(source.connected, source.streaming, False)
+            progress("detaching_processing")
             try:
-                await self._quiesce(before, state, progress)
+                await self._detach_pipeline(before)
             except Exception as exc:
                 raise RuntimeApplyFailure(f"Processing boundary was not confirmed: {exc}",
                                           recovery_required=True) from exc
@@ -224,55 +222,69 @@ class RuntimeApplyCoordinator:
         try:
             await self._stage_pipeline(target, before["CONFIG.module_revisions"]["processing"], boundary=boundary)
         except Exception as exc:
-            if state is None:
+            if boundary == "trial":
                 raise
             if (isinstance(exc, CommandRejectedError)
                     or isinstance(exc, RuntimeApplyFailure) and not exc.recovery_required):
                 try:
-                    await self._resume_same_source(state, before)
+                    await self._prepare_pipeline()
                 except Exception as recovery:
-                    raise RuntimeApplyFailure(f"Processing update rejected; source recovery failed: {recovery}",
+                    raise RuntimeApplyFailure(f"Processing update rejected; input recovery failed: {recovery}",
                                               recovery_required=True) from recovery
                 raise RuntimeApplyFailure(f"Processing update rejected; previous pipeline retained: {exc}",
                                           rolled_back=True) from exc
             raise RuntimeApplyFailure(f"Processing update outcome is unknown: {exc}",
                                       recovery_required=True) from exc
         try:
-            self.engine.acknowledge_configuration(target)
+            self.engine.acknowledge_configuration(target, modules=("processing",))
         except Exception as exc:
             raise RuntimeApplyFailure(f"Processing changed, but engine acknowledgement failed: {exc}",
                                       recovery_required=True) from exc
         written = []
-        resumed = False
+        attaching = False
         try:
             progress("persisting")
             written = self._persist(stored, previous)
-            if state is not None:
-                resumed = state.streaming
-                await self._resume_same_source(state, target)
+            if boundary == "module":
+                attaching = True
+                await self._prepare_pipeline()
         except Exception as exc:
-            if resumed or getattr(exc, "recovery_required", False):
+            if attaching or getattr(exc, "recovery_required", False):
                 raise RuntimeApplyFailure(f"Processing update requires recovery: {exc}", recovery_required=True) from exc
             progress("rolling_back_processing")
             try:
                 self._rollback_saved(stored, previous, written)
                 self._check_selected(previous, stored.plan.expected_revisions)
                 await self._stage_pipeline(before, target["CONFIG.module_revisions"]["processing"], boundary=boundary)
-                self.engine.acknowledge_configuration(before)
-                if state is not None:
-                    await self._resume_same_source(state, before)
+                self.engine.acknowledge_configuration(before, modules=("processing",))
+                if boundary == "module":
+                    await self._prepare_pipeline()
             except Exception as recovery:
                 raise RuntimeApplyFailure(f"Saving failed: {exc}; pipeline recovery failed: {recovery}",
                                           recovery_required=True) from recovery
             raise RuntimeApplyFailure(f"Apply failed; previous pipeline restored: {exc}", rolled_back=True) from exc
         return {"outcome": "applied", "boundary": boundary}
 
-    async def _resume_same_source(self, state, snapshot):
-        if state.checkpoint is not None:
-            data = await self._request(EventType.RestoreSourceCheckpoint,
-                                       {**self._identity(snapshot), "checkpoint": state.checkpoint})
-            self._receipt(data, snapshot, "restored")
-        await self._resume_stream(state)
+    async def _detach_pipeline(self, snapshot):
+        if self.signal_detacher is not None:
+            receipt = await asyncio.to_thread(self.signal_detacher)
+            if receipt is None:
+                return None
+        else:
+            if not self.engine.is_module_running("acquisition"):
+                return None
+            data = await self._request(EventType.DetachProcessingInput, self._identity(snapshot))
+            receipt = StreamDrainReceipt.from_value(data)
+        if (receipt.generation != snapshot["CONFIG.generation"]
+                or receipt.system_revision != snapshot["CONFIG.system_revision"]
+                or receipt.acquisition_revision != snapshot["CONFIG.module_revisions"]["acquisition"]
+                or receipt.processing_revision not in (None, snapshot["CONFIG.module_revisions"]["processing"])):
+            raise RuntimeError("Processing detach receipt belongs to a different configuration")
+        return receipt
+
+    async def _prepare_pipeline(self):
+        if self.signal_preparer is not None:
+            await asyncio.to_thread(self.signal_preparer)
 
     async def _apply_output(self, stored, previous, progress):
         module = stored.plan.module
@@ -300,7 +312,7 @@ class RuntimeApplyCoordinator:
             startup_pending = True
             started = await self._start_output(module, target, active)
             startup_pending = False
-            self.engine.acknowledge_configuration(target)
+            self.engine.acknowledge_configuration(target, modules=(module,))
             progress("persisting")
             written = self._persist(stored, previous)
         except Exception as exc:
@@ -322,7 +334,7 @@ class RuntimeApplyCoordinator:
                 self._check_selected(previous, stored.plan.expected_revisions)
                 await self.engine.reconfigure_output_modules(before, (module,))
                 await self._start_output(module, before, active)
-                self.engine.acknowledge_configuration(before)
+                self.engine.acknowledge_configuration(before, modules=(module,))
             except Exception as recovery:
                 raise RuntimeApplyFailure(f"Output update failed: {exc}; recovery failed: {recovery}",
                                           recovery_required=True) from recovery
@@ -452,6 +464,8 @@ class RuntimeApplyCoordinator:
 
     async def _rebuild_module(self, stored, previous, progress):
         module = stored.plan.module
+        if module == "processing":
+            return await self._rebuild_processing(stored, previous, progress)
         before = self.engine.applied_snapshot
         target = self._runtime_target(stored)
         source = self.acquisition.handle_get_status(GetAcquisitionStatusQuery())
@@ -465,7 +479,7 @@ class RuntimeApplyCoordinator:
             stopped = True
             progress("starting")
             await self.engine.start_module_for_configuration(module, target)
-            self.engine.acknowledge_configuration(target)
+            self.engine.acknowledge_configuration(target, modules=(module,))
             replay_resumed = False
             if module == "acquisition":
                 old_source = previous.modules[module].bindings[0].selection
@@ -480,10 +494,7 @@ class RuntimeApplyCoordinator:
             written = self._persist(stored, previous)
             progress("restoring")
             resumed = state.streaming
-            if module == "processing":
-                await self._resume_same_source(state, target)
-            else:
-                await self._resume_stream(state)
+            await self._resume_stream(state)
             return {"outcome": "applied", "boundary": "module",
                     "interrupted_epoch": receipt.interrupted_epoch if receipt is not None else False,
                     "replay_resumed": replay_resumed}
@@ -496,19 +507,56 @@ class RuntimeApplyCoordinator:
                 self._rollback_saved(stored, previous, written)
                 self._check_selected(previous, stored.plan.expected_revisions)
                 await self.engine.start_module_for_configuration(module, before)
-                self.engine.acknowledge_configuration(before)
+                self.engine.acknowledge_configuration(before, modules=(module,))
                 if module == "acquisition":
                     await self._restore_source(before, state, state.checkpoint,
                                                require_live_resume=state.streaming and state.checkpoint is None)
                     if state.streaming and self.signal_preparer is not None:
                         await asyncio.to_thread(self.signal_preparer)
                     await self._resume_stream(state)
-                else:
-                    await self._resume_same_source(state, before)
             except BaseException as recovery:
                 raise RuntimeApplyFailure(f"Module update failed: {exc}; recovery failed: {recovery}",
                                           recovery_required=True) from recovery
             raise RuntimeApplyFailure(f"Module update failed; previous module restored: {exc}", rolled_back=True) from exc
+
+    async def _rebuild_processing(self, stored, previous, progress):
+        before = self.engine.applied_snapshot
+        target = self._runtime_target(stored)
+        stopped = attaching = False
+        written = []
+        try:
+            progress("detaching_processing")
+            receipt = await self._detach_pipeline(before)
+            progress("stopping")
+            await self.engine.stop_module_for_configuration("processing")
+            stopped = True
+            progress("starting")
+            await self.engine.start_module_for_configuration("processing", target)
+            self.engine.acknowledge_configuration(target, modules=("processing",))
+            progress("persisting")
+            written = self._persist(stored, previous)
+            progress("restoring")
+            attaching = True
+            await self._prepare_pipeline()
+            return {"outcome": "applied", "boundary": "module",
+                    "interrupted_epoch": receipt.interrupted_epoch if receipt is not None else False,
+                    "replay_resumed": False}
+        except BaseException as exc:
+            if not stopped or attaching or getattr(exc, "recovery_required", False):
+                raise RuntimeApplyFailure(f"Processing update requires recovery: {exc}", recovery_required=True) from exc
+            progress("rolling_back")
+            try:
+                await self.engine.stop_module_for_configuration("processing")
+                self._rollback_saved(stored, previous, written)
+                self._check_selected(previous, stored.plan.expected_revisions)
+                await self.engine.start_module_for_configuration("processing", before)
+                self.engine.acknowledge_configuration(before, modules=("processing",))
+                await self._prepare_pipeline()
+            except BaseException as recovery:
+                raise RuntimeApplyFailure(f"Processing update failed: {exc}; recovery failed: {recovery}",
+                                          recovery_required=True) from recovery
+            raise RuntimeApplyFailure(f"Processing update failed; previous pipeline restored: {exc}",
+                                      rolled_back=True) from exc
 
     async def _rebuild(self, stored, previous, progress):
         plan = stored.plan

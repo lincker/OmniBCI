@@ -179,7 +179,7 @@ def test_materialized_runtime_uses_pinned_source_values_and_generation(service):
     assert values["ACQUISITION.file_reader_chunk_size"] == 123
     assert values["CONFIG.module_revisions"]["acquisition"] == source.revision
     assert values["CONFIG.generation"] == "run-1"
-    assert values["CONFIG.module_revisions"]["processing"] == ModuleActivation("processing", {}, ()).revision
+    assert values["CONFIG.module_revisions"]["processing"] is None
     assert values["CONFIG.system_revision"] == SystemSettings({}).revision
 
 
@@ -204,8 +204,10 @@ def test_idle_missing_source_package_does_not_block_foundation_or_outputs(servic
     running_output = accepted_runtime_settings(profiles=service, active_kinds={kind})
 
     assert "ACQUISITION.signal_source" not in foundation
-    assert foundation["CONFIG.module_revisions"]["acquisition"] == missing.revision
-    assert running_output == foundation
+    assert all(revision is None for revision in foundation["CONFIG.module_revisions"].values())
+    assert foundation["PLUGINS.bindings"] == []
+    assert running_output["CONFIG.module_revisions"]["acquisition"] is None
+    assert all(item["slot"].startswith(output.module + ".") for item in running_output["PLUGINS.bindings"])
     assert running_output["CONFIG.module_revisions"][output.module] == output.revision
     assert service.repository.get_module("acquisition") == missing
     with pytest.raises(RuntimeError, match="missing.source"):

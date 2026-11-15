@@ -6,7 +6,6 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from types import SimpleNamespace
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -14,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from omnibci.application.plugin_market import PluginMarketError
 from omnibci.application.plugin_profiles import ProfileRevisionConflict
 from omnibci.application.services.plugin_market_service import PluginMarketService
+from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
@@ -176,7 +176,8 @@ def test_real_signed_http_to_disabled_install_enable_profile_and_runtime_plan(tm
         selection = installed.contributions[0].selection
         output = profiles.create("effector", selection, "Downloaded output", {"gain": 2.0})
         bindings = [{"slot": "actuation.effector", "profile_id": output.profile_id}]
-        runtime = RuntimeConfigurationService(profiles, SimpleNamespace(is_engine_ready=False))
+        runtime = RuntimeConfigurationService(profiles, NeuroEngineService(
+            lambda _: pytest.fail("Planning a downloaded module must not start an engine")))
         plan = runtime.plan("actuation", bindings, expected_revision=None)
         assert not plan.errors and plan.strategy == "select_on_start"
         pinned = runtime.resolve_plan(plan.plan_id).candidates["actuation"]

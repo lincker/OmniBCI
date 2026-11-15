@@ -117,7 +117,7 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
     return () => { active = false; };
   }, [JSON.stringify(runtime.status?.accepted), config]);
   const changedSections = (Object.keys(sectionKeys) as Section[]).filter((module) => {
-    const accepted = module === "system" ? activation?.system.settings : activation?.modules[module]?.settings;
+    const accepted = module === "system" ? activation?.system?.settings : activation?.modules[module]?.settings;
     return config?.entries.some((entry) => sectionKeys[module].includes(entry.key) && JSON.stringify(entry.value) !== JSON.stringify(accepted?.[entry.key]));
   });
   const selectedSection = changedSections.includes(section) ? section : changedSections[0];
@@ -125,21 +125,21 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
     if (!selectedSection) return;
     setBusy(true); setError(null);
     try {
-      const current = await pluginConfigApi.modules();
-      const selected = selectedSection === "system" ? current.system : current.modules[selectedSection];
-      const bindings: RuntimePlanRequest["bindings"] = selectedSection === "system" ? [] : current.modules[selectedSection].bindings.map((binding) => {
+      const selectedModule = selectedSection === "system" ? null : await pluginConfigApi.module(selectedSection);
+      const selected = selectedModule ?? await pluginConfigApi.system();
+      const bindings: RuntimePlanRequest["bindings"] = selectedModule?.bindings.map((binding) => {
         if (binding.profile_id) return { slot: binding.slot, profile_id: binding.profile_id };
         return { slot: binding.slot, selection: binding.selection, parameters: binding.parameters,
           configuration_version: binding.configuration_version,
           ...(binding.slot === "processing.decoder" ? { processing_input: binding.processing_input } : {}) };
-      });
-      await runtime.review({ module: selectedSection, bindings, expected_revision: selected.revision, refresh_slots: [] });
+      }) ?? [];
+      await runtime.review({ module: selectedSection, bindings, expected_revision: selected?.revision ?? null, refresh_slots: [] });
     } catch (cause) { setError(String(cause)); }
     finally { setBusy(false); }
   };
   const entries = (config?.entries ?? []).filter((entry) => fieldLabels[entry.key]);
   const reviewReason = busy ? "feedback.busy" : dirty ? "settings.saveBeforeReview"
-    : runtimeBlockReason(runtime) ?? (!config || !activation ? "settings.unavailableError" : !selectedSection ? "settings.noChanges" : null);
+    : (activation?.errors?.[selectedSection] ? "settings.unavailableError" : runtimeBlockReason(runtime, selectedSection || "system")) ?? (!config || !activation ? "settings.unavailableError" : !selectedSection ? "settings.noChanges" : null);
   const renderEntry = (entry: ConfigEntry) => {
     const fieldId = `setting-${entry.key}`;
     const saved = String(entry.value ?? "");
@@ -180,6 +180,7 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
       <div className="settings-scroll">
         {!config && <div className="empty-state"><Icon name="settings" /><h2>{busy ? t("settings.loading") : t("settings.unavailable")}</h2>
           {!busy && <button onClick={() => void run(async () => {}, "settings.refreshed")}>{t("settings.tryAgain")}</button>}</div>}
+        {Object.entries(activation?.errors ?? {}).map(([module, message]) => <p className="error" role="alert" key={module}>{module}: {message}</p>)}
         {preferences}
         <div className="module-fields">
           {entries.length > 0 && <div className="setting-group" data-group="Engine">
@@ -191,12 +192,12 @@ export function ConfigCard({ navigation, preferences, runtime, onDirtyChange, on
           : t(config ? "settings.savedOnly" : "settings.unavailable")}</span>
         <p className="action-help" id="settings-save-help">{t(busy ? "feedback.busy" : dirty ? "settings.saveHelp" : "settings.noChanges")}</p>
         <p className="action-help" id="settings-review-help">{t(reviewReason ?? "settings.applyHint")}</p>
-        <RuntimeConfigurationProgress runtime={runtime} />
+        <RuntimeConfigurationProgress runtime={runtime} module={selectedSection || "system"} />
       </div>
         <div className="actions">
           <button disabled={busy || !dirty} onClick={() => confirmDiscard(() => setDraft({}))}>{t("settings.discard")}</button>
           <button className="primary" disabled={busy || !dirty} aria-describedby="settings-save-help" aria-keyshortcuts="Control+s Meta+s" onClick={() => save()}>{t("settings.save")}</button>
-          {changedSections.length > 0 && <select aria-label={t("runtime.affectedModules")} value={selectedSection} disabled={busy || runtime.blocked}
+          {changedSections.length > 0 && <select aria-label={t("runtime.affectedModules")} value={selectedSection} disabled={busy || runtime.state(selectedSection || "system").blocked}
             onChange={(event) => setSection(event.target.value as Section)}>{changedSections.map((module) => <option key={module} value={module}>{module}</option>)}</select>}
           <button disabled={!!reviewReason} aria-describedby="settings-review-help"
             onClick={() => void reviewHostSettings()}>{t("settings.review")}</button>

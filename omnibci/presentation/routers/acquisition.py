@@ -64,10 +64,12 @@ async def connect(svc: AcquisitionAppService = Depends(get_acquisition_service),
 async def disconnect(svc: AcquisitionAppService = Depends(get_acquisition_service),
                      engine: NeuroEngineService = Depends(get_engine_service)):
     try:
-        if engine.is_module_running("acquisition"):
-            await run_in_threadpool(svc.handle_disconnect, DisconnectDataProviderCommand())
+        try:
+            if engine.is_module_running("acquisition"):
+                await run_in_threadpool(svc.handle_disconnect, DisconnectDataProviderCommand())
+        finally:
             await engine.stop_module("acquisition")
-        svc.reset()
+            svc.reset()
         return ApiResponse(message="Data provider disconnected")
     except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
         raise command_error_to_api_error(e)

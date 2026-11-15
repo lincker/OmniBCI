@@ -74,16 +74,17 @@ async def test_saved_edits_do_not_change_explicitly_selected_startup():
     container = await build_container()
     profiles = container.plugin_profile_service
     accepted = _configure(container)
-    before = container.engine_service._snapshot_provider()
+    before = container.engine_service._module_snapshot_provider("acquisition")
     source = next(binding for binding in accepted.bindings() if binding.kind == "acquisition")
     profile = profiles.repository.get_profile(source.profile_id)
     parameters = {**profile.parameters, "sample_rate": 250}
     profiles.update(profile.profile_id, name="Saved edit", parameters=parameters,
                     expected_revision=profile.revision)
 
-    assert container.engine_service._snapshot_provider() == before
+    assert container.engine_service._module_snapshot_provider("acquisition") == before
     assert before["CONFIG.module_revisions"]["acquisition"] == accepted.modules["acquisition"].revision
-    assert len(before["PLUGINS.bindings"]) >= 4
+    assert [binding["slot"] for binding in before["PLUGINS.bindings"]] == ["acquisition.source"]
+    assert container.engine_service._snapshot_provider()["PLUGINS.bindings"] == []
 
 
 @pytest.mark.asyncio
@@ -106,6 +107,8 @@ async def test_fresh_installation_does_not_select_plugins(monkeypatch):
 def test_status_reads_applied_values_while_engine_running():
     engine = Mock(is_engine_ready=True, applied_snapshot={"ACQUISITION.sample_rate": 250})
     profiles = Mock()
+    profiles.repository.get_module.return_value = None
+    profiles.repository.get_system.return_value = None
     profiles.materialize.return_value = {"ACQUISITION.sample_rate": 1000}
     view = _RuntimeSettings(engine, profiles)
     assert view.get("ACQUISITION.sample_rate") == 250
@@ -219,13 +222,14 @@ async def test_existing_activation_keeps_its_revision_and_pinned_inputs(bootstra
     restarted = await build_container()
 
     assert restarted.plugin_profile_service.repository.get_activation_set() == historical
-    runtime = restarted.engine_service._snapshot_provider()
+    runtime = restarted.engine_service._module_snapshot_provider("acquisition")
     assert runtime["CONFIG.module_revisions"]["acquisition"] == historical.modules["acquisition"].revision
     assert runtime["ACQUISITION.sample_rate"] == 256
     assert runtime["ACQUISITION.channel_count"] == 5
     assert not {"ALGORITHM.window_duration", "ssvep.duration",
                 "ACQUISITION.parallel_port_address"} & runtime.keys()
-    decoder = next(binding for binding in runtime["PLUGINS.bindings"]
+    processing_runtime = restarted.engine_service._module_snapshot_provider("processing")
+    decoder = next(binding for binding in processing_runtime["PLUGINS.bindings"]
                    if binding["kind"] == "decoder")
     selected_decoder = next(binding for binding in historical.bindings() if binding.kind == "decoder")
     assert decoder["selection"] == selected_decoder.selection.to_dict()
@@ -266,9 +270,12 @@ async def test_broken_activation_keeps_management_available_without_replacement(
 
     assert container.config_service.list_entries()[0]
     assert container.acquisition_service._device_metadata() == (None, None, None)
+    foundation = container.engine_service._snapshot_provider()
+    assert foundation["PLUGINS.bindings"] == []
     with pytest.raises(RuntimeError, match="configuration is invalid"):
-        container.engine_service._snapshot_provider()
-    assert _toml_files(repository.root) == original_files
+        container.engine_service._module_snapshot_provider("acquisition")
+    assert path.read_bytes() == original_files[path]
+    assert repository.get_system() is not None
 
 
 @pytest.mark.asyncio

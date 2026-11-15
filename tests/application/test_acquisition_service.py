@@ -33,9 +33,8 @@ def test_command_executor_is_required():
 class TestAcquisitionConnect:
     def test_connect_dispatches_event(self, acquisition_service, mock_engine):
         acquisition_service.handle_connect(ConnectDataProviderCommand())
-        mock_engine.event_bus.put_event.assert_called_once()
-        event = mock_engine.event_bus.put_event.call_args[0][0]
-        assert event.type == EventType.ConnectDataProvider
+        events = [call.args[0].type for call in mock_engine.event_bus.put_event.call_args_list]
+        assert events == [EventType.ConnectDataProvider, EventType.GetSourceMetadata]
 
     def test_connect_does_not_guess_state(self, acquisition_service):
         # Projection semantics: commands dispatch intent; only worker-reported
@@ -53,7 +52,7 @@ class TestAcquisitionStream:
     def test_start_stream_dispatches_event(self, acquisition_service, mock_engine):
         acquisition_service.handle_start_stream(StartStreamCommand())
         assert [item.args[0].type for item in mock_engine.event_bus.put_event.call_args_list] == [
-            EventType.StopAndDrain, EventType.StartStream,
+            EventType.GetSourceMetadata, EventType.StartStream,
         ]
 
     def test_start_stream_does_not_guess_state(self, acquisition_service):
@@ -75,7 +74,7 @@ class TestAcquisitionStream:
         with pytest.raises(RuntimeError, match="valid stream drain evidence"):
             service.handle_stop_stream(StopStreamCommand())
 
-    def test_start_waits_for_preparation_receipt(self):
+    def test_source_start_does_not_require_processing_receipt(self):
         executor = MagicMock()
         executor.request.return_value = CommandResult("drain", "StopAndDrain", True,
             data=StreamDrainReceipt(None, None, -1, 0, False).to_dict())
@@ -84,7 +83,7 @@ class TestAcquisitionStream:
         service.set_signal_preparer(lambda: receipt)
         service.handle_start_stream(StartStreamCommand())
         assert executor.request.call_args_list == [
-            call(EventType.StopAndDrain, timeout_s=None), call(EventType.StartStream, receipt),
+            call(EventType.GetSourceMetadata, {"refresh": True}, timeout_s=5.0), call(EventType.StartStream, None),
         ]
 
     def test_start_during_streaming_keeps_the_current_epoch(self):
@@ -92,28 +91,24 @@ class TestAcquisitionStream:
         service = AcquisitionAppService(executor)
         service.on_acquisition_state(Event(EventType.AcquisitionState, AcquisitionSnapshot(True, True)))
         service.handle_start_stream(StartStreamCommand())
-        executor.request.assert_called_once_with(EventType.StartStream, None)
+        assert executor.request.call_args_list[-1] == call(EventType.StartStream, None)
+        assert all(item.args[0] != EventType.StopAndDrain for item in executor.request.call_args_list)
 
-    def test_failed_drain_prevents_preparation_and_restart(self):
+    def test_source_read_failure_is_still_reported(self):
         executor = MagicMock()
-        executor.request.side_effect = RuntimeError("drain failed")
+        executor.request.side_effect = RuntimeError("source unavailable")
         service = AcquisitionAppService(executor)
-        prepare = MagicMock()
-        service.set_signal_preparer(prepare)
-        with pytest.raises(RuntimeError, match="drain failed"):
+        with pytest.raises(RuntimeError, match="source unavailable"):
             service.handle_start_stream(StartStreamCommand())
-        prepare.assert_not_called()
-        executor.request.assert_called_once_with(EventType.StopAndDrain, timeout_s=None)
+        assert executor.request.call_args_list[-1] == call(EventType.StartStream, None)
 
-    def test_failed_preparation_does_not_start_stream(self):
+    def test_failed_processing_preparation_does_not_block_source(self):
         executor = MagicMock()
-        executor.request.return_value = CommandResult("drain", "StopAndDrain", True,
-            data=StreamDrainReceipt(None, None, -1, 0, False).to_dict())
         service = AcquisitionAppService(executor)
         service.set_signal_preparer(MagicMock(side_effect=ValueError("Missing C3")))
-        with pytest.raises(ValueError, match="Missing C3"):
-            service.handle_start_stream(StartStreamCommand())
-        executor.request.assert_called_once_with(EventType.StopAndDrain, timeout_s=None)
+        service.handle_start_stream(StartStreamCommand())
+        assert executor.request.call_args_list[-1] == call(EventType.StartStream, None)
+        assert all(item.args[0] != EventType.StopAndDrain for item in executor.request.call_args_list)
 
 
 
@@ -365,13 +360,16 @@ def test_signal_metadata_must_match_the_raw_metadata_connection():
     assert service.cached_descriptor is None
 
 
-def test_connect_waits_for_an_explicit_metadata_request():
+def test_connect_captures_metadata_for_later_processing_without_starting_stream():
     service, executor, provider, *_ = _metadata_service()
     service.handle_connect(ConnectDataProviderCommand())
-    executor.request.assert_called_once_with(EventType.ConnectDataProvider, None)
-    provider.assert_not_called()
-    assert service.cached_descriptor is None
-    assert service._raw_metadata is None
+    assert executor.request.call_args_list == [
+        call(EventType.ConnectDataProvider, None),
+        call(EventType.GetSourceMetadata, {"refresh": True}, timeout_s=5.0),
+    ]
+    provider.assert_called_once()
+    assert service.cached_descriptor is not None
+    assert not service.is_streaming
 
 
 def test_metadata_comparison_uses_the_pinned_profile_without_replacing_its_expectations():

@@ -111,7 +111,9 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     current.setFilterOrder(next.map((item) => item.slot));
   };
   const [localBusy, setBusy] = useState(true);
-  const busy = localBusy || acquisition.pending || (!current.ready && !current.error);
+  const currentState = current.modules[module];
+  const runtimeState = runtime.state(module);
+  const busy = localBusy || module === "acquisition" && acquisition.pending || (!currentState.ready && !currentState.error);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState<TranslationKey | null>(null);
   const [dialog, setDialog] = useState<Omit<ConfigDialogProps, "onCancel"> | null>(null);
@@ -165,7 +167,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     && runtime.status.applied?.[module] === activation?.revision
     && runtime.status.applied?.system === runtime.status.accepted.system;
   const canReadSource = !!sourceStatus?.connected && !sourceStatus.streaming && sourceMatches
-    && !runtime.blocked;
+    && !runtimeState.blocked;
   const metadataRevision = metadataGeneration.current;
   const canUseObserved = canReadSource && reportedSource && !!sourceMetadata?.descriptor
     && !!sourceMetadata.comparison && sourceMetadata.comparison.status !== "unverified"
@@ -176,7 +178,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   useEffect(() => {
     metadataGeneration.current += 1;
     setSourceMetadata(null);
-  }, [sourceMode, editor.plugin, editor.profile?.profile_id, sourceParameterKey, sourceStatus?.connected, sourceStatus?.connection_id, sourceStatus?.streaming, sourceMatches, runtime.status?.generation, runtime.blocked]);
+  }, [sourceMode, editor.plugin, editor.profile?.profile_id, sourceParameterKey, sourceStatus?.connected, sourceStatus?.connection_id, sourceStatus?.streaming, sourceMatches, runtime.status?.generation, runtimeState.blocked]);
 
   useEffect(() => {
     let active = true;
@@ -185,8 +187,8 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
       setActivation(next);
     }).catch((cause) => { if (active) setError(String(cause)); });
     return () => { active = false; };
-  }, [runtime.status?.accepted[module], runtime.operation?.operation_id, runtime.operation?.status,
-    runtime.completedOperation?.operation_id, slot.kind]);
+  }, [runtime.status?.accepted[module], runtimeState.operation?.operation_id, runtimeState.operation?.status,
+    runtimeState.completedOperation?.operation_id, slot.kind]);
 
   useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
   useEffect(() => () => { onBusyChange?.(false); }, [onBusyChange]);
@@ -202,7 +204,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     ]);
     if (generation !== loadGeneration.current) return;
     setDefinitions(nextDefinitions); setProfiles(nextProfiles); setActivation(nextActivation);
-    if (!current.ready) return;
+    if (!currentState.ready) return;
     const existing = current.get(slot.slot);
     if (existing) {
       const definition = nextDefinitions.find((item) => selectionKey(item.selection) === existing.plugin);
@@ -217,7 +219,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     const binding = nextActivation?.bindings.find((item) => item.slot === slot.slot);
     current.set(slot.slot, binding ? { ...currentFromBinding(binding), schema: nextDefinitions.find((item) => selectionKey(item.selection) === selectionKey(binding.selection))?.schema }
       : slot.kind === "trigger" ? structuredClone(emptyEditor) : editorFor(undefined, nextDefinitions, undefined, nextProfiles));
-  }, [slot.kind, slot.slot, current.ready]);
+  }, [slot.kind, slot.slot, currentState.ready]);
 
   useEffect(() => {
     let active = true;
@@ -267,7 +269,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
       const saved = await api.create(slot.kind, definition.selection, name, editor.parameters,
         slot.kind === "decoder" ? editor.processingInput ?? undefined : undefined);
       setProfiles((current) => [...current, saved]);
-      resetEditor(editorFor(saved, definitions));
+      if (current.get(editorSlot) === editor) resetEditor(editorFor(saved, definitions));
       setNotice("profiles.saved");
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(false); }
@@ -277,7 +279,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     sourceOperation.current = true;
     metadataGeneration.current += 1; setSourceMetadata(null);
     setBusy(true); setError(""); setNotice(null);
-    try { await acquisition.connect.run(current.request("acquisition", await api.modules())); }
+    try { await acquisition.connect.run(current.request("acquisition", await api.module("acquisition"))); }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { sourceOperation.current = false; setBusy(false); }
   };
@@ -333,7 +335,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     </option>)}
   </>;
 
-  const blockedReason = current.error ? "feedback.runtimeUnavailable" : runtimeBlockReason(runtime);
+  const blockedReason = currentState.error ? "feedback.runtimeUnavailable" : runtimeBlockReason(runtime, module);
   const addFilterReason = busy ? "feedback.busy" : !definition?.available ? "profiles.pluginUnavailable"
     : errors.length > 0 ? "profiles.fixErrors" : null;
   const saveReason = busy ? "feedback.busy" : !definition?.schema ? "profiles.schemaRequired"
@@ -342,8 +344,9 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
     ?? (!engineAvailable || !sourceStatus ? "profiles.sourceUnavailable" : sourceStatus.streaming ? "profiles.stopBeforeConnect"
       : sourceStatus.connected ? sourceMatches ? "profiles.sourceAlreadyConnected" : "profiles.disconnectChangedSource"
       : !definition?.available ? "profiles.pluginUnavailable" : errors.length > 0 ? "profiles.fixErrors" : null);
-  const disconnectReason = busy ? "feedback.busy" : blockedReason
-    ?? (!sourceStatus ? "profiles.sourceUnavailable" : !sourceStatus.connected ? "profiles.sourceDisconnectedStatus"
+  const disconnectReason = busy ? "feedback.busy" : runtime.status?.recovery.acquisition
+    ? (!sourceStatus ? "profiles.sourceUnavailable" : null)
+    : blockedReason ?? (!sourceStatus ? "profiles.sourceUnavailable" : !sourceStatus.connected ? "profiles.sourceDisconnectedStatus"
       : sourceStatus.streaming ? "profiles.stopBeforeConnect" : null);
   const saveAs = () => setDialog({ title: t("profiles.save"), message: t("profiles.saveHelp"),
     confirmLabel: t("profiles.create"), initialValue: editor.profile ? t("profiles.copyName", { name: editor.profile.name }) : editor.name || "new profile 1",
@@ -407,7 +410,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
         ] as const).map(([target, section, label]) => <button key={section} disabled={busy}
           onClick={() => openProcessingStep(target, section)}>{t(label)}</button>)}
       </nav>}
-      {(error || current.error) && <p className="inline-message error" role="alert">{error || current.error}</p>}
+      {(error || currentState.error) && <p className="inline-message error" role="alert">{error || currentState.error}</p>}
       {notice && <p className="inline-message success" role="status">{t(notice)}</p>}
       {engineRunning && slot.kind !== "acquisition" && <p className="inline-message">{t("profiles.engineRunning")}</p>}
       {selectedBinding && <div className="binding-summary" aria-label={t("profiles.selectedConfiguration")}>
@@ -418,7 +421,7 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
       {moduleValidation && <p className="inline-message error" role="alert">{moduleValidation}</p>}
       <ConfigurationHistory module={module} profile={profiles.find((profile) => profile.profile_id === editor.profile?.profile_id) ?? null}
         runtime={runtime} onProfileRestored={(profile) => setProfiles((previous) => previous.map((item) => item.profile_id === profile.profile_id ? profile : item))} />
-      <p className="setting-description">{t(current.hasChanges(module, current.baseline) ? "profiles.pendingCurrent" : "profiles.currentApplied")}</p>
+      <p className="setting-description">{t(current.hasChanges(module, currentState.activation) ? "profiles.pendingCurrent" : "profiles.currentApplied")}</p>
         <div className="setting-group profile-selectors"><h2>{t("profiles.pluginAndProfile")}</h2>
           <label className="setting-row"><span className="setting-label">{t("profiles.pluginAndVersion")}</span>
             <select value={editor.plugin} disabled={busy} onChange={(event) => choosePlugin(event.target.value)}>{pluginOptions}</select></label>
@@ -527,10 +530,10 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
           : dirty ? t("profiles.unsaved") : editor.profile ? t("profiles.profileSaved") : t("profiles.newNotSaved")}
           {chainDirty && <span className="pending-state">{t("profiles.chainPending")}</span>}</div>
         {!noTrigger && <p className="action-help" id="profile-save-help">{t(saveReason ?? "profiles.saveHelp")}</p>}
-        <RuntimeConfigurationProgress runtime={runtime} />
+        <RuntimeConfigurationProgress runtime={runtime} module={module} />
       </div>
         <div className="actions">
-          <button disabled={localBusy} onClick={() => { void current.reload(); void reload().catch((cause) => setError(String(cause))); }}>{t("profiles.reload")}</button>
+          <button disabled={localBusy} onClick={() => { void current.reload(module); void reload().catch((cause) => setError(String(cause))); }}>{t("profiles.reload")}</button>
           {!noTrigger && <>
             {editor.profile && <button className="text-button danger" disabled={busy || !!activation?.bindings.some((binding) => binding.profile_id === editor.profile?.profile_id)}
               onClick={() => setDialog({ title: t("profiles.deleteProfile"), message: t("profiles.deletePrompt", { name: editor.profile!.name }),

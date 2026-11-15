@@ -138,7 +138,8 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
     register_engine_listeners(container)
     coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
                                           container.stimulation_service,
-                                          container.command_results, signal_preparer=signal.prepare)
+                                          container.command_results, signal_preparer=signal.prepare,
+                                          signal_detacher=signal.detach)
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
     try:
         await engine.handle_start_engine(StartEngineCommand())
@@ -183,6 +184,23 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         assert signal.read()['active_input']['outputs'] == [{'source_channel_id': 'channel-0', 'name': 'CH1'}]
         assert signal.read()['readiness']['ready'] is True
 
+        # Changing only a filter must replace the detached input identity even
+        # though its source and channel mapping are unchanged.
+        previous_input = signal.read()['readiness']['receipt']['input_id']
+        source_pid = engine._engine.acquisition_worker.pid
+        baseline = profiles.create('filter', builtin_selection('filter', 'BASELINE_CORRECTION'), 'Baseline', {})
+        processing_bindings = bindings[1:3] + [{'slot': f'processing.filter.{uuid4()}', 'profile_id': baseline.profile_id}]
+        plan = runtime.plan('processing', processing_bindings, expected_revision=engine.applied_revisions['processing'])
+        assert plan.strategy == 'module'
+        operation = runtime.submit(plan.plan_id, str(uuid4()))
+        await runtime.wait_for_idle()
+        result = runtime.operation(operation['operation_id'])
+        assert result['status'] == 'succeeded', result
+        assert signal.read()['readiness']['receipt']['input_id'] != previous_input
+        assert engine._engine._processing_active.is_set()
+        assert engine._engine.acquisition_worker.pid == source_pid
+        assert container.acquisition_service.is_streaming
+
         # A dormant output selection still updates the pinned runtime context;
         # acquisition and processing processes remain alive.
         generation = engine.generation
@@ -202,7 +220,7 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         decoder = profiles.repository.get_profile(bindings[1]['profile_id'])
         profiles.update(decoder.profile_id, name=decoder.name,
                         parameters={**decoder.parameters, 'window_duration':2.5}, expected_revision=decoder.revision)
-        plan = runtime.plan("processing", bindings[1:3], expected_revision=engine.applied_revisions["processing"])
+        plan = runtime.plan("processing", processing_bindings, expected_revision=engine.applied_revisions["processing"])
         assert plan.strategy == 'trial_boundary'
         operation = runtime.submit(plan.plan_id, str(uuid4()))
         await runtime.wait_for_idle()

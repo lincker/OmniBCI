@@ -75,13 +75,14 @@ const navigation = (h, label) => elements(h.tree).find((item) => item.type === "
 async function withApp(action, { desktopMode = false, applying = false } = {}) {
   const original = Object.fromEntries(["window", "document", "location", "localStorage", "WebSocket", "fetch"].map((key) => [key, globalThis[key]]));
   const originalStatus = runtimeConfigApi.status;
-  const originalActivation = pluginConfigApi.modules;
+  const originalActivation = pluginConfigApi.modules, originalModule = pluginConfigApi.module;
   pluginConfigApi.modules = async () => moduleConfiguration();
+  pluginConfigApi.module = async (module) => (await pluginConfigApi.modules()).modules[module];
   const listeners = new Map(), editorStates = [];
   const location = { hash: "#acquisition", protocol: "http:", host: "localhost" };
   const localStorage = { getItem: () => null, setItem: () => {} };
-  const state = { running: false, accepted: revisionMap(null), applied: null, generation: null, recovery_required: false,
-    operation: applying ? { operation_id: "operation-1", status: "applying", stage: "rebuilding" } : null };
+  const state = { running: false, accepted: revisionMap(null), applied: null, generation: null, recovery: {},
+    operations: applying ? { acquisition: { module: "acquisition", affected_modules: ["acquisition"], operation_id: "operation-1", status: "applying", stage: "rebuilding" } } : {} };
   globalThis.window = { location, localStorage, history: { replaceState: (_state, _title, hash) => { location.hash = hash; } },
     addEventListener: (event, listener) => listeners.set(event, listener),
     removeEventListener: (event, listener) => { if (listeners.get(event) === listener) listeners.delete(event); } };
@@ -89,7 +90,7 @@ async function withApp(action, { desktopMode = false, applying = false } = {}) {
   globalThis.document = { hidden: true, documentElement: { style: {} } };
   globalThis.WebSocket = class { close() {} };
   globalThis.fetch = () => new Promise(() => {});
-  runtimeConfigApi.status = async () => state;
+  runtimeConfigApi.status = async () => structuredClone(state);
   if (desktopMode) {
     desktop.setDesktopConnection({ id: "backend", kind: "local", status: "ready" });
     window.omnibciDesktop = { subscribeResults: () => () => {}, setEditorState: (value) => editorStates.push(value) };
@@ -99,7 +100,7 @@ async function withApp(action, { desktopMode = false, applying = false } = {}) {
   const content = { querySelector: () => heading, focus: () => focusEvents.push("main") };
   const h = harness(App, {}, (tree) => { elements(tree).find((item) => item.type === "main").ref.current = content; });
   try { await h.settle(); await action({ h, listeners, editorStates, state, focusEvents, heading }); }
-  finally { h.dispose(); runtimeConfigApi.status = originalStatus; pluginConfigApi.modules = originalActivation; Object.assign(globalThis, original); }
+  finally { h.dispose(); runtimeConfigApi.status = originalStatus; pluginConfigApi.modules = originalActivation; pluginConfigApi.module = originalModule; Object.assign(globalThis, original); }
 }
 
 const currentSource = {
@@ -139,12 +140,12 @@ test("host settings still require an explicit discard before navigation", async 
   });
 });
 
-test("a busy editor rejects hash navigation without discarding or opening another dialog", async () => {
+test("module activity permits hash navigation without discarding current values", async () => {
   await withApp(async ({ h, listeners }) => {
     component(h, "PluginProfiles").props.onBusyChange(true); await h.settle();
     window.location.hash = "#run"; listeners.get("hashchange")(); await h.settle();
-    assert.equal(window.location.hash, "#acquisition");
-    assert.equal(component(h, "PluginProfiles").props.module, "acquisition");
+    assert.equal(window.location.hash, "#run");
+    assert.ok(component(h, "RunConsole"));
     assert.equal(component(h, "ConfigDialog"), undefined);
   });
 });
@@ -202,17 +203,13 @@ test("Open Run retains current values and Change setup returns to Acquisition", 
   });
 });
 
-test("Run processing shortcut opens the relevant editor and respects busy navigation", async () => {
+test("Run processing shortcut opens the relevant editor during module activity", async () => {
   await withApp(async ({ h }) => {
     navigation(h, "Run").props.onClick(); await h.settle();
     component(h, "RunConsole").props.onEditProcessing(); await h.settle();
     assert.equal(window.location.hash, "#processing");
     assert.equal(component(h, "PluginProfiles").props.module, "processing");
     navigation(h, "Run").props.onClick(); await h.settle();
-    component(h, "RunConsole").props.onBusyChange(true); await h.settle();
-    component(h, "RunConsole").props.onEditProcessing(); await h.settle();
-    assert.equal(window.location.hash, "#run", "A running operation keeps navigation blocked");
-    component(h, "RunConsole").props.onBusyChange(false); await h.settle();
     component(h, "RunConsole").props.onEditProcessing(); await h.settle();
     assert.equal(window.location.hash, "#processing");
     assert.equal(component(h, "PluginProfiles").props.module, "processing");
@@ -225,7 +222,7 @@ test("browser refresh stays protected until an in-flight runtime application set
     assert.ok(listeners.has("beforeunload"));
     listeners.get("beforeunload")(event);
     assert.equal(event.prevented, true); assert.equal(event.returnValue, "");
-    state.operation = { operation_id: "operation-1", status: "succeeded", stage: "complete" };
+    state.operations.acquisition = { module: "acquisition", affected_modules: ["acquisition"], operation_id: "operation-1", status: "succeeded", stage: "complete" };
     await component(h, "RuntimeConfigurationReview").props.runtime.refresh(); await h.settle();
     assert.equal(listeners.has("beforeunload"), false);
   }, { applying: true });
@@ -294,10 +291,10 @@ async function withSharedAcquisition(action) {
       runtimeConfigApi.plan = async () => ({ plan_id: "source-plan", module: "acquisition", expected_revision: "rev-1", expected_revisions: { acquisition: "rev-1", system: "system-revision" }, target_revisions: { acquisition: "rev-1" },
         applied_revisions: { acquisition: "rev-1", system: "system-revision" }, generation: "engine-1", running: true, strategy: "no_change", errors: [], changed_slots: [], changed_settings: [] });
       runtimeConfigApi.apply = async (planId, operationId) => {
-        state.operation = { operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "rev-1" }, status: "succeeded", stage: "complete" };
-        return state.operation;
+        state.operations.acquisition = { module: "acquisition", affected_modules: ["acquisition"], operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "rev-1" }, status: "succeeded", stage: "complete" };
+        return state.operations.acquisition;
       };
-      runtimeConfigApi.operation = async () => state.operation;
+      runtimeConfigApi.operation = async () => state.operations.acquisition;
       api.acqConnect = async () => { calls.push("connect"); Object.assign(source, { connected: true, connection_id: "source-1" }); };
       api.acqDisconnect = async () => { calls.push("disconnect"); Object.assign(source, { connected: false, connection_id: null }); };
       api.acqMetadata = async () => assert.fail("Connect must not inspect metadata");
@@ -305,7 +302,7 @@ async function withSharedAcquisition(action) {
       api.acqStreamStop = async () => { calls.push("stop"); source.streaming = false; };
       const controller = () => (component(h, "PluginProfiles") ?? component(h, "RunConsole")).props.acquisition;
       await controller().refresh(); await h.settle();
-      await action({ h, source, calls, controller, backend });
+      await action({ h, source, calls, controller, backend, state });
     });
   } finally { Object.assign(api, original); pluginConfigApi.modules = originalActivation; Object.assign(runtimeConfigApi, originalRuntime); }
 }
@@ -331,7 +328,7 @@ test("Setup and Run share connection state through connect, reading, stop and di
   });
 });
 
-test("a pending shared connection blocks navigation and duplicate commands", async () => {
+test("a pending shared connection survives navigation and blocks duplicate commands", async () => {
   await withSharedAcquisition(async ({ h, calls, controller }) => {
     let finish;
     const connect = api.acqConnect;
@@ -340,7 +337,7 @@ test("a pending shared connection blocks navigation and duplicate commands", asy
     await h.settle();
     assert.equal(controller().pending, true);
     component(h, "PluginProfiles").props.onRun(); await h.settle();
-    assert.ok(component(h, "PluginProfiles"));
+    assert.ok(component(h, "RunConsole"));
     await controller().connect.run(currentRequest());
     finish(); await connecting; await h.settle();
     assert.equal(controller().pending, false);
@@ -389,4 +386,73 @@ for (const unavailable of [false, true]) test(`Disconnect rejects a changed or u
     assert.deepEqual(calls, ["connect"]);
     assert.match(controller().disconnect.error, unavailable ? /status is unavailable/ : /connection changed/);
   });
+});
+
+test("module stop ownership survives navigation and rejects duplicate Stop", async () => {
+  const { signalConfigApi } = await server.ssrLoadModule("/src/api/signal-config.ts");
+  const originalSignal = signalConfigApi.get;
+  try {
+    signalConfigApi.get = async () => null;
+    await withSharedAcquisition(async ({ h }) => {
+      api.stimulationStatus = async () => ({ active: false, process_alive: false, engine_connected: false, paradigm: null });
+      let finish, stops = 0;
+      api.moduleStop = async () => { stops++; await new Promise((resolve) => { finish = resolve; }); };
+      navigation(h, "Run").props.onClick(); await h.settle();
+      const first = component(h, "RunConsole").props.runtimeControls.stopProcessing.run();
+      await h.settle();
+      component(h, "RunConsole").props.onEditProcessing(); await h.settle();
+      assert.ok(component(h, "PluginProfiles"));
+      navigation(h, "Run").props.onClick(); await h.settle();
+      const controls = component(h, "RunConsole").props.runtimeControls;
+      assert.equal(controls.stopProcessing.pending, true);
+      await controls.stopProcessing.run();
+      assert.equal(stops, 1);
+      finish(); await first; await h.settle();
+      assert.equal(component(h, "RunConsole").props.runtimeControls.stopProcessing.pending, false);
+    });
+  } finally { signalConfigApi.get = originalSignal; }
+});
+
+for (const stage of ["apply", "engine"]) test(`Engine Stop cancels acquisition ${stage} continuation across navigation`, async () => {
+  const { signalConfigApi } = await server.ssrLoadModule("/src/api/signal-config.ts");
+  const originalSignal = signalConfigApi.get;
+  try {
+    signalConfigApi.get = async () => null;
+    await withSharedAcquisition(async ({ h, controller, calls, state }) => {
+      Object.assign(state, { running: false, applied: null, generation: null });
+      api.stimulationStatus = async () => ({ active: false, process_alive: false, engine_connected: false, paradigm: null });
+      let finishStart, finishStop;
+      const delay = new Promise((resolve) => { finishStart = resolve; });
+      const apply = runtimeConfigApi.apply;
+      runtimeConfigApi.apply = async (...args) => { if (stage === "apply") await delay; return apply(...args); };
+      api.engineStart = async () => {
+        calls.push("engineStart");
+        await delay;
+        Object.assign(state, { running: true, applied: revisionMap("rev-1"), generation: "engine-2" });
+      };
+      api.engineStop = async () => {
+        calls.push("engineStop");
+        await new Promise((resolve) => { finishStop = resolve; });
+        Object.assign(state, { running: false, applied: null, generation: null });
+      };
+      await controller().refresh(); await h.settle();
+      const starting = controller().connect.run(currentRequest()); await h.settle();
+      assert.equal(controller().connect.pending, true);
+      assert.deepEqual(calls, stage === "engine" ? ["engineStart"] : []);
+      navigation(h, "Run").props.onClick(); await h.settle();
+      const controls = () => component(h, "RunConsole").props.runtimeControls;
+      const stopping = controls().stop.run(); await h.settle();
+      component(h, "RunConsole").props.onEditSetup(); await h.settle();
+      navigation(h, "Run").props.onClick(); await h.settle();
+      assert.equal(controls().stop.pending, true);
+      await controls().stop.run();
+      assert.equal(calls.filter((name) => name === "engineStop").length, 1);
+      finishStart(); await starting;
+      finishStop(); await stopping; await h.settle();
+      assert.deepEqual(calls, stage === "engine" ? ["engineStart", "engineStop"] : ["engineStop"]);
+      assert.equal(controller().connect.error, null);
+      assert.equal(controller().connect.pending, false);
+      assert.equal(controls().stop.pending, false);
+    });
+  } finally { signalConfigApi.get = originalSignal; }
 });

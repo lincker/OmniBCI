@@ -17,7 +17,7 @@ async function fixture(action, configure = () => {}) {
   const calls = [];
   const state = {
     runtime: { running: false, accepted: { ...expected }, applied: null, generation: null,
-      recovery_required: false, operation: null },
+      recovery: {}, operations: {} },
     acquisition: { connected: false, streaming: false, connection_id: null },
     selection: { revision, bindings: [{ slot: "acquisition.source", profile_id: "lab", profile_revision: 2 }] },
   };
@@ -87,8 +87,8 @@ for (const [name, configure] of [
   ["missing source", (state) => { state.selection.bindings = []; }],
   ["changed selection", (state) => { state.runtime.accepted.acquisition = "changed"; }],
   ["changed activation", (state) => { state.selection.revision = "changed"; }],
-  ["recovery required", (state) => { state.runtime.recovery_required = true; }],
-  ["configuration operation", (state) => { state.runtime.operation = { status: "queued" }; }],
+  ["recovery required", (state) => { state.runtime.recovery = { acquisition: "Unknown acquisition" }; }],
+  ["configuration operation", (state) => { state.runtime.operations = { acquisition: { module: "acquisition", affected_modules: ["acquisition"], status: "queued" } }; }],
   ["different applied configuration", (state) => { connected(state); state.runtime.applied.acquisition = "other"; }],
   ["missing connection identity", (state) => { connected(state); state.acquisition.connection_id = null; }],
 ]) test(`${name} blocks connecting without changing configuration or runtime`, async () => {
@@ -103,6 +103,19 @@ test("a changed revision after engine startup stops before connecting", async ()
     const start = api.engineStart;
     api.engineStart = async () => { await start(); state.runtime.accepted.acquisition = "changed"; };
     await assert.rejects(connectSource(expected), /configuration changed/i);
+    assert.deepEqual(calls, ["engine"]);
+  });
+});
+
+test("a cancelled startup does not reconnect or report failure after Engine Stop completes", async () => {
+  await fixture(async ({ state, calls }) => {
+    let valid = true;
+    api.engineStart = async () => {
+      calls.push("engine");
+      valid = false;
+      Object.assign(state.runtime, { running: false, applied: null, generation: null });
+    };
+    assert.equal(await connectSource(expected, () => valid), undefined);
     assert.deepEqual(calls, ["engine"]);
   });
 });
@@ -178,13 +191,13 @@ test("configuration checks confirm the expected running generation", async () =>
 
 for (const [name, configure, generation] of [
   ["a concurrent accepted revision", (state) => { state.runtime.accepted.acquisition = "new-selection"; }],
-  ["a concurrent activation revision", (state) => { state.selection.revision = "new-selection"; }],
-  ["a removed activation", (state) => { state.selection = null; }],
+  ["a concurrent activation revision", (state) => { state.selection.revision = "new-selection"; state.runtime.accepted.acquisition = "new-selection"; }],
+  ["a removed activation", (state) => { state.selection = null; state.runtime.accepted.acquisition = null; }],
   ["a different applied revision", (state) => { connected(state); state.runtime.applied.acquisition = "previous-selection"; }],
   ["an unacknowledged generation", (state) => { connected(state); state.runtime.generation = null; }],
   ["a replaced generation", connected, "engine-2"],
-  ["a pending operation", (state) => { state.runtime.operation = { status: "applying" }; }],
-  ["a recovery state", (state) => { state.runtime.recovery_required = true; }],
+  ["a pending operation", (state) => { state.runtime.operations = { acquisition: { module: "acquisition", affected_modules: ["acquisition"], status: "applying" } }; }],
+  ["a recovery state", (state) => { state.runtime.recovery = { acquisition: "Unknown acquisition" }; }],
 ]) test(`${name} prevents a subsequent engine start or stimulation launch`, async () => {
   await fixture(async ({ calls }) => {
     await assert.rejects(async () => {
@@ -212,4 +225,21 @@ for (const field of ["accepted", "applied"]) test(`a changed ${field} system rev
     await assert.rejects(connectSource(expected));
     assert.deepEqual(calls, []);
   }, (state) => { connected(state); state.runtime[field].system = "different-system"; });
+});
+
+test("Connect can prepare an accepted source on a foundation that has only applied system settings", async () => {
+  await fixture(async ({ state, calls }) => {
+    const connect = api.acqConnect;
+    api.acqConnect = async () => {
+      state.runtime.applied.acquisition = expected.acquisition;
+      await connect();
+    };
+    const result = await connectSource(expected);
+    assert.equal(result.acquisition.connected, true);
+    assert.deepEqual(calls, ["connect"]);
+  }, (state) => {
+    state.runtime.running = true;
+    state.runtime.generation = "engine-1";
+    state.runtime.applied = { system: expected.system };
+  });
 });

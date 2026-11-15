@@ -7,6 +7,8 @@ import queue
 from dataclasses import dataclass
 from time import monotonic_ns
 
+from omnibci.application.events import ProcessingInputStart, StreamBarrier
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,8 +28,10 @@ class DataManager:
         return self.processing_active is None or self.processing_active.is_set()
 
     def put_data(self, data):
-        if self.has_consumer:
+        if self.has_consumer or isinstance(data, (ProcessingInputStart, StreamBarrier)):
             self.buffer.put_nowait(_QueuedData(data, monotonic_ns()))
+            return True
+        return False
 
     def get_data(self, timeout=None):
         """Return the next payload, or None when the optional timeout expires.

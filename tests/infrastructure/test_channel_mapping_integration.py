@@ -1,4 +1,4 @@
-"""Prepare real CNT acquisition and mapping across spawned worker boundaries."""
+"""Attach real CNT processing independently of source reading across workers."""
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,7 +30,7 @@ from omnibci.infrastructure.plugins.accepted_configuration import accepted_runti
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_cnt_mapping_prepares_before_streaming_and_rejects_stale_connection(tmp_path):
+async def test_cnt_processing_attaches_independently_and_rejects_stale_connection(tmp_path):
     processing_input = ProcessingInput.from_dict({
         "schema_version": 2, "outputs": [{"source_channel_id": "channel-8", "name": "O2"},
                                            {"source_channel_id": "channel-0", "name": "Pz"}],
@@ -80,7 +80,8 @@ async def test_cnt_mapping_prepares_before_streaming_and_rejects_stale_connectio
     register_engine_listeners(container)
     coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
                                           container.stimulation_service,
-                                          container.command_results, signal_preparer=signal.prepare)
+                                          container.command_results, signal_preparer=signal.prepare,
+                                          signal_detacher=signal.detach)
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
     try:
         await engine.handle_start_engine(StartEngineCommand())
@@ -98,10 +99,12 @@ async def test_cnt_mapping_prepares_before_streaming_and_rejects_stale_connectio
         assert signal.read()["readiness"]["ready"] is False
         await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
 
-        # A process-ready engine still rejects samples before the plan is acknowledged.
-        with pytest.raises(CommandRejectedError) as unprepared:
-            await asyncio.to_thread(container.command_results.request, EventType.StartStream)
-        assert unprepared.value.result.error_code == "SIGNAL_NOT_PREPARED"
+        # Reading remains available while Processing is detached.
+        await asyncio.to_thread(signal.detach)
+        await asyncio.to_thread(container.command_results.request, EventType.StartStream)
+        assert container.acquisition_service.is_streaming
+        assert signal.read()["readiness"]["ready"] is False
+        await asyncio.to_thread(container.acquisition_service.handle_stop_stream, StopStreamCommand())
         assert profiles.repository.list_profiles("acquisition") == []
         metadata = await asyncio.to_thread(container.acquisition_service.get_metadata)
         assert isinstance(metadata["metadata"], str)
@@ -169,8 +172,8 @@ async def test_cnt_mapping_prepares_before_streaming_and_rejects_stale_connectio
         reconnected = await asyncio.to_thread(container.acquisition_service.get_metadata)
         assert reconnected["connection_id"] != metadata["connection_id"]
         with pytest.raises(CommandRejectedError) as stale:
-            await asyncio.to_thread(container.command_results.request, EventType.StartStream, original_receipt)
-        assert stale.value.result.error_code == "SIGNAL_NOT_PREPARED"
+            await asyncio.to_thread(container.command_results.request, EventType.AttachProcessingInput, original_receipt)
+        assert stale.value.result.error_code == "PROCESSING_INPUT_REJECTED"
         await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
         assert signal.read()["readiness"]["receipt"]["connection_id"] == reconnected["connection_id"]
         await asyncio.to_thread(container.acquisition_service.handle_stop_stream, StopStreamCommand())
@@ -208,9 +211,9 @@ async def test_cnt_mapping_prepares_before_streaming_and_rejects_stale_connectio
         await engine.start_module("acquisition")
         await engine.start_module("processing")
         await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
-        with pytest.raises(ValueError, match="Missing acquisition channel: not-present"):
-            await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
-        assert container.acquisition_service.is_streaming is False
+        await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
+        assert container.acquisition_service.is_streaming is True
         assert signal.read()["readiness"]["ready"] is False
+        assert "Missing acquisition channel: not-present" in signal.read()["source_error"]
     finally:
         await engine.handle_stop_engine(StopEngineCommand())

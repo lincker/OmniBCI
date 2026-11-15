@@ -19,11 +19,6 @@ export type ModuleHistory = S["ModuleHistoryResponse"];
 export type ProfileHistory = S["ProfileHistoryResponse"];
 export type RevisionMap = Record<string, string | null>;
 export const configurationModules: ConfigurationModule[] = ["acquisition", "processing", "stimulation", "actuation"];
-export const moduleBindings = (value: ModulesResponse | null) => configurationModules.flatMap((module) => value?.modules[module]?.bindings ?? []);
-export const moduleRevisions = (value: ModulesResponse | null): RevisionMap => Object.fromEntries([
-  ...configurationModules.map((module) => [module, value?.modules[module]?.revision ?? null]),
-  ["system", value?.system.revision ?? null],
-]);
 
 export function selectionKey(selection: PluginSelection) {
   return JSON.stringify([selection.package_id, selection.contribution_id, selection.version]);

@@ -2,6 +2,7 @@
 from omnibci.application.config_errors import ConfigProfileConflictError
 from omnibci.application.node_configuration import project_node_configuration
 from omnibci.application.plugin_schema import PluginSchemaError
+from omnibci.application.plugin_profiles import ActivationSet
 
 
 class NodeConfigurationService:
@@ -13,7 +14,10 @@ class NodeConfigurationService:
         if role not in ("stimulation", "actuation"):
             raise PluginSchemaError("Unsupported external node role")
         state, snapshot = self.engine.node_configuration_snapshot(
-            lambda: self.profiles.materialize(self.profiles.repository.get_activation_set()))
+            lambda: self.profiles.materialize(ActivationSet(
+                {role: self.profiles.repository.get_module(role)}, self.profiles.repository.get_system())),
+            module=role,
+        )
         module = role.upper()
         if snapshot.get(f"{module}.auto_spawn", True):
             raise ConfigProfileConflictError(f"{module.title()} is managed by the backend")

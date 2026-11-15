@@ -94,7 +94,8 @@ class SystemSettingsResponse(BaseModel):
 
 class ModulesResponse(BaseModel):
     modules: dict[ConfigurationModule, ModuleActivationResponse]
-    system: SystemSettingsResponse
+    system: SystemSettingsResponse | None
+    errors: dict[str, str] = Field(default_factory=dict)
 
 
 class ModuleHistoryResponse(BaseModel):

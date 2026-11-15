@@ -136,5 +136,7 @@ async def test_bootstrap_shares_pinned_plugin_selection_between_status_and_engin
         with patch("omnibci.application.services.engine_service.Thread"):
             await container.engine_service.handle_start_engine(StartEngineCommand())
         snapshot = builder.call_args.kwargs["settings_snapshot"]
-        assert snapshot["ACQUISITION.sample_rate"] == 500
-        assert snapshot["ACQUISITION.DATA_PROVIDER_PORT"] == 4000
+        assert snapshot["PLUGINS.bindings"] == []
+        source_snapshot = container.engine_service._module_snapshot_provider("acquisition")
+        assert source_snapshot["ACQUISITION.sample_rate"] == 500
+        assert source_snapshot["ACQUISITION.DATA_PROVIDER_PORT"] == 4000

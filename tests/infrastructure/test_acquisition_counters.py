@@ -16,7 +16,7 @@ def runtime(chunks, sink=None):
         stop_stream=AsyncMock(),
     )
     return AcquisitionRuntime(source, Queue(), sink or SimpleNamespace(put_data=lambda _: None),
-                              source_id="test", preparation_required=False)
+                              source_id="test")
 
 
 @pytest.mark.asyncio

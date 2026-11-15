@@ -89,6 +89,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/engine/modules/{module}/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Prepare an output module for an external connection */
+        post: operations["prepare_module_api_v1_engine_modules__module__prepare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/engine/modules/{module}/stop": {
         parameters: {
             query?: never;
@@ -1790,7 +1807,7 @@ export interface components {
              * Reason
              * @enum {string}
              */
-            reason: "prediction" | "end_marker" | "next_start" | "stream_stop" | "processor_stop" | "error";
+            reason: "prediction" | "end_marker" | "next_start" | "stream_stop" | "processor_stop" | "processing_detached" | "source_unavailable" | "error";
             /** Sample Rate */
             sample_rate: number | null;
             /** Channel Count */
@@ -1925,7 +1942,11 @@ export interface components {
             modules: {
                 [key: string]: components["schemas"]["ModuleActivationResponse"];
             };
-            system: components["schemas"]["SystemSettingsResponse"];
+            system: components["schemas"]["SystemSettingsResponse"] | null;
+            /** Errors */
+            errors?: {
+                [key: string]: string;
+            };
         };
         /** NodeConfigurationPublicationResponse */
         NodeConfigurationPublicationResponse: {
@@ -2309,8 +2330,10 @@ export interface components {
         RuntimeConfigurationResponse: {
             /** Running */
             running: boolean;
-            /** Recovery Required */
-            recovery_required: boolean;
+            /** Recovery */
+            recovery: {
+                [key: string]: string;
+            };
             /** Accepted */
             accepted: {
                 [key: string]: string | null;
@@ -2321,10 +2344,24 @@ export interface components {
             } | null;
             /** Generation */
             generation: string | null;
-            operation: components["schemas"]["RuntimeOperationResponse"] | null;
+            /** Operations */
+            operations: {
+                [key: string]: components["schemas"]["RuntimeOperationResponse"] | null;
+            };
+            /** Errors */
+            errors?: {
+                [key: string]: string;
+            };
         };
         /** RuntimeOperationResponse */
         RuntimeOperationResponse: {
+            /**
+             * Module
+             * @enum {string}
+             */
+            module: "acquisition" | "processing" | "stimulation" | "actuation" | "system";
+            /** Affected Modules */
+            affected_modules: string[];
             /** Operation Id */
             operation_id: string;
             /** Plan Id */
@@ -3051,6 +3088,91 @@ export interface operations {
             };
             /** @description Command execution timeout */
             504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    prepare_module_api_v1_engine_modules__module__prepare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                module: "stimulation" | "actuation";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

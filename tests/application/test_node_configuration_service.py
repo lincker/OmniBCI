@@ -41,6 +41,7 @@ def test_idle_publication_ignores_historical_applied_snapshot(engine):
 @pytest.mark.parametrize("phase", ["starting", "stopping", "failed_stop", "dead_thread", "apply", "recovery"])
 def test_unsettled_runtime_never_publishes_a_node_configuration(engine, phase):
     selected = Mock(side_effect=AssertionError("must not read saved configuration"))
+    reservation = None
     if phase in ("starting", "stopping"):
         engine._transitioning = True
     elif phase == "failed_stop":
@@ -48,11 +49,15 @@ def test_unsettled_runtime_never_publishes_a_node_configuration(engine, phase):
     elif phase == "dead_thread":
         engine._running = True
     elif phase == "apply":
-        engine.admission._transitioning = True
+        reservation = engine.admission.reserve_transition()
     else:
         engine.admission.quarantine("uncertain cleanup")
-    with pytest.raises((ProfileRevisionConflict, ConfigProfileConflictError)):
-        engine.node_configuration_snapshot(selected)
+    try:
+        with pytest.raises((ProfileRevisionConflict, ConfigProfileConflictError)):
+            engine.node_configuration_snapshot(selected)
+    finally:
+        if reservation is not None:
+            engine.admission.release_reservation(reservation)
 
 
 @pytest.mark.parametrize(("role", "snapshot", "message"), [
@@ -61,6 +66,18 @@ def test_unsettled_runtime_never_publishes_a_node_configuration(engine, phase):
     ("actuation", {"ACTUATION.auto_spawn": True}, "managed"),
 ])
 def test_node_endpoint_rejects_unowned_roles(role, snapshot, message):
-    engine = SimpleNamespace(node_configuration_snapshot=lambda selected: ("running", snapshot))
+    engine = SimpleNamespace(node_configuration_snapshot=lambda selected, *, module: ("running", snapshot))
     with pytest.raises((ValueError, ConfigProfileConflictError), match=message):
         NodeConfigurationService(engine, Mock()).configuration(role)
+
+
+def test_unrelated_processing_transition_and_recovery_do_not_block_stimulation_publication(engine):
+    reservation = engine.admission.reserve_transition("processing")
+    engine.admission.quarantine("Processing acknowledgement missing", "processing")
+    try:
+        assert engine.node_configuration_snapshot(lambda: {"role": "stimulation"}, module="stimulation") == (
+            "selected", {"role": "stimulation"})
+        with pytest.raises(ProfileRevisionConflict):
+            engine.node_configuration_snapshot(lambda: {}, module="processing")
+    finally:
+        engine.admission.release_reservation(reservation)

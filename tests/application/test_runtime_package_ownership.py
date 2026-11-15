@@ -1,5 +1,5 @@
 """Only graph/resource ownership retains package versions after runtime transitions."""
-from unittest.mock import MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
@@ -48,7 +48,9 @@ async def test_successful_stop_releases_runtime_references_but_preserves_history
     thread = Mock(is_alive=Mock(return_value=True))
     thread.join.side_effect = lambda timeout: setattr(thread.is_alive, "return_value", False)
     monkeypatch.setattr("omnibci.application.services.engine_service.Thread", Mock(return_value=thread))
-    service = NeuroEngineService(Mock(return_value=MagicMock(shutdown_complete=True)),
+    service = NeuroEngineService(Mock(return_value=MagicMock(
+        shutdown_complete=True, set_actuation_active=AsyncMock(),
+    )),
                                  snapshot_provider=lambda: snapshot("1.0.0"))
     await service.startup()
     await service.handle_start_engine(StartEngineCommand())
@@ -66,7 +68,7 @@ async def test_unconfirmed_shutdown_keeps_package_ownership_until_successful_rec
     thread = Mock(is_alive=Mock(return_value=True))
     thread.join.side_effect = lambda timeout: setattr(thread.is_alive, "return_value", False)
     monkeypatch.setattr("omnibci.application.services.engine_service.Thread", Mock(return_value=thread))
-    graph = MagicMock(shutdown_complete=True)
+    graph = MagicMock(shutdown_complete=True, set_actuation_active=AsyncMock())
     service = NeuroEngineService(Mock(return_value=graph), snapshot_provider=lambda: snapshot("1.0.0"))
     await service.startup()
     await service.handle_start_engine(StartEngineCommand())

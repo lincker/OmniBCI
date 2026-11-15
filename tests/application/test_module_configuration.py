@@ -105,7 +105,8 @@ def test_acquisition_does_not_inspect_or_modify_dormant_decoder(profiles, monkey
     accept_plan(profiles, runtime, plan)
     assert profiles.repository.get_module("processing") == previous
     snapshot = accepted_runtime_settings(profiles=profiles)
-    assert next(item for item in snapshot["PLUGINS.bindings"] if item["slot"] == "processing.decoder") == decoder.to_dict()
+    assert [item["slot"] for item in snapshot["PLUGINS.bindings"]] == ["acquisition.source"]
+    assert snapshot["CONFIG.module_revisions"]["processing"] is None
 
 
 @pytest.mark.parametrize("module,slot,kind,alias", [

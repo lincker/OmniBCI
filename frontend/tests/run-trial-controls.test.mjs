@@ -1,12 +1,13 @@
 /** Trial controls require the selected paradigm and a connected stimulation runtime. */
 import assert from "node:assert/strict";
-import { moduleConfiguration, revisionMap } from "./module-fixtures.mjs";
+import { moduleConfiguration, revisionMap, runtimeController, currentController } from "./module-fixtures.mjs";
 import { after, test } from "node:test";
 import React from "react";
 import { createServer } from "vite";
 
 const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
 after(() => server.close());
+const { useRuntimeControls } = await server.ssrLoadModule("/src/hooks/useRuntimeControls.ts");
 const { RunConsole } = await server.ssrLoadModule("/src/RunConsole.tsx");
 const { api } = await server.ssrLoadModule("/src/api/client.ts");
 const { pluginConfigApi } = await server.ssrLoadModule("/src/api/plugin-config.ts");
@@ -16,7 +17,7 @@ const { currentBindings } = await server.ssrLoadModule("/src/hooks/useCurrentCon
 const { translate } = await server.ssrLoadModule("/src/i18n.tsx");
 const english = { language: "en", t: (key, params) => translate("en", key, params) };
 const noop = () => {};
-const currentRequest = (module, selected) => ({ module, expected_revision: selected?.modules[module]?.revision ?? null,
+const currentRequest = (module, selected) => ({ module, expected_revision: selected?.revision ?? null,
   bindings: currentBindings(module, {}, [], selected) });
 const revision = "accepted-stimulation";
 const paradigm = { selection: { package_id: "example.visual", contribution_id: "main", version: "1.0.0" },
@@ -73,33 +74,30 @@ function render({ stimulation = ready, stimulationError = null, selectedParadigm
   const previous = dispatcher.current;
   // Seed the two polls, then the accepted selection and loaded trial-control state.
   const selectedModules = selection?.modules ? selection : selection ? moduleConfiguration(selection) : null;
-  const states = [stimulation, stimulationError, signal, signalError, selectedModules, profiles, selectedParadigm,
-    controls, loadError, controlValues, trialError,
-    ...["start", "stop", "launch", "readCurrent", "stopStim", "trigger", "startProcessing", "stopProcessing", "startActuation", "stopActuation"].flatMap((name) => [false, actionErrors[name] ?? null]),
-    configurationLoad ?? { status: loadError && (typeof loadError === "string"
-      || !["run.invalidTrialControls", "run.trialControlsUnavailable"].includes(loadError.key)) ? "failed" : selection ? "ready" : "loading",
-      revision: JSON.stringify(runtime.status?.accepted ?? revisionMap(revision)) }, 0];
+  const actions = Object.fromEntries(["start", "stop", "launch", "readCurrent", "stopStim", "trigger", "startProcessing", "stopProcessing", "startActuation", "stopActuation"].map((name) => [name, { pending: false, error: actionErrors[name] ?? null }]));
+  const states = [stimulation, stimulationError, signal, signalError, actions, {}, profiles, selectedParadigm,
+    controls, loadError, controlValues, trialError, 0];
   let stateIndex = 0;
   dispatcher.current = {
     useState: (initial) => {
       const index = stateIndex++;
       return [index < states.length ? states[index] : typeof initial === "function" ? initial() : initial,
-        (value) => onStateChange(({ 9: "controlValues", 10: "trialError" })[index] ?? index, value)];
+        (value) => onStateChange(({ 10: "controlValues", 11: "trialError" })[index] ?? index, value)];
     },
     useContext: () => english, useRef: (value) => ({ current: value }),
     useCallback: (callback) => callback, useEffect: onEffect,
   };
   try {
-    return RunConsole({ engine: { data: engine, error: engineError, refresh },
-      acquisition: { data: acquisition, error: acquisitionError, refresh, pending: acquisitionPending,
-        ...Object.fromEntries(["connect", "disconnect", "read", "stopRead"].map((name) => [name,
-          { run: acquisitionActions[name] ?? noop, pending: acquisitionPending, error: actionErrors[name] ?? null }])) },
-      feed: { generation: null, trials: [], acks: [] },
-      runtime: { status: { accepted: revisionMap(revision), applied: revisionMap(revision) }, blocked: false, refresh, ...runtime },
-      current: { ready: true, error: null, entries: {},
-        filterOrder: selection?.bindings?.filter((item) => item.kind === "filter").map((item) => item.slot) ?? [],
-        hasChanges: () => false, validationError: () => null, request: currentRequest },
-      onBusyChange: noop, onEditSetup: noop, onEditProcessing, onResults: noop });
+    const engineState = { data: engine, error: engineError, refresh };
+    const source = { data: acquisition, error: acquisitionError, refresh, pending: acquisitionPending, cancelPending: noop,
+      ...Object.fromEntries(["connect", "disconnect", "read", "stopRead"].map((name) => [name,
+        { run: acquisitionActions[name] ?? noop, pending: acquisitionPending && name === "connect", error: actionErrors[name] ?? null }])) };
+    const controller = runtimeController({ status: { accepted: revisionMap(revision), applied: revisionMap(revision), recovery: {}, operations: {}, errors: {} }, refresh, ...runtime });
+    const editable = currentController(selectedModules, { ready: !!selectedModules, error: typeof loadError === "string" ? loadError : null,
+      filterOrder: selection?.bindings?.filter((item) => item.kind === "filter").map((item) => item.slot) ?? [], request: currentRequest });
+    const runtimeControls = useRuntimeControls(controller, editable, source, engineState.refresh);
+    return RunConsole({ engine: engineState, acquisition: source, feed: { generation: null, trials: [], acks: [] },
+      runtime: controller, current: editable, runtimeControls, onEditSetup: noop, onEditProcessing, onResults: noop });
   } finally { dispatcher.current = previous; }
 }
 function triggerButton(tree) {
@@ -320,35 +318,16 @@ test("invalid paradigm controls do not prevent source-only acquisition", () => {
   assert.equal(triggerButton(tree).props.disabled, true);
 });
 
-test("a failed paradigm catalog does not block loading or connecting an accepted source", async () => {
-  const original = { ...pluginConfigApi };
-  const calls = [], updates = new Map(), effects = [];
-  const options = { selection: sourceActivation, engine: { running: false },
-    runtime: { status: { accepted: revisionMap(revision), applied: null } },
-    acquisitionActions: { connect: async (selectedRevision) => calls.push(["connect", selectedRevision]) } };
-  pluginConfigApi.modules = async () => moduleConfiguration(sourceActivation);
-  pluginConfigApi.catalog = async () => { throw new Error("Paradigm catalog unavailable"); };
-  pluginConfigApi.profiles = async () => { throw new Error("Profile names unavailable"); };
-  try {
-    render({ ...options, selection: null, profiles: [], selectedParadigm: null,
-      onStateChange: (state, value) => updates.set(state, value),
-      onEffect: (effect, dependencies) => effects.push([effect, dependencies]) });
-    const loadSelection = effects.find(([, dependencies]) => dependencies?.[0] === JSON.stringify(revisionMap(revision)));
-    assert.deepEqual(loadSelection[1], [JSON.stringify(revisionMap(revision)), "null", 0]);
-    const cleanup = loadSelection[0]();
-    await new Promise(setImmediate);
-    const loaded = render({ ...options, selection: updates.get(4), profiles: updates.get(5),
-      selectedParadigm: updates.get(6), controls: updates.get(7), loadError: updates.get(8), configurationLoad: updates.get(23) });
-    assert.equal(actionButton(loaded, "Connect").props.disabled, false);
-    assert.equal(triggerButton(loaded).props.disabled, true);
-    assert.ok(elements(loaded).some((element) => element.props.role === "alert"
-      && text(element).includes("Paradigm catalog unavailable")));
-    const summary = elements(loaded).find((element) => element.props["aria-label"] === "Module configurations");
-    assert.match(text(summary), /example\.source\/main/);
-    await actionButton(loaded, "Connect").props.onClick();
-    assert.deepEqual(calls, [["connect", currentRequest("acquisition", moduleConfiguration(sourceActivation))]]);
-    cleanup();
-  } finally { Object.assign(pluginConfigApi, original); }
+test("a failed paradigm catalog does not block connecting an accepted source", async () => {
+  const calls = [];
+  const tree = render({ selection: sourceActivation, selectedParadigm: null,
+    loadError: { key: "run.trialControlsUnavailable", params: { detail: "Paradigm catalog unavailable" } },
+    acquisitionActions: { connect: async (request) => calls.push(request) } });
+  assert.equal(actionButton(tree, "Connect").props.disabled, false);
+  assert.equal(triggerButton(tree).props.disabled, true);
+  assert.match(text(tree), /Paradigm catalog unavailable/);
+  await actionButton(tree, "Connect").props.onClick();
+  assert.deepEqual(calls, [currentRequest("acquisition", moduleConfiguration(sourceActivation).modules.acquisition)]);
 });
 
 test("Run routes each explicit source action to the shared controller without combining actions", async () => {
@@ -358,13 +337,14 @@ test("Run routes each explicit source action to the shared controller without co
   const originalSignal = signalConfigApi.get, originalStatus = runtimeConfigApi.status, originalActivation = pluginConfigApi.modules;
   signalConfigApi.get = async () => null;
   runtimeConfigApi.status = async () => ({ running: true, accepted: revisionMap(revision), applied: revisionMap(revision),
-    generation: "engine-1", recovery_required: false, operation: null });
+    generation: "engine-1", recovery: {}, operations: {} });
   pluginConfigApi.modules = async () => moduleConfiguration(sourceActivation);
+  pluginConfigApi.module = async (module) => moduleConfiguration(sourceActivation).modules[module];
   try {
     const disconnected = render({ selection: sourceActivation, acquisitionActions });
     await actionButton(disconnected, "Connect").props.onClick();
     await actionButton(disconnected, "Start reading").props.onClick();
-    assert.deepEqual(calls, [["connect", currentRequest("acquisition", moduleConfiguration(sourceActivation))]]);
+    assert.deepEqual(calls, [["connect", currentRequest("acquisition", moduleConfiguration(sourceActivation).modules.acquisition)]]);
     const connected = render({ selection: sourceActivation, acquisitionActions, acquisition: { connected: true, streaming: false } });
     assert.equal(actionButton(connected, "Connect").props.disabled, true);
     await actionButton(connected, "Connect").props.onClick();
@@ -374,22 +354,22 @@ test("Run routes each explicit source action to the shared controller without co
     await actionButton(reading, "Disconnect").props.onClick();
     await actionButton(reading, "Start reading").props.onClick();
     await actionButton(reading, "Stop reading").props.onClick();
-    assert.deepEqual(calls, [["connect", currentRequest("acquisition", moduleConfiguration(sourceActivation))], ["read", { acquisition: revision, system: "system-revision" }], ["disconnect"], ["stopRead"]]);
+    assert.deepEqual(calls, [["connect", currentRequest("acquisition", moduleConfiguration(sourceActivation).modules.acquisition)], ["read", { acquisition: revision, system: "system-revision" }], ["disconnect"], ["stopRead"]]);
   } finally { signalConfigApi.get = originalSignal; runtimeConfigApi.status = originalStatus; pluginConfigApi.modules = originalActivation; }
 });
 
-test("a shared pending source command blocks all source actions and navigation", () => {
+test("a pending source command blocks duplicate source actions but permits navigation", () => {
   const effects = [], calls = [];
   const tree = render({ selection: sourceActivation, acquisitionPending: true,
     acquisitionActions: { connect: () => calls.push("connect"), read: () => calls.push("read") },
     onEffect: (effect, dependencies) => effects.push([effect, dependencies]) });
-  for (const label of ["Connect", "Disconnect", "Start reading", "Stop reading", "Change setup"]) {
+  for (const label of ["Connect", "Disconnect", "Start reading", "Stop reading"]) {
     assert.equal(actionButton(tree, label).props.disabled, true, label);
   }
   actionButton(tree, "Connect").props.onClick();
   actionButton(tree, "Start reading").props.onClick();
   assert.deepEqual(calls, []);
-  assert.ok(effects.some(([, dependencies]) => dependencies?.[0] === true));
+  assert.equal(!!actionButton(tree, "Change setup").props.disabled, false);
 });
 
 test("a failed stimulation launch refreshes status and displays its error next to the action", async () => {
@@ -400,8 +380,9 @@ test("a failed stimulation launch refreshes status and displays its error next t
   api.stimulationStatus = async () => ({ ...ready, active: false, process_alive: false });
   signalConfigApi.get = async () => null;
   runtimeConfigApi.status = async () => ({ running: true, accepted: revisionMap(revision), applied: revisionMap(revision),
-    generation: "engine-1", recovery_required: false, operation: null });
+    generation: "engine-1", recovery: {}, operations: {} });
   pluginConfigApi.modules = async () => moduleConfiguration(activation);
+  pluginConfigApi.module = async (module) => moduleConfiguration(activation).modules[module];
   try {
     const options = { stimulation: { ...ready, active: false, process_alive: false },
       refresh: async () => { refreshes++; }, onStateChange: (state, value) => updates.set(state, value) };
@@ -409,9 +390,9 @@ test("a failed stimulation launch refreshes status and displays its error next t
     assert.equal(actionButton(tree, "Launch stimulation").props.disabled, false);
     actionButton(tree, "Launch stimulation").props.onClick();
     await new Promise(setImmediate);
-    assert.equal(refreshes, 1, "The shared acquisition controller refreshes source, engine, and runtime together");
+    assert.equal(refreshes, 1, "The stimulation command refreshes its own state and runtime without acquisition");
     assert.equal(updates.get(0).active, false);
-    const result = render({ ...options, actionErrors: { start: "Old engine failure", launch: updates.get(16) } });
+    const result = render({ ...options, actionErrors: { start: "Old engine failure", launch: updates.get(4).launch.error } });
     const stim = card(result, "Stimulation");
     assert.ok(elements(stim).some((element) => element.props.role === "alert" && text(element).includes("Renderer initialization failed")));
     assert.doesNotMatch(text(stim), /Old engine failure/);
@@ -544,13 +525,13 @@ for (const [label, overrides, reason] of [
   });
 }
 
-test("a shared configuration blocker is shown once per action group", () => {
+test("a configuration blocker explains Start while Stop remains available", () => {
   const tree = render({ runtime: { blocked: true, inProgress: true } });
   const start = actionButton(tree, "Start engine");
   const stop = actionButton(tree, "Stop engine");
-  assert.equal(start.props["aria-describedby"], stop.props["aria-describedby"]);
+  assert.equal(stop.props.disabled, false);
   const hint = description(tree, start);
-  assert.match(hint, /Start engine \/ Stop engine:/);
+  assert.match(hint, /Start engine:/);
   assert.equal(hint.match(/Applying configuration\. Wait for the operation to finish\./g).length, 1);
 });
 
@@ -609,7 +590,8 @@ test("active decoder input does not present cached readiness as current after a 
 
 test("recovery explains blocked actions while retaining usable stop controls", () => {
   const tree = render({ acquisition: { connected: true, streaming: true },
-    runtime: { blocked: true, recoveryRequired: true, inProgress: false } });
+    runtime: { status: { accepted: revisionMap(revision), applied: revisionMap(revision), operations: {}, recovery: { system: "Foundation state unknown" } },
+      blocked: true, recoveryRequired: true, inProgress: false } });
   for (const label of ["Start engine", "Disconnect", "Launch stimulation", "Trigger trial"]) {
     const button = actionButton(tree, label);
     assert.equal(button.props.disabled, true);

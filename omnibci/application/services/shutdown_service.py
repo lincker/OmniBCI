@@ -2,19 +2,12 @@
 import asyncio
 import logging
 
-from omnibci.application.commands.stimulation_commands import StopStimulationCommand
-
 logger = logging.getLogger(__name__)
 
 
 class BackendShutdownService:
-    def __init__(self, *, engine, stimulation, stimulation_process, actuation_process,
-                 acquisition, configuration):
+    def __init__(self, *, engine, configuration):
         self.engine = engine
-        self.stimulation = stimulation
-        self.stimulation_process = stimulation_process
-        self.actuation_process = actuation_process
-        self.acquisition = acquisition
         self.configuration = configuration
         self._lock = asyncio.Lock()
         self._complete = False
@@ -37,34 +30,18 @@ class BackendShutdownService:
                 return []
             errors = []
 
-            async def attempt(label, function, *, asynchronous=False):
+            async def attempt(label, function):
                 try:
-                    if asynchronous:
-                        await function()
-                    else:
-                        await asyncio.to_thread(function)
+                    await function()
                 except Exception as exc:
                     logger.exception("Backend shutdown failed: %s", label)
                     errors.append(f"{label}: {exc}")
 
             if self.configuration is not None:
                 report("waiting_for_configuration")
-                await attempt("configuration", self.configuration.wait_for_idle, asynchronous=True)
-            report("stopping_stimulation")
-            await attempt("stimulation", lambda: self.stimulation.handle_stop_stimulation(StopStimulationCommand())
-                          if self.stimulation.is_active else None)
-            # Manager cleanup is still attempted after a failed domain stop.
-            for label, manager in (("stimulation process", self.stimulation_process),
-                                   ("actuation process", self.actuation_process)):
-                if manager is not None:
-                    report("stopping_" + label.replace(" ", "_"))
-                    await attempt(label, manager.stop)
-            if self.acquisition is not None:
-                report("draining_acquisition")
-                await attempt("acquisition drain", lambda: self.acquisition.handle_stop_and_drain()
-                              if self.acquisition.is_streaming else None)
+                await attempt("configuration", self.configuration.wait_for_idle)
             report("stopping_engine")
-            await attempt("engine", self.engine.shutdown, asynchronous=True)
+            await attempt("engine", self.engine.shutdown)
             self._complete = not errors
             if self._complete:
                 report("stopped")

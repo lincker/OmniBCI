@@ -150,16 +150,14 @@ class TestBuilderActuationFoundation:
         ):
             return NeuroEngineBuilder(NeuroEngineConfig(**cfg_kwargs), settings_snapshot={}).build()
 
-    def test_transport_ready_but_commands_disabled_by_default(self):
+    def test_transport_is_deferred_and_commands_disabled_by_default(self):
         eng = self._build()
         assert isinstance(eng.actuation_translator, ActuationCommandTranslator)
         assert isinstance(eng.actuation_feedback, ActuationFeedbackHandler)
-        assert ACTUATION in eng.peer_gateway._channels
+        assert ACTUATION not in eng.peer_gateway._channels
         assert not eng._actuation_active
 
-    def test_enabled_wires_channel_and_components(self):
-        eng = self._build(actuation_server_port=8042)
-        assert isinstance(eng.actuation_translator, ActuationCommandTranslator)
-        assert isinstance(eng.actuation_feedback, ActuationFeedbackHandler)
-        ch = eng.peer_gateway.peer(ACTUATION)
-        assert ch._config.transport._server.port == 8042
+    def test_output_parameters_do_not_configure_foundation_listeners(self):
+        from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
+        eng = NeuroEngineBuilder(settings_snapshot={"ACTUATION.server_port": "invalid-until-prepared"}).build()
+        assert not eng.peer_gateway._channels

@@ -13,11 +13,11 @@ const { useRuntimeConfiguration } = await server.ssrLoadModule("/src/hooks/useRu
 const { runtimeConfigApi } = await server.ssrLoadModule("/src/api/runtime-config.ts");
 const { ApiError } = await server.ssrLoadModule("/src/api/client.ts");
 const { RuntimeConfigurationReview, RuntimeConfigurationStatus } = await server.ssrLoadModule("/src/RuntimeConfiguration.tsx");
-const history = { status: "recovery_required", operation_id: "failed-operation", error: "Unknown startup" };
+const history = { status: "recovery_required", module: "acquisition", affected_modules: ["acquisition"], operation_id: "failed-operation", error: "Unknown startup" };
 const plan = { expected_revisions: { system: "sys" }, module: "acquisition", plan_id: "new-plan", target_revisions: { acquisition: "new-revision" }, errors: [] };
 
 function hookRenderer(status) {
-  const values = [status, history, plan, false, false, false, null, null, null];
+  const values = [status, plan, {}, null, {}];
   const refs = [];
   const dispatcher = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
   return () => {
@@ -34,34 +34,34 @@ function hookRenderer(status) {
       useCallback: (callback) => callback,
       useEffect: () => {},
     };
-    try { return useRuntimeConfiguration(); }
+    try { const hook = useRuntimeConfiguration(); return { ...hook, ...hook.state("acquisition"), completedOperation: hook.state("acquisition").completedOperation ?? null, completedRestoration: hook.completedRestorations.processing ?? null }; }
     finally { dispatcher.current = previous; }
   };
 }
 
 test("a confirmed cleared quarantine permits Apply despite failed-operation history", async () => {
-  const status = { running: false, recovery_required: false, operation: history };
+  const status = { running: false, recovery: {}, operations: { acquisition: history } };
   const hook = hookRenderer(status)();
   assert.equal(hook.recoveryRequired, false);
   assert.equal(hook.blocked, false);
   assert.equal(hook.operation, history);
   const original = { ...runtimeConfigApi };
   let submitted = 0;
-  runtimeConfigApi.apply = async () => { submitted += 1; return { status: "succeeded" }; };
-  runtimeConfigApi.operation = async () => ({ status: "succeeded" });
+  runtimeConfigApi.apply = async () => { submitted += 1; return { module: "acquisition", affected_modules: ["acquisition"], status: "succeeded" }; };
+  runtimeConfigApi.operation = async () => ({ module: "acquisition", affected_modules: ["acquisition"], status: "succeeded" });
   runtimeConfigApi.status = async () => status;
   try { await hook.apply(); assert.equal(submitted, 1); }
   finally { Object.assign(runtimeConfigApi, original); }
 });
 
 test("connecting a source waits for configuration to finish before returning success", async () => {
-  const status = { running: false, recovery_required: false, operation: null };
+  const status = { running: false, recovery: {}, operations: {} };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
   const calls = [];
   runtimeConfigApi.plan = async (body) => { calls.push(body); return plan; };
-  runtimeConfigApi.apply = async () => ({ operation_id: "connect-operation", status: "queued" });
-  runtimeConfigApi.operation = async () => { calls.push("poll"); return { status: "succeeded" }; };
+  runtimeConfigApi.apply = async () => ({ module: "acquisition", affected_modules: ["acquisition"], operation_id: "connect-operation", status: "queued" });
+  runtimeConfigApi.operation = async () => { calls.push("poll"); return { module: "acquisition", affected_modules: ["acquisition"], status: "succeeded" }; };
   runtimeConfigApi.status = async () => status;
   const request = { module: "acquisition", bindings: [], refresh_slots: ["acquisition.source"], expected_revision: null };
   try {
@@ -72,7 +72,7 @@ test("connecting a source waits for configuration to finish before returning suc
 });
 
 test("a rejected connection configuration cannot report success", async () => {
-  const status = { running: false, recovery_required: false, operation: null };
+  const status = { running: false, recovery: {}, operations: {} };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
   let submitted = false;
@@ -80,14 +80,14 @@ test("a rejected connection configuration cannot report success", async () => {
   runtimeConfigApi.apply = async () => { submitted = true; };
   runtimeConfigApi.status = async () => status;
   try {
-    assert.equal(await render().applyCurrentSelection({ bindings: [] }), null);
+    assert.equal(await render().applyCurrentSelection({ module: "acquisition", bindings: [] }), null);
     assert.equal(submitted, false);
     assert.equal(render().requestError, "Source unavailable");
   } finally { Object.assign(runtimeConfigApi, original); }
 });
 
 test("applying current parameters returns its own revision even when another client changes runtime status", async () => {
-  const status = { running: false, recovery_required: false, accepted: { acquisition: "before", system: "sys" }, operation: null };
+  const status = { running: false, recovery: {}, accepted: { acquisition: "before", system: "sys" }, operations: {} };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
   const target = { ...plan, target_revisions: { acquisition: "current-parameters" } };
@@ -100,7 +100,7 @@ test("applying current parameters returns its own revision even when another cli
   runtimeConfigApi.apply = async (planId, operationId) => {
     submitted += 1;
     assert.equal(planId, target.plan_id);
-    return { operation_id: operationId, plan_id: planId, target_revisions: { acquisition: target.target_revisions.acquisition }, status: "succeeded" };
+    return { module: "acquisition", affected_modules: ["acquisition"], operation_id: operationId, plan_id: planId, target_revisions: { acquisition: target.target_revisions.acquisition }, status: "succeeded" };
   };
   runtimeConfigApi.status = async () => ({ ...status, accepted: { acquisition: "another-client", system: "sys" } });
   try {
@@ -112,12 +112,12 @@ test("applying current parameters returns its own revision even when another cli
 });
 
 for (const result of ["failed", "recovery_required"]) test(`a ${result} application returns no current revision`, async () => {
-  const status = { running: false, recovery_required: false, operation: null };
+  const status = { running: false, recovery: {}, operations: {} };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
   runtimeConfigApi.plan = async () => ({ ...plan, target_revisions: { acquisition: "current-parameters" } });
   runtimeConfigApi.apply = async (planId, operationId) => ({
-    operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "current-parameters" }, status: result,
+    module: "acquisition", affected_modules: ["acquisition"], operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "current-parameters" }, status: result,
   });
   runtimeConfigApi.status = async () => status;
   try {
@@ -128,7 +128,7 @@ for (const result of ["failed", "recovery_required"]) test(`a ${result} applicat
 });
 
 test("an invalid current configuration never submits an apply operation", async () => {
-  const render = hookRenderer({ running: false, recovery_required: false, operation: null });
+  const render = hookRenderer({ running: false, recovery: {}, operations: {} });
   const original = { ...runtimeConfigApi };
   runtimeConfigApi.plan = async () => ({ ...plan, target_revisions: { acquisition: "invalid" }, errors: ["Invalid source address"] });
   runtimeConfigApi.apply = async () => assert.fail("Invalid parameters must not be applied");
@@ -140,7 +140,7 @@ test("an invalid current configuration never submits an apply operation", async 
 });
 
 test("an interrupted current application returns no revision while its result is uncertain", async () => {
-  const status = { running: false, recovery_required: false, operation: null };
+  const status = { running: false, recovery: {}, operations: {} };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
   runtimeConfigApi.plan = async () => ({ ...plan, target_revisions: { acquisition: "current-parameters" } });
@@ -155,7 +155,7 @@ test("an interrupted current application returns no revision while its result is
 });
 
 test("a stale runtime plan returns no revision and a fresh request can apply current parameters", async () => {
-  const status = { running: false, recovery_required: false, accepted: { acquisition: "another-client", system: "sys" }, operation: null };
+  const status = { running: false, recovery: {}, accepted: { acquisition: "another-client", system: "sys" }, operations: {} };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
   const planned = [];
@@ -167,7 +167,7 @@ test("a stale runtime plan returns no revision and a fresh request can apply cur
   runtimeConfigApi.apply = async (planId, operationId) => {
     submitted += 1;
     if (submitted === 1) throw new ApiError(409, "REVISION_CONFLICT", "Runtime configuration changed");
-    return { operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "target-2" }, status: "succeeded" };
+    return { module: "acquisition", affected_modules: ["acquisition"], operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "target-2" }, status: "succeeded" };
   };
   runtimeConfigApi.status = async () => status;
   try {
@@ -183,7 +183,7 @@ test("a stale runtime plan returns no revision and a fresh request can apply cur
 });
 
 test("same-render current configuration requests share one planning and application lock", async () => {
-  const status = { running: false, recovery_required: false, operation: null };
+  const status = { running: false, recovery: {}, operations: {} };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
   const calls = [];
@@ -196,7 +196,7 @@ test("same-render current configuration requests share one planning and applicat
   runtimeConfigApi.apply = async (planId, operationId) => {
     calls.push(["apply", planId]);
     await new Promise((resolve) => { finishApplying = resolve; });
-    return { operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "current-parameters" }, status: "succeeded" };
+    return { module: "acquisition", affected_modules: ["acquisition"], operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "current-parameters" }, status: "succeeded" };
   };
   runtimeConfigApi.status = async () => status;
   const request = { module: "acquisition", bindings: [] };
@@ -217,7 +217,7 @@ test("same-render current configuration requests share one planning and applicat
 });
 
 test("an outstanding review blocks automatic application and stale Apply callbacks", async () => {
-  const render = hookRenderer({ running: false, recovery_required: false, operation: null });
+  const render = hookRenderer({ running: false, recovery: {}, operations: {} });
   const original = { ...runtimeConfigApi };
   let finishPlanning, planned = 0;
   runtimeConfigApi.plan = async () => {
@@ -228,7 +228,7 @@ test("an outstanding review blocks automatic application and stale Apply callbac
   runtimeConfigApi.apply = async () => assert.fail("Do not apply a stale plan during review");
   try {
     const hook = render();
-    const review = hook.review({ module: "processing", bindings: [] });
+    const review = hook.review({ module: "acquisition", bindings: [] });
     assert.equal(await hook.applyCurrentSelection({ module: "acquisition", bindings: [] }), null);
     assert.equal(await hook.apply(), false);
     assert.equal(planned, 1);
@@ -238,7 +238,7 @@ test("an outstanding review blocks automatic application and stale Apply callbac
 });
 
 test("automatic planning blocks manual review and stale Apply callbacks", async () => {
-  const status = { running: false, recovery_required: false, operation: null };
+  const status = { running: false, recovery: {}, operations: {} };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
   let finishPlanning, planned = 0, submitted = 0;
@@ -249,13 +249,13 @@ test("automatic planning blocks manual review and stale Apply callbacks", async 
   };
   runtimeConfigApi.apply = async (planId, operationId) => {
     submitted += 1;
-    return { operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "current-parameters" }, status: "succeeded" };
+    return { module: "acquisition", affected_modules: ["acquisition"], operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "current-parameters" }, status: "succeeded" };
   };
   runtimeConfigApi.status = async () => status;
   try {
     const hook = render();
     const applying = hook.applyCurrentSelection({ module: "acquisition", bindings: [] });
-    assert.equal(await hook.review({ module: "processing", bindings: [] }), null);
+    assert.equal(await hook.review({ module: "acquisition", bindings: [] }), null);
     assert.equal(await hook.apply(), false);
     assert.equal(planned, 1);
     assert.equal(submitted, 0);
@@ -266,23 +266,23 @@ test("automatic planning blocks manual review and stale Apply callbacks", async 
 });
 
 for (const [label, status] of [
-  ["not ready but quarantined", { running: false, recovery_required: true, operation: history }],
+  ["not ready but quarantined", { running: false, recovery: { system: "Unknown runtime" }, operations: { acquisition: history } }],
   ["missing status", null],
-  ["missing recovery acknowledgement", { running: false, operation: history }],
+  ["missing recovery acknowledgement", { running: false, operations: { acquisition: history } }],
 ]) {
   test(`${label} remains blocked`, async () => {
     const hook = hookRenderer(status)();
     assert.equal(hook.blocked, true);
     const original = runtimeConfigApi.apply;
     let submitted = 0;
-    runtimeConfigApi.apply = async () => { submitted += 1; return { status: "succeeded" }; };
+    runtimeConfigApi.apply = async () => { submitted += 1; return { module: "acquisition", affected_modules: ["acquisition"], status: "succeeded" }; };
     try { await hook.apply(); assert.equal(submitted, 0); }
     finally { runtimeConfigApi.apply = original; }
   });
 }
 
 test("a rejected host-settings review clears the previous plan and displays the backend error", async () => {
-  const status = { running: false, recovery_required: false, operation: null };
+  const status = { running: false, recovery: {}, operations: {} };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
   const message = "Backend restart required for LOGGING.level";
@@ -299,7 +299,7 @@ test("a rejected host-settings review clears the previous plan and displays the 
     assert.equal(await render().review(request), null);
     const hook = render();
     assert.equal(hook.plan, null);
-    assert.equal(hook.requestError, message);
+    assert.equal(hook.state("system").requestError, message);
     assert.equal(hook.reviewing, false);
     assert.match(renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(RuntimeConfigurationStatus, { runtime: hook }))),
       /Backend restart required for LOGGING.level/);
@@ -311,7 +311,7 @@ test("a rejected host-settings review clears the previous plan and displays the 
 
 
 test("review returns the immutable plan identity used to associate a later completion", async () => {
-  const status = { running: false, recovery_required: false, operation: null };
+  const status = { running: false, recovery: {}, operations: {} };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
   const reviewed = { ...plan, target_revisions: { acquisition: "source-target" } };
@@ -328,14 +328,14 @@ test("review returns the immutable plan identity used to associate a later compl
 });
 
 test("a tracked success is retained when runtime status already describes another client's operation", async () => {
-  const status = { running: false, recovery_required: false, operation: null };
+  const status = { running: false, recovery: {}, operations: {} };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
-  const other = { operation_id: "other-operation", plan_id: "other-plan", target_revisions: { acquisition: "other-target" }, status: "applying" };
+  const other = { module: "acquisition", affected_modules: ["acquisition"], operation_id: "other-operation", plan_id: "other-plan", target_revisions: { acquisition: "other-target" }, status: "applying" };
   let own;
   const polled = [];
   runtimeConfigApi.apply = async (planId, operationId) => {
-    own = { operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "source-target" }, status: "succeeded" };
+    own = { module: "acquisition", affected_modules: ["acquisition"], operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "source-target" }, status: "succeeded" };
     return { ...own, status: "queued" };
   };
   runtimeConfigApi.operation = async (operationId) => {
@@ -343,7 +343,7 @@ test("a tracked success is retained when runtime status already describes anothe
     assert.equal(operationId, own.operation_id);
     return own;
   };
-  runtimeConfigApi.status = async () => ({ ...status, operation: other });
+  runtimeConfigApi.status = async () => ({ ...status, operations: { acquisition: other } });
   try {
     await render().apply();
     assert.deepEqual(polled, [own.operation_id]);
@@ -356,16 +356,16 @@ test("a tracked success is retained when runtime status already describes anothe
 });
 
 test("an immediately completed Apply records its own identity before global status refresh", async () => {
-  const status = { running: false, recovery_required: false, operation: null };
+  const status = { running: false, recovery: {}, operations: {} };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
-  const other = { operation_id: "other-operation", plan_id: "other-plan", target_revisions: { acquisition: "other-target" }, status: "succeeded" };
+  const other = { module: "acquisition", affected_modules: ["acquisition"], operation_id: "other-operation", plan_id: "other-plan", target_revisions: { acquisition: "other-target" }, status: "succeeded" };
   let own;
   runtimeConfigApi.apply = async (planId, operationId) => {
-    own = { operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "source-target" }, status: "succeeded" };
+    own = { module: "acquisition", affected_modules: ["acquisition"], operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "source-target" }, status: "succeeded" };
     return own;
   };
-  runtimeConfigApi.status = async () => ({ ...status, operation: other });
+  runtimeConfigApi.status = async () => ({ ...status, operations: { acquisition: other } });
   try {
     assert.equal(await render().apply(), true);
     assert.equal(render().operation, other);
@@ -374,16 +374,16 @@ test("an immediately completed Apply records its own identity before global stat
 });
 
 test("confirming an interrupted Apply records the original operation success without resubmitting", async () => {
-  const status = { running: false, recovery_required: false, operation: null };
+  const status = { running: false, recovery: {}, operations: {} };
   const render = hookRenderer(status);
   const original = { ...runtimeConfigApi };
-  const other = { operation_id: "other-operation", plan_id: "other-plan", target_revisions: { acquisition: "other-target" }, status: "succeeded" };
+  const other = { module: "acquisition", affected_modules: ["acquisition"], operation_id: "other-operation", plan_id: "other-plan", target_revisions: { acquisition: "other-target" }, status: "succeeded" };
   let own;
   let submitted = 0;
   let checked = 0;
   runtimeConfigApi.apply = async (planId, operationId) => {
     submitted += 1;
-    own = { operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "source-target" }, status: "succeeded" };
+    own = { module: "acquisition", affected_modules: ["acquisition"], operation_id: operationId, plan_id: planId, target_revisions: { acquisition: "source-target" }, status: "succeeded" };
     throw new Error("Connection interrupted");
   };
   runtimeConfigApi.operation = async (operationId) => {
@@ -392,12 +392,12 @@ test("confirming an interrupted Apply records the original operation success wit
     if (checked === 1) throw new ApiError(404, "NOT_FOUND", "Operation not visible yet");
     return own;
   };
-  runtimeConfigApi.status = async () => ({ ...status, operation: other });
+  runtimeConfigApi.status = async () => ({ ...status, operations: { acquisition: other } });
   try {
     assert.equal(await render().apply(), false);
     assert.equal(render().uncertain, true);
     assert.equal(render().completedOperation, null);
-    await render().retryUnconfirmed();
+    await render().retryUnconfirmed("acquisition");
     assert.equal(submitted, 1);
     assert.equal(render().uncertain, false);
     assert.equal(render().operation, other);
@@ -408,13 +408,13 @@ test("confirming an interrupted Apply records the original operation success wit
 
 test("only the successful reviewed revert marks its module for current-value synchronization", async () => {
   const original = { ...runtimeConfigApi };
-  const status = { running: false, recovery_required: false, operation: null, accepted: { processing: "before", system: "sys" } };
+  const status = { running: false, recovery: {}, operations: {}, accepted: { processing: "before", system: "sys" } };
   const render = hookRenderer(status);
   const target = { ...plan, plan_id: "restore-plan", module: "processing", target_revisions: { processing: "restored" } };
-  const other = { operation_id: "another-operation", plan_id: "another-plan", status: "succeeded", target_revisions: { acquisition: "other" } };
-  runtimeConfigApi.apply = async (_plan, operationId) => ({ operation_id: operationId, plan_id: target.plan_id,
+  const other = { module: "acquisition", affected_modules: ["acquisition"], operation_id: "another-operation", plan_id: "another-plan", status: "succeeded", target_revisions: { acquisition: "other" } };
+  runtimeConfigApi.apply = async (_plan, operationId) => ({ module: "processing", affected_modules: ["processing"], operation_id: operationId, plan_id: target.plan_id,
     status: "succeeded", target_revisions: target.target_revisions });
-  runtimeConfigApi.status = async () => ({ ...status, operation: other });
+  runtimeConfigApi.status = async () => ({ ...status, operations: { acquisition: other } });
   try {
     render().reviewPlan(target, "processing");
     assert.equal(render().completedRestoration, null);
@@ -425,4 +425,84 @@ test("only the successful reviewed revert marks its module for current-value syn
     await render().refresh();
     assert.deepEqual(render().completedRestoration, restoration);
   } finally { Object.assign(runtimeConfigApi, original); }
+});
+
+test("unrelated module applications retain independent operation IDs and completion records", async () => {
+  const original = { ...runtimeConfigApi };
+  const status = { running: true, accepted: {}, applied: {}, generation: "engine", operations: {}, recovery: {} };
+  const render = hookRenderer(status);
+  const pending = new Map(), operations = new Map();
+  runtimeConfigApi.status = async () => status;
+  runtimeConfigApi.plan = async ({ module }) => ({ ...plan, module, plan_id: module, target_revisions: { [module]: `${module}-new` } });
+  runtimeConfigApi.apply = async (module, operationId) => {
+    operations.set(module, { module, affected_modules: [module], operation_id: operationId, plan_id: module,
+      target_revisions: { [module]: `${module}-new` }, status: "succeeded" });
+    await new Promise((resolve) => pending.set(module, resolve));
+    return operations.get(module);
+  };
+  try {
+    const processing = render().applyCurrentSelection({ module: "processing", bindings: [] });
+    const stimulation = render().applyCurrentSelection({ module: "stimulation", bindings: [] });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    assert.equal(pending.size, 2);
+    assert.equal(render().state("processing").submitting, true);
+    assert.equal(render().state("stimulation").submitting, true);
+    assert.equal(render().state("actuation").blocked, false);
+    assert.notEqual(operations.get("processing").operation_id, operations.get("stimulation").operation_id);
+    pending.get("stimulation")();
+    assert.deepEqual(await stimulation, { system: "sys", stimulation: "stimulation-new" });
+    assert.equal(render().state("processing").submitting, true);
+    pending.get("processing")();
+    assert.deepEqual(await processing, { system: "sys", processing: "processing-new" });
+    assert.equal(render().state("stimulation").completedOperation, operations.get("stimulation"));
+    assert.equal(render().state("processing").completedOperation, operations.get("processing"));
+  } finally { Object.assign(runtimeConfigApi, original); }
+});
+
+test("an uncertain module retries its own ID after another module has succeeded", async () => {
+  const original = { ...runtimeConfigApi };
+  const status = { running: true, accepted: {}, applied: {}, generation: "engine", operations: {}, recovery: {} };
+  const render = hookRenderer(status);
+  const submitted = [], completed = {};
+  let visible = false;
+  runtimeConfigApi.status = async () => status;
+  runtimeConfigApi.plan = async ({ module }) => ({ ...plan, module, plan_id: module, target_revisions: { [module]: "new" } });
+  runtimeConfigApi.apply = async (module, operationId) => {
+    submitted.push([module, operationId]);
+    completed[module] = { module, affected_modules: [module], operation_id: operationId, plan_id: module,
+      target_revisions: { [module]: "new" }, status: "succeeded" };
+    if (module === "processing") throw new Error("Response interrupted");
+    return completed[module];
+  };
+  runtimeConfigApi.operation = async (id) => {
+    assert.equal(id, completed.processing.operation_id);
+    if (!visible) throw new ApiError(404, "NOT_FOUND", "Not visible");
+    return completed.processing;
+  };
+  try {
+    assert.equal(await render().applyCurrentSelection({ module: "processing", bindings: [] }), null);
+    assert.equal(render().state("processing").uncertain, true);
+    assert.equal(render().state("stimulation").blocked, false);
+    assert.ok(await render().applyCurrentSelection({ module: "stimulation", bindings: [] }));
+    visible = true;
+    await render().retryUnconfirmed("processing");
+    assert.equal(submitted.length, 2, "Confirmation never resubmits a completed operation");
+    assert.equal(render().state("processing").completedOperation, completed.processing);
+    assert.equal(render().state("stimulation").completedOperation, completed.stimulation);
+  } finally { Object.assign(runtimeConfigApi, original); }
+});
+
+test("affected modules and system recovery bound the configuration gate", () => {
+  const status = { running: true, operations: { processing: { module: "processing", affected_modules: ["acquisition", "processing"], status: "applying" } }, recovery: {} };
+  const runtime = hookRenderer(status)();
+  assert.equal(runtime.state("acquisition").blocked, true);
+  assert.equal(runtime.state("processing").blocked, true);
+  assert.equal(runtime.state("stimulation").blocked, false);
+  assert.equal(runtime.state("actuation").blocked, false);
+  assert.equal(runtime.state("system").blocked, true);
+  status.operations = {}; status.recovery = { processing: "Unknown processing" };
+  assert.equal(runtime.state("processing").blocked, true);
+  assert.equal(runtime.state("stimulation").blocked, false);
+  status.recovery.system = "Unknown engine";
+  assert.equal(runtime.state("stimulation").blocked, true);
 });

@@ -33,6 +33,7 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/engine/stop", "post"),
     ("/api/v1/engine/status", "get"),
     ("/api/v1/engine/modules/{module}/start", "post"),
+    ("/api/v1/engine/modules/{module}/prepare", "post"),
     ("/api/v1/engine/modules/{module}/stop", "post"),
     # acquisition
     ("/api/v1/acquisition/connect", "post"),
@@ -178,6 +179,18 @@ class TestResponseDtos:
             "generation", "trial_number", "target_id", "event_id", "confidence", "forced", "produced_at",
             "processing_revision", "acquisition_revision",
         }
+
+    def test_runtime_configuration_uses_scoped_operations_and_recovery(self, spec):
+        schema = _schema(spec, "RuntimeConfigurationResponse")
+        assert set(schema["properties"]) == {
+            "running", "recovery", "accepted", "applied", "generation", "operations", "errors",
+        }
+        assert {"operations", "recovery"} <= set(schema["required"])
+        operation = _schema(spec, "RuntimeOperationResponse")
+        assert {"module", "affected_modules", "operation_id"} <= set(operation["required"])
+        prepare = spec["paths"]["/api/v1/engine/modules/{module}/prepare"]["post"]
+        module = next(parameter for parameter in prepare["parameters"] if parameter["name"] == "module")
+        assert set(module["schema"]["enum"]) == {"stimulation", "actuation"}
 
     def test_engine_status_fields(self, spec):
         props = _schema(spec, "EngineStatusResponse")["properties"]

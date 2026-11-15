@@ -20,9 +20,13 @@ class EventType(IntEnum):
     StartAcquisitionPreview = 114
     StopAcquisitionPreview = 115
     GetAcquisitionPreview = 116
+    AttachProcessingInput = 117
+    DetachProcessingInput = 118
     StageProcessingConfiguration = 211  # stage a pipeline until the next epoch boundary
     CancelProcessingConfiguration = 212  # reconcile or cancel a staged pipeline
     PrepareSignalProcessing = 214
+    ResetProcessingInput = 215
+    ProcessingInputFault = 216  # acquisition delivery failed; source reading continues
     AcquisitionState = 121  # worker -> API: authoritative device-state snapshot
                             # payload: application.events.AcquisitionSnapshot
     CommandResult = 601      # command consumer -> API: application.events.CommandResult

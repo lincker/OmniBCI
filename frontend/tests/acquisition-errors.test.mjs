@@ -19,6 +19,10 @@ function sourceFixture(error) {
   const state = { error, connected: false, revision: "rev-1", calls: [] };
   globalThis.fetch = async (path, options = {}) => {
     state.calls.push([path, options.method ?? "GET"]);
+    if (path === "/api/v1/acquisition/disconnect") {
+      state.connected = false;
+      return Response.json({ success: true, message: "Data provider disconnected", data: null });
+    }
     if (path === "/api/v1/acquisition/connect") {
       if (state.error) return Response.json(state.error, { status: 500 });
       state.connected = true;
@@ -27,7 +31,7 @@ function sourceFixture(error) {
     const data = path === "/api/v1/acquisition/status"
       ? { connected: state.connected, streaming: false, connection_id: state.connected ? "source-1" : null }
       : path === "/api/v1/config/runtime"
-        ? { running: true, generation: "engine-1", accepted: revisions(state.revision), applied: revisions(state.revision), recovery_required: false, operation: null }
+        ? { running: true, generation: "engine-1", accepted: revisions(state.revision), applied: revisions(state.revision), recovery: {}, operations: {} }
         : path === "/api/v1/config/modules/acquisition"
           ? { revision: state.revision, bindings: [{ slot: "acquisition.source" }] } : assert.fail(`Unexpected request: ${path}`);
     return Response.json({ success: true, message: "ok", data });
@@ -201,4 +205,12 @@ test("Connect cannot apply another module or rebuild an existing source connecti
     assert.match(harness.render().connect.error, connected ? /disconnect/i : /acquisition/i);
     assert.equal(state.calls.some(([path]) => path.endsWith("/connect")), false);
   }
+});
+
+test("Disconnect sends scoped recovery even when the acquisition worker is already disconnected", async () => {
+  const state = sourceFixture(null);
+  const harness = controllerHarness({ status: { recovery: { acquisition: "Worker state unknown" } } });
+  await harness.render().disconnect.run();
+  assert.equal(harness.render().disconnect.error, null);
+  assert.equal(state.calls.filter(([path]) => path.endsWith("/disconnect")).length, 1);
 });

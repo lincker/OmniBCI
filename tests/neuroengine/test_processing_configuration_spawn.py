@@ -9,7 +9,7 @@ import time
 import numpy as np
 import pytest
 
-from omnibci.application.events import CommandRequest
+from omnibci.application.events import CommandRequest, ProcessingInputStart
 from omnibci.application.plugin_profiles import ProfileBinding
 from omnibci.domain.signal import SignalChunk
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
@@ -111,12 +111,15 @@ class ValueDecoder(Decoder):
                             connection_id="connection")
         plan = compile_processing_plan(source, ProcessingInput(), acquisition_revision="old")
         receipt = {"generation": "run", "acquisition_revision": "old", "processing_revision": "old", "system_revision": "system", "connection_id": "connection",
-                   "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint}
+                   "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input"}
         commands.put((SignalProcessorCommand.prepare_signal, CommandRequest("prepare", {
             "plan": plan.to_dict(), "receipt": receipt,
         })))
         prepared = _event(events, EventType.CommandResult, lambda event: event.data.command_id == "prepare")
         assert prepared.ok, prepared.message
+        data.put(ProcessingInputStart("attach", receipt, 0))
+        attached = _event(events, EventType.CommandResult, lambda event: event.data.command_id == "attach")
+        assert attached.ok, attached.message
         data.put(SignalChunk(1.0, 1, np.array([[1., 1., 1.], [7., 0., 0.]])))
         _wait_file(plugin / "epoch-1")
         commands.put((SignalProcessorCommand.stage_configuration, CommandRequest("update", {

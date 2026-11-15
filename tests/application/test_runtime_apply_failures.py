@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 
 from omnibci.application.events import CommandResult, StreamDrainReceipt
+from omnibci.application.activation_settings import merge_module_settings
 from omnibci.application.plugin_profiles import ActivationSet, ModuleActivation, ProfileRevisionConflict
 from tests.plugin_configuration_helpers import accept_profiles
 from omnibci.application.plugin_schema import PluginSchemaError
@@ -37,8 +38,9 @@ class Engine:
     def is_module_running(self, module):
         return self.is_engine_ready and self.modules.get(module, False)
 
-    def acknowledge_configuration(self, snapshot):
-        self.applied_snapshot = deepcopy(snapshot)
+    def acknowledge_configuration(self, snapshot, *, modules=None):
+        self.applied_snapshot = (deepcopy(snapshot) if modules is None else
+                                 merge_module_settings(self.applied_snapshot, snapshot, modules))
 
     async def start_module_for_configuration(self, module, snapshot):
         revision = snapshot["CONFIG.module_revisions"][module]
@@ -70,8 +72,8 @@ class Engine:
         return (deepcopy(self.applied_snapshot),) if self.is_engine_ready or self.owned_unready else ()
 
     @asynccontextmanager
-    async def runtime_transition(self):
-        with self.admission.transition():
+    async def runtime_transition(self, scopes=None):
+        with self.admission.transition(scopes):
             yield
 
     async def start_for_configuration(self, snapshot):
@@ -236,7 +238,7 @@ async def test_idle_owned_resources_reject_review_or_resolve_before_submission(h
     with pytest.raises(PluginSchemaError, match="still owns resources"):
         h.runtime.submit(plan.plan_id, str(uuid4()))
 
-    assert h.runtime.status()["operation"] is None
+    assert all(operation is None for operation in h.runtime.status()["operations"].values())
     assert h.profiles.repository.get_activation_set() == h.previous
     assert h.log == []
     assert h.engine.starts == []
@@ -289,7 +291,7 @@ async def test_idle_effector_validation_uses_owned_resources_not_history(harness
         assert not h.plan.errors
         operation = await apply(h)
         assert operation["status"] == "succeeded"
-        assert operation["result"] == {"outcome": "selected"}
+        assert operation["result"] == {"outcome": "selected", "applied": True, "history_saved": True}
         assert h.profiles.repository.get_module(h.module).settings["ACTUATION.watchdog_timeout_s"] == 3.0
     assert h.log == []
     assert h.engine.starts == []
@@ -340,7 +342,7 @@ async def test_stopped_module_configuration_is_selected_without_starting_it(harn
     assert h.plan.strategy == "select_on_start" and not h.plan.errors
     operation = await apply(h)
     assert operation["status"] == "succeeded"
-    assert operation["result"] == {"outcome": "selected"}
+    assert operation["result"] == {"outcome": "selected", "applied": True, "history_saved": True}
     assert not h.engine.is_module_running(module)
     assert h.engine.is_engine_ready
     assert h.engine.applied_revisions[module] == h.profiles.repository.get_module(module).revision
@@ -358,8 +360,8 @@ async def test_inactive_selection_acknowledgement_failure_restores_or_quarantine
     assert h.plan.strategy == "select_on_start"
     before = deepcopy(h.engine.applied_snapshot)
 
-    def acknowledge(snapshot):
-        h.engine.applied_snapshot = deepcopy(snapshot)
+    def acknowledge(snapshot, *, modules=None):
+        h.engine.applied_snapshot = merge_module_settings(h.engine.applied_snapshot, snapshot, modules)
         if restoration_fails or snapshot["CONFIG.module_revisions"]["acquisition"] == h.plan.target_revisions["acquisition"]:
             raise RuntimeError("Runtime configuration acknowledgement failed")
 
