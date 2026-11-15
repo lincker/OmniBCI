@@ -150,6 +150,31 @@ export function useCurrentConfiguration(acceptedRevisions?: RevisionMap,
     if (module === "processing" && baseline !== undefined && (typeof baseline !== "number" || !Number.isFinite(baseline) || baseline < 0)) {
       return "Pre-trigger duration must be a non-negative number.";
     }
+    if (module === "stimulation" || module === "actuation") {
+      const settings = settingValues.current[module] ?? {};
+      const prefix = module.toUpperCase();
+      const mode = settings[`${prefix}.auto_spawn`];
+      const address = settings[`${prefix}.server_ip`];
+      const port = settings[`${prefix}.server_port`];
+      if (mode !== undefined && typeof mode !== "boolean") return "Choose a run mode.";
+      if (address !== undefined && (typeof address !== "string" || !address.trim())) return "Listen address is required.";
+      if (port !== undefined && (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535)) {
+        return "Listen port must be an integer between 1 and 65535.";
+      }
+      if (module === "stimulation") {
+        const renderer = settings["STIMULATION.renderer"];
+        if (renderer !== undefined && renderer !== "moderngl" && renderer !== "pyopengl") return "Choose a supported renderer.";
+      } else {
+        const watchdog = settings["ACTUATION.watchdog_timeout_s"];
+        const age = settings["ACTUATION.max_command_age_s"];
+        if (watchdog !== undefined && (typeof watchdog !== "number" || !Number.isFinite(watchdog) || watchdog <= 0)) {
+          return "Watchdog timeout must be a positive number.";
+        }
+        if (age !== undefined && (typeof age !== "number" || !Number.isFinite(age) || age < 0)) {
+          return "Maximum command age must be a non-negative number.";
+        }
+      }
+    }
     const decoder = values.current["processing.decoder"];
     return module === "processing" && decoder?.selection && (decoder.requiresProcessingInputReview || !decoder.processingInput)
       ? "Configure the decoder input before applying or starting processing." : null;

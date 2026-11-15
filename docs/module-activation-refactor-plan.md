@@ -312,13 +312,17 @@ Rules:
 |---|---|
 | acquisition | None |
 | processing | `ALGORITHM.baseline_duration` |
-| stimulation | `STIMULATION.renderer`, `STIMULATION.auto_spawn` |
+| stimulation | `STIMULATION.server_ip`, `STIMULATION.server_port`, `STIMULATION.renderer`, `STIMULATION.auto_spawn` |
 | actuation | `ACTUATION.server_ip`, `ACTUATION.server_port`, `ACTUATION.watchdog_timeout_s`, `ACTUATION.max_command_age_s`, `ACTUATION.auto_spawn` |
-| system | `NEUROENGINE.queue_size`, `NEUROENGINE.message_server_ip`, `NEUROENGINE.message_server_port`, `NEUROENGINE.startup_timeout_s`, `debug` |
+| system | `NEUROENGINE.queue_size`, `NEUROENGINE.startup_timeout_s`, `debug` |
 
 `BACKEND_STARTUP_DEFAULTS` (`LOGGING.*`, `NEUROENGINE.command_timeout_s`, `PLUGINS.user_dir`) are process-startup settings, not runtime settings. They are unchanged.
 
-Host settings are written by the settings page into `settings.toml` (existing `api.patchConfig`). Accepting a module copies `section_settings(host_settings, module)` into that module's `ModuleActivation.settings`. This replaces `include_host_settings`, which applied to everything. Accepting `system` copies `section_settings(host_settings, "system")`.
+Shared settings are written by the settings page into `settings.toml` (existing
+`api.patchConfig`). Accepting `system` copies `section_settings(host_settings,
+"system")`. Module settings come from the current editor's explicit action
+request; host values only initialize an absent module. Output addresses belong
+to their respective modules and never trigger a shared system rebuild.
 
 ### 3.4 Runtime identity
 

@@ -271,14 +271,15 @@ parameters through the existing schema contract.
 
 ## 3. Host settings
 
-The target owner is shared host configuration. These values do not belong in a
-Plugin Profile merely because a key starts with a module name.
+Runtime settings belong to their owning module or the shared foundation.
+Module settings are edited alongside current plugin values and submitted in the
+same module action; they are not saved in an individual Plugin Profile.
 
 | Existing key | Responsibility | Application boundary and current limitation |
 | --- | --- | --- |
 | `ALGORITHM.baseline_duration` | Signal Processing framework: amount of pre-trigger data retained | Processing restart |
 | `NEUROENGINE.queue_size` | Shared worker command queue capacity (system) | Engine rebuild |
-| `NEUROENGINE.message_server_ip`, `NEUROENGINE.message_server_port` | Engine/Stimulation communication | Engine rebuild with managed peers; no live update for external peers |
+| `STIMULATION.server_ip`, `STIMULATION.server_port` | Stimulation listener and node connection, default `127.0.0.1:8765` | Stimulation module replacement; reconfigure only its listener and renderer process |
 | `debug` | Engine event-loop debug mode | Engine rebuild |
 | `ACTUATION.server_ip`, `ACTUATION.server_port` | Engine/Actuation communication | Actuation module replacement; reconfigure only its gateway and driver |
 | `ACTUATION.watchdog_timeout_s` | Actuation connection watchdog and heartbeat | Actuation module replacement; update its two endpoints together |
@@ -710,3 +711,44 @@ This plan preserves the current real-time execution model: configuration I/O,
 schema validation, planning, and persistence run at management/start/apply
 boundaries, with no new file reads, locks, schema checks, or network requests in
 acquisition, processing, trial, or rendering loops.
+
+## 7. Proposed consolidation of settings outside the four modules
+
+This section is a review proposal; the output-module ownership and editor changes
+do not yet replace the shared settings workflow.
+
+`activation/system.toml` is still required: it records the successfully accepted
+Engine settings and supplies the shared system revision. The user `settings.toml`
+currently also holds saved Engine edits that may not have been applied. These
+files have different meanings, but saving the same runtime setting twice creates
+an unnecessary step. Remove that step rather than discarding the accepted state.
+
+| Group | Settings and current consumers | Proposed source and application |
+| --- | --- | --- |
+| Engine foundation | Queue capacity, worker startup timeout, event-loop debug; consumed by the Engine builder | Current editor values go directly to the existing system plan/apply flow. Successful application persists only `activation/system.toml`; an Engine rebuild applies changes |
+| Backend startup | Logging level/path, command-result timeout, plugin-directory default; consumed during service construction | User `settings.toml` holds these values. Show saved values separately from the startup snapshot when a backend restart is pending |
+| Deployment | Configuration/plugin directory overrides, HTTP host/port, authentication, market URL/repository/trust/cache, node backend URL | Keep launch arguments and environment inputs as deployment sources. Show relevant effective values and their sources; credentials do not enter the ordinary settings form or module history |
+| Client preferences | Appearance and language | Remain local browser/desktop preferences; immediate effect |
+
+Use one settings page grouped by these application boundaries. Extend the existing
+explicit settings policies instead of adding a configuration registry, another
+version layer, or a second application coordinator. Keep both `system_revision`
+and Engine generation: they identify actual shared settings and a running Engine
+instance, respectively.
+
+The next implementation should:
+
+1. Make system review accept explicit current settings through the existing
+   plan request, as module review already does. Initialize the editor from accepted
+   values, using declared defaults only when no accepted system exists.
+2. Remove the Engine-settings `PATCH settings.toml` prerequisite, its duplicate
+   comparison state, and the corresponding frontend Save-before-Review gate.
+3. Keep backend-startup writes in the existing settings service with explicit
+   validation and restart feedback. Pending backend settings must not block an
+   unrelated Engine-settings plan or falsely appear applied after an Engine restart.
+4. Preserve accepted values and module history. Review and remove obsolete host
+   runtime keys once; add no automatic legacy compatibility layer.
+
+Verify that a failed system application retains the previous accepted settings,
+concurrent edits conflict, backend-only changes require a backend restart, and
+module-only changes never alter the shared system revision.

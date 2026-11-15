@@ -125,13 +125,13 @@ def test_each_section_copies_only_its_owned_host_settings(service):
     service.settings_source = lambda: {
         "NEUROENGINE.queue_size": 64, "ALGORITHM.baseline_duration": 2.0,
         "STIMULATION.auto_spawn": False, "ACTUATION.auto_spawn": False,
-        "NEUROENGINE.message_server_port": 5000, "debug": True,
+        "STIMULATION.server_port": 5000, "debug": True,
         "LOGGING.level": "INFO", "ACQUISITION.sample_rate": 999, "unknown": 1,
     }
     expected = {
         "acquisition": {},
         "processing": {"ALGORITHM.baseline_duration": 2.0},
-        "stimulation": {"STIMULATION.auto_spawn": False},
+        "stimulation": {"STIMULATION.auto_spawn": False, "STIMULATION.server_port": 5000},
         "actuation": {"ACTUATION.auto_spawn": False},
     }
     for module, settings in expected.items():
@@ -140,7 +140,7 @@ def test_each_section_copies_only_its_owned_host_settings(service):
         service.repository.save_module(candidate, expected_revision=None)
     assert service.repository.get_system() is None
     system = service.propose_system()
-    assert system.settings == {"NEUROENGINE.queue_size": 64, "NEUROENGINE.message_server_port": 5000, "debug": True}
+    assert system.settings == {"NEUROENGINE.queue_size": 64, "debug": True}
     service.repository.save_system(system, expected_revision=None)
     values = runtime(service)
     assert values["CONFIG.system_revision"] == system.revision

@@ -92,8 +92,7 @@ def _run_stimulation(
 class StimulationProcessManager:
     """Manages the Stimulation OS process.
 
-    When *auto_spawn* is False all public methods are no-ops, so the same
-    ``StimulationAppService`` code path works for both deployment modes.
+    Each start uses the pinned snapshot's managed or external mode.
     Desktop hosts disable process termination and retain unresponsive children.
     """
 
@@ -104,15 +103,13 @@ class StimulationProcessManager:
 
     def __init__(
         self,
-        auto_spawn: bool = True,
         *,
         startup_timeout_s: float = _STARTUP_TIMEOUT_S,
         allow_process_termination: bool = True,
     ) -> None:
         if startup_timeout_s <= 0:
             raise ValueError("startup_timeout_s must be greater than zero")
-        self._default_auto_spawn = auto_spawn
-        self._auto_spawn = auto_spawn
+        self._auto_spawn = True
         self._settings_snapshot: dict | None = None
         self._startup_timeout_s = float(startup_timeout_s)
         self._allow_process_termination = allow_process_termination
@@ -130,13 +127,13 @@ class StimulationProcessManager:
     # ── Public API ─────────────────────────────────────────────────────────
 
     def start(self, *, settings_snapshot: dict) -> None:
-        """Spawn the Stimulation subprocess (no-op if auto_spawn=False or already running).
+        """Start a managed child or release it when external mode is selected.
 
         The snapshot determines the selected paradigm and managed mode.
         """
         with self._lifecycle_lock:
             snapshot = deepcopy(settings_snapshot)
-            auto_spawn = bool(snapshot.get("STIMULATION.auto_spawn", self._default_auto_spawn))
+            auto_spawn = snapshot.get("STIMULATION.auto_spawn", True)
             if not auto_spawn:
                 self._stop_locked()
                 self._auto_spawn = False

@@ -743,6 +743,74 @@ async def test_output_module_apply_never_commands_acquisition_or_processing(outp
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("module", ["stimulation", "actuation"])
+@pytest.mark.parametrize("occupied", [False, True])
+async def test_output_address_change_is_local_and_failed_bind_restores_previous_listener(
+    rebuild_harness, unused_tcp_port_factory, module, occupied,
+):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from omnibci.infrastructure.neuroengine.gateway.peer_gateway import PeerGateway
+    from tests.neuroengine.test_neuro_engine import _make_engine
+    from tests.neuroengine.test_peer_gateway import FakeBus
+
+    h = rebuild_harness()
+    h.module = module
+    for role in ("stimulation", "actuation"):
+        selected = h.profiles.repository.get_module(role)
+        settings = {**selected.settings, f"{role.upper()}.server_port": unused_tcp_port_factory()}
+        h.profiles.repository.save_module(ModuleActivation(role, settings, selected.bindings),
+                                         expected_revision=selected.revision)
+    h.previous = h.profiles.repository.get_activation_set()
+    h.engine.applied_snapshot = {**h.profiles.materialize(h.previous), "CONFIG.generation": h.engine.generation}
+    original = h.engine.applied_snapshot
+    bus = FakeBus()
+    gateway = PeerGateway(bus)
+    foundation = _make_engine(event_bus=bus, peer_gateway=gateway,
+                              generation=h.engine.generation, system_revision=h.previous.system.revision)
+    foundation._loop = asyncio.get_running_loop()
+    foundation._started = True
+    h.engine.reconfigure_output_modules = foundation.reconfigure_output_modules
+    h.engine.stop_actuation_for_configuration = AsyncMock()
+    blocker = await asyncio.start_server(lambda reader, writer: writer.close(), "127.0.0.1", 0) if occupied else None
+    port = blocker.sockets[0].getsockname()[1] if blocker else unused_tcp_port_factory()
+    selected = h.previous.modules[module]
+    h.plan = h.runtime.plan(module, [{"slot": item.slot, "profile_id": item.profile_id} for item in selected.bindings],
+                            settings={**selected.settings, f"{module.upper()}.server_port": port},
+                            expected_revision=selected.revision)
+    assert h.plan.strategy == "module" and not h.plan.errors
+    await gateway.start()
+    try:
+        for role in ("stimulation", "actuation"):
+            await foundation.ensure_output_ready(role, original)
+        other = "actuation" if module == "stimulation" else "stimulation"
+        unrelated = gateway.peer(other)
+        operation = await apply(h)
+        assert operation["status"] == ("failed" if occupied else "succeeded"), operation
+        assert operation["rolled_back"] is occupied
+        listener = gateway.peer(module)._transport._server
+        expected_port = original[f"{module.upper()}.server_port"] if occupied else port
+        assert listener.port == expected_port and gateway.peer(module).is_ready
+        assert gateway.peer(other) is unrelated and unrelated.is_ready
+        assert h.engine.generation == original["CONFIG.generation"]
+        assert h.engine.applied_revisions["system"] == h.previous.system.revision
+        assert h.engine.is_module_running("acquisition") and h.engine.is_module_running("processing")
+        assert h.acquisition.streaming and not h.log and not h.engine.starts
+        for role in ("acquisition", "processing", other):
+            assert h.profiles.repository.get_module(role) == h.previous.modules[role]
+        if occupied:
+            assert h.profiles.repository.get_module(module) == selected
+        else:
+            assert h.profiles.repository.get_module(module).settings[f"{module.upper()}.server_port"] == port
+    finally:
+        await gateway.stop()
+        if blocker:
+            blocker.close()
+            await blocker.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_unknown_output_start_never_recreates_previous_driver(output_update):
     h = output_update
     h.fail_output_start = True

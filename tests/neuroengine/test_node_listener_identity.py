@@ -71,6 +71,22 @@ async def test_preparation_is_idempotent_and_does_not_prepare_another_role(build
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("settings,address", [
+    ({}, ("127.0.0.1", 8765)),
+    ({"STIMULATION.server_ip": "192.0.2.4", "STIMULATION.server_port": 9234}, ("192.0.2.4", 9234)),
+])
+async def test_stimulation_listener_and_client_use_the_same_module_address(build_graph, settings, address):
+    from omnibci.infrastructure.stimulation.application import Stimulation
+
+    engine, snapshot = await build_graph(**settings)
+    await engine.ensure_output_ready("stimulation", snapshot)
+    server = engine.peer_gateway.peer("stimulation")._transport._server
+    client = Stimulation(settings_snapshot=snapshot).peer_channel._transport._client
+    assert (server.host, server.port) == address
+    assert (client.server_ip, client.server_port) == address
+
+
+@pytest.mark.asyncio
 async def test_external_actuation_is_prepared_before_module_activation(build_graph):
     engine, snapshot = await build_graph(**{"ACTUATION.auto_spawn": False})
     assert not engine.peer_gateway._channels

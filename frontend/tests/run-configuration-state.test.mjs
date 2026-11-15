@@ -68,7 +68,7 @@ const sameDeps = (left, right) => !!left && !!right && left.length === right.len
 
 function componentHarness(props) {
   const hooks = [];
-  let cursor = 0, dirty = true, tree;
+  let cursor = 0, dirty = true, tree, currentController;
   let effects = [];
   const memo = (factory, deps) => {
     const index = cursor++;
@@ -107,6 +107,7 @@ function componentHarness(props) {
       const current = { ...loaded, ...overrides, modules: Object.fromEntries(Object.entries(loaded.modules).map(([module, state]) => [module, {
         ...state, ...(overrides?.ready === undefined ? {} : { ready: overrides.ready }), ...(overrides?.error === undefined ? {} : { error: overrides.error }),
       }])) };
+      currentController = current;
       const runtime = runtimeController(props.runtime);
       const runtimeControls = useRuntimeControls(runtime, current, props.acquisition, props.engine.refresh);
       tree = RunConsole({ ...props, current, runtime, runtimeControls });
@@ -115,7 +116,7 @@ function componentHarness(props) {
     pending.forEach((effect) => effect());
   }
   return {
-    get tree() { return tree; }, render,
+    get tree() { return tree; }, get current() { return currentController; }, render,
     updateRuntimeState(value) { Object.assign(props.runtime, value); dirty = true; },
     updateRuntime(status) { props.runtime = { ...props.runtime, status: { ...props.runtime.status, ...status } }; dirty = true; },
     async settle() {
@@ -674,8 +675,129 @@ for (const module of ["acquisition", "processing", "stimulation", "actuation", "
   });
 }
 
+for (const connected of [false, true]) {
+  test(`external stimulation ${connected ? "enables" : "prepares"} a paradigm unavailable on the backend platform`, async () => {
+    const accepted = { ...complete, settings: { "STIMULATION.auto_spawn": false } };
+    await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, running: true,
+      catalog: async () => [{ ...paradigm, available: false }],
+      stimulationStatus: { active: false, process_alive: false, engine_connected: connected, paradigm: null } },
+      async ({ harness, calls }) => {
+        await harness.settle();
+        const start = button(harness.tree, connected ? "Enable stimulation" : "Prepare external stimulation");
+        assert.equal(start.props.disabled, false);
+        await start.props.onClick(); await harness.settle();
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0][0], "stimStart");
+        assert.equal(calls[0][1].configuration.settings["STIMULATION.auto_spawn"], false);
+      });
+  });
+}
+
+for (const available of [true, false]) {
+  test(`enabled external stimulation can trigger trials with a null local paradigm and backend availability=${available}`, async () => {
+    const accepted = { ...complete, settings: { "STIMULATION.auto_spawn": false } };
+    await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, running: true,
+      catalog: async () => [{ ...paradigm, available }],
+      stimulationStatus: { active: true, process_alive: false, engine_connected: true, paradigm: null } },
+      async ({ harness, calls }) => {
+        await harness.settle();
+        const trigger = button(harness.tree, "Trigger trial");
+        assert.equal(trigger.props.disabled, false);
+        elements(harness.tree).find((item) => item.type === "form" && item.props.className.includes("trial-controls")).props.onSubmit({ preventDefault: noop });
+        await harness.settle();
+        assert.deepEqual(calls, [["trialStart", 1, undefined]]);
+      });
+  });
+}
+
+for (const missing of ["enabled", "connected", "applied configuration"]) {
+  test(`external trials still require ${missing}`, async () => {
+    const accepted = { ...complete, settings: { "STIMULATION.auto_spawn": false } };
+    await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, running: true,
+      catalog: async () => [{ ...paradigm, available: false }],
+      appliedRevisions: { ...revisionMap(complete.revision), stimulation: missing === "applied configuration" ? "older" : complete.revision },
+      stimulationStatus: { active: missing !== "enabled", process_alive: false, engine_connected: missing !== "connected", paradigm: null } },
+      async ({ harness, calls }) => {
+        await harness.settle();
+        const trigger = button(harness.tree, "Trigger trial");
+        assert.equal(trigger.props.disabled, true);
+        elements(harness.tree).find((item) => item.type === "form" && item.props.className.includes("trial-controls")).props.onSubmit({ preventDefault: noop });
+        await harness.settle();
+        assert.deepEqual(calls, []);
+      });
+  });
+}
+
+test("managed stimulation still requires a paradigm available on the backend platform", async () => {
+  const accepted = { ...complete, settings: { "STIMULATION.auto_spawn": true } };
+  await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, running: true,
+    catalog: async () => [{ ...paradigm, available: false }] }, async ({ harness, calls }) => {
+    await harness.settle();
+    assert.equal(button(harness.tree, "Launch stimulation").props.disabled, true);
+    assert.deepEqual(calls, []);
+  });
+});
+
+test("switching an external paradigm to managed mode still checks backend platform availability", async () => {
+  const accepted = { ...complete, settings: { "STIMULATION.auto_spawn": false } };
+  await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, running: true,
+    catalog: async () => [{ ...paradigm, available: false }] }, async ({ harness, calls }) => {
+    await harness.settle();
+    harness.current.setSetting("stimulation", "STIMULATION.auto_spawn", true); await harness.settle();
+    assert.equal(button(harness.tree, "Launch stimulation").props.disabled, true);
+    assert.deepEqual(calls, []);
+  });
+});
+
 for (const [module, setting, prepareLabel, startLabel] of [["stimulation", "STIMULATION.auto_spawn", "Prepare external stimulation", "Enable stimulation"],
   ["actuation", "ACTUATION.auto_spawn", "Prepare external actuation", "Start actuation"]]) {
+  test(`${module} Start uses current mode and all edited settings in one request`, async () => {
+    const prefix = module.toUpperCase();
+    const accepted = { ...complete, settings: { [setting]: true, [`${prefix}.server_ip`]: "127.0.0.1",
+      [`${prefix}.server_port`]: module === "stimulation" ? 8765 : 8001 } };
+    await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, running: true },
+      async ({ harness, calls }) => {
+        await harness.settle();
+        harness.current.setSetting(module, setting, false);
+        harness.current.setSetting(module, `${prefix}.server_port`, 9023);
+        await harness.settle();
+        const prepare = button(harness.tree, prepareLabel);
+        assert.equal(prepare.props.disabled, false);
+        await prepare.props.onClick(); await harness.settle();
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0][0], module === "stimulation" ? "stimStart" : "moduleStart");
+        const body = calls[0].at(-1).configuration;
+        assert.deepEqual(body.settings, { [setting]: false, [`${prefix}.server_ip`]: "127.0.0.1", [`${prefix}.server_port`]: 9023 });
+        assert.ok(body.bindings.length > 0);
+        assert.equal(body.expected_revision, complete.revision);
+      });
+  });
+  test(`${module} refuses current edits while an external node is connected, including switching to managed mode`, async () => {
+    const accepted = { ...complete, settings: { [setting]: false } };
+    await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, running: true,
+      actuationConnected: true, stimulationStatus: { active: false, process_alive: false, engine_connected: true, paradigm: null } },
+      async ({ harness, calls }) => {
+        await harness.settle();
+        harness.current.setSetting(module, setting, true); await harness.settle();
+        const start = button(harness.tree, module === "stimulation" ? "Launch stimulation" : "Start actuation");
+        assert.equal(start.props.disabled, true);
+        assert.match(text(harness.tree), /Disconnect the external node before changing its configuration/);
+        assert.equal(button(harness.tree, module === "stimulation" ? "Stop stimulation" : "Stop actuation").props.disabled, false);
+        assert.deepEqual(calls, []);
+      });
+  });
+  test(`${module} invalid settings block its Start while Stop and the other module remain available`, async () => {
+    await withScenario({ activation: async () => complete, acceptedRevision: complete.revision, running: true,
+      actuationConnected: true, stimulationStatus: { active: true, process_alive: true, engine_connected: true, paradigm: "visual" } },
+      async ({ harness }) => {
+        await harness.settle();
+        harness.current.setSetting(module, `${module.toUpperCase()}.server_port`, 0); await harness.settle();
+        assert.equal(button(harness.tree, module === "stimulation" ? "Launch stimulation" : "Start actuation").props.disabled, true);
+        assert.match(text(harness.tree), /port.*1.*65535/i);
+        assert.equal(button(harness.tree, module === "stimulation" ? "Stop stimulation" : "Stop actuation").props.disabled, false);
+        assert.equal(button(harness.tree, "Connect").props.disabled, false);
+      });
+  });
   test(`external ${module} recovery prepares its retained listener without applying edited values`, async () => {
     const accepted = { ...complete, settings: { [setting]: false } };
     const current = currentConfiguration({ [module]: complete.bindings.filter((item) => item.slot.startsWith(`${module}.`)) });

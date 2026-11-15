@@ -236,19 +236,20 @@ VITE_BACKEND=http://192.168.1.10:8000 npm run dev
 
 ### Distributed Stimulation and Actuation
 
-To run stimulation on another machine, save `STIMULATION.auto_spawn = false`
-and the engine's reachable `NEUROENGINE.message_server_ip` / `message_server_port`
-in the host settings file. Review and apply these host settings while the engine
-is stopped. Install the pinned Paradigm and Trigger packages on the stimulation
-node. Start the engine and use **Prepare external stimulation** in Run, then run
+To run stimulation on another machine, choose external mode in the Stimulation
+current configuration and set `STIMULATION.server_ip` / `STIMULATION.server_port`
+to the backend machine's reachable listener address (default port 8765).
+Install the pinned Paradigm and Trigger packages on the stimulation node.
+Start the engine and use **Prepare external stimulation** in Run, then run
 (replace the example address with your backend):
 
 ```bash
 python scripts/run_stimulation.py --backend http://192.168.1.10:8000
 ```
 
-For Actuation, save `ACTUATION.auto_spawn = false` and its `server_ip` /
-`server_port` in host settings. Configure the current Effector values in Setup,
+For Actuation, choose external mode and set `ACTUATION.server_ip` /
+`ACTUATION.server_port` in its current configuration (default port 8001).
+Configure the current Effector values in Setup,
 start the engine, and use **Prepare external actuation** in Run. Install the pinned
 Effector package before running the following command on the device machine:
 

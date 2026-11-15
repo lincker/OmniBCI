@@ -38,7 +38,7 @@ export function runtimeController(value = {}) {
 
 export function currentController(activation, value = {}) {
   const selected = activation?.modules ? activation : moduleConfiguration(activation ?? {});
-  return { entries: {}, filterOrder: [], settings: {}, acknowledge: () => {}, setSetting: () => {},
+  return { entries: {}, filterOrder: [], settings: Object.fromEntries(moduleNames.map((module) => [module, selected.modules[module].settings])), acknowledge: () => {}, setSetting: () => {},
     hasChanges: () => false, validationError: () => null,
     request: (module) => ({ expected_revision: selected.modules[module].revision,
       settings: selected.modules[module].settings, bindings: selected.modules[module].bindings }),

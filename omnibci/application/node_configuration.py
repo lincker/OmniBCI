@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import json
 import re
 
-from omnibci.application.activation_settings import RUNTIME_HOST_SETTING_KEYS
+from omnibci.application.activation_settings import SECTION_SETTING_KEYS
 from omnibci.application.plugin_profiles import ProfileBinding
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfigurationCatalog
@@ -32,15 +32,10 @@ _CONTEXT_KEYS = frozenset({
     "ACQUISITION.channel_labels",
 })
 _ROLE_SETTING_KEYS = {
-    "engine": RUNTIME_HOST_SETTING_KEYS | _CONTEXT_KEYS,
-    "stimulation": {
-        "debug", "NEUROENGINE.message_server_ip", "NEUROENGINE.message_server_port",
-        "STIMULATION.renderer", "STIMULATION.auto_spawn",
-    },
-    "actuation": {
-        "debug", "ACTUATION.auto_spawn", "ACTUATION.server_ip",
-        "ACTUATION.server_port", "ACTUATION.watchdog_timeout_s", "ACTUATION.max_command_age_s",
-    },
+    "engine": (SECTION_SETTING_KEYS["system"] | SECTION_SETTING_KEYS["acquisition"]
+               | SECTION_SETTING_KEYS["processing"] | _CONTEXT_KEYS),
+    "stimulation": SECTION_SETTING_KEYS["stimulation"] | {"debug"},
+    "actuation": SECTION_SETTING_KEYS["actuation"] | {"debug"},
 }
 _ALIASES = {
     "acquisition.source": "ACQUISITION.signal_source",
@@ -79,7 +74,7 @@ def _validate_settings(role: str, settings: dict) -> None:
     for key, value in settings.items():
         if key in _CONTEXT_KEYS:
             continue
-        if key == "debug" or key.endswith((".enabled", ".auto_spawn")):
+        if key == "debug" or key.endswith(".auto_spawn"):
             valid = type(value) is bool
         elif key.endswith(("_ip", ".renderer")):
             valid = isinstance(value, str) and bool(value.strip())

@@ -99,7 +99,7 @@ schema_version=1
                        'channel_count':{'type':'integer','default':2}},
         'required':['size','log','sample_rate','channel_count'],
     }))
-    host = {'NEUROENGINE.message_server_port':0, 'STIMULATION.auto_spawn':True,
+    host = {'STIMULATION.auto_spawn':True,
             'ACTUATION.server_port':actuation_port, 'ALGORITHM.baseline_duration':0.0}
     profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / 'profiles'),
                                     CatalogConfigurationAdapter(), settings_source=lambda: host)

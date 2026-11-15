@@ -204,7 +204,8 @@ test("external stimulation offers preparation before connecting and enabling its
   const prepare = actionButton(tree, "Prepare external stimulation");
   assert.equal(prepare.props.disabled, false);
   assert.match(text(card(tree, "Stimulation")), /External stimulation mode/);
-  assert.match(text(card(tree, "Stimulation")), /backend host configuration/);
+  assert.match(text(card(tree, "Stimulation")), /run mode in the stimulation configuration page/);
+  assert.doesNotMatch(text(card(tree, "Stimulation")), /backend host configuration/);
   assert.match(description(tree, actionButton(tree, "Trigger trial")), /Enable stimulation first/);
   assert.equal(selection.settings["STIMULATION.auto_spawn"], false);
   const connected = render({ selection, stimulation: { ...ready, active: false, process_alive: false } });

@@ -68,10 +68,29 @@ def _mock_spawning(monkeypatch, module, component):
     return factory
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("module", "manager_class", "component", "key"), MANAGERS)
+async def test_host_mode_does_not_override_current_snapshot_default(monkeypatch, module, manager_class, component, key):
+    from omnibci.bootstrap import build_container
+
+    factory = _mock_spawning(monkeypatch, module, component)
+    container = await build_container(host_settings={"STIMULATION.auto_spawn": False, "ACTUATION.auto_spawn": False})
+    manager = getattr(container, f"{component.lower()}_process_manager")
+    snapshot = _snapshot(key)
+    snapshot.pop(f"{component.upper()}.auto_spawn")
+    try:
+        manager.start(settings_snapshot=snapshot)
+        factory.assert_called_once()
+        assert manager.auto_spawn
+        assert manager.is_ready
+    finally:
+        manager.stop()
+
+
 @pytest.mark.parametrize(("module", "manager_class", "component", "key"), MANAGERS)
 def test_snapshot_transport_and_revision_restart(monkeypatch, module, manager_class, component, key):
     factory = _mock_spawning(monkeypatch, module, component)
-    manager = manager_class(auto_spawn=False)
+    manager = manager_class()
     saved = _snapshot(key)
     original = deepcopy(saved)
     manager.start(settings_snapshot=saved)
@@ -81,7 +100,7 @@ def test_snapshot_transport_and_revision_restart(monkeypatch, module, manager_cl
     if component == "Stimulation":
         assert manager.current_paradigm == "STIMULATION_THUBCI_SSVEP_classic40"
     else:
-        assert spawned["args"][0] == "selected-plugin"
+        assert manager.current_effector == "selected-plugin"
     assert pickle.loads(pickle.dumps(spawned["kwargs"])) == {"settings_snapshot": original}
 
     saved["CONFIG.module_revisions"][component.lower()] = "revision-2"
@@ -128,19 +147,9 @@ def test_output_child_restarts_for_own_identity_changes(monkeypatch, module, man
     manager.stop()
 
 
-def test_actuation_snapshot_rejects_conflicting_legacy_override_before_spawn(monkeypatch):
-    factory = _mock_spawning(monkeypatch, actuation, "Actuation")
-    manager = actuation.ActuationProcessManager()
-
-    with pytest.raises(RuntimeError, match="Apply the .* configuration"):
-        manager.start("other-plugin", settings_snapshot=_snapshot("ACTUATION.effector"))
-
-    factory.assert_not_called()
-
-
 def test_actuation_snapshot_can_switch_between_managed_and_external_child(monkeypatch):
     factory = _mock_spawning(monkeypatch, actuation, "Actuation")
-    manager = actuation.ActuationProcessManager(auto_spawn=False)
+    manager = actuation.ActuationProcessManager()
     snapshot = _snapshot("ACTUATION.effector")
     manager.start(settings_snapshot=snapshot)
     child = manager._process

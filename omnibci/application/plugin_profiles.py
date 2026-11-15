@@ -274,9 +274,9 @@ class ModuleActivation:
                 valid = type(value) is bool
             elif key == "STIMULATION.renderer":
                 valid = isinstance(value, str) and value in ("pyopengl", "moderngl")
-            elif key == "ACTUATION.server_ip":
+            elif key.endswith(".server_ip"):
                 valid = isinstance(value, str) and bool(value.strip())
-            elif key == "ACTUATION.server_port":
+            elif key.endswith(".server_port"):
                 valid = type(value) is int and 1 <= value <= 65535
             else:
                 try:

@@ -1,5 +1,5 @@
 """
-Tests for P1 config-收回: NeuroEngineConfig is the single source of engine
+Tests for P1 configuration consolidation: NeuroEngineConfig is the single source of engine
 tunables, and the deep modules no longer read settings themselves.
 
 Pins:
@@ -27,8 +27,6 @@ class TestConfigFromSettings:
     def test_reads_all_keys(self, monkeypatch):
         values = {
             "NEUROENGINE.queue_size": 50,
-            "NEUROENGINE.message_server_ip": "10.0.0.1",
-            "NEUROENGINE.message_server_port": 9000,
             "ACQUISITION.sample_rate": 250,
             "debug": True,
         }
@@ -43,7 +41,7 @@ class TestConfigFromSettings:
 
     def test_falls_back_on_missing_keys(self, monkeypatch):
         import omnibci.conf as conf
-        # P2-9：缺键语义 = get(key, default) 返回 default（异常吞噬已移除）。
+        # Missing keys return the supplied default without swallowing errors.
         monkeypatch.setattr(conf.settings, "get",
                             lambda key, default=None: default)
 
@@ -59,6 +57,7 @@ class TestConfigFromSettings:
     def test_dormant_module_values_are_not_parsed_by_foundation(self):
         cfg = NeuroEngineConfig.from_settings({
             "ALGORITHM.baseline_duration": "invalid",
+            "STIMULATION.server_port": "invalid",
             "ACTUATION.server_port": "invalid",
             "ACTUATION.watchdog_timeout_s": "invalid",
         })
@@ -101,8 +100,8 @@ class TestEngineDebugFlag:
     def test_run_passes_debug_true(self, mock_run):
         _engine(debug=True).run()
         assert mock_run.call_args.kwargs.get("debug") is True
-        # asyncio.run 被 mock，serve() 协程从未被 await——显式关闭，
-        # 否则 GC 时报 "coroutine was never awaited" RuntimeWarning。
+        # Close the coroutine that mocked asyncio.run never awaited, avoiding
+        # a "coroutine was never awaited" warning during garbage collection.
         mock_run.call_args.args[0].close()
 
     @patch("omnibci.infrastructure.neuroengine.engine.asyncio.run")

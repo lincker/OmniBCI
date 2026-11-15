@@ -36,7 +36,7 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
         "schema_version": 2, "outputs": [{"source_channel_id": "channel-8", "name": "O2"},
                                            {"source_channel_id": "channel-0", "name": "Pz"}],
     })
-    host = {"NEUROENGINE.message_server_port": 0, "NEUROENGINE.startup_timeout_s": 15.0,
+    host = {"NEUROENGINE.startup_timeout_s": 15.0,
             "NEUROENGINE.command_timeout_s": 30.0, "STIMULATION.auto_spawn": True,
             "ACTUATION.server_port": 0, "ALGORITHM.baseline_duration": 0.2}
     profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "profiles"),

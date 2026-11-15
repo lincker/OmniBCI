@@ -662,8 +662,8 @@ class NeuroEngine:
                     raise RuntimeError("Start NeuroEngine before preparing an output")
                 identity_key = (
                     revisions.get(module), snapshot.get(f"{module.upper()}.auto_spawn", True),
-                    snapshot.get("NEUROENGINE.message_server_ip", "127.0.0.1") if module == "stimulation" else snapshot.get("ACTUATION.server_ip", "127.0.0.1"),
-                    snapshot.get("NEUROENGINE.message_server_port", 8000) if module == "stimulation" else snapshot.get("ACTUATION.server_port", 8001),
+                    snapshot.get(f"{module.upper()}.server_ip", "127.0.0.1"),
+                    snapshot.get(f"{module.upper()}.server_port", 8765 if module == "stimulation" else 8001),
                     snapshot.get("ACTUATION.watchdog_timeout_s", 1.0) if module == "actuation" else None,
                 )
                 if (ensure and self._output_configurations.get(module) == identity_key
@@ -682,8 +682,8 @@ class NeuroEngine:
             identity = PeerIdentity(module, revisions.get(module), self._system_revision, self._generation)
         if module == "stimulation":
             config = stimulation_peer_config(
-                host=snapshot.get("NEUROENGINE.message_server_ip", "127.0.0.1"),
-                port=int(snapshot.get("NEUROENGINE.message_server_port", 8000)), identity=identity,
+                host=snapshot.get("STIMULATION.server_ip", "127.0.0.1"),
+                port=int(snapshot.get("STIMULATION.server_port", 8765)), identity=identity,
             )
         else:
             config = actuation_peer_config(

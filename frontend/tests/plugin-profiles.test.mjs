@@ -1128,6 +1128,61 @@ test("Processing edits pre-trigger duration as current module settings without s
   });
 });
 
+for (const module of ["stimulation", "actuation"]) {
+  test(`${module} settings stay with the module across plugin profiles and navigation`, async () => {
+    await withProfiles(module, async (h, calls, data) => {
+      const prefix = module.toUpperCase();
+      assert.equal(control(h, "Run mode").props.value, "managed");
+      assert.equal(control(h, "Listen port", "input").props.value, module === "stimulation" ? "8765" : "8001");
+      await change(h, "Run mode", "external");
+      await change(h, "Listen address", "192.0.2.50", "input");
+      await change(h, "Listen port", "9012", "input");
+      if (module === "stimulation") await change(h, "Renderer", "pyopengl");
+      else {
+        await change(h, "Watchdog timeout (s)", "2.5", "input");
+        await change(h, "Maximum command age (s)", "0", "input");
+      }
+      const expected = clone(data.current().request(module).settings);
+      assert.equal(expected[`${prefix}.auto_spawn`], false);
+      assert.equal(expected[`${prefix}.server_ip`], "192.0.2.50");
+      assert.equal(expected[`${prefix}.server_port`], 9012);
+      const choice = module === "stimulation" ? paradigm : effector;
+      await change(h, "Plugin and version", selectionKey(choice));
+      await change(h, "Load saved profile", module === "stimulation" ? "paradigm-a" : "effector-a");
+      assert.deepEqual(data.current().request(module).settings, expected);
+      await click(h, "Save as profile");
+      dialog(h).props.onConfirm("Module plugin copy"); await h.settle();
+      assert.equal(calls.create.length, 1);
+      assert.deepEqual(calls.create[0].parameters, { gain: 1, calibration: [3, 4] });
+      assert.equal("settings" in calls.create[0], false);
+      h.updateProps({ module: "acquisition" }); await h.settle();
+      h.updateProps({ module }); await h.settle();
+      assert.equal(control(h, "Run mode").props.value, "external");
+      assert.equal(control(h, "Listen port", "input").props.value, "9012");
+      assert.deepEqual(data.current().request(module).settings, expected);
+      assert.deepEqual(data.current().request(module === "stimulation" ? "actuation" : "stimulation").settings, {});
+    });
+  });
+
+  test(`${module} rejects invalid current module settings without changing other modules`, async () => {
+    await withProfiles(module, async (h, _, data) => {
+      const prefix = module.toUpperCase();
+      const invalid = [["auto_spawn", "false"], ["server_ip", "  "], ["server_ip", 127],
+        ["server_port", ""], ["server_port", 0], ["server_port", 65536], ["server_port", 12.5], ["server_port", Infinity],
+        ...(module === "stimulation" ? [["renderer", "unsupported"]]
+          : [["watchdog_timeout_s", 0], ["watchdog_timeout_s", -1], ["watchdog_timeout_s", NaN],
+            ["max_command_age_s", -1], ["max_command_age_s", Infinity]])];
+      const original = clone(data.current().modules[module].activation);
+      for (const [setting, value] of invalid) {
+        data.current().setSetting(module, `${prefix}.${setting}`, value); await h.settle();
+        assert.throws(() => data.current().request(module), /mode|address|port|renderer|timeout|age/i, `${setting}=${value}`);
+        assert.doesNotThrow(() => data.current().request("acquisition"));
+        data.current().restoreModule(original); await h.settle();
+      }
+    });
+  });
+}
+
 test("a remote accepted revision cannot rebase an edited module draft", async () => {
   await withProfiles("acquisition", async (h, _, data) => {
     const original = data.current().request("acquisition");

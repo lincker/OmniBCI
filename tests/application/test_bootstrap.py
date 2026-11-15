@@ -67,7 +67,7 @@ def _container(engine) -> AppContainer:
             command_results,
         ),
         stimulation_service=StimulationAppService(engine),
-        stimulation_process_manager=StimulationProcessManager(auto_spawn=False),
+        stimulation_process_manager=StimulationProcessManager(),
         results_service=ResultsService(engine),
         command_results=command_results,
     )

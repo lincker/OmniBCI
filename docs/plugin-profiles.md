@@ -8,6 +8,9 @@ current values never requires saving a Profile first.
 
 - Edit current parameters in Setup. Decoder, Epoch Detector, each ordered Filter,
   Paradigm, Trigger, and Effector retain separate saved Profiles.
+- Edit output mode and connection settings in the owning Stimulation or Actuation
+  page. Stimulation also owns its renderer; Actuation owns watchdog and command
+  age limits. Saving or loading a plugin Profile leaves these module settings intact.
 - Save current values as a new Profile when they should be reusable. Load a
   Profile to copy its values into the editor. Neither action applies a module.
 - **Connect** applies the current Acquisition values, starts the engine when

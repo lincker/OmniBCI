@@ -38,7 +38,7 @@ def runtime():
     return {
         "CONFIG.module_revisions": {'acquisition': "a" * 64, 'processing': "a" * 64, 'stimulation': "a" * 64, 'actuation': "a" * 64}, "CONFIG.system_revision": "c" * 64, "CONFIG.generation": "engine-generation-1",
         "ACQUISITION.sample_rate": 1000, "ACQUISITION.channel_count": 2,
-        "NEUROENGINE.message_server_ip": "192.0.2.1", "NEUROENGINE.message_server_port": 8765,
+        "STIMULATION.server_ip": "192.0.2.1", "STIMULATION.server_port": 8765,
         "NEUROENGINE.queue_size": 100, "STIMULATION.renderer": "pyopengl",
         "STIMULATION.auto_spawn": False, "ACTUATION.auto_spawn": False,
         "ACTUATION.enabled": True, "ACTUATION.server_ip": "192.0.2.1",
@@ -93,6 +93,7 @@ def test_node_needs_only_owned_plugins(runtime, role, kinds, alias):
     if role == "engine":
         assert result["ACQUISITION.sample_rate"] == 1000
         assert result["ACQUISITION.channel_count"] == 2
+        assert not any(key.startswith(("STIMULATION.", "ACTUATION.")) for key in result)
     else:
         assert "ACQUISITION.sample_rate" not in result
         assert "ACQUISITION.channel_count" not in result
@@ -103,10 +104,24 @@ def test_node_needs_only_owned_plugins(runtime, role, kinds, alias):
         assert "ACQUISITION.data_file_path" not in result
         assert "NEUROENGINE.queue_size" not in result
     if role == "stimulation":
+        assert result["STIMULATION.server_ip"] == "192.0.2.1"
+        assert result["STIMULATION.server_port"] == 8765
         assert "ACTUATION.server_ip" not in result
     if role == "actuation":
         assert "STIMULATION.renderer" not in result
-        assert "NEUROENGINE.message_server_ip" not in result
+        assert "STIMULATION.server_ip" not in result
+
+
+@pytest.mark.parametrize("key,value", [
+    ("STIMULATION.server_port", True), ("STIMULATION.server_port", 0),
+    ("STIMULATION.server_port", 65536), ("STIMULATION.server_port", "8765"),
+    ("STIMULATION.server_ip", ""), ("STIMULATION.server_ip", 127),
+])
+def test_stimulation_node_transport_settings_are_validated(runtime, key, value):
+    data = project_node_configuration(runtime, "stimulation").to_dict()
+    data["settings"][key] = value
+    with pytest.raises(PluginSchemaError, match="invalid node setting value"):
+        NodeConfiguration.from_dict(data)
 
 
 def test_stimulation_node_preserves_an_explicit_absent_trigger(runtime):

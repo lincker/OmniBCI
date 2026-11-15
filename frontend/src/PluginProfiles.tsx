@@ -351,6 +351,8 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
   const saveAs = () => setDialog({ title: t("profiles.save"), message: t("profiles.saveHelp"),
     confirmLabel: t("profiles.create"), initialValue: editor.profile ? t("profiles.copyName", { name: editor.profile.name }) : editor.name || "new profile 1",
     onConfirm: (name) => { setDialog(null); void save(name); } });
+  const moduleSettings = current.settings[module] ?? {};
+  const modulePrefix = module.toUpperCase();
 
   return <section className={`settings-workspace plugin-profiles module-${module}`} onKeyDown={(event) => {
     if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "s" && !event.defaultPrevented) {
@@ -436,6 +438,45 @@ export function PluginProfiles({ module, engineRunning, engineAvailable = true, 
             onChange={(event) => current.setSetting("processing", "ALGORITHM.baseline_duration", event.target.value === "" ? "" : Number(event.target.value))} />
         </label>
         <p className="setting-description">{t("settings.preTriggerDescription")}</p>
+      </section>}
+      {(module === "stimulation" || module === "actuation") && <section className="setting-group" aria-label={t("profiles.moduleSettings")}>
+        <h2>{t("profiles.moduleSettings")}</h2>
+        <p className="setting-description">{t("profiles.moduleSettingsHint")}</p>
+        <label className="setting-row"><span className="setting-label">{t("profiles.runMode")}</span>
+          <select disabled={busy || !currentState.ready} value={moduleSettings[`${modulePrefix}.auto_spawn`] === false ? "external" : "managed"}
+            onChange={(event) => current.setSetting(module, `${modulePrefix}.auto_spawn`, event.target.value === "managed")}>
+            <option value="managed">{t("profiles.managedProcess")}</option><option value="external">{t("profiles.externalNode")}</option>
+          </select>
+        </label>
+        {module === "stimulation" && <label className="setting-row"><span className="setting-label">{t("profiles.renderer")}</span>
+          <select disabled={busy || !currentState.ready} value={String(moduleSettings["STIMULATION.renderer"] ?? "moderngl")}
+            onChange={(event) => current.setSetting(module, "STIMULATION.renderer", event.target.value)}>
+            <option value="moderngl">ModernGL</option><option value="pyopengl">PyOpenGL</option>
+          </select>
+        </label>}
+        <label className="setting-row"><span className="setting-label">{t("profiles.listenAddress")}</span>
+          <input type="text" disabled={busy || !currentState.ready} value={String(moduleSettings[`${modulePrefix}.server_ip`] ?? "127.0.0.1")}
+            onChange={(event) => current.setSetting(module, `${modulePrefix}.server_ip`, event.target.value)} />
+        </label>
+        <label className="setting-row"><span className="setting-label">{t("profiles.listenPort")}</span>
+          <input type="number" min="1" max="65535" step="1" disabled={busy || !currentState.ready}
+            value={String(moduleSettings[`${modulePrefix}.server_port`] ?? (module === "stimulation" ? 8765 : 8001))}
+            onChange={(event) => current.setSetting(module, `${modulePrefix}.server_port`, event.target.value === "" ? "" : Number(event.target.value))} />
+        </label>
+        <p className="setting-description">{t("profiles.listenerHint")}</p>
+        {module === "actuation" && <>
+          <label className="setting-row"><span className="setting-label">{t("profiles.watchdogTimeout")}</span>
+            <input type="number" min="0" step="any" disabled={busy || !currentState.ready}
+              value={String(moduleSettings["ACTUATION.watchdog_timeout_s"] ?? 1)}
+              onChange={(event) => current.setSetting(module, "ACTUATION.watchdog_timeout_s", event.target.value === "" ? "" : Number(event.target.value))} />
+          </label>
+          <label className="setting-row"><span className="setting-label">{t("profiles.maxCommandAge")}</span>
+            <input type="number" min="0" step="any" disabled={busy || !currentState.ready}
+              value={String(moduleSettings["ACTUATION.max_command_age_s"] ?? 0)}
+              onChange={(event) => current.setSetting(module, "ACTUATION.max_command_age_s", event.target.value === "" ? "" : Number(event.target.value))} />
+          </label>
+          <p className="setting-description">{t("profiles.commandAgeHint")}</p>
+        </>}
       </section>}
       <ConfigurationHistory module={module} profile={profiles.find((profile) => profile.profile_id === editor.profile?.profile_id) ?? null}
         runtime={runtime} onProfileRestored={(profile) => setProfiles((previous) => previous.map((item) => item.profile_id === profile.profile_id ? profile : item))} />

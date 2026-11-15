@@ -66,8 +66,7 @@ class AppContainer:
     stimulation_service: StimulationAppService
     stimulation_process_manager: StimulationProcessManager
     results_service: ResultsService
-    # Optional so existing test constructions stay valid; the composition
-    # root always supplies one (auto_spawn=False when ACTUATION disabled).
+    # The composition root supplies the manager; lightweight service fixtures may omit it.
     actuation_process_manager: "ActuationProcessManager | None" = None
     # Shared correlation rendezvous for commands that must report actual worker
     # execution before REST returns success.
@@ -91,7 +90,6 @@ def assemble(
     *,
     settings=None,
     acquisition_settings=None,
-    auto_spawn: bool = True,
     actuation_process_manager: "ActuationProcessManager | None" = None,
     stimulation_process_manager: "StimulationProcessManager | None" = None,
     admission=None,
@@ -114,7 +112,7 @@ def assemble(
         preview_provider=engine_service.read_acquisition_preview,
         generation_provider=lambda: engine_service.generation,
     )
-    process_manager = stimulation_process_manager or StimulationProcessManager(auto_spawn=auto_spawn)
+    process_manager = stimulation_process_manager or StimulationProcessManager()
 
     return AppContainer(
         engine_service=engine_service,
@@ -146,13 +144,11 @@ async def build_container(*, host_settings: dict | None = None,
 async def _build_container_services(host_settings, allow_process_termination):
     from omnibci.conf import settings
 
-    auto_spawn = bool(host_settings.get("STIMULATION.auto_spawn", True))
-    actuation_auto_spawn = bool(host_settings.get("ACTUATION.auto_spawn", True))
     actuation_manager = ActuationProcessManager(
-        auto_spawn=actuation_auto_spawn, allow_process_termination=allow_process_termination,
+        allow_process_termination=allow_process_termination,
     )
     stimulation_manager = StimulationProcessManager(
-        auto_spawn=auto_spawn, allow_process_termination=allow_process_termination,
+        allow_process_termination=allow_process_termination,
     )
 
     # Processes are single-use, so every restart requires a fresh engine graph.
@@ -189,7 +185,6 @@ async def _build_container_services(host_settings, allow_process_termination):
     await engine_service.startup()
     container = assemble(engine_service,
                          settings=host_settings, acquisition_settings=_RuntimeSettings(engine_service, plugin_profiles),
-                         auto_spawn=auto_spawn,
                          actuation_process_manager=actuation_manager,
                          stimulation_process_manager=stimulation_manager,
                          admission=engine_service.admission)

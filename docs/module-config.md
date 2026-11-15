@@ -11,13 +11,23 @@ Named saved Profiles remain independent for each plugin.
 | --- | --- | --- |
 | acquisition | None | Source |
 | processing | `ALGORITHM.baseline_duration` | Decoder, Epoch Detector, ordered Filters |
-| stimulation | `STIMULATION.renderer`, `STIMULATION.auto_spawn` | Paradigm, Trigger |
+| stimulation | Address/port, renderer, `auto_spawn` | Paradigm, Trigger |
 | actuation | Address/port, watchdog, command age, `auto_spawn` | Effector |
-| system | Queue capacity, message-server address/port, startup timeout, `debug` | None |
+| system | Queue capacity, startup timeout, `debug` | None |
 
 The `system` revision represents shared infrastructure settings, not an aggregate
 of module revisions. A derived `ActivationSet` combines only the files needed by an operation;
 it does not introduce another saved object or global revision.
+
+Setup edits Stimulation's `STIMULATION.server_ip`, `STIMULATION.server_port`,
+renderer and managed/external mode, and Actuation's corresponding address,
+mode, watchdog and maximum command age. These are module settings, separate
+from plugin Profiles. Stimulation defaults to `127.0.0.1:8765`; Actuation defaults
+to `127.0.0.1:8001`. Maximum command age `0` disables age filtering.
+Each output owns its listener settings even though Engine hosts the listener.
+Changing them replaces only that output, preserving the foundation generation,
+other listeners, and A/P workers. A connected external node must disconnect
+before its settings change.
 
 ## Apply flow
 

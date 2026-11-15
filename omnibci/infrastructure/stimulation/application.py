@@ -49,8 +49,8 @@ class Stimulation:
         self._runtime_snapshot = (deepcopy(settings_snapshot) if settings_snapshot is not None
                                   else settings.snapshot())
         source = self._runtime_snapshot
-        host = source.get("NEUROENGINE.message_server_ip", "127.0.0.1")
-        port = int(source.get("NEUROENGINE.message_server_port", 8765))
+        host = source.get("STIMULATION.server_ip", "127.0.0.1")
+        port = int(source.get("STIMULATION.server_port", 8765))
         self._external_node = source.get("CONFIG.node_role") == "stimulation"
         self._reconnect_requested = False
         identity = None

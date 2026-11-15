@@ -110,16 +110,24 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
   const currentSource = currentBindings("acquisition").find((item) => item.slot === "acquisition.source");
   const currentDecoder = currentBindings("processing").some((item) => item.slot === "processing.decoder");
   const currentDetector = currentBindings("processing").some((item) => item.slot === "processing.epoch_detector");
-  const currentParadigmConfigured = currentBindings("stimulation").some((item) => item.slot === "stimulation.paradigm");
+  const currentParadigmBinding = currentBindings("stimulation").find((item) => item.slot === "stimulation.paradigm");
+  const currentParadigmConfigured = !!currentParadigmBinding;
   const currentEffector = currentBindings("actuation").some((item) => item.slot === "actuation.effector");
   const pendingSource = current.hasChanges("acquisition", activation("acquisition"));
   const pendingStimulation = current.hasChanges("stimulation", activation("stimulation"));
+  const pendingActuation = current.hasChanges("actuation", activation("actuation"));
   const decoderConfigured = readyFor("processing") ? bindings("processing").some((item) => item.slot === "processing.decoder") : null;
   const missingDetector = decoderConfigured && !bindings("processing").some((item) => item.slot === "processing.epoch_detector");
   const externalStimulation = matches("stimulation") && activation("stimulation")?.settings["STIMULATION.auto_spawn"] === false;
-  const stimulationStartLabel = t(externalStimulation ? stimulation.data?.engine_connected ? "run.enableStimulation" : "run.prepareExternalStimulation" : "run.launchStimulation");
+  const currentExternalStimulation = current.settings.stimulation?.["STIMULATION.auto_spawn"] === false;
+  const currentParadigmUnavailable = !currentExternalStimulation && currentParadigmBinding && selectedParadigm
+    && !selectedParadigm.available && selectionKey(currentParadigmBinding.selection) === selectionKey(selectedParadigm.selection);
+  const stimulationStartLabel = t((runtime.status?.recovery?.stimulation ? externalStimulation : currentExternalStimulation)
+    ? stimulation.data?.engine_connected ? "run.enableStimulation" : "run.prepareExternalStimulation" : "run.launchStimulation");
   const externalActuation = matches("actuation") && activation("actuation")?.settings["ACTUATION.auto_spawn"] === false;
-  const actuationStartLabel = t(externalActuation && !engine.data?.actuation_connected ? "run.prepareExternalActuation" : "run.startActuation");
+  const currentExternalActuation = current.settings.actuation?.["ACTUATION.auto_spawn"] === false;
+  const actuationStartLabel = t((runtime.status?.recovery?.actuation ? externalActuation : currentExternalActuation)
+    && !engine.data?.actuation_connected ? "run.prepareExternalActuation" : "run.startActuation");
   const emptySelection = (module: ConfigurationModule) => t(current.modules[module].error ? "run.unavailable"
     : !readyFor(module) ? "run.loading" : "run.none");
   const sourceNotConfigured = readyFor("acquisition") && !currentSource;
@@ -147,9 +155,10 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
     selectedParadigm?.plugin_type === currentParadigm ? selectedParadigm.label : currentParadigm || t("run.none"), t);
   const paradigmBinding = bindings("stimulation").find((item) => item.slot === "stimulation.paradigm");
   const paradigmKey = paradigmBinding ? selectionKey(paradigmBinding.selection) : null;
-  const trialControlsReady = readyFor("stimulation") && selectedParadigm?.available && selectionKey(selectedParadigm.selection) === paradigmKey && !loadError && !controlsLoading
+  const trialControlsReady = readyFor("stimulation") && selectedParadigm && (externalStimulation || selectedParadigm.available)
+    && selectionKey(selectedParadigm.selection) === paradigmKey && !loadError && !controlsLoading
     && matches("stimulation", true)
-    && (!stimulation.data?.active || stimulation.data.paradigm === selectedParadigm.plugin_type);
+    && (!stimulation.data?.active || externalStimulation || stimulation.data.paradigm === selectedParadigm.plugin_type);
   const engineReason = !engineAvailable ? t("run.reason.engineUnavailable") : null;
   const acquisitionReason = engineReason ?? (!acquisitionAvailable ? t("run.reason.acquisitionUnavailable") : null);
   const stimulationReason = !stimulationAvailable ? t("run.reason.stimulationUnavailable") : null;
@@ -157,7 +166,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
   const currentReason = (module: ConfigurationModule) => current.modules[module].error
     ?? (!readyFor(module) ? t("run.reason.configurationLoading") : null);
   const trialSetupReason = currentReason("stimulation") ?? (trialControlsReady ? null : t(loadError ? "run.reason.trialControlsUnavailable"
-    : !selectedParadigm?.available ? "run.reason.selectParadigm"
+    : !selectedParadigm || !externalStimulation && !selectedParadigm.available ? "run.reason.selectParadigm"
     : running && !matches("stimulation", true) ? "run.reason.selectionNotApplied" : "run.reason.paradigmMismatch"));
   const recovery = runtime.status?.recovery ?? {};
   const recoverStimulation = externalStimulation && !!recovery.stimulation && !stimulation.data?.engine_connected;
@@ -181,11 +190,15 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
       : !currentDetector ? t("run.reason.missingDetector") : current.validationError("processing"));
   const stopProcessingReason = stopProcessing.pending ? t("feedback.busy") : engineReason ?? (!processingRunning && !startProcessing.pending && !recovery.processing ? t("run.reason.processingStopped") : null);
   const startActuationReason = operationReason("actuation", recoverActuation) ?? engineReason ?? (!running ? t("run.reason.startEngine") : null)
-    ?? (recoverActuation ? null : currentReason("actuation") ?? (actuationRunning ? t("run.reason.actuationActive") : !currentEffector ? t("run.reason.selectEffector") : current.validationError("actuation")));
-  const stopActuationReason = stopActuation.pending ? t("feedback.busy") : engineReason ?? (!actuationRunning && !startActuation.pending && !recovery.actuation ? t("run.reason.actuationStopped") : null);
+    ?? (recoverActuation ? null : currentReason("actuation") ?? current.validationError("actuation")
+    ?? (pendingActuation && engine.data?.actuation_connected && (externalActuation || currentExternalActuation) ? t("run.reason.disconnectExternal")
+      : actuationRunning ? t("run.reason.actuationActive") : !currentEffector ? t("run.reason.selectEffector") : null));
+  const stopActuationReason = stopActuation.pending ? t("feedback.busy") : engineReason ?? (!actuationRunning && !engine.data?.actuation_connected && !startActuation.pending && !recovery.actuation ? t("run.reason.actuationStopped") : null);
   const launchReason = operationReason("stimulation", recoverStimulation) ?? engineReason ?? (!running ? t("run.reason.startEngine") : null)
-    ?? stimulationReason ?? (recoverStimulation ? null : currentReason("stimulation")
-    ?? (pendingStimulation || !matches("stimulation", true) ? !currentParadigmConfigured ? t("run.reason.selectParadigm") : null : trialSetupReason)
+    ?? stimulationReason ?? (recoverStimulation ? null : currentReason("stimulation") ?? current.validationError("stimulation")
+    ?? (pendingStimulation && stimulation.data?.engine_connected && (externalStimulation || currentExternalStimulation) ? t("run.reason.disconnectExternal") : null)
+    ?? (currentParadigmUnavailable ? t("profiles.pluginUnavailable") : null)
+    ?? (pendingStimulation || currentExternalStimulation || !matches("stimulation", true) ? !currentParadigmConfigured ? t("run.reason.selectParadigm") : null : trialSetupReason)
     ?? (stimulation.data?.active && (stimulation.data.process_alive || stimulation.data.engine_connected)
       ? t("run.reason.stimulationActive") : null));
   const stopStimReason = stopStim.pending ? t("feedback.busy") : stimulationReason

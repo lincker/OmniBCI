@@ -3,7 +3,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from omnibci.application.plugin_profiles import ModuleActivation, PluginProfileValidationError
+from omnibci.application.plugin_profiles import ModuleActivation, PluginProfileValidationError, SystemSettings
 from omnibci.application.services.plugin_profile_service import PluginProfileService
 
 
@@ -71,6 +71,50 @@ def test_initial_settings_are_owned_defaults_with_saved_overrides():
     assert "NEUROENGINE.queue_size" not in settings
     settings["ACTUATION.server_port"] = 1
     assert service.default_module_settings("actuation")["ACTUATION.server_port"] == 8001
+
+
+def test_stimulation_listener_settings_belong_only_to_stimulation():
+    settings = {"STIMULATION.server_ip": "display.local", "STIMULATION.server_port": 9000}
+    service = PluginProfileService(Mock(), Mock(), settings_source=lambda: settings)
+    assert service.default_module_settings("stimulation") == {
+        **settings, "STIMULATION.renderer": "moderngl", "STIMULATION.auto_spawn": True,
+    }
+    assert service.propose_system().settings == {}
+    assert ModuleActivation("stimulation", settings, ()).settings == settings
+    with pytest.raises(PluginProfileValidationError, match="system section"):
+        SystemSettings(settings)
+
+
+def test_stimulation_listener_default_port_is_8765():
+    service = PluginProfileService(Mock(), Mock(), settings_source=lambda: {})
+    defaults = service.default_module_settings("stimulation")
+    assert defaults["STIMULATION.server_ip"] == "127.0.0.1"
+    assert defaults["STIMULATION.server_port"] == 8765
+
+
+def test_stimulation_listener_change_does_not_change_system_or_other_module_revisions():
+    settings = {"STIMULATION.server_port": 8765, "NEUROENGINE.queue_size": 100}
+    service = PluginProfileService(Mock(), Mock(), settings_source=lambda: settings)
+    system = service.propose_system()
+    before = {module: ModuleActivation(module, service.default_module_settings(module), ())
+              for module in ("acquisition", "processing", "stimulation", "actuation")}
+    settings["STIMULATION.server_port"] = 9000
+    assert service.propose_system().revision == system.revision
+    for module, previous in before.items():
+        current = ModuleActivation(module, service.default_module_settings(module), ())
+        assert (current.revision != previous.revision) == (module == "stimulation")
+
+
+@pytest.mark.parametrize("module", ["stimulation", "actuation"])
+@pytest.mark.parametrize("field,value", [
+    ("server_ip", "  "), ("server_ip", 127),
+    ("server_port", 0), ("server_port", 65536), ("server_port", True),
+    ("server_port", "8765"), ("server_port", 8765.5),
+])
+def test_output_transport_values_are_validated_in_the_owning_module(module, field, value):
+    key = f"{module.upper()}.{field}"
+    with pytest.raises(PluginProfileValidationError, match="Invalid module setting"):
+        ModuleActivation(module, {key: value}, ())
 
 
 @pytest.mark.parametrize("module,key", [

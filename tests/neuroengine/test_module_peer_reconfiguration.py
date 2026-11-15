@@ -132,3 +132,43 @@ async def test_output_reconfiguration_from_another_loop_executes_on_engine_loop(
     engine.peer_gateway.replace_peer = AsyncMock(side_effect=replace)
     await asyncio.to_thread(asyncio.run, engine.reconfigure_output_modules(snapshot(), ["stimulation"]))
     assert loops == [engine_loop]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("module", ["stimulation", "actuation"])
+async def test_live_listener_address_change_preserves_other_modules(module, unused_tcp_port_factory):
+    ports = {role: unused_tcp_port_factory() for role in ("stimulation", "actuation")}
+    bus = FakeBus()
+    gateway = PeerGateway(bus)
+    engine = _make_engine(event_bus=bus, peer_gateway=gateway, generation="run", system_revision="c" * 64)
+    engine._loop = asyncio.get_running_loop()
+    engine._started = True
+    original = snapshot(**{f"{role.upper()}.server_port": port for role, port in ports.items()})
+    workers = engine.acquisition_worker, engine.signal_processing_worker
+    await gateway.start()
+    try:
+        for role in ports:
+            await engine.ensure_output_ready(role, original)
+        other = "actuation" if module == "stimulation" else "stimulation"
+        unchanged = gateway.peer(other)
+        old = gateway.peer(module)
+        new_port = unused_tcp_port_factory()
+        changed = {**original, f"{module.upper()}.server_port": new_port,
+                   "CONFIG.module_revisions": {**original["CONFIG.module_revisions"], module: "d" * 64}}
+        await engine.ensure_output_ready(module, changed)
+        replacement = gateway.peer(module)
+        assert replacement is not old and replacement.is_ready
+        assert gateway.peer(other) is unchanged and unchanged.is_ready
+        assert replacement._transport._server.port == new_port
+        assert engine._generation == "run" and engine._system_revision == "c" * 64
+        assert (engine.acquisition_worker, engine.signal_processing_worker) == workers
+        reader, writer = await asyncio.open_connection("127.0.0.1", new_port)
+        writer.close()
+        await writer.wait_closed()
+        with pytest.raises(OSError):
+            await asyncio.open_connection("127.0.0.1", ports[module])
+        for worker in workers:
+            worker.start.assert_not_called()
+            worker.join.assert_not_called()
+    finally:
+        await gateway.stop()

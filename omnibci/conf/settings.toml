@@ -16,8 +16,6 @@ baseline_duration = 0.0
 queue_size = 100
 # Maximum time a REST control request waits for the subprocess execution result.
 command_timeout_s = 10.0
-message_server_ip = '127.0.0.1'
-message_server_port = 8765   # must differ from uvicorn HTTP port (8000)
 
 [ACTUATION]
 # Actuation (external-device control) subsystem. The engine listens on
@@ -35,6 +33,8 @@ max_command_age_s = 0.0
 auto_spawn = true
 
 [STIMULATION]
+server_ip = '127.0.0.1'
+server_port = 8765   # must differ from uvicorn HTTP port (8000)
 renderer    = "moderngl"
 auto_spawn  = true   # false → multi-machine: start run_stimulation.py manually
 

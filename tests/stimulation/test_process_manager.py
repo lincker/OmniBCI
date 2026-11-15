@@ -62,8 +62,8 @@ def startup_pipe(monkeypatch):
 
 
 def test_no_spawn_mode_is_a_noop() -> None:
-    manager = StimulationProcessManager(auto_spawn=False)
-    manager.start(settings_snapshot=_paradigm_snapshot())
+    manager = StimulationProcessManager()
+    manager.start(settings_snapshot={**_paradigm_snapshot(), "STIMULATION.auto_spawn": False})
     manager.stop()
     assert manager.is_alive is False
     assert manager.state is ChildProcessState.STOPPED

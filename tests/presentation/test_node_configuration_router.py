@@ -24,7 +24,7 @@ def node_api():
     snapshot = {
         "CONFIG.module_revisions": {'acquisition': "a" * 64, 'processing': "a" * 64, 'stimulation': "a" * 64, 'actuation': "a" * 64}, "CONFIG.system_revision": "c" * 64,
         "STIMULATION.auto_spawn": False, "ACTUATION.auto_spawn": False, "ACTUATION.enabled": True,
-        "NEUROENGINE.message_server_ip": "127.0.0.1", "NEUROENGINE.message_server_port": 9000,
+        "STIMULATION.server_ip": "127.0.0.1", "STIMULATION.server_port": 9000,
         "ACTUATION.server_ip": "127.0.0.1", "ACTUATION.server_port": 9001,
         "PLUGINS.bindings": [
             binding("acquisition.source", "acquisition", {"sample_rate": 500, "channel_count": 2,
