@@ -5,18 +5,18 @@ from uuid import uuid4
 import pytest
 
 from omnibci.application.services.engine_service import NeuroEngineService
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
 
 @pytest.fixture
 def runtime(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
-    profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
-                                    CatalogConfigurationAdapter(), settings_source=lambda: {})
+    profiles = ConfigurationService(TomlConfigurationRepository(tmp_path / "config"),
+                                    CatalogConfigurationAdapter())
     engine = NeuroEngineService(lambda _: pytest.fail("Selecting current values must not start an engine"))
     coordinator = RuntimeApplyCoordinator(engine, profiles, None,
                                           SimpleNamespace(is_active=False, process_alive=False), None)

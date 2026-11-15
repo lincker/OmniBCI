@@ -9,10 +9,10 @@ import pytest
 from omnibci.application.plugin_packages import PluginPackageConflictError, package_references_from_settings
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.plugin_package_service import PluginPackageService
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from tests.infrastructure.test_package_store import package_archive
 
 
@@ -27,8 +27,8 @@ def services(tmp_path, monkeypatch):
         with references:
             yield
 
-    profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
-                                    CatalogConfigurationAdapter(), settings_source=lambda: {},
+    profiles = ConfigurationService(TomlConfigurationRepository(tmp_path / "config"),
+                                    CatalogConfigurationAdapter(),
                                     change_guard=profile_guard)
     packages = PluginPackageService(ManagedPluginPackageStore(), profiles,
         runtime_references=lambda: tuple(reference for snapshot in engine.runtime_package_snapshots

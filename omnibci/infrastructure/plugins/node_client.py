@@ -130,8 +130,6 @@ def run_configured_node(role: str, application_factory, *, server_url: str) -> N
             continue
 
         snapshot = materialize_node_configuration(configuration, CatalogConfigurationAdapter())
-        from omnibci.conf import settings
-        settings.use_snapshot(snapshot)
         logger.info(
             "Starting %s for modules %s, Engine %s, generation %s",
             role, configuration.module_revisions, configuration.engine_revision, configuration.generation,

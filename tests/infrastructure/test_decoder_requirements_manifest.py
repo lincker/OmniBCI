@@ -2,7 +2,7 @@
 import pytest
 import tomlkit
 
-from omnibci.application.plugin_profiles import PluginSelection
+from omnibci.application.configuration.models import PluginSelection
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginManifestError, PluginRoot
 

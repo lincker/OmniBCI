@@ -23,7 +23,7 @@ class Actuator:
         *,
         plugin_catalog: PluginCatalog | None = None,
         plugin_loader: type[PluginLoader] = PluginLoader,
-        settings_snapshot: dict | None = None,
+        settings_snapshot: dict,
     ) -> None:
         self.effector: Optional[Effector] = None
         self._plugin_catalog = (
@@ -35,12 +35,9 @@ class Actuator:
     # ── Manifest-resolved plugin loading ──────────────────────────────────
 
     def _load_effector(self) -> Optional[Effector]:
-        from omnibci.conf import settings
-
         from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
-        snapshot = self._settings_snapshot if self._settings_snapshot is not None else settings.snapshot()
         return load_configured_plugin(
-            snapshot, "actuation.effector", "effector", Effector,
+            self._settings_snapshot, "actuation.effector", "effector", Effector,
             catalog=self._plugin_catalog,
             loader=self._plugin_loader,
         )

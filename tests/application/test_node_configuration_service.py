@@ -4,8 +4,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from omnibci.application.config_errors import ConfigProfileConflictError
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ConfigProfileConflictError
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.node_configuration_service import NodeConfigurationService
 

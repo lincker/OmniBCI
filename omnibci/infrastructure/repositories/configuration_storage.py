@@ -1,4 +1,4 @@
-"""Filesystem operations used only at host configuration management boundaries."""
+"""Filesystem operations used at configuration persistence boundaries."""
 
 import errno
 import os
@@ -13,7 +13,7 @@ def file_lock(path: Path, *, timeout_s: float = 5.0):
     """Serialize cooperating writers across server processes and platforms."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_symlink():
-        raise OSError("Host settings lock must not be a symlink")
+        raise OSError("Configuration lock must not be a symlink")
     with path.open("a+b") as stream:
         if os.name == "nt":
             import msvcrt
@@ -47,7 +47,7 @@ def file_lock(path: Path, *, timeout_s: float = 5.0):
                 if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
                     raise
                 if time.monotonic() >= deadline:
-                    raise TimeoutError("Timed out waiting for the host settings lock") from exc
+                    raise TimeoutError("Timed out waiting for the configuration lock") from exc
                 time.sleep(0.01)
         try:
             yield

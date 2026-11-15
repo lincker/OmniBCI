@@ -6,7 +6,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from omnibci.application.plugin_profiles import ModuleActivation, ProfileBinding, PluginSelection, EngineSettings
+from omnibci.application.configuration.models import ModuleActivation, ProfileBinding, PluginSelection, EngineSettings
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.node_configuration_service import NodeConfigurationService
 from omnibci.presentation.errors import register_exception_handlers

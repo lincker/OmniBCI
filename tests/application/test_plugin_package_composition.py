@@ -2,7 +2,6 @@
 import base64
 import json
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from threading import Event
 from time import monotonic, sleep
 from uuid import uuid4
@@ -12,8 +11,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
-import omnibci.conf as conf
-from omnibci.application.plugin_profiles import PluginProfileStorageError
+from omnibci.application.configuration.errors import PluginProfileStorageError
 from omnibci.application.plugin_packages import PluginPackageConflictError
 from omnibci.bootstrap import build_container
 from omnibci.presentation.main import create_app
@@ -27,15 +25,6 @@ def isolated_composition(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIBCI_CONFIG_DIR", str(tmp_path / "configuration"))
     for name in ("OMNIBCI_MARKET_URL", "OMNIBCI_MARKET_REPOSITORY_ID", "OMNIBCI_MARKET_TRUSTED_KEYS", "OMNIBCI_MARKET_CACHE_DIR"):
         monkeypatch.delenv(name, raising=False)
-    settings_path = tmp_path / "settings.toml"
-    settings_path.write_bytes(Path(conf.__file__).with_name("settings.toml").read_bytes())
-    settings = conf.OmniBCISettings(settings_path)
-    settings.set("STIMULATION.auto_spawn", False)
-    settings.set("ACTUATION.auto_spawn", False)
-    settings.set("ACTUATION.enabled", False)
-    settings.set("ACQUISITION.signal_source", "file_reader")
-    settings.save()
-    monkeypatch.setattr(conf, "settings", settings)
     builder = Mock(side_effect=AssertionError("Package APIs must not construct an engine graph"))
     monkeypatch.setattr("omnibci.bootstrap.NeuroEngineBuilder.build", builder)
     yield builder
@@ -59,7 +48,7 @@ async def test_actual_container_shares_package_references_without_runtime_gate(t
     try:
         packages = container.plugin_package_service
         assert container.plugin_installation_service is packages
-        assert packages.profiles is container.plugin_profile_service
+        assert packages.profiles is container.configuration_service
         assert packages.store.plugin_dir == tmp_path / "plugins"
         assert packages.admission_guard() is container.runtime_configuration.reference_guard()
         assert container.plugin_market_service is None
@@ -83,7 +72,7 @@ async def test_queued_current_configuration_pins_its_package_before_execution(tm
         installed = packages.install(package_archive(tmp_path)).package
         packages.set_enabled(installed.package_id, installed.version, True)
         selection = installed.contributions[0].selection
-        profiles = container.plugin_profile_service
+        profiles = container.configuration_service
         runtime = container.runtime_configuration
         assert profiles.repository.list_profiles() == []
         assert profiles.repository.get_module("actuation") is None
@@ -244,7 +233,7 @@ def test_configured_market_is_published_by_real_lifespan_and_installs_disabled(m
 def test_inventory_reports_profile_storage_failures_as_actionable_errors(monkeypatch, problem, status):
     app = create_app()
     with TestClient(app, raise_server_exceptions=False) as client:
-        repository = app.state.container.plugin_profile_service.repository
+        repository = app.state.container.configuration_service.repository
         if problem == "invalid":
             directory = repository.root / "plugin-profiles" / "00000000-0000-0000-0000-000000000001"
             directory.mkdir(parents=True, exist_ok=True)

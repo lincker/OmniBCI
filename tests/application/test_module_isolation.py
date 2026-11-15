@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from omnibci.application.plugin_profiles import EngineSettings
+from omnibci.application.configuration.models import EngineSettings
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 

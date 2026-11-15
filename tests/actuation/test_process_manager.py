@@ -406,7 +406,6 @@ class TestSpawnMode:
 class TestChildEntryPoint:
     @patch("omnibci.infrastructure.actuation.application.Actuation")
     def test_forwards_stop_event_to_application(self, mock_actuation_cls, monkeypatch):
-        monkeypatch.setattr("omnibci.conf.settings.use_snapshot", lambda _: None)
         stop_event = object()
 
         _run_actuation(stop_event=stop_event, settings_snapshot={})
@@ -418,7 +417,6 @@ class TestChildEntryPoint:
     def test_entrypoint_reports_constructor_or_run_failure(
         self, mock_actuation_cls, monkeypatch
     ):
-        monkeypatch.setattr("omnibci.conf.settings.use_snapshot", lambda _: None)
         connection = MagicMock()
         mock_actuation_cls.return_value.run.side_effect = RuntimeError(
             "configuration failed"

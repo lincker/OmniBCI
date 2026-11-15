@@ -4,7 +4,7 @@ from dataclasses import replace
 from uuid import uuid4
 
 from omnibci.application.plugin_packages import PluginPackageConflictError, PluginPackageError, PluginPackageStorageError
-from omnibci.application.plugin_profiles import PLUGIN_KINDS
+from omnibci.application.configuration.models import PLUGIN_KINDS
 from omnibci.infrastructure.plugins.installed_registry import InstalledPackageRegistry
 from omnibci.infrastructure.plugins.package_store import DirectoryPluginPackageStore
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog

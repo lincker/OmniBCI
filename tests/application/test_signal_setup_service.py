@@ -6,12 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from omnibci.application.config_errors import ConfigProfileValidationError
+from omnibci.application.configuration.errors import ConfigProfileValidationError
 from omnibci.application.events import StreamDrainReceipt
 from omnibci.application.runtime_admission import RuntimeAdmission
-from omnibci.application.plugin_profiles import ActivationSet, ModuleActivation
+from omnibci.application.configuration.models import ActivationSet, ModuleActivation
 from omnibci.application.services.signal_setup_service import SignalSetupService
-from omnibci.conf import OmniBCISettings
 from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 from omnibci.shared.events import Event, EventType
@@ -19,9 +18,6 @@ from omnibci.shared.events import Event, EventType
 
 @pytest.fixture
 def signal_service(tmp_path):
-    path = tmp_path / "settings.toml"
-    path.write_text('[NEUROENGINE]\nqueue_size = 100\n', encoding="utf-8")
-    settings = OmniBCISettings(path)
     metadata = SignalInfo("source", 500, (
         ChannelDescriptor(0, "O1", unit="uV"), ChannelDescriptor(1, "M1", unit="uV"),
     ), 2, connection_id="connection")
@@ -64,7 +60,7 @@ def signal_service(tmp_path):
             return SimpleNamespace(data={"attached": False})
         raise AssertionError(f"Unexpected command: {event}")
 
-    service = SignalSetupService(settings, profiles, engine, acquisition,
+    service = SignalSetupService(profiles, engine, acquisition,
                                 SimpleNamespace(request=request))
     return service, metadata, setup, calls
 
@@ -153,11 +149,11 @@ def test_invalid_preview_does_not_write_or_prepare(signal_service):
 @pytest.mark.parametrize("source", [{"source_channel_id": "channel-0"}, {"source_channel_index": 0}])
 def test_processing_input_preview_uses_source_facts_without_writing(signal_service, source):
     service, metadata, _, calls = signal_service
-    before = service.settings.read_saved()
+    before = service.read()
     result = service.preview_input({"outputs": [{**source, 'name': 'O1'}]})
     assert result["plan"]["source_indices"] == [0]
     assert result["plan"]["source"] == metadata.to_dict()
-    assert service.settings.read_saved() == before
+    assert service.read() == before
     assert not calls
 
 
@@ -174,7 +170,7 @@ def test_processing_input_cannot_redeclare_acquisition_metadata(signal_service, 
 
 def test_decoder_input_read_uses_pinned_input_without_saved_draft(signal_service):
     from uuid import uuid4
-    from omnibci.application.plugin_profiles import PluginProfile, PluginSelection, ProfileBinding
+    from omnibci.application.configuration.models import PluginProfile, PluginSelection, ProfileBinding
     from omnibci.domain.channel_mapping import ProcessingInput
     service, _, _, _ = signal_service
     selection = PluginSelection("test.decoder", "default", "1")
@@ -315,7 +311,7 @@ def test_current_source_with_unchanged_values_preserves_metadata_and_preparation
 
 
 def test_stale_preview_revision_rejected_after_reconnect(signal_service):
-    from omnibci.application.plugin_profiles import ProfileRevisionConflict
+    from omnibci.application.configuration.errors import ProfileRevisionConflict
     service, metadata, _, calls = signal_service
     modern_binding(service, metadata)
     revision = service.read()["source_revision"]

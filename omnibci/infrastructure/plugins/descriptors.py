@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from omnibci.application.plugin_profiles import PluginSelection
+from omnibci.application.configuration.models import PluginSelection
 from omnibci.domain.decoder_input import DecoderChannelRequirements
 
 

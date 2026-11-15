@@ -171,14 +171,13 @@ def test_lost_link_stops_commands_before_delayed_transport_cleanup(monkeypatch, 
 
 @pytest.mark.parametrize("failure", ["quiesce", "teardown"])
 def test_real_effector_failed_cleanup_cannot_restart_from_supervisor(monkeypatch, failure):
-    import omnibci.conf as conf
     from omnibci.infrastructure.actuation.actuator import Actuator
     from omnibci.infrastructure.plugins import node_client
 
     app, peer, config, lifecycle, queue = make_app(monkeypatch, "actuation")
     effector = Mock()
     getattr(effector, failure).side_effect = RuntimeError("device still held")
-    actuator = Actuator()
+    actuator = Actuator(settings_snapshot={})
     actuator._load_effector = Mock(return_value=effector)
     app.actuator = actuator
     peer.start.side_effect = None
@@ -196,7 +195,6 @@ def test_real_effector_failed_cleanup_cannot_restart_from_supervisor(monkeypatch
     monkeypatch.setattr(node_client, "materialize_node_configuration", Mock(return_value={}))
     monkeypatch.setattr(node_client, "CatalogConfigurationAdapter", Mock())
     monkeypatch.setattr(node_client.time, "sleep", sleep)
-    monkeypatch.setattr(conf, "settings", Mock())
 
     with pytest.raises(RuntimeError, match="device still held"):
         node_client.run_configured_node("actuation", factory, server_url="http://server")

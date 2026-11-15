@@ -1,5 +1,4 @@
 """Current quarantine is independent of retained failed-operation history."""
-from omnibci.application.activation_settings import section_settings
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -7,7 +6,7 @@ from uuid import uuid4
 import pytest
 
 from omnibci.application.commands.engine_commands import StopEngineCommand
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.runtime_admission import RuntimeAdmission
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.presentation.schemas.runtime_config import RuntimeConfigurationResponse
@@ -35,7 +34,7 @@ def test_recovery_flag_reflects_quarantine_even_when_engine_is_not_ready(runtime
     assert status.running is False
     assert status.recovery == {"engine": "Unknown startup outcome"}
     assert status.operations["processing"].model_dump() == failed
-    plan = service.plan("processing", [item for item in bindings if item["slot"].startswith("processing.")], expected_revision=snapshot.modules["processing"].revision, settings=section_settings(service.profiles.settings_source(), "processing"))
+    plan = service.plan("processing", [item for item in bindings if item["slot"].startswith("processing.")], expected_revision=snapshot.modules["processing"].revision, settings=service.profiles.default_module_settings("processing"))
     with pytest.raises(ProfileRevisionConflict, match="uncertain runtime"):
         service.submit(plan.plan_id, str(uuid4()))
 
@@ -57,7 +56,7 @@ async def test_confirmed_stop_clears_current_recovery_and_allows_apply_with_fail
         pass
     service.executor = SimpleNamespace(supported_strategies={"select_on_start", "no_change"},
                                        execute=AsyncMock(return_value={"outcome": "selected"}))
-    plan = service.plan("processing", [item for item in bindings if item["slot"].startswith("processing.")], expected_revision=snapshot.modules["processing"].revision, settings=section_settings(service.profiles.settings_source(), "processing"))
+    plan = service.plan("processing", [item for item in bindings if item["slot"].startswith("processing.")], expected_revision=snapshot.modules["processing"].revision, settings=service.profiles.default_module_settings("processing"))
     operation = service.submit(plan.plan_id, str(uuid4()))
     await service.wait_for_idle()
     assert service.operation(operation["operation_id"])["status"] == "succeeded"

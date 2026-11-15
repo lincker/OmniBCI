@@ -1,5 +1,4 @@
 """Configuration remains repairable through the real application lifespan."""
-from omnibci.application.activation_settings import section_settings
 import logging
 from dataclasses import replace
 from copy import deepcopy
@@ -13,8 +12,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from omnibci import bootstrap
-from omnibci.application.plugin_profiles import ModuleActivation
-from omnibci.conf import OmniBCISettings
+from omnibci.application.configuration.models import ModuleActivation
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.presentation.main import create_app
 from tests.plugin_configuration_helpers import accept_profiles
 
@@ -68,35 +67,10 @@ class MemoryEngine:
 
 @pytest.fixture
 def startup_environment(tmp_path, monkeypatch):
-    import omnibci.conf as conf
-
-    path = tmp_path / "settings.toml"
-    path.write_text('''[ACQUISITION]
-signal_source = "file_reader"
-data_file_path = "recordings/startup.cnt"
-sample_rate = 256
-channel_count = 5
-file_reader_chunk_size = 17
-trigger = ""
-[ALGORITHM]
-decoder = "THUBCI_SSVEP_classic40FBCCA"
-epoch_detector = "DEFAULT_EPOCH_DETECTOR"
-window_duration = 4.25
-offset_time = 0.15
-baseline_duration = 0.4
-filters = []
-[STIMULATION]
-paradigm = "STIMULATION_THUBCI_SSVEP_classic40"
-auto_spawn = false
-[ACTUATION]
-auto_spawn = false
-effector = ""
-[NEUROENGINE]
-queue_size = 29
-''', encoding="utf-8")
-    settings = OmniBCISettings(path)
-    monkeypatch.setattr(conf, "settings", settings)
     root = tmp_path / "module-config"
+    root.mkdir()
+    (root / "settings.toml").write_text('[LOGGING]\nlevel = "INFO"\n', encoding="utf-8")
+    settings = TomlConfigurationRepository(root)
     monkeypatch.setenv("OMNIBCI_CONFIG_DIR", str(root))
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
     for key in ("OMNIBCI_MARKET_URL", "OMNIBCI_MARKET_REPOSITORY_ID", "OMNIBCI_MARKET_TRUSTED_KEYS"):
@@ -113,7 +87,7 @@ def _data(client, path):
 
 
 def _select_profiles(client):
-    return accept_profiles(client.app.state.container.plugin_profile_service, [
+    return accept_profiles(client.app.state.container.configuration_service, [
         ("acquisition.source", "acquisition", "file_reader", {
             "data_file_path": "recordings/startup.cnt", "sample_rate": 256,
             "channel_count": 5, "file_reader_chunk_size": 17,
@@ -123,7 +97,10 @@ def _select_profiles(client):
         }),
         ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
         ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40", {}),
-    ])
+    ], module_settings={
+        "processing": {"ALGORITHM.baseline_duration": 0.4},
+        "stimulation": {"STIMULATION.auto_spawn": False},
+    })
 
 
 @pytest.mark.parametrize("desktop", [False, True])
@@ -146,7 +123,7 @@ def _assert_management_available(client):
 
 def test_fresh_lifespan_leaves_module_configuration_unselected(startup_environment):
     environment = startup_environment
-    settings_bytes = environment.settings._config_path.read_bytes()
+    settings_bytes = (environment.root / "settings.toml").read_bytes()
 
     with TestClient(create_app()) as client:
         _assert_management_available(client)
@@ -155,15 +132,13 @@ def test_fresh_lifespan_leaves_module_configuration_unselected(startup_environme
         assert all(value is None for value in _data(client, "/config/runtime")["accepted"].values())
         environment.builder.assert_not_called()
 
-    assert environment.settings._config_path.read_bytes() == settings_bytes
+    assert (environment.root / "settings.toml").read_bytes() == settings_bytes
 
 
-def test_invalid_initial_settings_can_be_repaired_without_restarting_server(
+def test_initial_module_configuration_can_be_applied_without_restarting_server(
     startup_environment, monkeypatch,
 ):
     environment = startup_environment
-    environment.settings.set("ACQUISITION.sample_rate", "invalid")
-    environment.settings.save()
     with TestClient(create_app()) as client:
         _assert_management_available(client)
         assert all(item["revision"] is None for item in _data(client, "/config/modules")["modules"].values())
@@ -270,7 +245,7 @@ def _apply_plan(client, plan):
 
 
 def _assert_invalid_activation(client, environment, snapshot, operation, *, plan_status=200):
-    repository = client.app.state.container.plugin_profile_service.repository
+    repository = client.app.state.container.configuration_service.repository
     previous = repository.get_module("acquisition")
     path = environment.root / "activation" / "acquisition.toml"
     original = path.read_bytes()
@@ -309,7 +284,7 @@ def test_engine_start_does_not_require_any_module_selection(startup_environment,
     environment = startup_environment
     with TestClient(create_app()) as client:
         previous = _select_profiles(client)
-        service = client.app.state.container.plugin_profile_service
+        service = client.app.state.container.configuration_service
         for module, activation in previous.modules.items():
             if activation is None:
                 continue
@@ -320,7 +295,7 @@ def test_engine_start_does_not_require_any_module_selection(startup_environment,
             assert response.status_code == 200, response.text
             _apply_plan(client, response.json()["data"])
         if missing_slot == "actuation.effector":
-            service.repository.save_module(service.propose("actuation", [], settings=section_settings(service.settings_source(), "actuation")), expected_revision=None)
+            service.repository.save_module(service.propose("actuation", [], settings=service.default_module_settings("actuation")), expected_revision=None)
         started = client.post("/api/v1/engine/start")
         assert started.status_code == 200, started.text
         environment.builder.assert_called_once()
@@ -339,7 +314,7 @@ def test_engine_start_does_not_require_any_module_selection(startup_environment,
 def test_unavailable_source_profiles_can_be_selected_but_not_started(startup_environment, monkeypatch, operation):
     with TestClient(create_app()) as client:
         _select_profiles(client)
-        service = client.app.state.container.plugin_profile_service
+        service = client.app.state.container.configuration_service
         previous = service.repository.get_module("acquisition")
         source = next(binding for binding in previous.bindings if binding.kind == "acquisition")
         original_get = service.catalog.get
@@ -387,7 +362,7 @@ def test_unavailable_source_profiles_can_be_selected_but_not_started(startup_env
 def test_invalid_profile_parameters_or_schema_block_accept_and_start(startup_environment, operation, invalid):
     with TestClient(create_app()) as client:
         _select_profiles(client)
-        service = client.app.state.container.plugin_profile_service
+        service = client.app.state.container.configuration_service
         previous = service.repository.get_module("acquisition")
         source = next(binding for binding in previous.bindings if binding.kind == "acquisition")
         profile = service.repository.get_profile(source.profile_id)
@@ -404,7 +379,7 @@ def test_invalid_profile_parameters_or_schema_block_accept_and_start(startup_env
 def test_inactive_output_plugins_can_retain_portable_selections(startup_environment, monkeypatch):
     with TestClient(create_app()) as client:
         _select_profiles(client)
-        service = client.app.state.container.plugin_profile_service
+        service = client.app.state.container.configuration_service
         original_get = service.catalog.get
         def get(kind, selection):
             definition = original_get(kind, selection)
@@ -432,9 +407,8 @@ def test_inactive_output_plugins_can_retain_portable_selections(startup_environm
 
 
 def test_server_logging_covers_startup_and_shutdown(startup_environment, tmp_path):
-    startup_environment.settings.set("LOGGING.level", "INFO")
-    startup_environment.settings.set("LOGGING.file_path", str(tmp_path / "server.log"))
-    startup_environment.settings.save()
+    startup_environment.settings.save_server({"LOGGING.file_path": str(tmp_path / "server.log")},
+        expected_revision=startup_environment.settings.read_server()[1])
     app = create_app()
 
     with TestClient(app) as client:
@@ -453,8 +427,8 @@ def test_server_logging_covers_startup_and_shutdown(startup_environment, tmp_pat
 def test_server_logging_closes_when_startup_fails(startup_environment, tmp_path, monkeypatch):
     from omnibci.presentation import main
 
-    startup_environment.settings.set("LOGGING.file_path", str(tmp_path / "failed-startup.log"))
-    startup_environment.settings.save()
+    startup_environment.settings.save_server({"LOGGING.file_path": str(tmp_path / "failed-startup.log")},
+        expected_revision=startup_environment.settings.read_server()[1])
 
     async def failed_container(**kwargs):
         logging.getLogger("omnibci.test_server").error("Container startup failed")
@@ -471,8 +445,8 @@ def test_server_logging_closes_when_startup_fails(startup_environment, tmp_path,
 
 
 def test_server_logging_closes_when_shutdown_fails(startup_environment, tmp_path, monkeypatch):
-    startup_environment.settings.set("LOGGING.file_path", str(tmp_path / "failed-shutdown.log"))
-    startup_environment.settings.save()
+    startup_environment.settings.save_server({"LOGGING.file_path": str(tmp_path / "failed-shutdown.log")},
+        expected_revision=startup_environment.settings.read_server()[1])
 
     async def failed_shutdown():
         logging.getLogger("omnibci.test_server").error("Engine shutdown failed")
@@ -511,16 +485,16 @@ def test_saved_logging_edit_during_startup_still_requires_server_restart(
 
     initial_log = tmp_path / "loaded.log"
     changed_log = tmp_path / "changed.log"
-    startup_environment.settings.set("LOGGING.file_path", str(initial_log))
-    startup_environment.settings.save()
+    startup_environment.settings.save_server({"LOGGING.file_path": str(initial_log)},
+        expected_revision=startup_environment.settings.read_server()[1])
     create_logging = main.create_server_logging
     loaded = {}
 
     def edit_after_logging_is_configured(*args, **kwargs):
         service = create_logging(*args, **kwargs)
         loaded["path"] = service.file_path
-        startup_environment.settings.set("LOGGING.file_path", str(changed_log))
-        startup_environment.settings.save()
+        startup_environment.settings.save_server({"LOGGING.file_path": str(changed_log)},
+            expected_revision=startup_environment.settings.read_server()[1])
         return service
 
     monkeypatch.setattr(main, "create_server_logging", edit_after_logging_is_configured)

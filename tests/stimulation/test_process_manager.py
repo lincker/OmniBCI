@@ -316,7 +316,6 @@ def test_ready_state_detects_child_that_dies_later(
 
 @patch("omnibci.infrastructure.stimulation.application.Stimulation")
 def test_child_entrypoint_forwards_stop_event(mock_stimulation_cls, monkeypatch):
-    monkeypatch.setattr("omnibci.conf.settings.use_snapshot", lambda _: None)
     stop_event = object()
     snapshot = _paradigm_snapshot()
 

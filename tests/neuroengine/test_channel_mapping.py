@@ -9,7 +9,7 @@ import pytest
 
 from tests.processing_helpers import make_processor
 from omnibci.application.events import CommandRequest, ProcessingInputStart, StreamBarrier
-from omnibci.application.plugin_profiles import ProfileBinding
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.channel_mapping import (
     ChannelBinding, ProcessingInput, compile_processing_plan,
 )
@@ -36,7 +36,7 @@ def _plan():
 
 
 def _snapshot(plan):
-    from omnibci.application.plugin_profiles import PluginSelection
+    from omnibci.application.configuration.models import PluginSelection
     return {
         "CONFIG.module_revisions": {"acquisition": plan.acquisition_revision, "processing": plan.acquisition_revision, "stimulation": plan.acquisition_revision, "actuation": plan.acquisition_revision}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "generation-one",
         "ACQUISITION.sample_rate": plan.source.sample_rate,
@@ -111,8 +111,6 @@ def _prepare(monkeypatch, processor, plan):
 
 
 def test_worker_with_explicit_setup_starts_control_loop_before_plugin_construction(monkeypatch):
-    from omnibci.conf import settings
-    monkeypatch.setattr(settings, "use_snapshot", lambda _: None)
     plan = _plan()
     worker = SignalProcessingWorker(command_queue=MagicMock(), settings_snapshot=_snapshot(plan))
     load = MagicMock(side_effect=AssertionError("premature plugin construction"))

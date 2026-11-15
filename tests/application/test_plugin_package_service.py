@@ -1,5 +1,4 @@
 """References block destructive package lifecycle changes; version copies are explicit."""
-from omnibci.application.activation_settings import section_settings
 from contextlib import contextmanager
 from dataclasses import replace
 from types import SimpleNamespace
@@ -7,14 +6,14 @@ from types import SimpleNamespace
 import pytest
 
 from omnibci.application.plugin_packages import PackageReference, PluginPackageConflictError
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.services.plugin_package_service import PluginPackageService
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from tests.infrastructure.test_package_store import package_archive
 from tests.plugin_configuration_helpers import builtin_selection
 
@@ -34,8 +33,8 @@ def service(tmp_path, monkeypatch):
         finally:
             state["held"] = False
     store = ManagedPluginPackageStore()
-    profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
-                                    CatalogConfigurationAdapter(), settings_source=lambda: {})
+    profiles = ConfigurationService(TomlConfigurationRepository(tmp_path / "config"),
+                                    CatalogConfigurationAdapter())
     svc = PluginPackageService(store, profiles, runtime_references=lambda: state["references"], admission_guard=guard)
     for version in ("1.0.0", "2.0.0"):
         svc.install(package_archive(tmp_path, version))
@@ -53,7 +52,7 @@ def test_saved_profile_and_accepted_binding_references_are_listed_and_block_disa
     profile = source_profile(svc)
     active = svc.profiles.propose("actuation", [
         {"slot": "actuation.effector", "profile_id": profile.profile_id},
-    ], settings=section_settings(svc.profiles.settings_source(), "actuation"))
+    ], settings=svc.profiles.default_module_settings("actuation"))
     svc.profiles.repository.save_module(active, expected_revision=None)
     references = svc.list()[0].references
     assert {item.scope for item in references} == {"profile", "accepted"}
@@ -100,7 +99,7 @@ def test_proposal_and_new_profile_do_not_mutate_accepted_or_source_profile(servi
     original = source_profile(svc)
     snapshot = svc.profiles.propose("actuation", [
         {"slot": "actuation.effector", "profile_id": original.profile_id},
-    ], settings=section_settings(svc.profiles.settings_source(), "actuation"))
+    ], settings=svc.profiles.default_module_settings("actuation"))
     svc.profiles.repository.save_module(snapshot, expected_revision=None)
     proposal = svc.propose_profile(original.profile_id, "2.0.0", name="Output v2")
     assert proposal.parameters == {"gain": 2.0} and not proposal.target_enabled

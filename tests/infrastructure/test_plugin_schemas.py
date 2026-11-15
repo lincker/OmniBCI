@@ -4,7 +4,7 @@ import json
 import pytest
 import tomlkit
 
-from omnibci.application.plugin_profiles import PluginSelection
+from omnibci.application.configuration.models import PluginSelection
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.infrastructure.plugins.loader import PluginLoader, PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import (

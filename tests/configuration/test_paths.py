@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from omnibci.conf.paths import resolve_config_path
+from omnibci.infrastructure.config_paths import resolve_config_path
 
 
 def test_resolve_config_path_converts_portable_relative_path(tmp_path: Path):

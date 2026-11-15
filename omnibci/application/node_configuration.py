@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 import json
 import re
 
-from omnibci.application.activation_settings import SECTION_SETTING_KEYS
-from omnibci.application.plugin_profiles import ProfileBinding
+from omnibci.application.configuration.definitions import SECTION_SETTING_KEYS
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfigurationCatalog
 from omnibci.application.processing_source import materialize_processing_binding, processing_input

@@ -8,27 +8,14 @@ import re
 from datetime import datetime
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Mapping, Protocol
+from typing import Any, Mapping
 from uuid import UUID
 
-from omnibci.application.activation_settings import MODULES, SECTION_SETTING_KEYS
+from omnibci.application.configuration.definitions import (
+    MODULES, validate_engine_settings, validate_module_settings,
+)
+from omnibci.application.configuration.errors import PluginProfileValidationError
 from omnibci.domain.channel_mapping import ProcessingInput
-
-
-class PluginProfileValidationError(ValueError):
-    """A profile, binding or stored activation is invalid."""
-
-
-class PluginProfileNotFoundError(KeyError):
-    """The requested profile does not exist."""
-
-
-class ProfileRevisionConflict(RuntimeError):
-    """The stored document changed after the caller read it."""
-
-
-class PluginProfileStorageError(OSError):
-    """Local plugin configuration could not be read or written."""
 
 
 PLUGIN_KINDS = frozenset({
@@ -267,25 +254,7 @@ class ModuleActivation:
         if any(module_for_slot(item.slot) != module or item.kind not in MODULE_KINDS[module] for item in bindings):
             raise PluginProfileValidationError("Bindings must belong to the configuration module")
         settings = _object_data(settings, "settings")
-        if settings.keys() - SECTION_SETTING_KEYS[module]:
-            raise PluginProfileValidationError("Settings must belong to the configuration module")
-        for key, value in settings.items():
-            if key.endswith("auto_spawn"):
-                valid = type(value) is bool
-            elif key == "STIMULATION.renderer":
-                valid = isinstance(value, str) and value in ("pyopengl", "moderngl")
-            elif key.endswith(".server_ip"):
-                valid = isinstance(value, str) and bool(value.strip())
-            elif key.endswith(".server_port"):
-                valid = type(value) is int and 1 <= value <= 65535
-            else:
-                try:
-                    valid = (type(value) in (int, float) and math.isfinite(value)
-                             and (value > 0 if key == "ACTUATION.watchdog_timeout_s" else value >= 0))
-                except OverflowError:
-                    valid = False
-            if not valid:
-                raise PluginProfileValidationError(f"Invalid module setting: {key}")
+        validate_module_settings(module, settings)
         values = [item.to_dict() for item in bindings]
         semantic = [{key: value for key, value in item.items() if key not in {"profile_id", "profile_revision"}}
                     for item in values]
@@ -325,20 +294,7 @@ class EngineSettings:
 
     def __init__(self, settings: dict) -> None:
         settings = _object_data(settings, "settings")
-        if settings.keys() - SECTION_SETTING_KEYS["engine"]:
-            raise PluginProfileValidationError("Settings must belong to the engine section")
-        for key, value in settings.items():
-            if key == "debug":
-                valid = type(value) is bool
-            elif key == "NEUROENGINE.queue_size":
-                valid = type(value) is int and value > 0
-            else:
-                try:
-                    valid = type(value) in (int, float) and math.isfinite(value) and value > 0
-                except OverflowError:
-                    valid = False
-            if not valid:
-                raise PluginProfileValidationError(f"Invalid Engine setting: {key}")
+        validate_engine_settings(settings)
         object.__setattr__(self, "_settings_json", _canonical(settings))
         content = _canonical({"engine": settings})
         object.__setattr__(self, "revision", hashlib.sha256(content.encode("utf-8")).hexdigest())
@@ -461,23 +417,3 @@ class ModuleActivationRevision:
         _fields(data, {"module", "entry_id", "saved_at", "activation"}, {"restored_from"})
         return cls(data["module"], data["entry_id"], data["saved_at"],
                    ModuleActivation.from_dict(data["activation"]), data.get("restored_from"))
-
-
-class PluginProfileRepository(Protocol):
-    def list_profiles(self, kind: str | None = None) -> list[PluginProfile]: ...
-    def get_profile(self, profile_id: str) -> PluginProfile: ...
-    def save_profile(self, profile: PluginProfile, expected_revision: int | None) -> PluginProfile: ...
-    def delete_profile(self, profile_id: str, expected_revision: int) -> None: ...
-    def list_profile_history(self, profile_id: str) -> list[ProfileRevision]: ...
-    def get_profile_revision(self, profile_id: str, revision: int) -> ProfileRevision | None: ...
-    def get_module(self, module: str) -> ModuleActivation | None: ...
-    def save_module(self, activation: ModuleActivation, expected_revision: str | None) -> ModuleActivation: ...
-    def remove_module(self, module: str, *, expected_revision: str) -> None: ...
-    def list_module_history(self, module: str) -> list[ModuleActivationRevision]: ...
-    def get_module_history_entry(self, module: str, entry_id: str) -> ModuleActivationRevision | None: ...
-    def record_module_history(self, activation: ModuleActivation, entry_id: str,
-                              restored_from: str | None = None) -> ModuleActivationRevision: ...
-    def get_engine(self) -> EngineSettings | None: ...
-    def save_engine(self, settings: EngineSettings, expected_revision: str | None) -> EngineSettings: ...
-    def remove_engine(self, *, expected_revision: str) -> None: ...
-    def get_activation_set(self) -> ActivationSet: ...

@@ -8,11 +8,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from omnibci.application.services.plugin_package_service import PluginPackageService
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.presentation.errors import register_exception_handlers
 from omnibci.presentation.routers.plugin_package_lifecycle import router
 from omnibci.presentation.routers.plugin_packages import router as installation_router
@@ -23,8 +23,8 @@ from tests.plugin_configuration_helpers import builtin_selection
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
-    profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
-                                    CatalogConfigurationAdapter(), settings_source=lambda: {})
+    profiles = ConfigurationService(TomlConfigurationRepository(tmp_path / "config"),
+                                    CatalogConfigurationAdapter())
     svc = PluginPackageService(ManagedPluginPackageStore(), profiles, runtime_references=lambda: (), admission_guard=nullcontext)
     for version in ("1.0.0", "2.0.0"):
         svc.install(package_archive(tmp_path, version))

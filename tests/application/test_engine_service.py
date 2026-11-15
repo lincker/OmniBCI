@@ -17,7 +17,7 @@ from omnibci.application.commands.engine_commands import (
 from omnibci.application.queries.engine_queries import GetEngineStatusQuery
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.events import CommandResult
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.services.command_result_service import CommandExecutionError, CommandResultBroker, CommandTimeoutError
 from omnibci.shared.events import Event, EventType
 

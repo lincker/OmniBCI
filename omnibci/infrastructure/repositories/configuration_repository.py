@@ -1,6 +1,12 @@
-"""Atomic, compare-and-swap TOML storage for plugin profiles and activation."""
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+# @Author   : lincker <haolin.d.wu@gmail.com>
+# @Date     : 2025-04-28 10:39
+"""Atomic TOML storage for Server, Engine, module configurations and Profiles."""
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 import shutil
@@ -12,27 +18,31 @@ from threading import RLock
 
 import tomlkit
 
-from omnibci.application.activation_settings import MODULES
-from omnibci.application.plugin_profiles import (
+from omnibci.application.configuration.definitions import (
+    MODULES, SERVER_STARTUP_DEFAULTS, server_startup_settings, validate_server_settings,
+)
+from omnibci.application.configuration.models import (
     PLUGIN_KINDS, ActivationSet, ModuleActivation, ModuleActivationRevision,
-    PluginProfile, PluginProfileNotFoundError, PluginProfileStorageError,
-    PluginProfileValidationError, ProfileRevision, ProfileRevisionConflict,
+    PluginProfile, ProfileRevision,
     EngineSettings, validate_profile_id,
 )
+from omnibci.application.configuration.errors import (
+    ConfigKeyNotAllowedError, ConfigValidationError, ConfigProfileValidationError,
+    ConfigProfileConflictError, PluginProfileNotFoundError, PluginProfileStorageError,
+    PluginProfileValidationError, ProfileRevisionConflict,
+)
 from omnibci.infrastructure.config_paths import config_root
-from omnibci.conf import OmniBCISettings
-from omnibci.conf.storage import atomic_write, file_lock
+from omnibci.infrastructure.repositories.configuration_storage import atomic_write, file_lock
 
 
-class TomlPluginProfileRepository:
+class TomlConfigurationRepository:
     def __init__(self, root: Path | None = None, *, lock_timeout_s: float = 5.0):
         self.root = (root if root is not None else config_root()).resolve()
         if (isinstance(lock_timeout_s, bool) or not isinstance(lock_timeout_s, (int, float))
                 or not math.isfinite(lock_timeout_s) or lock_timeout_s <= 0):
             raise ValueError("lock_timeout_s must be positive and finite")
         self._lock_timeout_s = lock_timeout_s
-        self._thread_locks = {section: RLock() for section in ("profiles", *MODULES)}
-        self._settings = OmniBCISettings(user_file=self.root / "settings.toml", lock_timeout_s=lock_timeout_s)
+        self._thread_locks = {section: RLock() for section in ("settings", "profiles", *MODULES)}
 
     def _safe(self, path: Path) -> Path:
         if not path.resolve().is_relative_to(self.root):
@@ -59,8 +69,12 @@ class TomlPluginProfileRepository:
                     yield
             except PluginProfileStorageError:
                 raise
+            except PluginProfileValidationError as exc:
+                if section == "settings":
+                    raise ConfigProfileValidationError(str(exc)) from exc
+                raise
             except OSError as exc:
-                raise PluginProfileStorageError(f"Cannot access plugin configuration: {exc}") from exc
+                raise PluginProfileStorageError(f"Cannot access configuration: {exc}") from exc
         finally:
             lock.release()
 
@@ -264,16 +278,100 @@ class TomlPluginProfileRepository:
         validate_profile_id(entry_id)
         return next((item for item in self.list_module_history(module) if item.entry_id == entry_id), None)
 
+    def _settings_document(self):
+        path = self.root / "settings.toml"
+        if path.is_symlink():
+            raise ConfigProfileValidationError("Settings file must not be a symlink")
+        self._safe(path)
+        if not path.exists():
+            return tomlkit.document()
+        try:
+            return tomlkit.parse(path.read_text(encoding="utf-8"))
+        except (ValueError, TypeError) as exc:
+            raise ConfigProfileValidationError(f"Invalid settings in {path}: {exc}") from exc
+
+    @staticmethod
+    def _server_values(document):
+        values = {}
+        for section, fields in document.unwrap().items():
+            if section == "engine":
+                continue
+            prefix = f"{section}."
+            if (not hasattr(fields, "items")
+                    or not any(key.startswith(prefix) for key in SERVER_STARTUP_DEFAULTS)):
+                raise ConfigProfileValidationError(f"Unsupported Server settings section: {section}")
+            values.update({f"{section}.{key}": value for key, value in fields.items()})
+        try:
+            return server_startup_settings(validate_server_settings(values, allow_empty=True))
+        except (ConfigKeyNotAllowedError, ConfigValidationError) as exc:
+            raise ConfigProfileValidationError(f"Invalid Server settings: {exc}") from exc
+
+    @staticmethod
+    def _server_revision(values):
+        content = json.dumps(values, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    def read_server(self) -> tuple[dict, str]:
+        """Read only Server-owned values; other configuration content is independent."""
+        with self._access("settings"):
+            values = self._server_values(self._settings_document())
+            return values, self._server_revision(values)
+
+    def save_server(self, updates: dict, *, expected_revision: str) -> str:
+        """Compare Server values under the shared file lock and preserve Engine settings."""
+        self._expected_revision(expected_revision)
+        if expected_revision is None:
+            raise ConfigProfileValidationError("expected_revision is required for Server settings")
+        clean = validate_server_settings(updates)
+        with self._access("settings", write=True):
+            document = self._settings_document()
+            values = self._server_values(document)
+            if self._server_revision(values) != expected_revision:
+                raise ConfigProfileConflictError("Server settings changed; refresh before saving again")
+            for key, value in clean.items():
+                section, name = key.split(".", 1)
+                if section not in document:
+                    document[section] = tomlkit.table()
+                document[section][name] = value
+            values.update(clean)
+            self._write(self.root / "settings.toml", document)
+            return self._server_revision(values)
+
+    @staticmethod
+    def _engine_value(document) -> EngineSettings | None:
+        if "engine" not in document:
+            return None
+        values = document["engine"]
+        try:
+            return EngineSettings(values.unwrap() if hasattr(values, "unwrap") else values)
+        except PluginProfileValidationError as exc:
+            raise ConfigProfileValidationError(f"Invalid Engine settings: {exc}") from exc
+
     def get_engine(self) -> EngineSettings | None:
-        return self._settings.get_engine()
+        with self._access("settings"):
+            return self._engine_value(self._settings_document())
 
     def save_engine(self, settings: EngineSettings, expected_revision: str | None = None) -> EngineSettings:
-        self._expected_revision(expected_revision)
-        return self._settings.save_engine(settings, expected_revision)
+        settings = EngineSettings.from_dict(settings.to_dict())
+        self._write_engine(settings, expected_revision)
+        return settings
 
     def remove_engine(self, *, expected_revision: str) -> None:
+        self._write_engine(None, expected_revision)
+
+    def _write_engine(self, settings: EngineSettings | None, expected_revision: str | None):
         self._expected_revision(expected_revision)
-        self._settings.remove_engine(expected_revision)
+        with self._access("settings", write=True):
+            document = self._settings_document()
+            previous = self._engine_value(document)
+            if ((previous is None and settings is None)
+                    or (previous.revision if previous is not None else None) != expected_revision):
+                raise ProfileRevisionConflict("Engine settings changed; reload before saving")
+            if settings is None:
+                del document["engine"]
+            else:
+                document["engine"] = settings.settings
+            self._write(self.root / "settings.toml", document)
 
     def get_activation_set(self) -> ActivationSet:
         if not self.root.exists():

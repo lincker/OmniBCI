@@ -135,7 +135,7 @@ class TestStimulatorStop:
         assert s._loop is None
 
     def test_stop_without_start_is_noop(self):
-        s = Stimulator()
+        s = Stimulator(settings_snapshot={})
         s.stop()   # should not raise
 
 
@@ -167,11 +167,11 @@ class TestStimulatorPresent:
         mock_paradigm.trial_result_present.assert_called_once_with(result=3)
 
     def test_present_trial_noop_without_paradigm(self):
-        s = Stimulator()
+        s = Stimulator(settings_snapshot={})
         s.present_trial(0)   # should not raise
 
     def test_present_result_noop_without_paradigm(self):
-        s = Stimulator()
+        s = Stimulator(settings_snapshot={})
         s.present_result(0)  # should not raise
 
 

@@ -6,8 +6,8 @@ from functools import wraps
 from inspect import iscoroutinefunction
 from threading import Condition, RLock
 
-from omnibci.application.activation_settings import MODULES
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.definitions import MODULES
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 
 
 class RuntimeAdmission:

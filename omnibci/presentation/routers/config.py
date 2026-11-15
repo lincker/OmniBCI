@@ -2,12 +2,12 @@
 
 from fastapi import APIRouter, Depends, status
 
-from omnibci.application.services.config_service import (
+from omnibci.application.configuration.errors import (
     ConfigKeyNotAllowedError,
-    ConfigService,
     ConfigValidationError,
 )
-from omnibci.presentation.dependencies import get_config_service
+from omnibci.application.configuration.service import ConfigurationService
+from omnibci.presentation.dependencies import get_configuration_service
 from omnibci.presentation.errors import ApiError
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.config import (
@@ -21,9 +21,9 @@ router = APIRouter(prefix="/config", tags=["Config"])
 
 
 @router.get("", response_model=ApiResponse[ConfigResponse], summary="Server startup settings")
-def get_config(svc: ConfigService = Depends(get_config_service)):
+def get_config(svc: ConfigurationService = Depends(get_configuration_service)):
     try:
-        entries, revision = svc.read()
+        entries, revision = svc.read_server()
     except OSError as exc:
         raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.SERVICE_UNAVAILABLE,
                        "Host settings storage is unavailable") from exc
@@ -34,9 +34,9 @@ def get_config(svc: ConfigService = Depends(get_config_service)):
 @router.patch("", response_model=ApiResponse[PatchConfigResponse],
               summary="Save settings for the next server startup")
 def patch_config(body: PatchConfigRequest,
-                 svc: ConfigService = Depends(get_config_service)):
+                 svc: ConfigurationService = Depends(get_configuration_service)):
     try:
-        saved, restart, revision = svc.save(body.updates, expected_revision=body.expected_revision)
+        saved, restart, revision = svc.save_server(body.updates, expected_revision=body.expected_revision)
     except ConfigKeyNotAllowedError as exc:
         raise ApiError(status.HTTP_400_BAD_REQUEST, ErrorCode.CONFIG_KEY_NOT_ALLOWED,
                        "Keys outside the config whitelist", detail={"keys": exc.keys})

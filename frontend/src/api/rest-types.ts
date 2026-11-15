@@ -2466,8 +2466,6 @@ export interface components {
             processing_input?: components["schemas"]["ProcessingInputModel"] | null;
             accepted_input?: components["schemas"]["ProcessingInputModel"] | null;
             active_input?: components["schemas"]["ProcessingInputModel"] | null;
-            /** Revision */
-            revision: string;
             readiness: components["schemas"]["SignalReadinessModel"];
         };
         /** SourceExpectationsModel */

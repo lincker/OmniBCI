@@ -8,10 +8,9 @@ from unittest.mock import MagicMock, call, patch
 import numpy as np
 import pytest
 
-import omnibci.conf as conf_module
 import omnibci.infrastructure.signal_processing.worker as worker_module
 from omnibci.application.events import CommandRequest, ProcessingInputStart
-from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
+from omnibci.application.configuration.models import PluginSelection, ProfileBinding
 from omnibci.domain.channel_mapping import ProcessingInput, compile_processing_plan
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter, Prediction
 from omnibci.domain.signal import SignalChunk
@@ -36,6 +35,7 @@ def _worker(**overrides) -> SignalProcessingWorker:
         "data_manager": MagicMock(),
         "event_bus": MagicMock(),
         "baseline_duration": 0.3,
+        "settings_snapshot": {},
     }
     defaults.update(overrides)
     return SignalProcessingWorker(**defaults)
@@ -45,7 +45,7 @@ class TestFilterLoading:
     @staticmethod
     def snapshot(count=1, *, missing=False):
         from dataclasses import replace
-        from omnibci.application.plugin_profiles import ProfileBinding
+        from omnibci.application.configuration.models import ProfileBinding
         from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
         from uuid import uuid4
         descriptor = PluginCatalog().resolve_selection("filter", builtin_selection("filter", "BASELINE_CORRECTION"))
@@ -70,8 +70,8 @@ class TestFilterLoading:
 
 
 class TestAlgorithmLoading:
-    def test_prepared_pipeline_uses_observed_sample_rate_without_global_reads(self, monkeypatch):
-        from omnibci.application.plugin_profiles import ProfileBinding
+    def test_prepared_pipeline_uses_observed_sample_rate_without_global_reads(self):
+        from omnibci.application.configuration.models import ProfileBinding
         from omnibci.domain.channel_mapping import ChannelDescriptor, ProcessingInput, SignalInfo, compile_processing_plan
         from omnibci.infrastructure.signal_processing.signal_configuration import load_signal_pipeline
         from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
@@ -90,7 +90,6 @@ class TestAlgorithmLoading:
         source = SignalInfo("file_reader", 250,
                                 (ChannelDescriptor(0, "O1", signal_type="eeg", unit="V"),), 1)
         plan = compile_processing_plan(source, ProcessingInput(), acquisition_revision=snapshot["CONFIG.module_revisions"]["processing"])
-        monkeypatch.setattr(conf_module.settings, "get", lambda *a, **k: pytest.fail("global settings read"))
         with patch.object(
             PluginLoader, "load_entrypoint", wraps=PluginLoader.load_entrypoint
         ) as load_entrypoint:
@@ -111,13 +110,12 @@ class TestProcessorWiring:
         [{"slot": "processing.decoder", "processing_input": {"schema_version": 1, "outputs": ["C3"]}}],
         [{"slot": "processing.decoder", "processing_input": {"schema_version": 2, "outputs": "invalid"}}],
     ])
-    def test_standby_readiness_does_not_require_decoder_configuration(self, bindings, monkeypatch):
+    def test_standby_readiness_does_not_require_decoder_configuration(self, bindings):
         reporter = MagicMock(spec=StartupReporter)
         commands = Queue()
         commands.put((SignalProcessorCommand.should_stop, None))
         worker = _worker(command_queue=commands, startup_reporter=reporter,
                          settings_snapshot={"PLUGINS.bindings": bindings})
-        monkeypatch.setattr(conf_module.settings, "use_snapshot", lambda snapshot: None)
         with patch.object(PluginLoader, "load_entrypoint") as load:
             worker.run()
         reporter.ready.assert_called_once_with()
@@ -179,7 +177,6 @@ class TestProcessorWiring:
                 commands.put((SignalProcessorCommand.should_stop, None))
             return item
         data_manager.get_data = stop_after_sample
-        monkeypatch.setattr(conf_module.settings, "use_snapshot", lambda snapshot: None)
         monkeypatch.setattr(signal_configuration, "load_signal_pipeline", lambda snapshot, plan: (
             InvalidTargetDecoder(), DefaultEpochDetector(parameters={}, context=PluginContext(sample_rate=250)), [],
         ))
@@ -216,7 +213,7 @@ class TestProcessorWiring:
             filters=[],
             generation=None,
             processing_revision=None, acquisition_revision=None, engine_revision=None,
-            settings_snapshot=worker._snapshot(), runtime_counters=None,
+            settings_snapshot=worker.settings_snapshot, runtime_counters=None,
         )
         assert worker.signal_processor is processor
         processor.run.assert_called_once_with()

@@ -11,16 +11,16 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from omnibci.application.plugin_market import PluginMarketError
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.services.plugin_market_service import PluginMarketService
 from omnibci.application.services.engine_service import NeuroEngineService
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.market_adapter import MarketRepositoryAdapter, configured_market_service
 from omnibci.infrastructure.plugins.market_repository import StaticMarketRepository
 from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from tests.infrastructure.test_market_repository import _NOW, _URL, _DOWNLOAD, _Opener, _index, _signed
 from tests.infrastructure.test_package_store import package_archive
 
@@ -169,8 +169,8 @@ def test_real_signed_http_to_disabled_install_enable_profile_and_runtime_plan(tm
         assert len(market.list()) == 1
         installed = market.install("acme.device", "1.0.0").package
         assert not installed.enabled
-        profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
-                                        CatalogConfigurationAdapter(), settings_source=lambda: {"ACTUATION.enabled": True})
+        profiles = ConfigurationService(TomlConfigurationRepository(tmp_path / "config"),
+                                        CatalogConfigurationAdapter())
         assert all(item.selection.package_id != "acme.device" for item in profiles.catalog.list("effector"))
         store.set_enabled("acme.device", "1.0.0", True)
         selection = installed.contributions[0].selection

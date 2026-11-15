@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from omnibci.application.events import CommandRequest, ProcessingInputStart
-from omnibci.application.plugin_profiles import ProfileBinding
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.signal import SignalChunk
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.channel_mapping import ProcessingInput, compile_processing_plan

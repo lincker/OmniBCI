@@ -1,5 +1,4 @@
 """Real publication and TCP admission reject an old run after an engine restart."""
-from omnibci.application.activation_settings import section_settings
 import asyncio
 import json
 from threading import Event as ThreadEvent
@@ -9,15 +8,15 @@ import pytest
 
 from omnibci.application.commands.engine_commands import StartEngineCommand, StopEngineCommand
 from omnibci.application.node_configuration import NodeConfiguration, materialize_node_configuration
-from omnibci.application.plugin_profiles import PluginSelection
+from omnibci.application.configuration.models import PluginSelection
 from omnibci.domain.channel_mapping import ProcessingInput
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.node_configuration_service import NodeConfigurationService
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.infrastructure.ipc.network import NetworkClient, NetworkServer
 from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.shared.events import Event, EventType
 
 
@@ -113,11 +112,8 @@ def test_restarted_engine_rejects_cached_node_configuration_and_accepts_fresh_fe
     tmp_path, role, kinds, editable_kind, event_type,
 ):
     server_catalog = MetadataCatalog(_SLOTS, server=True)
-    profiles = PluginProfileService(
-        TomlPluginProfileRepository(tmp_path / "profiles"), server_catalog,
-        settings_source=lambda: {
-            "STIMULATION.auto_spawn": False, "ACTUATION.auto_spawn": False, "ACTUATION.enabled": True,
-        },
+    profiles = ConfigurationService(
+        TomlConfigurationRepository(tmp_path / "profiles"), server_catalog,
     )
     saved = {kind: profiles.create(kind, definition.selection, kind, {},
              **({"processing_input": ProcessingInput()} if kind == "decoder" else {}))
@@ -126,7 +122,12 @@ def test_restarted_engine_rejects_cached_node_configuration_and_accepts_fresh_fe
     for module in ("acquisition", "processing", "stimulation", "actuation"):
         selected = [{"slot": _SLOTS[kind], "profile_id": profile.profile_id}
                     for kind, profile in saved.items() if _SLOTS[kind].startswith(module + ".")]
-        profiles.repository.save_module(profiles.propose(module, selected, settings=section_settings(profiles.settings_source(), module)), expected_revision=None)
+        settings = profiles.default_module_settings(module)
+        if module in ("stimulation", "actuation"):
+            settings[f"{module.upper()}.auto_spawn"] = False
+        profiles.repository.save_module(profiles.propose(
+            module, selected, settings=settings,
+        ), expected_revision=None)
     node_catalog = MetadataCatalog(kinds)
 
     async def scenario():

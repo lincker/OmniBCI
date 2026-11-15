@@ -5,6 +5,30 @@ Signal Processing, Stimulation, and Actuation. Each owns its settings, pinned
 plugin bindings, content revision, file, lock, and application history.
 Named saved Profiles remain independent for each plugin.
 
+## Configuration management package
+
+`application/configuration` owns configuration definitions, validation, models,
+the storage port, and one `ConfigurationService`. Server settings, Engine settings,
+module configuration and named plugin Profiles use this same service. Profiles
+remain independent saved parameter sets; they are not a second configuration
+management subsystem.
+
+`infrastructure/repositories/configuration_repository.py` implements the storage
+port with `TomlConfigurationRepository`. It owns TOML serialization, atomic writes,
+file locks and revision checks. Bootstrap injects one service/repository pair.
+The configuration package does not import runtime services or infrastructure.
+Runtime application and lifecycle coordination remain in their existing services.
+
+Workers and output processes receive explicit configuration snapshots. They do
+not load user files or install process-wide configuration. The old `conf` package,
+global settings instance, separate Profile service and packaged default TOML are
+removed without compatibility aliases.
+
+Server and Engine share a physical file, but each validates only its own values.
+Invalid Engine values do not block Server reads/saves, and invalid Server values
+do not block Engine reads/saves. Invalid TOML syntax prevents both from reading
+that file. Plugin Profiles and module files remain independently readable.
+
 ## Server and Engine
 
 **OmniBCI Server** is the Python service: HTTP/WebSocket APIs, configuration and plugin
@@ -45,7 +69,7 @@ Stimulation and Actuation do not require Acquisition or Processing to run.
 
 ## Ownership
 
-| Section | Owned host settings | Plugin bindings |
+| Section | Owned settings | Plugin bindings |
 | --- | --- | --- |
 | acquisition | None | Source |
 | processing | `ALGORITHM.baseline_duration` | Decoder, Epoch Detector, ordered Filters |
@@ -98,8 +122,9 @@ user_dir = ""
 
 Only supplied values need to be present. An absent `[engine]` means no Engine
 settings have been accepted; an empty table preserves an accepted empty
-configuration. Missing Engine fields use declared runtime defaults. The packaged
-`omnibci/conf/settings.toml` remains a read-only default template.
+configuration. Missing Engine fields use defaults declared in
+`application/configuration/definitions.py`. Module defaults come from the same
+definitions, independently of the Server settings file.
 
 Engine Review uses current editor values. Successful application stores
 `[engine]`; when running, it rebuilds Engine and restores the modules that were
@@ -107,7 +132,7 @@ running. Server Save writes its own fields for the next Server startup. The
 page shows saved values separately from that process's startup values. Restarting
 Engine alone does not apply Server edits.
 
-Both writers use `.host-settings.lock`, reread the latest document under the
+Both writers use `locks/settings.lock`, reread the latest document under the
 lock, check their own content revision, and atomically replace the file. Engine
 rollback restores or removes only `[engine]`, preserving concurrent Server
 saves. Revisions are derived, not additional stored fields. Shared settings are
@@ -245,6 +270,10 @@ or enabling output. Reconnect and confirm the module's Stop before starting it.
 Worker restarts retain the engine generation. Source sequence, trial, and epoch
 counters remain monotonic during that generation. Worker failure affects that
 module's availability, not foundation readiness or unrelated module lifetimes.
+
+The signal configuration query uses `source_revision` to detect changes to the
+selected acquisition source and observed metadata. It does not expose a Server
+settings revision or read the Server settings file.
 
 ## Runtime identity
 

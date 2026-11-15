@@ -5,11 +5,8 @@ from uuid import uuid4
 
 import pytest
 
-from omnibci.application.plugin_profiles import (
-    ActivationSet, ModuleActivation, ModuleActivationRevision, PluginProfile,
-    PluginProfileValidationError, PluginSelection, ProfileBinding, ProfileRevision,
-    EngineSettings, module_for_slot,
-)
+from omnibci.application.configuration.models import ActivationSet, ModuleActivation, ModuleActivationRevision, PluginProfile, PluginSelection, ProfileBinding, ProfileRevision, EngineSettings, module_for_slot
+from omnibci.application.configuration.errors import PluginProfileValidationError
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 
 

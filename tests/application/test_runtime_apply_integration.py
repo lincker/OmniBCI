@@ -1,5 +1,5 @@
 """Exercise live pause/rebuild/restore and rollback with real spawned workers."""
-from omnibci.application.activation_settings import section_settings
+from tests.plugin_configuration_helpers import section_settings
 import asyncio
 import json
 from types import SimpleNamespace
@@ -10,7 +10,7 @@ import pytest
 from omnibci.application.commands.acquisition_commands import ConnectDataProviderCommand, StartStreamCommand
 from omnibci.application.commands.engine_commands import StartEngineCommand, StopEngineCommand
 from omnibci.application.services.engine_service import NeuroEngineService
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.services.signal_setup_service import SignalSetupService
@@ -20,7 +20,7 @@ from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 from tests.plugin_configuration_helpers import accept_profiles, builtin_selection
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
 
 SOURCE = '''
@@ -101,14 +101,18 @@ schema_version=1
     }))
     host = {'STIMULATION.auto_spawn':True,
             'ACTUATION.server_port':actuation_port, 'ALGORITHM.baseline_duration':0.0}
-    profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / 'profiles'),
-                                    CatalogConfigurationAdapter(), settings_source=lambda: host)
+    profiles = ConfigurationService(TomlConfigurationRepository(tmp_path / 'profiles'),
+                                    CatalogConfigurationAdapter())
     accepted = accept_profiles(profiles, [
         ('acquisition.source', 'acquisition', 'test_replay', {}),
         ('processing.decoder', 'decoder', 'THUBCI_SSVEP_classic40CCA', {}),
         ('processing.epoch_detector', 'epoch_detector', 'DEFAULT_EPOCH_DETECTOR', {}),
         ('stimulation.paradigm', 'paradigm', 'STIMULATION_THUBCI_SSVEP_classic40', {}),
-    ])
+    ], module_settings={
+        "processing": section_settings(host, "processing"),
+        "stimulation": section_settings(host, "stimulation"),
+        "actuation": section_settings(host, "actuation"),
+    })
     selections = [{"slot": item.slot, "profile_id": item.profile_id} for item in accepted.bindings()]
     return profiles, selections
 
@@ -116,11 +120,11 @@ schema_version=1
 def wire_signal_preparation(profiles, engine, container):
     container.acquisition_service.set_metadata_binding(lambda: _acquisition_binding(engine))
     service = SignalSetupService(
-        SimpleNamespace(read_saved=lambda: (profiles.settings_source(), "saved")), profiles, engine,
+        profiles, engine,
         container.acquisition_service, container.command_results,
     )
     container.acquisition_service.set_signal_preparer(service.prepare)
-    from omnibci.application.plugin_profiles import MODULE_KINDS
+    from omnibci.application.configuration.models import MODULE_KINDS
     engine.configure_modules(container.acquisition_service, container.command_results, service,
                              lambda module: accepted_runtime_settings(profiles=profiles, active_kinds=MODULE_KINDS[module]))
 
@@ -232,7 +236,7 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         profiles.update(source.profile_id, name=source.name, parameters={**source.parameters, 'size':7},
                         expected_revision=source.revision)
         before = profiles.repository.get_module("acquisition")
-        plan = runtime.plan("acquisition", [bindings[0]], expected_revision=before.revision, settings=section_settings(runtime.profiles.settings_source(), "acquisition"))
+        plan = runtime.plan("acquisition", [bindings[0]], expected_revision=before.revision, settings=runtime.profiles.default_module_settings("acquisition"))
         operation = runtime.submit(plan.plan_id, str(uuid4()))
         await runtime.wait_for_idle()
         result = runtime.operation(operation['operation_id'])
@@ -249,7 +253,7 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         profiles.update(decoder.profile_id, name=decoder.name, parameters=decoder.parameters,
                         processing_input=ProcessingInput(outputs=(ChannelBinding("CH1", "channel-0"),)), expected_revision=decoder.revision)
         previous_generation = engine.generation
-        plan = runtime.plan("processing", bindings[1:3], expected_revision=engine.applied_revisions["processing"], settings=section_settings(runtime.profiles.settings_source(), "processing"))
+        plan = runtime.plan("processing", bindings[1:3], expected_revision=engine.applied_revisions["processing"], settings=runtime.profiles.repository.get_module("processing").settings)
         assert plan.strategy == 'rebuild'
         operation = runtime.submit(plan.plan_id, str(uuid4()))
         await runtime.wait_for_idle()
@@ -266,7 +270,7 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         source_pid = engine._engine.acquisition_worker.pid
         baseline = profiles.create('filter', builtin_selection('filter', 'BASELINE_CORRECTION'), 'Baseline', {})
         processing_bindings = bindings[1:3] + [{'slot': f'processing.filter.{uuid4()}', 'profile_id': baseline.profile_id}]
-        plan = runtime.plan('processing', processing_bindings, expected_revision=engine.applied_revisions['processing'], settings=section_settings(runtime.profiles.settings_source(), 'processing'))
+        plan = runtime.plan('processing', processing_bindings, expected_revision=engine.applied_revisions['processing'], settings=runtime.profiles.repository.get_module('processing').settings)
         assert plan.strategy == 'module'
         operation = runtime.submit(plan.plan_id, str(uuid4()))
         await runtime.wait_for_idle()
@@ -283,7 +287,7 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         worker_ids = (engine._engine.acquisition_worker.pid, engine._engine.signal_processing_worker.pid)
         effector = profiles.create('effector', builtin_selection('effector', 'logger'), 'Logger', {})
         bindings.append({'slot':'actuation.effector', 'profile_id':effector.profile_id})
-        plan = runtime.plan("actuation", [bindings[-1]], expected_revision=None, settings=section_settings(runtime.profiles.settings_source(), "actuation"))
+        plan = runtime.plan("actuation", [bindings[-1]], expected_revision=None, settings=runtime.profiles.default_module_settings("actuation"))
         assert plan.strategy == 'module'
         operation = runtime.submit(plan.plan_id, str(uuid4()))
         await runtime.wait_for_idle()
@@ -296,7 +300,7 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         decoder = profiles.repository.get_profile(bindings[1]['profile_id'])
         profiles.update(decoder.profile_id, name=decoder.name,
                         parameters={**decoder.parameters, 'window_duration':2.5}, expected_revision=decoder.revision)
-        plan = runtime.plan("processing", processing_bindings, expected_revision=engine.applied_revisions["processing"], settings=section_settings(runtime.profiles.settings_source(), "processing"))
+        plan = runtime.plan("processing", processing_bindings, expected_revision=engine.applied_revisions["processing"], settings=runtime.profiles.repository.get_module("processing").settings)
         assert plan.strategy == 'trial_boundary'
         operation = runtime.submit(plan.plan_id, str(uuid4()))
         await runtime.wait_for_idle()
@@ -333,7 +337,7 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         source = profiles.repository.get_profile(source.profile_id)
         profiles.update(source.profile_id, name=source.name, parameters={**source.parameters, 'size':0},
                         expected_revision=source.revision)
-        failed = runtime.plan("acquisition", [bindings[0]], expected_revision=accepted.revision, settings=section_settings(runtime.profiles.settings_source(), "acquisition"))
+        failed = runtime.plan("acquisition", [bindings[0]], expected_revision=accepted.revision, settings=runtime.profiles.default_module_settings("acquisition"))
         operation = runtime.submit(failed.plan_id, str(uuid4()))
         await runtime.wait_for_idle()
         result = runtime.operation(operation['operation_id'])

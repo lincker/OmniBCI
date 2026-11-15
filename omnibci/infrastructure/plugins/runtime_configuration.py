@@ -1,7 +1,7 @@
 """Resolve only selected capabilities from a process's pinned configuration."""
 from copy import deepcopy
 
-from omnibci.application.plugin_profiles import ProfileBinding
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.infrastructure.plugins.loader import PluginLoader, PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.sdk import PluginContext

@@ -1,7 +1,7 @@
 """
 /api/v1/acquisition — Data acquisition control endpoints.
 """
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from fastapi import APIRouter, Depends, Path, Query, status
 from starlette.concurrency import run_in_threadpool
 

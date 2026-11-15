@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from omnibci.application.plugin_profiles import PluginSelection
+from omnibci.application.configuration.models import PluginSelection
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration
 
 
@@ -77,7 +77,7 @@ def package_references_from_settings(settings: dict | None, scope: str = "runnin
     """Adapt one pinned worker/apply snapshot without inferring runtime ownership."""
     if settings is None:
         return ()
-    from omnibci.application.plugin_profiles import ProfileBinding
+    from omnibci.application.configuration.models import ProfileBinding
     return tuple(
         PackageReference(scope, binding.slot, binding.selection)
         for item in settings.get("PLUGINS.bindings", [])

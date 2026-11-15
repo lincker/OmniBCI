@@ -5,10 +5,11 @@ from typing import Callable, Iterable
 from omnibci.application.plugin_packages import (
     ManagedPluginPackageStore, PackageReference, PluginPackageConflictError, PluginPackageError,
 )
-from omnibci.application.plugin_profiles import PluginProfile, PluginSelection, ProfileRevisionConflict
+from omnibci.application.configuration.models import PluginProfile, PluginSelection
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.application.services.plugin_installation_service import PluginInstallationService
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.domain.channel_mapping import ProcessingInput
 
 
@@ -26,7 +27,7 @@ class ProfileVersionProposal:
 
 
 class PluginPackageService(PluginInstallationService):
-    def __init__(self, store: ManagedPluginPackageStore, profiles: PluginProfileService, *,
+    def __init__(self, store: ManagedPluginPackageStore, profiles: ConfigurationService, *,
                  runtime_references: Callable[[], Iterable[PackageReference]], admission_guard):
         super().__init__(store, admission_guard=admission_guard)
         self.profiles = profiles

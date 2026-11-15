@@ -4,11 +4,10 @@ from dataclasses import dataclass
 
 from omnibci.application.commands.acquisition_commands import ConnectDataProviderCommand, StartStreamCommand
 from omnibci.application.commands.stimulation_commands import StartStimulationCommand, StopStimulationCommand
-from omnibci.application.activation_settings import merge_module_settings
+from omnibci.application.configuration.definitions import merge_module_settings
 from omnibci.application.events import StreamDrainReceipt
-from omnibci.application.plugin_profiles import (
-    ActivationSet, ProfileRevisionConflict,
-)
+from omnibci.application.configuration.models import ActivationSet
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 from omnibci.application.source_checkpoint import checkpoint_for_restore
 from omnibci.application.services.command_result_service import CommandRejectedError, CommandTimeoutError

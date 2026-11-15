@@ -29,6 +29,7 @@ import time
 from queue import Empty, Full, Queue
 from typing import Any
 
+from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.ipc.event_bus import EventBus
@@ -56,25 +57,21 @@ class Actuation:
         stop_event: Any = None,
         startup_reporter: StartupReporter | None = None,
         *,
-        settings_snapshot: dict | None = None,
+        settings_snapshot: dict,
     ):
         self._event_queue = mp.Queue()
         self._event_queue_closed = False
         self.event_bus = EventBus(self._event_queue)
 
-        from omnibci.conf import settings
-        self._runtime_snapshot = (deepcopy(settings_snapshot) if settings_snapshot is not None
-                                  else settings.snapshot())
-        source = self._runtime_snapshot
-        host = source.get("ACTUATION.server_ip", "127.0.0.1")
-        port = int(source.get("ACTUATION.server_port", 8001))
-        self._heartbeat_interval = float(
-            source.get("ACTUATION.watchdog_timeout_s", 1.0)) / 2.0
+        self._runtime_snapshot = deepcopy(settings_snapshot)
+        source = MODULE_SETTING_DEFAULTS["actuation"] | self._runtime_snapshot
+        host = source["ACTUATION.server_ip"]
+        port = int(source["ACTUATION.server_port"])
+        self._heartbeat_interval = float(source["ACTUATION.watchdog_timeout_s"]) / 2.0
         # Age gate for the slow-trickle case (old commands arriving one at a
         # time on a live-but-slow link, where drain-to-latest cannot help).
         # 0 = disabled; requires engine/device clocks roughly in sync to use.
-        self._max_command_age = float(
-            source.get("ACTUATION.max_command_age_s", 0.0))
+        self._max_command_age = float(source["ACTUATION.max_command_age_s"])
         self._external_node = source.get("CONFIG.node_role") == "actuation"
         self._reconnect_requested = False
         identity = None

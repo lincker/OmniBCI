@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from omnibci.application.events import CommandRequest, ProcessingInputStart, TrialOutcome
-from omnibci.application.plugin_profiles import ProfileBinding
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.application.services.results_service import ResultsService
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime

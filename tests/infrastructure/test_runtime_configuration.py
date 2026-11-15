@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from omnibci.application.plugin_profiles import ProfileBinding
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.infrastructure.plugins.loader import PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginNotFoundError
 from omnibci.infrastructure.plugins.runtime_configuration import (

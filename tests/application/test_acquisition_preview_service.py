@@ -6,7 +6,7 @@ import pytest
 
 from omnibci.application.acquisition_preview import PreviewSelection, limits
 from omnibci.application.events import CommandResult
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.services.acquisition_service import AcquisitionAppService
 from omnibci.application.services.command_result_service import CommandRejectedError
 from omnibci.shared.events import EventType

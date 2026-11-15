@@ -9994,10 +9994,6 @@
               }
             ]
           },
-          "revision": {
-            "type": "string",
-            "title": "Revision"
-          },
           "readiness": {
             "$ref": "#/components/schemas/SignalReadinessModel"
           }
@@ -10005,7 +10001,6 @@
         "type": "object",
         "required": [
           "source_revision",
-          "revision",
           "readiness"
         ],
         "title": "SignalSetupResponse"

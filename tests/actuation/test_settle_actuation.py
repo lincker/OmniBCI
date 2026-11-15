@@ -92,7 +92,7 @@ def test_effector_without_quiescence_cannot_claim_physical_completion():
         def play(self, command): pass
 
     async def scenario():
-        actuator = Actuator()
+        actuator = Actuator(settings_snapshot={})
         actuator.effector = UnconfirmedEffector()
         instance = app(actuator)
         await instance._settle_actuation(Event(EventType.SettleActuation, CommandRequest("settle")))
@@ -108,7 +108,7 @@ def test_effector_without_quiescence_cannot_claim_physical_completion():
 
 def test_logger_explicitly_confirms_quiescence():
     async def scenario():
-        actuator = Actuator()
+        actuator = Actuator(settings_snapshot={})
         actuator.effector = LogEffector(parameters={})
         instance = app(actuator)
         await instance._settle_actuation(Event(EventType.SettleActuation, CommandRequest("settle")))

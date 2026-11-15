@@ -1,12 +1,13 @@
 """Module settings are explicit current values, independently of host-file edits."""
 from unittest.mock import Mock
 
-from omnibci.application.activation_settings import section_settings
+from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS, MODULE_SETTING_DEFAULTS
 
 import pytest
 
-from omnibci.application.plugin_profiles import ModuleActivation, PluginProfileValidationError, EngineSettings
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.errors import PluginProfileValidationError
+from omnibci.application.configuration.models import ModuleActivation, EngineSettings
+from omnibci.application.configuration.service import ConfigurationService
 
 
 @pytest.mark.parametrize("module,key,value", [
@@ -49,62 +50,64 @@ def test_owned_module_settings_preserve_supported_values(module, settings):
 
 
 def test_propose_uses_only_submitted_settings_and_never_reads_host_file():
-    source = Mock(return_value={"ALGORITHM.baseline_duration": 7})
     repository = Mock()
     repository.get_module.return_value = None
-    service = PluginProfileService(repository, Mock(), settings_source=source)
-    source.reset_mock()
+    repository.read_server.side_effect = AssertionError("Module edits must not read Server settings")
+    service = ConfigurationService(repository, Mock())
 
     candidate = service.propose("processing", [], settings={"ALGORITHM.baseline_duration": 1})
 
     assert candidate.settings == {"ALGORITHM.baseline_duration": 1}
-    source.assert_not_called()
+    repository.read_server.assert_not_called()
     assert service.propose("processing", [], settings={}).settings == {}
 
 
-def test_initial_settings_are_owned_defaults_with_saved_overrides():
-    service = PluginProfileService(Mock(), Mock(), settings_source=lambda: {
-        "ALGORITHM.baseline_duration": 3, "ACTUATION.auto_spawn": False, "NEUROENGINE.queue_size": 9,
-    })
-    assert service.default_module_settings("processing") == {"ALGORITHM.baseline_duration": 3}
+def test_initial_settings_use_owned_defaults_without_reading_storage():
+    repository = Mock()
+    repository.read_server.side_effect = AssertionError("Module defaults must not read storage")
+    service = ConfigurationService(repository, Mock())
+
+    assert service.default_module_settings("processing") == {"ALGORITHM.baseline_duration": 0.0}
     settings = service.default_module_settings("actuation")
-    assert settings["ACTUATION.auto_spawn"] is False
+    assert settings["ACTUATION.auto_spawn"] is True
     assert settings["ACTUATION.server_port"] == 8001
     assert "NEUROENGINE.queue_size" not in settings
     settings["ACTUATION.server_port"] = 1
     assert service.default_module_settings("actuation")["ACTUATION.server_port"] == 8001
+    repository.read_server.assert_not_called()
 
 
 def test_stimulation_listener_settings_belong_only_to_stimulation():
     settings = {"STIMULATION.server_ip": "display.local", "STIMULATION.server_port": 9000}
-    service = PluginProfileService(Mock(), Mock(), settings_source=lambda: settings)
-    assert service.default_module_settings("stimulation") == {
-        **settings, "STIMULATION.renderer": "moderngl", "STIMULATION.auto_spawn": True,
-    }
-    assert service.propose_engine(section_settings(service.settings_source(), "engine")).settings == {}
+    service = ConfigurationService(Mock(), Mock())
+    assert service.default_module_settings("stimulation") == MODULE_SETTING_DEFAULTS["stimulation"]
+    assert service.propose_engine({}).settings == {}
     assert ModuleActivation("stimulation", settings, ()).settings == settings
     with pytest.raises(PluginProfileValidationError, match="engine section"):
         EngineSettings(settings)
 
 
 def test_stimulation_listener_default_port_is_8765():
-    service = PluginProfileService(Mock(), Mock(), settings_source=lambda: {})
+    service = ConfigurationService(Mock(), Mock())
     defaults = service.default_module_settings("stimulation")
     assert defaults["STIMULATION.server_ip"] == "127.0.0.1"
     assert defaults["STIMULATION.server_port"] == 8765
 
 
 def test_stimulation_listener_change_does_not_change_engine_or_other_module_revisions():
-    settings = {"STIMULATION.server_port": 8765, "NEUROENGINE.queue_size": 100}
-    service = PluginProfileService(Mock(), Mock(), settings_source=lambda: settings)
-    engine_settings = service.propose_engine(section_settings(service.settings_source(), "engine"))
+    repository = Mock()
+    repository.get_module.return_value = None
+    service = ConfigurationService(repository, Mock())
+    engine_settings = service.propose_engine(ENGINE_SETTING_DEFAULTS)
     before = {module: ModuleActivation(module, service.default_module_settings(module), ())
               for module in ("acquisition", "processing", "stimulation", "actuation")}
-    settings["STIMULATION.server_port"] = 9000
-    assert service.propose_engine(section_settings(service.settings_source(), "engine")).revision == engine_settings.revision
+    changed = service.propose("stimulation", [], settings={
+        **before["stimulation"].settings, "STIMULATION.server_port": 9000,
+    })
+    assert changed.revision != before["stimulation"].revision
+    assert service.propose_engine(ENGINE_SETTING_DEFAULTS).revision == engine_settings.revision
     for module, previous in before.items():
-        current = ModuleActivation(module, service.default_module_settings(module), ())
-        assert (current.revision != previous.revision) == (module == "stimulation")
+        assert ModuleActivation(module, service.default_module_settings(module), ()).revision == previous.revision
 
 
 @pytest.mark.parametrize("module", ["stimulation", "actuation"])
@@ -127,7 +130,7 @@ def test_output_transport_values_are_validated_in_the_owning_module(module, fiel
 def test_submitted_numeric_settings_have_one_revision_for_int_and_float(module, key):
     repository = Mock()
     repository.get_module.return_value = None
-    service = PluginProfileService(repository, Mock(), settings_source=lambda: {})
+    service = ConfigurationService(repository, Mock())
     integer = service.propose(module, [], settings={key: 1})
     decimal = service.propose(module, [], settings={key: 1.0})
     assert integer.revision == decimal.revision

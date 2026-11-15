@@ -24,6 +24,7 @@ from copy import deepcopy
 from threading import RLock
 from typing import Any
 
+from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessState,
     StartupReporter,
@@ -45,7 +46,7 @@ def _run_actuation(
 ) -> None:
     """Actuation subprocess entry point.  Runs in the spawned child process.
 
-    A pinned snapshot is required and installed before runtime imports.
+    The application receives the pinned snapshot directly.
     """
     reporter = (
         StartupReporter(
@@ -58,8 +59,6 @@ def _run_actuation(
         else None
     )
     try:
-        from omnibci.conf import settings
-        settings.use_snapshot(settings_snapshot)
         from omnibci.infrastructure.actuation.application import Actuation
         kwargs = {"stop_event": stop_event, "settings_snapshot": settings_snapshot}
         if reporter is not None:
@@ -119,7 +118,9 @@ class ActuationProcessManager:
     def _start_locked(self, settings_snapshot: dict) -> None:
         snapshot = deepcopy(settings_snapshot)
         effector = snapshot.get("ACTUATION.effector")
-        auto_spawn = snapshot.get("ACTUATION.auto_spawn", True)
+        auto_spawn = snapshot.get(
+            "ACTUATION.auto_spawn", MODULE_SETTING_DEFAULTS["actuation"]["ACTUATION.auto_spawn"],
+        )
         if not auto_spawn:
             self._stop_locked()
             self._auto_spawn = False

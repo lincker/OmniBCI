@@ -3,11 +3,12 @@ from unittest.mock import Mock
 
 import pytest
 
-from omnibci.application.activation_settings import ENGINE_SETTING_DEFAULTS
-from omnibci.application.plugin_profiles import PluginProfileValidationError, EngineSettings
+from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS
+from omnibci.application.configuration.errors import PluginProfileValidationError
+from omnibci.application.configuration.models import EngineSettings
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.services.engine_service import NeuroEngineService
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 
 
@@ -24,18 +25,19 @@ def test_invalid_engine_values_cannot_be_accepted(key, value):
 
 
 def test_engine_candidate_does_not_read_saved_server_values():
-    source = Mock(side_effect=AssertionError("Engine review must not read server settings"))
-    profiles = PluginProfileService(Mock(), Mock(), settings_source=source)
+    repository = Mock()
+    repository.read_server.side_effect = AssertionError("Engine review must not read server settings")
+    profiles = ConfigurationService(repository, Mock())
     candidate = profiles.propose_engine({"NEUROENGINE.queue_size": 42, "debug": True})
     assert candidate.settings == {"NEUROENGINE.queue_size": 42, "debug": True}
-    source.assert_not_called()
+    repository.read_server.assert_not_called()
 
 
 def test_engine_review_requires_explicit_current_settings():
     repository = Mock()
     repository.get_engine.return_value = None
     repository.get_module.return_value = None
-    profiles = PluginProfileService(repository, Mock(), settings_source=lambda: {})
+    profiles = ConfigurationService(repository, Mock())
     engine = NeuroEngineService(lambda snapshot: pytest.fail("Review must not start Engine"))
     runtime = RuntimeConfigurationService(profiles, engine)
     with pytest.raises(PluginSchemaError, match="Current Engine settings are required"):
@@ -47,7 +49,7 @@ def test_engine_review_requires_explicit_current_settings():
 
 
 def test_engine_timeout_submission_normalizes_numeric_representation():
-    profiles = PluginProfileService(Mock(), Mock(), settings_source=lambda: {})
+    profiles = ConfigurationService(Mock(), Mock())
     integer = profiles.propose_engine({"NEUROENGINE.startup_timeout_s": 5})
     decimal = profiles.propose_engine({"NEUROENGINE.startup_timeout_s": 5.0})
     assert integer.revision == decimal.revision
@@ -58,8 +60,8 @@ def test_first_module_selection_uses_engine_defaults_without_reading_server_valu
     repository = Mock()
     repository.get_engine.return_value = None
     repository.get_module.return_value = None
-    source = Mock(side_effect=AssertionError("Module selection must not read server settings"))
-    profiles = PluginProfileService(repository, Mock(), settings_source=source)
+    repository.read_server.side_effect = AssertionError("Module selection must not read server settings")
+    profiles = ConfigurationService(repository, Mock())
     engine = NeuroEngineService(lambda snapshot: pytest.fail("Review must not start Engine"))
     runtime = RuntimeConfigurationService(profiles, engine)
 
@@ -68,5 +70,5 @@ def test_first_module_selection_uses_engine_defaults_without_reading_server_valu
 
     assert runtime.resolve_plan(plan.plan_id).engine.settings == ENGINE_SETTING_DEFAULTS
     assert not plan.errors
-    source.assert_not_called()
+    repository.read_server.assert_not_called()
     repository.save_engine.assert_not_called()

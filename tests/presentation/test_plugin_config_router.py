@@ -10,10 +10,10 @@ from time import monotonic, sleep
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from tests.plugin_configuration_helpers import builtin_selection
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.presentation.errors import register_exception_handlers
 from omnibci.presentation.routers.plugin_config import router
 from omnibci.presentation.routers.runtime_config import router as runtime_router
@@ -31,10 +31,8 @@ def manual_montage():
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
-    state = {"settings": {"NEUROENGINE.queue_size": 32}}
-    service = PluginProfileService(
-        TomlPluginProfileRepository(tmp_path / "configuration"), CatalogConfigurationAdapter(),
-        settings_source=lambda: state["settings"],
+    service = ConfigurationService(
+        TomlConfigurationRepository(tmp_path / "configuration"), CatalogConfigurationAdapter(),
     )
     engine = NeuroEngineService(lambda: pytest.fail("Applying stopped configuration must not start the engine"))
     executor = RuntimeApplyCoordinator(engine, service, None,
@@ -43,14 +41,14 @@ def client(tmp_path, monkeypatch):
     register_exception_handlers(app)
     app.include_router(router, prefix="/api/v1")
     app.include_router(runtime_router, prefix="/api/v1")
-    app.state.container = SimpleNamespace(plugin_profile_service=service,
+    app.state.container = SimpleNamespace(configuration_service=service,
         runtime_configuration=RuntimeConfigurationService(service, engine, executor=executor))
     with TestClient(app) as http:
-        yield http, service, state
+        yield http, service
 
 
 def create(client, kind="acquisition", alias="file_reader", name="Example", parameters=None):
-    http, service, _ = client
+    http, service = client
     selection = builtin_selection(kind, alias).to_dict()
     response = http.post(f"{PREFIX}/plugin-profiles", json={
         "kind": kind, "selection": selection, "name": name, "parameters": parameters or {},
@@ -60,7 +58,7 @@ def create(client, kind="acquisition", alias="file_reader", name="Example", para
 
 
 def test_unavailable_shared_settings_returns_service_error(client, monkeypatch):
-    http, service, _ = client
+    http, service = client
 
     def unavailable():
         raise OSError("Settings storage unavailable")
@@ -97,21 +95,20 @@ def accept(http, module, profiles, expected_revision=None, refresh_slots=None):
 
 
 def test_absent_module_exposes_owned_defaults_without_creating_configuration(client):
-    http, service, state = client
-    state["settings"]["ALGORITHM.baseline_duration"] = 0.75
+    http, service = client
     response = http.get(f"{PREFIX}/modules/processing")
     assert response.status_code == 200
     assert response.json()["data"] == {
         "module": "processing", "revision": None, "bindings": [],
-        "settings": {"ALGORITHM.baseline_duration": 0.75},
+        "settings": {"ALGORITHM.baseline_duration": 0.0},
     }
     assert service.repository.get_module("processing") is None
 
 
-def test_accepted_module_read_does_not_mix_in_changed_host_defaults(client):
-    http, _, state = client
+def test_accepted_module_read_is_independent_of_invalid_server_values(client):
+    http, service = client
     selected = accept(http, "processing", [])
-    state["settings"]["ALGORITHM.baseline_duration"] = 9
+    (service.repository.root / "settings.toml").write_text('[LOGGING]\nlevel = 9\n', encoding="utf-8")
     response = http.get(f"{PREFIX}/modules/processing")
     assert response.status_code == 200
     assert response.json()["data"] == selected
@@ -121,7 +118,7 @@ def test_accepted_module_read_does_not_mix_in_changed_host_defaults(client):
 
 
 def test_runtime_plan_accepts_source_draft_without_creating_profile(client):
-    http, service, _ = client
+    http, service = client
     profile = create(client)
     accepted = accept(http, "acquisition", [("acquisition.source", profile)])
     saved = service.repository.list_profiles()
@@ -153,7 +150,7 @@ def test_runtime_plan_accepts_source_draft_without_creating_profile(client):
     ("actuation.effector", "effector", "logger"),
 ])
 def test_runtime_plan_accepts_current_values_for_every_plugin_role(client, slot, kind, alias):
-    http, service, _ = client
+    http, service = client
     definition = service.catalog.get(kind, builtin_selection(kind, alias))
     current = {"slot": slot, "selection": definition.selection.to_dict(), "parameters": {}}
     if kind == "decoder":
@@ -192,7 +189,7 @@ def test_runtime_plan_accepts_current_values_for_every_plugin_role(client, slot,
     ]}},
 ])
 def test_runtime_plan_rejects_invalid_current_values_without_writes(client, changes):
-    http, service, _ = client
+    http, service = client
     definition = service.catalog.get("decoder", builtin_selection("decoder", "THUBCI_SSVEP_classic40CCA"))
     current = {"slot": "processing.decoder", "selection": definition.selection.to_dict(),
                "parameters": {}, "processing_input": {"schema_version": 2, "outputs": []}, **changes}
@@ -203,7 +200,7 @@ def test_runtime_plan_rejects_invalid_current_values_without_writes(client, chan
 
 
 def test_runtime_plan_requires_explicit_current_decoder_mapping(client):
-    http, service, _ = client
+    http, service = client
     definition = service.catalog.get("decoder", builtin_selection("decoder", "THUBCI_SSVEP_classic40CCA"))
     response = http.post(f"{PREFIX}/apply-plan", json={"settings": {}, "module": "processing", "bindings": [{
         "slot": "processing.decoder", "selection": definition.selection.to_dict(), "parameters": {},
@@ -214,7 +211,7 @@ def test_runtime_plan_requires_explicit_current_decoder_mapping(client):
 
 
 def test_acquisition_configuration_does_not_require_processing(client):
-    http, service, _ = client
+    http, service = client
     source = create(client)
     selected = accept(http, "acquisition", [("acquisition.source", source)])
     assert [item["slot"] for item in selected["bindings"]] == ["acquisition.source"]
@@ -222,7 +219,7 @@ def test_acquisition_configuration_does_not_require_processing(client):
 
 
 def test_acquisition_configuration_preserves_other_modules(client):
-    http, service, _ = client
+    http, service = client
     decoder = create(client, "decoder", "THUBCI_SSVEP_classic40CCA")
     processing = accept(http, "processing", [("processing.decoder", decoder)])
     source = create(client)
@@ -231,7 +228,7 @@ def test_acquisition_configuration_preserves_other_modules(client):
 
 
 def test_module_configuration_rejects_another_modules_binding(client):
-    http, _, _ = client
+    http, _ = client
     decoder = create(client, "decoder", "THUBCI_SSVEP_classic40CCA")
     response = http.post(f"{PREFIX}/apply-plan", json={"settings": {}, "module": "acquisition",
         "bindings": [{"slot": "processing.decoder", "profile_id": decoder["profile_id"]}]})
@@ -239,7 +236,7 @@ def test_module_configuration_rejects_another_modules_binding(client):
 
 
 def test_catalog_exposes_exact_identity_and_plugin_owned_schema(client):
-    http, _, _ = client
+    http, _ = client
     response = http.get(f"{PREFIX}/plugin-catalog/acquisition")
     assert response.status_code == 200
     reader = next(item for item in response.json()["data"] if item["plugin_type"] == "file_reader")
@@ -260,7 +257,7 @@ def test_catalog_exposes_exact_identity_and_plugin_owned_schema(client):
     ("effector", "logger"),
 ])
 def test_catalog_lists_each_plugin_kind_without_applying_configuration(client, kind, alias):
-    http, service, _ = client
+    http, service = client
     response = http.get(f"{PREFIX}/plugin-catalog/{kind}")
     assert response.status_code == 200
     plugins = response.json()["data"]
@@ -276,7 +273,7 @@ def test_catalog_lists_each_plugin_kind_without_applying_configuration(client, k
 
 
 def test_catalog_exposes_stimulation_trial_controls(client):
-    http, _, _ = client
+    http, _ = client
     response = http.get(f"{PREFIX}/plugin-catalog/paradigm")
     assert response.status_code == 200
     paradigm = next(plugin for plugin in response.json()["data"]
@@ -291,7 +288,7 @@ def test_catalog_exposes_stimulation_trial_controls(client):
 
 
 def test_catalog_exposes_read_only_decoder_channel_requirements(client):
-    http, _, _ = client
+    http, _ = client
     response = http.get(f"{PREFIX}/plugin-catalog/decoder")
     assert response.status_code == 200
     decoders = response.json()["data"]
@@ -308,7 +305,7 @@ def test_catalog_exposes_read_only_decoder_channel_requirements(client):
 
 
 def test_profile_crud_and_compare_and_swap(client):
-    http, _, _ = client
+    http, _ = client
     profile = create(client)
     path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
     assert http.get(path).json()["data"] == profile
@@ -332,7 +329,7 @@ def test_profile_crud_and_compare_and_swap(client):
     ({"source_channel_index": 1}, {"source_channel_index": 0}),
 ])
 def test_decoder_profile_saves_and_pins_processing_input(client, sources):
-    http, service, _ = client
+    http, service = client
     profile = create(client, "decoder", "THUBCI_SSVEP_classic40CCA")
     assert profile["processing_input"] == {"schema_version": 2, "outputs": []}
     path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
@@ -364,7 +361,7 @@ def test_decoder_profile_saves_and_pins_processing_input(client, sources):
 
 
 def test_new_decoder_with_null_input_uses_explicit_default(client):
-    http, service, _ = client
+    http, service = client
     response = http.post(f"{PREFIX}/plugin-profiles", json={
         "kind": "decoder", "selection": builtin_selection("decoder", "THUBCI_SSVEP_classic40CCA").to_dict(),
         "name": "Default input", "processing_input": None,
@@ -379,7 +376,7 @@ def test_new_decoder_with_null_input_uses_explicit_default(client):
     {"assignments": []}, {"reference": {"mode": "average", "channels": []}},
 ])
 def test_invalid_decoder_input_returns_422_without_saving(client, channel_input):
-    http, _, _ = client
+    http, _ = client
     profile = create(client, "decoder", "THUBCI_SSVEP_classic40CCA")
     path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
     response = http.put(path, json={"name": profile["name"], "parameters": profile["parameters"],
@@ -389,7 +386,7 @@ def test_invalid_decoder_input_returns_422_without_saving(client, channel_input)
 
 
 def test_acquisition_profile_rejects_processing_input(client):
-    http, _, _ = client
+    http, _ = client
     profile = create(client)
     path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
     response = http.put(path, json={"name": profile["name"], "parameters": profile["parameters"],
@@ -403,7 +400,7 @@ def test_acquisition_profile_rejects_processing_input(client):
     ("acquisition_montage", manual_montage()),
 ])
 def test_acquisition_profile_rejects_removed_metadata_fields(client, field, value):
-    http, service, _ = client
+    http, service = client
     request = {"kind": "acquisition", "selection": builtin_selection("acquisition", "file_reader").to_dict(),
                "name": "Source metadata", "parameters": {}, field: value}
     assert http.post(f"{PREFIX}/plugin-profiles", json=request).status_code == 422
@@ -415,7 +412,7 @@ def test_acquisition_profile_rejects_removed_metadata_fields(client, field, valu
 
 
 def test_saving_active_profile_does_not_change_selected_values(client):
-    http, service, _ = client
+    http, service = client
     profile = create(client)
     previous = accept(http, "acquisition", [("acquisition.source", profile)])
     saved = http.put(f"{PREFIX}/plugin-profiles/{profile['profile_id']}", json={
@@ -427,12 +424,11 @@ def test_saving_active_profile_does_not_change_selected_values(client):
 
 
 def test_reviewed_candidate_is_applied_and_stale_plan_is_rejected(client):
-    http, service, state = client
+    http, service = client
     profile = create(client, parameters={"sample_rate": 1000, "channel_count": 10})
     before = accept(http, "acquisition", [("acquisition.source", profile)])
     assert http.put(f"{PREFIX}/plugin-profiles/{profile['profile_id']}", json={
         "name": profile["name"], "parameters": {"sample_rate": 500}, "expected_revision": 1}).status_code == 200
-    state["settings"]["NEUROENGINE.queue_size"] = 64
     body = {"settings": {}, "module": "acquisition", "bindings": [{"slot": "acquisition.source", "profile_id": profile["profile_id"]}],
             "expected_revision": before["revision"], "refresh_slots": ["acquisition.source"]}
     planned = http.post(f"{PREFIX}/apply-plan", json=body)
@@ -454,9 +450,9 @@ def test_reviewed_candidate_is_applied_and_stale_plan_is_rejected(client):
     ("LOGGING.level", "DEBUG"), ("LOGGING.file_path", "changed.log"),
 ])
 def test_pending_server_changes_do_not_block_current_engine_review(client, key, value):
-    http, service, state = client
+    http, service = client
+    service.save_server({key: value}, expected_revision=service.read_server()[1])
     stored = {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")}
-    state["settings"][key] = value
     response = http.post(f"{PREFIX}/apply-plan", json={"module": "engine", "bindings": [],
         "settings": {"NEUROENGINE.queue_size": 42}})
     assert response.status_code == 200, response.text
@@ -466,7 +462,7 @@ def test_pending_server_changes_do_not_block_current_engine_review(client, key, 
 
 
 def test_filter_instances_have_stable_slots_and_order(client):
-    http, _, _ = client
+    http, _ = client
     profile = create(client, "filter", "BASELINE_CORRECTION")
     first, second = f"processing.filter.{uuid4()}", f"processing.filter.{uuid4()}"
     before = accept(http, "processing", [(first, profile), (second, profile)])
@@ -479,7 +475,7 @@ def test_filter_instances_have_stable_slots_and_order(client):
 
 
 def test_empty_module_can_be_selected_before_startup(client):
-    http, _, _ = client
+    http, _ = client
     before = accept(http, "acquisition", [("acquisition.source", create(client))])
     selected = accept(http, "acquisition", [], before["revision"])
     assert selected["bindings"] == []
@@ -488,7 +484,7 @@ def test_empty_module_can_be_selected_before_startup(client):
 
 @pytest.mark.parametrize("parameters", [{"sample_rate": True}, {"sample_rate": 0}, {"unknown": 1}])
 def test_invalid_parameters_return_structured_422(client, parameters):
-    http, service, _ = client
+    http, service = client
     selection = builtin_selection("acquisition", "file_reader").to_dict()
     response = http.post(f"{PREFIX}/plugin-profiles", json={
         "kind": "acquisition", "selection": selection, "name": "Bad input", "parameters": parameters,
@@ -498,7 +494,7 @@ def test_invalid_parameters_return_structured_422(client, parameters):
 
 
 def test_missing_profile_and_unknown_fields_are_rejected(client):
-    http, _, _ = client
+    http, _ = client
     assert http.get(f"{PREFIX}/plugin-profiles/{uuid4()}").status_code == 404
     assert http.get(f"{PREFIX}/plugin-profiles/not-a-uuid").status_code == 422
     response = http.post(f"{PREFIX}/apply-plan", json={"settings": {}, "module": "acquisition", "bindings": [], "unexpected": True})
@@ -506,7 +502,7 @@ def test_missing_profile_and_unknown_fields_are_rejected(client):
 
 
 def test_openapi_publishes_typed_profile_and_module_contracts(client):
-    http, _, _ = client
+    http, _ = client
     openapi = http.get("/openapi.json").json()
     schemas = openapi["components"]["schemas"]
     assert "schema" in schemas["PluginConfigurationResponse"]["properties"]
@@ -519,17 +515,19 @@ def test_openapi_publishes_typed_profile_and_module_contracts(client):
     assert f"{PREFIX}/activation" not in openapi["paths"]
 
 
-def test_unknown_host_fields_do_not_enter_module_or_engine_contract(client):
-    http, _, state = client
-    state["settings"]["CUSTOM.setting"] = "not runtime configuration"
-    accept(http, "acquisition", [("acquisition.source", create(client))])
-    selected = http.get(f"{PREFIX}/modules").json()["data"]
-    assert "CUSTOM.setting" not in selected["engine"]["settings"]
-    assert all("CUSTOM.setting" not in module["settings"] for module in selected["modules"].values())
+@pytest.mark.parametrize("module", ["acquisition", "engine"])
+def test_unknown_settings_are_rejected_by_module_and_engine(client, module):
+    http, service = client
+    response = http.post(f"{PREFIX}/apply-plan", json={
+        "module": module, "bindings": [], "settings": {"CUSTOM.setting": "unknown"},
+    })
+    assert response.status_code == 422, response.text
+    assert service.repository.get_engine() is None
+    assert service.repository.get_module("acquisition") is None
 
 
 def test_profile_history_revert_creates_revision_without_applying(client):
-    http, service, _ = client
+    http, service = client
     profile = create(client, parameters={"sample_rate": 250})
     selected = accept(http, "acquisition", [("acquisition.source", profile)])
     path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
@@ -549,7 +547,7 @@ def test_profile_history_revert_creates_revision_without_applying(client):
 
 
 def test_module_history_records_a_b_a_and_revert_uses_entry_identity(client):
-    http, _, _ = client
+    http, _ = client
     profile = create(client, parameters={"sample_rate": 250})
     first = accept(http, "acquisition", [("acquisition.source", profile)])
     entry = http.get(f"{PREFIX}/modules/acquisition/history").json()["data"][0]

@@ -14,8 +14,8 @@ from typing import Callable, Optional, TYPE_CHECKING
 from uuid import uuid4
 
 from omnibci.application.runtime_admission import RuntimeAdmission
-from omnibci.application.activation_settings import merge_module_settings
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.definitions import merge_module_settings
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.services.command_result_service import command_scopes
 from omnibci.application.services.actuation_service import ActuationAppService
 from omnibci.application.commands.stimulation_commands import StopStimulationCommand
@@ -23,7 +23,7 @@ from omnibci.application.commands.acquisition_commands import StartStreamCommand
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 
 from omnibci.shared.events import EventType, Event
-from omnibci.application.config_errors import ConfigProfileConflictError
+from omnibci.application.configuration.errors import ConfigProfileConflictError
 from omnibci.application.ports.engine_port import (
     EngineFactory,
     EngineHandle,

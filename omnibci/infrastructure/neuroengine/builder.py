@@ -3,6 +3,7 @@ import multiprocessing as mp
 from copy import deepcopy
 from dataclasses import dataclass
 
+from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS, MODULE_SETTING_DEFAULTS
 from omnibci.infrastructure.acquisition.preview_channel import PreviewChannel
 from omnibci.infrastructure.acquisition.preview_cache import PreviewCache
 from omnibci.infrastructure.acquisition.logging import AcquisitionLogListener
@@ -22,9 +23,9 @@ class NeuroEngineConfig:
     """
     Host controls for NeuroEngineBuilder, resolved from its runtime snapshot.
     """
-    queue_size: int = 100                    # max items in each mp.Queue
-    debug: bool = False                     # asyncio debug mode for the engine loop
-    startup_timeout_s: float = 5.0          # configured worker initialization deadline
+    queue_size: int = ENGINE_SETTING_DEFAULTS["NEUROENGINE.queue_size"]
+    debug: bool = ENGINE_SETTING_DEFAULTS["debug"]
+    startup_timeout_s: float = ENGINE_SETTING_DEFAULTS["NEUROENGINE.startup_timeout_s"]
 
     def __post_init__(self):
         if self.queue_size <= 0:
@@ -117,7 +118,10 @@ class NeuroEngineBuilder:
                     worker = SignalProcessingWorker(
                         command_queue=processor_command_queue, data_manager=data_manager,
                         event_bus=event_bus, settings_snapshot=runtime_snapshot,
-                        baseline_duration=float(runtime_snapshot.get("ALGORITHM.baseline_duration", 0.2)),
+                        baseline_duration=float(runtime_snapshot.get(
+                            "ALGORITHM.baseline_duration",
+                            MODULE_SETTING_DEFAULTS["processing"]["ALGORITHM.baseline_duration"],
+                        )),
                         startup_reporter=reporter, runtime_counters=runtime_counters,
                     )
                 return StartupChannel(component, worker, receiver, reporter)

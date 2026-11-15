@@ -1,7 +1,7 @@
 """
 /api/v1/engine — NeuroEngine lifecycle endpoints.
 """
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from fastapi import APIRouter, Depends, status
 from typing import Literal
 

@@ -4,7 +4,7 @@ from threading import Event, Thread
 
 import pytest
 
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.runtime_admission import RuntimeAdmission, admitted
 
 

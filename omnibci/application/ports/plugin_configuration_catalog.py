@@ -2,7 +2,7 @@
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from omnibci.application.plugin_profiles import PluginSelection
+from omnibci.application.configuration.models import PluginSelection
 from omnibci.domain.decoder_input import DecoderChannelRequirements
 
 

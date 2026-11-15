@@ -1,5 +1,4 @@
 """Each configuration page owns only its module's selections and validation."""
-from omnibci.application.activation_settings import section_settings
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -7,24 +6,25 @@ from uuid import uuid4
 
 import pytest
 
-from omnibci.application.plugin_profiles import ModuleActivation, ProfileBinding, ProfileRevisionConflict
+from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS
+from omnibci.application.configuration.models import ModuleActivation, ProfileBinding
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.domain.channel_mapping import ProcessingInput
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.services.engine_service import NeuroEngineService
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
 
 @pytest.fixture
 def profiles(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
-    return PluginProfileService(
-        TomlPluginProfileRepository(tmp_path / "config"), CatalogConfigurationAdapter(),
-        settings_source=lambda: {},
+    return ConfigurationService(
+        TomlConfigurationRepository(tmp_path / "config"), CatalogConfigurationAdapter(),
     )
 
 
@@ -128,7 +128,7 @@ def test_each_module_can_be_configured_first(profiles, module, slot, kind, alias
 
 def test_module_request_cannot_change_another_modules_slots(profiles):
     with pytest.raises(PluginSchemaError, match="module"):
-        profiles.propose("processing", [source_request(profiles)], settings=section_settings(profiles.settings_source(), "processing"))
+        profiles.propose("processing", [source_request(profiles)], settings=profiles.default_module_settings("processing"))
 
 
 def test_acquisition_still_validates_its_own_parameters(profiles):
@@ -139,17 +139,17 @@ def test_acquisition_still_validates_its_own_parameters(profiles):
 
 
 def test_unrelated_module_write_does_not_expire_reviewed_plan(profiles):
-    profiles.repository.save_engine(profiles.propose_engine(section_settings(profiles.settings_source(), "engine")), expected_revision=None)
+    profiles.repository.save_engine(profiles.propose_engine(ENGINE_SETTING_DEFAULTS), expected_revision=None)
     runtime = stopped_runtime(profiles)
     plan = runtime.plan("acquisition", [source_request(profiles)], expected_revision=None, settings={})
-    profiles.repository.save_module(profiles.propose("stimulation", [], settings=section_settings(profiles.settings_source(), "stimulation")), expected_revision=None)
+    profiles.repository.save_module(profiles.propose("stimulation", [], settings=profiles.default_module_settings("stimulation")), expected_revision=None)
     assert runtime.resolve_plan(plan.plan_id).candidates["acquisition"].bindings
     with pytest.raises(ProfileRevisionConflict):
         runtime.plan("stimulation", [], expected_revision=None, settings={})
 
 
 def test_existing_engine_keeps_single_module_target_scoped(profiles):
-    profiles.repository.save_engine(profiles.propose_engine(section_settings(profiles.settings_source(), "engine")), expected_revision=None)
+    profiles.repository.save_engine(profiles.propose_engine(ENGINE_SETTING_DEFAULTS), expected_revision=None)
     runtime = stopped_runtime(profiles)
     plan = runtime.plan("stimulation", [], expected_revision=None, settings={})
     assert set(plan.target_revisions) == {"stimulation"}

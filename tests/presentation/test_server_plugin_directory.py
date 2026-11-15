@@ -7,8 +7,8 @@ import pytest
 import tomlkit
 from fastapi.testclient import TestClient
 
-from omnibci.application.plugin_profiles import PluginSelection
-from omnibci.conf import OmniBCISettings
+from omnibci.application.configuration.models import PluginSelection
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, user_plugins_dir
 from omnibci.presentation.main import create_app
 
@@ -30,8 +30,6 @@ def _plugin(directory):
 
 
 def _worker_directory(connection):
-    from omnibci.conf import settings
-    settings.use_snapshot({"CONFIG.engine_revision": "accepted-engine"})
     connection.send((str(user_plugins_dir()), str(PluginCatalog().resolve_selection("effector", SELECTION).location)))
     connection.close()
 
@@ -59,17 +57,15 @@ def _spawned_directory():
 
 @pytest.fixture
 def plugin_environment(tmp_path, monkeypatch):
-    import omnibci.conf as conf
     monkeypatch.delenv("OMNIBCI_PLUGIN_DIR", raising=False)
     for key in ("OMNIBCI_MARKET_URL", "OMNIBCI_MARKET_REPOSITORY_ID", "OMNIBCI_MARKET_TRUSTED_KEYS"):
         monkeypatch.delenv(key, raising=False)
     root = tmp_path / "configuration"
     monkeypatch.setenv("OMNIBCI_CONFIG_DIR", str(root))
-    settings = OmniBCISettings(user_file=root / "settings.toml")
+    settings = TomlConfigurationRepository(root)
     old, new = tmp_path / "old", tmp_path / "new"
     old_package, new_package = _plugin(old), _plugin(new)
-    settings.update({"PLUGINS.user_dir": str(old)}, expected_revision=settings.read_saved()[1])
-    monkeypatch.setattr(conf, "settings", settings)
+    settings.save_server({"PLUGINS.user_dir": str(old)}, expected_revision=settings.read_server()[1])
     return old, new, old_package, new_package
 
 
@@ -77,7 +73,7 @@ def test_api_save_defers_plugin_directory_for_catalog_store_and_spawned_workers(
     old, new, old_package, new_package = plugin_environment
     with TestClient(create_app()) as client:
         container = client.app.state.container
-        catalog = container.plugin_profile_service.catalog.catalog
+        catalog = container.configuration_service.catalog.catalog
         store = container.plugin_package_service.store
         revision = client.get("/api/v1/config").json()["data"]["revision"]
         response = client.patch("/api/v1/config", json={
@@ -92,7 +88,7 @@ def test_api_save_defers_plugin_directory_for_catalog_store_and_spawned_workers(
 
     with TestClient(create_app()) as client:
         container = client.app.state.container
-        assert container.plugin_profile_service.catalog.catalog.resolve_selection("effector", SELECTION).location == new_package
+        assert container.configuration_service.catalog.catalog.resolve_selection("effector", SELECTION).location == new_package
         assert container.plugin_package_service.store.plugin_dir == new
         assert _spawned_directory() == (str(new), str(new_package))
         entries = client.get("/api/v1/config").json()["data"]["entries"]
@@ -116,7 +112,7 @@ def test_lifespan_preserves_environment_override_and_restores_it(plugin_environm
                 pass
     else:
         with TestClient(create_app()) as client:
-            catalog = client.app.state.container.plugin_profile_service.catalog.catalog
+            catalog = client.app.state.container.configuration_service.catalog.catalog
             assert catalog.resolve_selection("effector", SELECTION).location == new_package
             assert os.environ["OMNIBCI_PLUGIN_DIR"] == str(new)
     assert os.environ["OMNIBCI_PLUGIN_DIR"] == original

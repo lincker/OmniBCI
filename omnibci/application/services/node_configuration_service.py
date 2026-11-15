@@ -1,8 +1,8 @@
 """Publish role-specific configuration from the server's settled runtime."""
-from omnibci.application.config_errors import ConfigProfileConflictError
+from omnibci.application.configuration.errors import ConfigProfileConflictError
 from omnibci.application.node_configuration import project_node_configuration
 from omnibci.application.plugin_schema import PluginSchemaError
-from omnibci.application.plugin_profiles import ActivationSet
+from omnibci.application.configuration.models import ActivationSet
 
 
 class NodeConfigurationService:

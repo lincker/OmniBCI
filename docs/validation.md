@@ -48,7 +48,9 @@ files as fixtures.
 
 The current regression suite checks:
 
-- Independent module configuration, plugin Profiles, history and revision conflicts.
+- Unified configuration management with independent module/Profile storage, history and revision conflicts.
+- Server/Engine value validation and revisions remain independent under one settings-file lock.
+- Spawned runtime components consume explicit snapshots without reading configuration storage.
 - One plugin catalog endpoint for all seven plugin kinds; retired discovery routes
   return 404 without redirects, and stimulation trial controls remain available.
 - Engine and Server fields sharing one user settings file without lost updates,

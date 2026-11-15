@@ -1,12 +1,18 @@
-"""Save plugin profiles independently from explicitly accepted startup snapshots."""
+"""Manage Server settings, module configuration and independent plugin profiles."""
 from contextlib import nullcontext
 from dataclasses import replace
+from threading import RLock
 from uuid import uuid4
 
-from omnibci.application.activation_settings import MODULES, MODULE_SETTING_DEFAULTS, section_settings
-from omnibci.application.plugin_profiles import (
+from omnibci.application.configuration.definitions import (
+    MODULES, MODULE_SETTING_DEFAULTS, SERVER_SETTINGS, server_startup_settings,
+    validate_server_settings,
+)
+from omnibci.application.configuration.errors import PluginProfileNotFoundError
+from omnibci.application.configuration.ports import ConfigurationRepository
+from omnibci.application.configuration.models import (
     ActivationSet, ModuleActivation, EngineSettings, PluginProfile, PluginSelection, ProfileBinding,
-    MODULE_KINDS, PluginProfileNotFoundError, plugin_kind_for_slot,
+    MODULE_KINDS, plugin_kind_for_slot,
 )
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfigurationCatalog
@@ -31,13 +37,37 @@ def _validate_source_parameters(binding: ProfileBinding) -> None:
             )
 
 
-class PluginProfileService:
-    def __init__(self, repository, catalog: PluginConfigurationCatalog, *,
-                 settings_source, change_guard=None):
+class ConfigurationService:
+    def __init__(self, repository: ConfigurationRepository, catalog: PluginConfigurationCatalog | None = None, *,
+                 active_server_settings: dict | None = None, change_guard=None):
         self.repository = repository
         self.catalog = catalog
-        self.settings_source = settings_source
         self.change_guard = change_guard or nullcontext
+        self._active_server = (server_startup_settings(active_server_settings)
+                               if active_server_settings is not None else None)
+        self._server_lock = RLock()
+
+    def read_server(self) -> tuple[list[dict], str]:
+        with self._server_lock:
+            saved, revision = self.repository.read_server()
+            values = server_startup_settings(saved)
+            if self._active_server is None:
+                self._active_server = server_startup_settings(values)
+            return [{
+                "key": key, "value": values[key], "type": definition.type,
+                "requires": "server-restart", "description": definition.description,
+                "active_value": self._active_server[key],
+                "restart_required": values[key] != self._active_server[key],
+            } for key, definition in SERVER_SETTINGS.items()], revision
+
+    def save_server(self, updates: dict, *, expected_revision: str) -> tuple[list[str], bool, str]:
+        clean = validate_server_settings(updates)
+        with self._server_lock:
+            if self._active_server is None:
+                self.read_server()
+            revision = self.repository.save_server(clean, expected_revision=expected_revision)
+            entries, _ = self.read_server()
+        return sorted(clean), any(entry["restart_required"] for entry in entries), revision
 
     def _parameters(self, kind, selection, parameters, configuration_version=None):
         definition = self.catalog.get(kind, selection)
@@ -92,9 +122,8 @@ class PluginProfileService:
             return self.repository.save_profile(entry.profile, expected_revision=expected_revision)
 
     def default_module_settings(self, module: str) -> dict:
-        """Initialize an absent module's editor from deployment values once."""
-        values = {**MODULE_SETTING_DEFAULTS[module], **section_settings(self.settings_source(), module)}
-        return ModuleActivation(module, values, ()).settings
+        """Initialize an absent module from its declared defaults without storage I/O."""
+        return ModuleActivation(module, MODULE_SETTING_DEFAULTS[module], ()).settings
 
     def propose(self, module: str, bindings: list[dict], *, settings: dict,
                 refresh_slots: list[str] | None = None) -> ModuleActivation:

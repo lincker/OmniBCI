@@ -1,5 +1,5 @@
 """Attach real CNT processing independently of source reading across workers."""
-from omnibci.application.activation_settings import section_settings
+from tests.plugin_configuration_helpers import section_settings
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,7 +14,7 @@ from omnibci.application.commands.acquisition_commands import (
 from omnibci.application.commands.engine_commands import StartEngineCommand, StopEngineCommand
 from omnibci.application.services.command_result_service import CommandRejectedError
 from omnibci.application.services.engine_service import NeuroEngineService
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.services.signal_setup_service import SignalSetupService
@@ -23,7 +23,7 @@ from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, Reso
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.shared.events import EventType
 from tests.plugin_configuration_helpers import builtin_selection
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
@@ -39,8 +39,8 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
     host = {"NEUROENGINE.startup_timeout_s": 15.0,
             "NEUROENGINE.command_timeout_s": 30.0, "STIMULATION.auto_spawn": True,
             "ACTUATION.server_port": 0, "ALGORITHM.baseline_duration": 0.2}
-    profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "profiles"),
-                                    CatalogConfigurationAdapter(), settings_source=lambda: host)
+    profiles = ConfigurationService(TomlConfigurationRepository(tmp_path / "profiles"),
+                                    CatalogConfigurationAdapter())
     selections = []
     for slot, kind, alias, parameters in (
         ("acquisition.source", "acquisition", "file_reader", {
@@ -65,17 +65,17 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
                                       processing_input=ProcessingInput(outputs=(ChannelBinding("NotPresent", "not-present"),)))
     profiles.repository.save_engine(profiles.propose_engine(section_settings(host, "engine")), expected_revision=None)
     for module in ("acquisition", "processing", "stimulation"):
-        profiles.repository.save_module(profiles.propose(module, [item for item in selections if item["slot"].startswith(f"{module}.")], settings=section_settings(profiles.settings_source(), module)),
+        profiles.repository.save_module(profiles.propose(module, [item for item in selections if item["slot"].startswith(f"{module}.")], settings=section_settings(host, module)),
                                expected_revision=None)
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
                                 snapshot_provider=lambda: accepted_runtime_settings(profiles=profiles))
     await engine.startup()
     container = assemble(engine, settings=host, admission=engine.admission)
     container.acquisition_service.set_metadata_binding(lambda: _acquisition_binding(engine))
-    signal = SignalSetupService(SimpleNamespace(read_saved=lambda: (host, "saved")), profiles, engine,
+    signal = SignalSetupService(profiles, engine,
                                 container.acquisition_service, container.command_results)
     container.acquisition_service.set_signal_preparer(signal.prepare)
-    from omnibci.application.plugin_profiles import MODULE_KINDS
+    from omnibci.application.configuration.models import MODULE_KINDS
     engine.configure_modules(container.acquisition_service, container.command_results, signal,
                              lambda module: accepted_runtime_settings(profiles=profiles, active_kinds=MODULE_KINDS[module]))
     register_engine_listeners(container)
@@ -97,7 +97,7 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
         # Processing can precede acquisition, including a new source selection.
         previous_source = profiles.repository.get_module("acquisition")
         selections[0]["parameters"]["file_reader_chunk_size"] = 200
-        profiles.repository.save_module(profiles.propose("acquisition", selections[:1], settings=section_settings(profiles.settings_source(), "acquisition")),
+        profiles.repository.save_module(profiles.propose("acquisition", selections[:1], settings=section_settings(host, "acquisition")),
                                expected_revision=previous_source.revision)
         await start_worker("acquisition")
         assert engine._engine.signal_processing_worker is processor
@@ -191,11 +191,11 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
             (decoder_b, ["Pz", "O2"]), (decoder_a, ["O2", "Pz"]),
         ):
             await engine.handle_stop_engine(StopEngineCommand())
-            profiles.repository = TomlPluginProfileRepository(tmp_path / "profiles")
+            profiles.repository = TomlConfigurationRepository(tmp_path / "profiles")
             assert profiles.repository.get_profile(decoder.profile_id).processing_input == decoder.processing_input
             selections[1] = {"slot": "processing.decoder", "profile_id": decoder.profile_id}
             previous = profiles.repository.get_module("processing")
-            profiles.repository.save_module(profiles.propose("processing", [item for item in selections if item["slot"].startswith("processing.")], settings=section_settings(profiles.settings_source(), "processing")),
+            profiles.repository.save_module(profiles.propose("processing", [item for item in selections if item["slot"].startswith("processing.")], settings=section_settings(host, "processing")),
                                    expected_revision=previous.revision)
             await engine.handle_start_engine(StartEngineCommand())
             await start_worker("acquisition")
@@ -212,7 +212,7 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
         await engine.handle_stop_engine(StopEngineCommand())
         selections[1] = {"slot": "processing.decoder", "profile_id": missing_decoder.profile_id}
         previous = profiles.repository.get_module("processing")
-        profiles.repository.save_module(profiles.propose("processing", [item for item in selections if item["slot"].startswith("processing.")], settings=section_settings(profiles.settings_source(), "processing")),
+        profiles.repository.save_module(profiles.propose("processing", [item for item in selections if item["slot"].startswith("processing.")], settings=section_settings(host, "processing")),
                                    expected_revision=previous.revision)
         await engine.handle_start_engine(StartEngineCommand())
         await start_worker("acquisition")

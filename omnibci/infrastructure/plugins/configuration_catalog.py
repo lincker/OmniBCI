@@ -3,7 +3,7 @@ import sys
 from copy import deepcopy
 
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration
-from omnibci.application.plugin_profiles import PluginSelection
+from omnibci.application.configuration.models import PluginSelection
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginResolutionError
 

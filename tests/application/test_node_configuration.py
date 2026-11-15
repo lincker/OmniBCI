@@ -6,7 +6,7 @@ import pytest
 from omnibci.application.node_configuration import (
     NodeConfiguration, materialize_node_configuration, project_node_configuration,
 )
-from omnibci.application.plugin_profiles import ProfileBinding, PluginSelection
+from omnibci.application.configuration.models import ProfileBinding, PluginSelection
 from omnibci.application.processing_source import processing_input as selected_processing_input
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration

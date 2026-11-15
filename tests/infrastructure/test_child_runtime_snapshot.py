@@ -12,7 +12,6 @@ from unittest.mock import Mock
 
 import pytest
 
-import omnibci.conf
 from omnibci.infrastructure.actuation import process_manager as actuation
 from omnibci.infrastructure.stimulation import process_manager as stimulation
 from omnibci.infrastructure.process_lifecycle import StartupReport, StartupReporter
@@ -183,29 +182,29 @@ def test_stimulation_snapshot_can_disable_owned_child(monkeypatch):
 
 
 @pytest.mark.parametrize(("module", "manager_class", "component", "key"), MANAGERS)
-def test_child_installs_snapshot_before_importing_application(
+def test_child_passes_snapshot_without_loading_configuration_storage(
     monkeypatch, module, manager_class, component, key,
 ):
-    settings = Mock()
-    monkeypatch.setattr(omnibci.conf, "settings", settings)
     application = Mock()
     original_import = builtins.__import__
     snapshot = _snapshot(key)
     app_module = module.__name__.removesuffix("process_manager") + "application"
 
-    def import_after_snapshot(name, *args, **kwargs):
+    def import_runtime(name, *args, **kwargs):
+        if name == "omnibci.conf" or name.startswith("omnibci.conf.") or name == (
+            "omnibci.infrastructure.repositories.configuration_repository"
+        ):
+            raise AssertionError("Runtime child must not load configuration storage")
         if name == app_module:
-            settings.use_snapshot.assert_called_once_with(snapshot)
             return SimpleNamespace(**{component: application})
         return original_import(name, *args, **kwargs)
 
-    monkeypatch.setattr(builtins, "__import__", import_after_snapshot)
+    monkeypatch.setattr(builtins, "__import__", import_runtime)
     entrypoint = getattr(module, f"_run_{component.lower()}")
     entrypoint(settings_snapshot=snapshot)
 
     application.assert_called_once_with(stop_event=None, settings_snapshot=snapshot)
     application.return_value.run.assert_called_once_with()
-    settings.set.assert_not_called()
 
 
 def _report_plugin_directory(connection):

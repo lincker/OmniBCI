@@ -1,17 +1,10 @@
-"""Resolve the persisted activation once at a standalone process boundary."""
+"""Resolve accepted module inputs at the Server composition boundary."""
 from omnibci.application.plugin_schema import PluginSchemaError
-from omnibci.application.plugin_profiles import ActivationSet, MODULE_KINDS
-from omnibci.application.services.plugin_profile_service import PluginProfileService
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.application.configuration.models import ActivationSet, MODULE_KINDS
 
 
-def accepted_runtime_settings(*, profiles=None, active_kinds=None) -> dict:
+def accepted_runtime_settings(*, profiles, active_kinds=None) -> dict:
     """Validate pinned inputs without initializing, refreshing, or saving them."""
-    if profiles is None:
-        profiles = PluginProfileService(
-            TomlPluginProfileRepository(), CatalogConfigurationAdapter(), settings_source=lambda: {},
-        )
     try:
         kinds = {"acquisition"} if active_kinds is None else active_kinds
         modules = {module for module, supported in MODULE_KINDS.items() if supported & kinds}

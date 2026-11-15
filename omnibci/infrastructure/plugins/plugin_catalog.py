@@ -66,7 +66,7 @@ def user_plugins_dir(*, host_settings: dict | None = None) -> Optional[Path]:
     Resolution order
     ----------------
     1. ``OMNIBCI_PLUGIN_DIR`` environment variable (useful for CI / dev).
-    2. ``PLUGINS.user_dir`` setting from settings.toml.
+    2. ``PLUGINS.user_dir`` from explicitly supplied server startup settings.
     3. The platform-specific default from *platformdirs*:
          macOS   ~/Library/Application Support/OmniBCI/plugins
          Linux   ~/.local/share/OmniBCI/plugins          (XDG_DATA_HOME honoured)
@@ -80,15 +80,10 @@ def user_plugins_dir(*, host_settings: dict | None = None) -> Optional[Path]:
     if env:
         return Path(env)
 
-    # 2. settings.toml override (lazy import to avoid circular dependency)
-    try:
-        from omnibci.conf import settings  # noqa: PLC0415
-        raw = (settings.host_get("PLUGINS.user_dir") if host_settings is None
-               else host_settings.get("PLUGINS.user_dir"))
-        if raw:
-            return Path(raw)
-    except Exception:
-        pass
+    # The composition root publishes this directory to child processes via env.
+    raw = (host_settings or {}).get("PLUGINS.user_dir")
+    if raw:
+        return Path(raw)
 
     # 3. platformdirs (optional dependency — graceful degradation)
     try:

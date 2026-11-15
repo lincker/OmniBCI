@@ -98,7 +98,6 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
     app.state.acquisition_service = container.acquisition_service
     app.state.stimulation_service = container.stimulation_service
     app.state.stimulation_process_manager = container.stimulation_process_manager
-    app.state.config_service = container.config_service
     app.state.plugin_installation_service = container.plugin_installation_service
     app.state.plugin_package_service = container.plugin_package_service
     app.state.plugin_market_service = container.plugin_market_service

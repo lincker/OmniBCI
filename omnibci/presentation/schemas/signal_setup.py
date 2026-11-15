@@ -78,7 +78,6 @@ class SignalSetupResponse(BaseModel):
     processing_input: ProcessingInputModel | None = None
     accepted_input: ProcessingInputModel | None = None
     active_input: ProcessingInputModel | None = None
-    revision: str
     readiness: SignalReadinessModel
 
 

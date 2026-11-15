@@ -2,7 +2,7 @@
 
 ## Storage
 
-Managed packages use the existing user plugin directory. `OMNIBCI_PLUGIN_DIR`
+Server-managed packages use the existing user plugin directory. `OMNIBCI_PLUGIN_DIR`
 overrides `PLUGINS.user_dir`; otherwise `platformdirs.user_data_dir("OmniBCI",
 "OmniBCI") / "plugins"` chooses the operating-system data directory:
 
@@ -77,7 +77,7 @@ described in `plugin-market-format.md`.
 
 Step 21 uses `DirectoryPluginPackageStore` and `PluginInstallationService`.
 Step 22 uses `ManagedPluginPackageStore` and `PluginPackageService` with the
-existing `PluginProfileService`. Bootstrap injects a runtime reference provider
+shared `ConfigurationService`. Bootstrap injects a runtime reference provider
 and an **exclusive** admission guard shared with configuration Apply and commands.
 For `RuntimeAdmission`, pass `admission.transition`. Profile writes must enter the
 same admission system so they cannot race a reference check and removal. The

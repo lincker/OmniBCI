@@ -1,7 +1,7 @@
 """
 /api/v1/stimulation — Stimulation paradigm control endpoints.
 """
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from fastapi import APIRouter, Depends, Request, status
 
 from omnibci.presentation.dependencies import get_stimulation_service

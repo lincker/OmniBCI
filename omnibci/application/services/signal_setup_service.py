@@ -6,8 +6,9 @@ import logging
 from threading import RLock
 from uuid import uuid4
 
-from omnibci.application.config_errors import ConfigProfileValidationError
-from omnibci.application.plugin_profiles import ActivationSet, PluginProfileNotFoundError, PluginSelection, ProfileRevisionConflict
+from omnibci.application.configuration.errors import ConfigProfileValidationError
+from omnibci.application.configuration.models import ActivationSet, PluginSelection
+from omnibci.application.configuration.errors import PluginProfileNotFoundError, ProfileRevisionConflict
 from omnibci.application.processing_source import (
     acquisition_binding_key, binding_for, processing_binding_key, processing_input,
     validate_source_binding,
@@ -31,8 +32,7 @@ def _input_value(snapshot):
 
 
 class SignalSetupService:
-    def __init__(self, settings, profiles, engine, acquisition, commands):
-        self.settings = settings
+    def __init__(self, profiles, engine, acquisition, commands):
         self.profiles = profiles
         self.engine = engine
         self.acquisition = acquisition
@@ -68,7 +68,6 @@ class SignalSetupService:
             self._admission.quarantine(self._preparation_error, "processing")
 
     def read(self):
-        _, revision = self.settings.read_saved()
         accepted = ActivationSet({module: self.profiles.repository.get_module(module)
                                   for module in ("acquisition", "processing")},
                                  self.profiles.repository.get_engine())
@@ -139,7 +138,6 @@ class SignalSetupService:
             "metadata": metadata, "generation": active.get("CONFIG.generation") if active and metadata else None,
         }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         return {"processing_input": selected_input,
-                "revision": revision,
                 "selected_source_id": source_id, "selected_decoder_profile_id": decoder.get("profile_id"),
                 "selected_decoder_selection": decoder.get("selection"),
                 "source_binding": source_context, "source_revision": source_revision,

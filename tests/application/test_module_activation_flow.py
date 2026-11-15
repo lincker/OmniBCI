@@ -1,25 +1,23 @@
 """Module application records successful operations without coupling other sections."""
-from omnibci.application.activation_settings import section_settings
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.services.engine_service import NeuroEngineService
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
 
 @pytest.fixture
 def flow(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
-    host = {"NEUROENGINE.queue_size": 32, "debug": False}
-    profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
-                                    CatalogConfigurationAdapter(), settings_source=lambda: host)
+    profiles = ConfigurationService(TomlConfigurationRepository(tmp_path / "config"),
+                                    CatalogConfigurationAdapter())
     engine = NeuroEngineService(lambda _: pytest.fail("Selecting configuration must not start workers"))
     executor = RuntimeApplyCoordinator(engine, profiles, None,
                                       SimpleNamespace(is_active=False, process_alive=False), None)
@@ -27,7 +25,7 @@ def flow(tmp_path, monkeypatch):
     definition = next(item for item in profiles.catalog.list("acquisition") if item.plugin_type == "file_reader")
     bindings = [{"slot": "acquisition.source", "selection": definition.selection.to_dict(),
                  "parameters": {"file_reader_chunk_size": 100}}]
-    return SimpleNamespace(host=host, profiles=profiles, runtime=runtime, bindings=bindings)
+    return SimpleNamespace(profiles=profiles, runtime=runtime, bindings=bindings)
 
 
 async def execute(flow, plan, operation_id=None):
@@ -91,7 +89,7 @@ async def test_unrelated_module_write_does_not_expire_a_plan(flow):
     assert (await execute(flow, source_plan(flow)))["status"] == "succeeded"
     flow.bindings[0]["parameters"]["file_reader_chunk_size"] = 200
     plan = source_plan(flow)
-    flow.profiles.repository.save_module(flow.profiles.propose("stimulation", [], settings=section_settings(flow.profiles.settings_source(), "stimulation")), expected_revision=None)
+    flow.profiles.repository.save_module(flow.profiles.propose("stimulation", [], settings=flow.profiles.default_module_settings("stimulation")), expected_revision=None)
     assert flow.runtime.resolve_plan(plan.plan_id).plan == plan
     assert (await execute(flow, plan))["status"] == "succeeded"
     assert flow.profiles.repository.get_module("stimulation") is not None
@@ -136,7 +134,7 @@ async def test_changed_engine_rejects_pending_module_plan(flow):
     await execute(flow, source_plan(flow))
     plan = source_plan(flow)
     previous = flow.profiles.repository.get_engine()
-    flow.host["debug"] = True
-    flow.profiles.repository.save_engine(flow.profiles.propose_engine(section_settings(flow.profiles.settings_source(), "engine")), expected_revision=previous.revision)
+    changed = flow.profiles.propose_engine({**previous.settings, "debug": True})
+    flow.profiles.repository.save_engine(changed, expected_revision=previous.revision)
     with pytest.raises(ProfileRevisionConflict):
         flow.runtime.resolve_plan(plan.plan_id)

@@ -1,5 +1,5 @@
 """Configuration reviews pin candidates without mutating selected or running values."""
-from omnibci.application.activation_settings import section_settings
+from tests.plugin_configuration_helpers import section_settings
 import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
@@ -8,14 +8,15 @@ from uuid import uuid4
 
 import pytest
 
-from omnibci.application.plugin_profiles import ActivationSet, ModuleActivation, ProfileRevisionConflict, EngineSettings
+from omnibci.application.configuration.models import ModuleActivation, EngineSettings
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.processing_source import processing_input
 from omnibci.application.runtime_admission import RuntimeAdmission
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 from tests.plugin_configuration_helpers import accept_profiles, builtin_selection
@@ -31,9 +32,8 @@ def prepared_signal_plan(snapshot, *, sample_rate, signal_channel_count):
 @pytest.fixture
 def runtime(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
-    host = {"STIMULATION.auto_spawn": True, "ACTUATION.auto_spawn": True}
-    profiles = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
-                                    CatalogConfigurationAdapter(), settings_source=lambda: dict(host))
+    profiles = ConfigurationService(TomlConfigurationRepository(tmp_path / "config"),
+                                    CatalogConfigurationAdapter())
     snapshot = accept_profiles(profiles, [
         ("acquisition.source", "acquisition", "file_reader", {"sample_rate": 1000, "channel_count": 10}),
         ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA", {}),
@@ -61,7 +61,8 @@ def request(runtime, module="processing", *, selections=None, **options):
     service, defaults, _ = runtime
     current = service.profiles.repository.get_module(module) if module != "engine" else service.profiles.repository.get_engine()
     bindings = [item for item in (defaults if selections is None else selections) if item["slot"].startswith(f"{module}.")]
-    return service.plan(module, bindings, expected_revision=current.revision if current else None, **options, settings=section_settings(service.profiles.settings_source(), module))
+    settings = options.pop("settings", current.settings if current else service.profiles.default_module_settings(module))
+    return service.plan(module, bindings, expected_revision=current.revision if current else None, settings=settings, **options)
 
 
 def install(service, candidate):
@@ -183,8 +184,7 @@ def test_no_semantic_change_does_not_restart(runtime):
 ])
 def test_runtime_host_changes_use_the_owning_section(runtime, module, key, value, strategy):
     service, _, before = runtime
-    service.profiles.settings_source = lambda: {**before.settings(), key: value}
-    plan = request(runtime, module)
+    plan = request(runtime, module, settings=section_settings({**before.settings(), key: value}, module))
     assert plan.strategy == strategy and not plan.errors
     assert plan.changed_settings == (key,)
     assert set(plan.target_revisions) == {module}
@@ -196,7 +196,7 @@ def test_runtime_host_changes_use_the_owning_section(runtime, module, key, value
 def test_changed_server_startup_settings_do_not_block_engine_plan(runtime, running, key, value):
     service, _, before = runtime
     service.engine.is_engine_ready = running
-    service.profiles.settings_source = lambda: {**before.settings(), key: value}
+    service.profiles.save_server({key: value}, expected_revision=service.profiles.read_server()[1])
     plan = request(runtime, "engine")
     assert not plan.errors
     assert key not in service.resolve_plan(plan.plan_id).engine.settings
@@ -205,8 +205,9 @@ def test_changed_server_startup_settings_do_not_block_engine_plan(runtime, runni
 
 def test_saved_other_section_host_changes_are_excluded_from_module_plan(runtime):
     service, _, before = runtime
-    service.profiles.settings_source = lambda: {**before.settings(), "NEUROENGINE.queue_size": 30,
-                                                "debug": True, "LOGGING.level": "DEBUG"}
+    service.profiles.repository.save_engine(EngineSettings({"NEUROENGINE.queue_size": 30, "debug": True}),
+                                            expected_revision=before.engine.revision)
+    service.profiles.save_server({"LOGGING.level": "DEBUG"}, expected_revision=service.profiles.read_server()[1])
     plan = request(runtime)
     assert plan.strategy == "no_change" and plan.changed_settings == ()
 
@@ -219,10 +220,8 @@ def test_external_mode_transitions_check_current_and_target(runtime, module, ext
     current = before.modules[module]
     settings = {**current.settings, f"{module.upper()}.auto_spawn": not external_before}
     install(service, ModuleActivation(module, settings, current.bindings))
-    host = service.profiles.repository.get_activation_set().settings()
-    service.profiles.settings_source = lambda: {**host, f"{module.upper()}.auto_spawn": external_before}
     service.engine.is_peer_connected = lambda role: connected and role == module
-    plan = request(runtime, module)
+    plan = request(runtime, module, settings={**current.settings, f"{module.upper()}.auto_spawn": external_before})
     assert plan.strategy == "module"
     if connected:
         assert any("externally managed" in error for error in plan.errors)
@@ -304,7 +303,7 @@ def test_unrelated_module_revision_does_not_expire_processing_plan(runtime):
 def test_plan_compare_and_swap_and_expiry(runtime):
     service, selections, _ = runtime
     with pytest.raises(ProfileRevisionConflict):
-        service.plan("processing", [item for item in selections if item["slot"].startswith("processing.")], expected_revision="stale", settings=section_settings(service.profiles.settings_source(), "processing"))
+        service.plan("processing", [item for item in selections if item["slot"].startswith("processing.")], expected_revision="stale", settings=service.profiles.default_module_settings("processing"))
     plan = request(runtime)
     service._plans[plan.plan_id] = replace(service._plans[plan.plan_id], created_at=-1000)
     with pytest.raises(ProfileRevisionConflict, match="expired"):
@@ -329,8 +328,7 @@ def test_stopped_acquisition_can_select_an_empty_configuration(runtime):
 def test_engine_change_rechecks_connected_external_outputs(runtime, role):
     service, _, before = runtime
     service.engine.applied_snapshot[f"{role.upper()}.auto_spawn"] = False
-    service.profiles.settings_source = lambda: {**before.settings(), "debug": True}
-    plan = request(runtime, "engine")
+    plan = request(runtime, "engine", settings={**before.engine.settings, "debug": True})
     assert not plan.errors
     service.engine.is_peer_connected = lambda selected: selected == role
     with pytest.raises(PluginSchemaError, match="externally managed"):
@@ -341,7 +339,7 @@ def test_filter_order_is_a_real_module_change(runtime):
     service, selections, _ = runtime
     profile = service.profiles.create("filter", builtin_selection("filter", "BASELINE_CORRECTION"), "Baseline", {})
     selections += [{"slot": f"processing.filter.{uuid4()}", "profile_id": profile.profile_id} for _ in range(2)]
-    candidate = service.profiles.propose("processing", [item for item in selections if item["slot"].startswith("processing.")], settings=section_settings(service.profiles.settings_source(), "processing"))
+    candidate = service.profiles.propose("processing", [item for item in selections if item["slot"].startswith("processing.")], settings=service.profiles.default_module_settings("processing"))
     install(service, candidate)
     plan = request(runtime, selections=selections[:-2] + list(reversed(selections[-2:])))
     assert plan.strategy == "module"

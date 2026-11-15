@@ -6,16 +6,14 @@ from uuid import uuid4
 import pytest
 import tomlkit
 
-from omnibci.application.plugin_profiles import (
-    ModuleActivation, PluginProfile, PluginProfileNotFoundError, PluginProfileStorageError,
-    PluginProfileValidationError, PluginSelection, ProfileBinding, ProfileRevisionConflict, EngineSettings,
-)
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.application.configuration.models import ModuleActivation, PluginProfile, PluginSelection, ProfileBinding, EngineSettings
+from omnibci.application.configuration.errors import PluginProfileNotFoundError, PluginProfileStorageError, PluginProfileValidationError, ProfileRevisionConflict
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
 
 @pytest.fixture
 def repository(tmp_path):
-    return TomlPluginProfileRepository(tmp_path / "config")
+    return TomlConfigurationRepository(tmp_path / "config")
 
 
 @pytest.fixture
@@ -45,7 +43,7 @@ def test_missing_reads_do_not_create_storage(repository):
 def test_profile_save_writes_integer_history_and_preserves_current(repository, profile):
     saved = repository.save_profile(profile)
     renamed = repository.save_profile(replace(saved, name="Lab B"), expected_revision=1)
-    fresh = TomlPluginProfileRepository(repository.root)
+    fresh = TomlConfigurationRepository(repository.root)
     assert renamed.revision == 2
     assert fresh.get_profile(profile.profile_id) == renamed
     assert fresh.list_profiles("acquisition") == [renamed]
@@ -168,7 +166,7 @@ def test_engine_cas_and_compensation_restore_absence_without_history(repository)
 
 def test_different_modules_do_not_share_thread_or_file_lock(repository):
     repository.save_module(ModuleActivation("processing", {}, ()))
-    other = TomlPluginProfileRepository(repository.root, lock_timeout_s=0.05)
+    other = TomlConfigurationRepository(repository.root, lock_timeout_s=0.05)
     with repository._access("processing", write=True):
         stimulation = other.save_module(ModuleActivation("stimulation", {}, ()))
         actuation = repository.save_module(ModuleActivation("actuation", {}, ()))
@@ -214,7 +212,7 @@ def test_failed_module_replace_preserves_current_and_history(repository, monkeyp
     entry = repository.record_module_history(saved, str(uuid4()))
     def fail(*args):
         raise OSError("disk full")
-    monkeypatch.setattr("omnibci.conf.storage.os.replace", fail)
+    monkeypatch.setattr("omnibci.infrastructure.repositories.configuration_storage.os.replace", fail)
     with pytest.raises(PluginProfileStorageError, match="disk full"):
         repository.save_module(ModuleActivation("processing", {"ALGORITHM.baseline_duration": 1.0}, ()),
                                expected_revision=saved.revision)
@@ -262,11 +260,11 @@ def test_symlink_cannot_redirect_writes(repository, profile, tmp_path, directory
 @pytest.mark.parametrize("timeout", [0, -1, True, float("nan"), float("inf")])
 def test_lock_timeout_must_remain_bounded(tmp_path, timeout):
     with pytest.raises(ValueError, match="finite"):
-        TomlPluginProfileRepository(tmp_path, lock_timeout_s=timeout)
+        TomlConfigurationRepository(tmp_path, lock_timeout_s=timeout)
 
 
 def _competing_update(root, profile_id, barrier, output, name):
-    repository = TomlPluginProfileRepository(root)
+    repository = TomlConfigurationRepository(root)
     profile = repository.get_profile(profile_id)
     barrier.wait(timeout=15)
     try:

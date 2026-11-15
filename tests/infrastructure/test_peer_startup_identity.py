@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from omnibci.application.plugin_profiles import ProfileBinding
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessStartupError, ChildProcessState, StartupReport,
@@ -42,8 +42,6 @@ def test_entrypoint_report_preserves_snapshot_identity(peer, monkeypatch, outcom
         return runtime
 
     monkeypatch.setattr(app_module, component, construct)
-    from omnibci.conf import settings
-    monkeypatch.setattr(settings, "use_snapshot", MagicMock())
     entrypoint = getattr(module, f"_run_{kind}")
     if outcome == "failure":
         with pytest.raises(ValueError):

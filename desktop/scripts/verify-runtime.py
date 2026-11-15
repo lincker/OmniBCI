@@ -97,7 +97,7 @@ def plugin_check():
             if descriptor.entrypoint and descriptor.supports_platform(sys.platform):
                 PluginLoader.load_entrypoint(descriptor, object)
         contributions.extend(found)
-    assert len(contributions) == 10, len(contributions)
+    assert len(contributions) == 11, len(contributions)
     resource = resources.files("omnibci.infrastructure.plugins.paradigms.classic40SSVEP").joinpath(
         "resource", "classic40_ssvep.ofp",
     )
@@ -169,8 +169,11 @@ def verify_inside(root, collect):
     source = Path(next(iter(omnibci.__path__))).resolve()
     assert not (source / "tests").exists()
     assert not any(source.rglob("*.cnt")), "Sample recordings must not ship in the application"
-    assert resources.files("omnibci.conf").joinpath("settings.toml").is_file()
-    assert not (source / "conf" / "profiles").exists(), "Machine-specific profiles must not ship"
+    from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS, MODULE_SETTING_DEFAULTS
+    from omnibci.application.configuration.models import EngineSettings, ModuleActivation
+    EngineSettings(ENGINE_SETTING_DEFAULTS)
+    for module, settings in MODULE_SETTING_DEFAULTS.items():
+        ModuleActivation(module, settings, ())
     count = plugin_check()
     context = multiprocessing.get_context("spawn")
     receive, send = context.Pipe(duplex=False)

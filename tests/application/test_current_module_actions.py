@@ -8,7 +8,8 @@ from uuid import uuid4
 
 import pytest
 
-from omnibci.application.plugin_profiles import ModuleActivation, ProfileBinding, PluginSelection, ProfileRevisionConflict, EngineSettings
+from omnibci.application.configuration.models import ModuleActivation, ProfileBinding, PluginSelection, EngineSettings
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.runtime_admission import RuntimeAdmission
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.services.engine_service import NeuroEngineService

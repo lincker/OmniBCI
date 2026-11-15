@@ -2,20 +2,20 @@
 
 import pytest
 
-from omnibci.application.activation_settings import SERVER_STARTUP_DEFAULTS
-from omnibci.application.services.config_service import ConfigService
-from omnibci.conf import OmniBCISettings
+from omnibci.application.configuration.definitions import SERVER_STARTUP_DEFAULTS
+from omnibci.application.configuration.service import ConfigurationService
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
+import tomlkit
 
 
 @pytest.fixture()
 def config_client(api_client, tmp_path):
     path = tmp_path / "settings.toml"
     path.write_text(
-        '[ACQUISITION]\nsignal_source = "file_reader"\nsample_rate = 1000\n'
-        '[ALGORITHM]\nbaseline_duration = 1.0\n'
+        '[engine]\n"NEUROENGINE.queue_size" = 100\n'
         '[NEUROENGINE]\ncommand_timeout_s = 32\n', encoding="utf-8",
     )
-    api_client.app.state.config_service = ConfigService(OmniBCISettings(path))
+    api_client.app.state.container.configuration_service = ConfigurationService(TomlConfigurationRepository(tmp_path))
     return api_client
 
 
@@ -31,19 +31,18 @@ def test_get_saved_settings_shape(config_client):
 
 
 @pytest.mark.parametrize("method", ["get", "patch"])
-def test_invalid_engine_table_returns_validation_error(config_client, tmp_path, method):
+def test_invalid_engine_values_do_not_block_server_settings(config_client, tmp_path, method):
     revision = config_client.get("/api/v1/config").json()["data"]["revision"]
     path = tmp_path / "settings.toml"
-    path.write_text('[engine]\ndebug = "invalid"\n', encoding="utf-8")
+    path.write_text('[engine]\ndebug = "invalid"\n[NEUROENGINE]\ncommand_timeout_s = 32\n', encoding="utf-8")
     if method == "get":
         response = config_client.get("/api/v1/config")
     else:
         response = config_client.patch("/api/v1/config", json={
             "expected_revision": revision, "updates": {"LOGGING.level": "WARNING"},
         })
-    assert response.status_code == 422
-    assert response.json()["code"] == "VALIDATION_ERROR"
-    assert path.read_text() == '[engine]\ndebug = "invalid"\n'
+    assert response.status_code == 200, response.text
+    assert tomlkit.parse(path.read_text())["engine"]["debug"] == "invalid"
 
 
 def test_patch_saves_host_settings(config_client, tmp_path):
@@ -57,9 +56,9 @@ def test_patch_saves_host_settings(config_client, tmp_path):
         "saved": ["NEUROENGINE.command_timeout_s"],
         "server_restart_required": True,
     }
-    fresh = OmniBCISettings(tmp_path / "settings.toml")
-    assert fresh.get("NEUROENGINE.command_timeout_s") == 64
-    assert fresh.get("ALGORITHM.baseline_duration") == 1.0
+    fresh = TomlConfigurationRepository(tmp_path)
+    assert fresh.read_server()[0]["NEUROENGINE.command_timeout_s"] == 64
+    assert fresh.get_engine().settings["NEUROENGINE.queue_size"] == 100
 
 
 @pytest.mark.parametrize("key,value", [
@@ -84,7 +83,7 @@ def test_plugin_and_internal_keys_cannot_partially_write(config_client, tmp_path
     assert response.json()["code"] == "CONFIG_KEY_NOT_ALLOWED"
     assert response.json()["detail"]["keys"] == [key]
     assert path.read_bytes() == before
-    assert config_client.app.state.config_service._settings.get("NEUROENGINE.command_timeout_s") == 32
+    assert config_client.app.state.container.configuration_service.repository.read_server()[0]["NEUROENGINE.command_timeout_s"] == 32
 
 
 def test_invalid_host_value_has_key_detail(config_client):
@@ -140,13 +139,13 @@ def test_stale_browser_save_returns_conflict_and_preserves_newer_values(config_c
 
 @pytest.mark.parametrize("method", ["GET", "PATCH"])
 def test_unavailable_storage_returns_service_error(config_client, monkeypatch, method):
-    settings = config_client.app.state.config_service._settings
+    settings = config_client.app.state.container.configuration_service.repository
     revision = config_client.get("/api/v1/config").json()["data"]["revision"]
 
     def fail(*args, **kwargs):
         raise OSError("disk is unavailable")
 
-    monkeypatch.setattr(settings, "read_saved" if method == "GET" else "update", fail)
+    monkeypatch.setattr(settings, "read_server" if method == "GET" else "save_server", fail)
     response = config_client.request(method, "/api/v1/config", json={
         "expected_revision": revision, "updates": {"NEUROENGINE.command_timeout_s": 64}})
     assert response.status_code == 503

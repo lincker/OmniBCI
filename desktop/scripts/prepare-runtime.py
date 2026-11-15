@@ -51,8 +51,6 @@ def copy_source(root, destination):
     shutil.copyfile(root / "pyproject.toml", destination / "pyproject.toml")
     def ignore(directory, names):
         excluded = {name for name in names if name.startswith(".") or name == "__pycache__" or name.endswith((".pyc", ".pyo"))}
-        if Path(directory) == root / "omnibci" / "conf":
-            excluded.add("profiles")
         return excluded
     shutil.copytree(root / "omnibci", destination / "omnibci", ignore=ignore)
 

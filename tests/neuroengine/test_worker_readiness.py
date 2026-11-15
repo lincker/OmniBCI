@@ -51,9 +51,9 @@ def test_worker_reports_ready_after_construction_before_loop(worker_type, servic
 @pytest.mark.parametrize("error", [ValueError("invalid plugin"), SystemExit(7)])
 def test_worker_reports_all_startup_failures_and_closes(worker_type, loader, stage, error):
     reporter = MagicMock(spec=StartupReporter)
-    worker = worker_type(MagicMock(), startup_reporter=reporter)
+    worker = worker_type(MagicMock(), startup_reporter=reporter, settings_snapshot={})
     setattr(worker, loader, MagicMock(side_effect=error))
-    with patch("omnibci.conf.settings.use_snapshot"), pytest.raises(type(error)):
+    with pytest.raises(type(error)):
         worker.run()
     reporter.failed.assert_called_once_with(stage, error)
     reporter.ready.assert_not_called()
@@ -62,15 +62,16 @@ def test_worker_reports_all_startup_failures_and_closes(worker_type, loader, sta
 
 @pytest.mark.parametrize("worker_type,loader,service_path,stage", [
     (AcquisitionWorker, "_load_data_source", "omnibci.infrastructure.acquisition.worker.AcquisitionRuntime", "acquisition"),
-    (SignalProcessingWorker, "_snapshot", "omnibci.infrastructure.signal_processing.worker.SignalProcessor", "processor"),
+    (SignalProcessingWorker, None, "omnibci.infrastructure.signal_processing.worker.SignalProcessor", "processor"),
 ])
 def test_service_constructor_failure_never_reports_ready(worker_type, loader, service_path, stage):
     reporter = MagicMock(spec=StartupReporter)
-    worker = worker_type(MagicMock(), startup_reporter=reporter)
+    worker = worker_type(MagicMock(), startup_reporter=reporter, settings_snapshot={})
     worker.data_source = MagicMock()
-    setattr(worker, loader, MagicMock(return_value={}))
+    if loader:
+        setattr(worker, loader, MagicMock(return_value={}))
     error = ValueError("invalid service configuration")
-    with patch("omnibci.conf.settings.use_snapshot"), patch(service_path, side_effect=error), pytest.raises(ValueError):
+    with patch(service_path, side_effect=error), pytest.raises(ValueError):
         worker.run()
     reporter.failed.assert_called_once_with(stage, error)
     reporter.ready.assert_not_called()
@@ -263,7 +264,7 @@ domain = "processing"
 
 def _pinned_worker_snapshot(decoder_alias, broken_kind=None):
     from dataclasses import replace
-    from omnibci.application.plugin_profiles import ProfileBinding
+    from omnibci.application.configuration.models import ProfileBinding
     from omnibci.domain.channel_mapping import ProcessingInput
     from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
     snapshot = {"CONFIG.module_revisions": {"acquisition": "r", "processing": "r", "stimulation": "r", "actuation": "r"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "g", "ACQUISITION.sample_rate": 250,

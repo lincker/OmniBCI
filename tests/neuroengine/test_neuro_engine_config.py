@@ -24,27 +24,18 @@ from omnibci.infrastructure.signal_processing.worker import SignalProcessingWork
 # ---------------------------------------------------------------------------
 
 class TestConfigFromSettings:
-    def test_reads_all_keys(self, monkeypatch):
+    def test_reads_all_keys(self):
         values = {
             "NEUROENGINE.queue_size": 50,
             "ACQUISITION.sample_rate": 250,
             "debug": True,
         }
-        import omnibci.conf as conf
-        monkeypatch.setattr(conf.settings, "get",
-                            lambda key, default=None: values.get(key, default))
-
         cfg = NeuroEngineConfig.from_settings(values)
         assert cfg.queue_size == 50
         assert not hasattr(cfg, "sample_rate")
         assert cfg.debug is True
 
-    def test_falls_back_on_missing_keys(self, monkeypatch):
-        import omnibci.conf as conf
-        # Missing keys return the supplied default without swallowing errors.
-        monkeypatch.setattr(conf.settings, "get",
-                            lambda key, default=None: default)
-
+    def test_falls_back_on_missing_keys(self):
         cfg = NeuroEngineConfig.from_settings({})
         # dataclass defaults
         assert cfg.queue_size == 100
@@ -65,7 +56,7 @@ class TestConfigFromSettings:
         assert not hasattr(cfg, "baseline_duration")
 
     def test_worker_stores_baseline_duration(self):
-        w = SignalProcessingWorker(command_queue=MagicMock(), baseline_duration=0.3)
+        w = SignalProcessingWorker(command_queue=MagicMock(), baseline_duration=0.3, settings_snapshot={})
         assert w.baseline_duration == 0.3
 
 

@@ -5,35 +5,26 @@ from unittest.mock import Mock
 
 import pytest
 
-from omnibci.application.plugin_profiles import ActivationSet, ModuleActivation, ProfileBinding
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.models import ActivationSet, ModuleActivation, ProfileBinding
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from tests.plugin_configuration_helpers import accept_profiles, builtin_selection
 
 
 @pytest.fixture
 def profiles(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
-    seed = {
-        "ACQUISITION.signal_source": "file_reader", "ACQUISITION.sample_rate": 500,
-        "ACQUISITION.channel_count": 10, "ACQUISITION.trigger": "",
-        "ALGORITHM.decoder": "THUBCI_SSVEP_classic40CCA",
-        "ALGORITHM.epoch_detector": "DEFAULT_EPOCH_DETECTOR", "ALGORITHM.filters": [],
-        "STIMULATION.paradigm": "STIMULATION_THUBCI_SSVEP_classic40",
-        "ACTUATION.effector": "logger",
-        "ACTUATION.server_ip": "192.0.2.3", "ACTUATION.server_port": 9010,
-    }
-    service = PluginProfileService(TomlPluginProfileRepository(tmp_path / "config"),
-                                   CatalogConfigurationAdapter(), settings_source=lambda: seed)
+    service = ConfigurationService(TomlConfigurationRepository(tmp_path / "config"),
+                                   CatalogConfigurationAdapter())
     accept_profiles(service, (
         ("acquisition.source", "acquisition", "file_reader", {"sample_rate": 500, "channel_count": 10}),
         ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA", {}),
         ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
         ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40", {}),
         ("actuation.effector", "effector", "logger", {}),
-    ))
+    ), module_settings={"actuation": {"ACTUATION.server_ip": "192.0.2.3", "ACTUATION.server_port": 9010}})
     return service
 
 
@@ -60,7 +51,7 @@ def test_standalone_and_managed_projection_match_after_saved_profile_edit(profil
 
 def test_missing_activation_does_not_initialize_storage(tmp_path):
     root = tmp_path / "missing"
-    service = PluginProfileService(TomlPluginProfileRepository(root), Mock(), settings_source=lambda: {})
+    service = ConfigurationService(TomlConfigurationRepository(root), Mock())
     with pytest.raises(RuntimeError, match="not selected"):
         accepted_runtime_settings(profiles=service)
     assert not root.exists()

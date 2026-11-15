@@ -28,6 +28,7 @@ from copy import deepcopy
 from threading import RLock
 from typing import Any
 
+from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessState,
     StartupReporter,
@@ -60,7 +61,7 @@ def _run_stimulation(
 ) -> None:
     """Stimulation subprocess entry point.  Runs in the spawned child process.
 
-    A pinned snapshot is required and installed before runtime imports.
+    The application receives the pinned snapshot directly.
     """
     reporter = (
         StartupReporter(
@@ -73,8 +74,6 @@ def _run_stimulation(
         else None
     )
     try:
-        from omnibci.conf import settings
-        settings.use_snapshot(settings_snapshot)
         from omnibci.infrastructure.stimulation.application import Stimulation
         kwargs = {"stop_event": stop_event, "settings_snapshot": settings_snapshot}
         if reporter is not None:
@@ -133,7 +132,9 @@ class StimulationProcessManager:
         """
         with self._lifecycle_lock:
             snapshot = deepcopy(settings_snapshot)
-            auto_spawn = snapshot.get("STIMULATION.auto_spawn", True)
+            auto_spawn = snapshot.get(
+                "STIMULATION.auto_spawn", MODULE_SETTING_DEFAULTS["stimulation"]["STIMULATION.auto_spawn"],
+            )
             if not auto_spawn:
                 self._stop_locked()
                 self._auto_spawn = False

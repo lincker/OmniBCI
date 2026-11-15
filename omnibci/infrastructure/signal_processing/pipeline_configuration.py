@@ -70,7 +70,7 @@ def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int | 
                    if binding.kind in {"acquisition", "epoch_detector"}}
     if before_fixed != after_fixed:
         raise ValueError("Source or detector topology changes require a module restart")
-    from omnibci.application.activation_settings import SECTION_SETTING_KEYS
+    from omnibci.application.configuration.definitions import SECTION_SETTING_KEYS
     fixed_keys = SECTION_SETTING_KEYS["processing"] | SECTION_SETTING_KEYS["engine"] | SECTION_SETTING_KEYS["acquisition"]
     fixed_keys = fixed_keys | {key for key in current.keys() | snapshot.keys()
                               if key.startswith("ACQUISITION.") and key != "ACQUISITION.trigger"}

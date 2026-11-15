@@ -85,7 +85,7 @@ point inward:
 | Domain | `omnibci/domain` | Sessions, signals, epochs, classification results, and core interfaces |
 | Infrastructure | `omnibci/infrastructure` | Acquisition, signal processing, IPC, process management, plugins, persistence, and external-device adapters |
 | Shared kernel | `omnibci/shared` | Cross-process event contracts and common utilities with no internal package dependencies |
-| Configuration | `omnibci/conf` | Read-only defaults, user host settings, and worker snapshots |
+| Configuration | `omnibci/application/configuration` | Definitions, validation, Server/Engine/module settings and plugin Profiles |
 | Composition root | `omnibci/bootstrap.py` | Selects concrete implementations from configuration and assembles the object graph |
 
 The Application layer does not depend directly on Infrastructure.
@@ -174,8 +174,8 @@ in `activation/`, alongside separate per-plugin Profiles and module history.
 The user directory defaults to `~/Library/Application Support/OmniBCI` on macOS,
 `~/.config/OmniBCI` on Linux (honoring `XDG_CONFIG_HOME`), and
 `%LOCALAPPDATA%/OmniBCI` on Windows. `OMNIBCI_CONFIG_DIR` can select an absolute
-directory. The packaged `omnibci/conf/settings.toml` supplies read-only defaults;
-retired named Application Profile overlays are not loaded.
+directory. Defaults are defined in `omnibci/application/configuration/definitions.py`;
+there is no separate default settings file or configuration overlay.
 
 ### 4. Start the Server
 
@@ -236,6 +236,10 @@ VITE_SERVER=http://192.168.1.10:8000 npm run dev
 ```
 
 ### Distributed Stimulation and Actuation
+
+Independent nodes use `OMNIBCI_PLUGIN_DIR` for a custom local plugin directory,
+or the platform default when unset. They receive runtime configuration from the
+Server and do not load local `settings.toml`.
 
 To run stimulation on another machine, choose external mode in the Stimulation
 current configuration and set `STIMULATION.server_ip` / `STIMULATION.server_port`

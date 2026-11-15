@@ -4,46 +4,18 @@ from unittest.mock import Mock
 import pytest
 
 from omnibci import bootstrap
-from omnibci.application.activation_settings import ENGINE_SETTING_DEFAULTS
+from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS, SERVER_STARTUP_DEFAULTS
+from omnibci.application.configuration.errors import ConfigKeyNotAllowedError, ConfigProfileValidationError
 from omnibci.bootstrap import _RuntimeSettings, build_container
-from omnibci.conf import OmniBCISettings
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.infrastructure.config_paths import config_root
 from tests.plugin_configuration_helpers import accept_profiles
 
 
 @pytest.fixture
 def bootstrap_settings(tmp_path, monkeypatch):
-    import omnibci.conf as conf
-
-    path = tmp_path / "settings.toml"
-    path.write_text('''[ACQUISITION]
-signal_source = "file_reader"
-data_file_path = "recordings/custom.cnt"
-sample_rate = 256
-channel_count = 5
-file_reader_chunk_size = 17
-trigger = ""
-[ALGORITHM]
-decoder = "THUBCI_SSVEP_classic40FBCCA"
-epoch_detector = "DEFAULT_EPOCH_DETECTOR"
-window_duration = 4.25
-offset_time = 0.15
-baseline_duration = 0.4
-filters = []
-[STIMULATION]
-paradigm = "STIMULATION_THUBCI_SSVEP_classic40"
-auto_spawn = false
-[ACTUATION]
-enabled = false
-auto_spawn = false
-effector = ""
-[NEUROENGINE]
-queue_size = 29
-[custom]
-retain = ["settings-only", "user-value"]
-''', encoding="utf-8")
-    settings = OmniBCISettings(path)
-    monkeypatch.setattr(conf, "settings", settings)
+    settings = TomlConfigurationRepository()
+    settings.save_server(SERVER_STARTUP_DEFAULTS, expected_revision=settings.read_server()[1])
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
     builder = Mock(side_effect=AssertionError("Bootstrap must not construct a worker graph"))
     monkeypatch.setattr(bootstrap, "NeuroEngineBuilder", builder)
@@ -56,7 +28,7 @@ def _toml_files(root):
 
 
 def _configure(container):
-    return accept_profiles(container.plugin_profile_service, (
+    return accept_profiles(container.configuration_service, (
         ("acquisition.source", "acquisition", "file_reader", {
             "data_file_path": "recordings/custom.cnt", "sample_rate": 256,
             "channel_count": 5, "file_reader_chunk_size": 17,
@@ -72,7 +44,7 @@ def _configure(container):
 @pytest.mark.asyncio
 async def test_saved_edits_do_not_change_explicitly_selected_startup():
     container = await build_container()
-    profiles = container.plugin_profile_service
+    profiles = container.configuration_service
     accepted = _configure(container)
     before = container.engine_service._module_snapshot_provider("acquisition")
     source = next(binding for binding in accepted.bindings() if binding.kind == "acquisition")
@@ -88,13 +60,10 @@ async def test_saved_edits_do_not_change_explicitly_selected_startup():
 
 
 @pytest.mark.asyncio
-async def test_fresh_installation_does_not_select_plugins(monkeypatch):
-    import omnibci.conf as conf
-
-    monkeypatch.setattr(conf, "settings", OmniBCISettings())
+async def test_fresh_installation_does_not_select_plugins():
     container = await build_container()
 
-    profiles = container.plugin_profile_service
+    profiles = container.configuration_service
     assert all(value is None for value in profiles.repository.get_activation_set().revisions().values())
     assert profiles.repository.list_profiles() == []
     assert container.acquisition_service._device_metadata() == (None, None, None)
@@ -135,7 +104,7 @@ async def test_stream_prepares_only_processing_and_keeps_receipt(monkeypatch):
 async def test_metadata_binding_uses_the_running_source_without_reading_saved_profiles():
     from omnibci.bootstrap import _acquisition_binding
     container = await build_container()
-    profiles = container.plugin_profile_service
+    profiles = container.configuration_service
     accepted = _configure(container)
     binding = next(item for item in accepted.bindings() if item.slot == "acquisition.source")
     engine = Mock(applied_snapshot=profiles.materialize(accepted))
@@ -149,25 +118,27 @@ async def test_metadata_binding_uses_the_running_source_without_reading_saved_pr
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_ignores_retired_plugin_settings(bootstrap_settings):
-    original_settings = bootstrap_settings._config_path.read_bytes()
+async def test_bootstrap_rejects_retired_plugin_settings(bootstrap_settings):
+    path = bootstrap_settings.root / "settings.toml"
+    path.write_text(path.read_text() + '\n[ACQUISITION]\nsample_rate = 256\n')
+    original_files = _toml_files(bootstrap_settings.root)
 
-    container = await build_container()
+    with pytest.raises(ConfigProfileValidationError, match="Unsupported Server settings"):
+        await build_container()
 
-    assert all(value is None for value in container.plugin_profile_service.repository.get_activation_set().revisions().values())
-    assert container.plugin_profile_service.repository.list_profiles() == []
-    assert bootstrap_settings._config_path.read_bytes() == original_settings
-    snapshot = container.engine_service._snapshot_provider()
-    assert {key: snapshot[key] for key in ENGINE_SETTING_DEFAULTS} == ENGINE_SETTING_DEFAULTS
-    assert container.plugin_profile_service.repository.get_engine().settings == ENGINE_SETTING_DEFAULTS
+    assert _toml_files(bootstrap_settings.root) == original_files
+    assert bootstrap_settings.list_profiles() == []
+    assert all(bootstrap_settings.get_module(module) is None for module in (
+        "acquisition", "processing", "stimulation", "actuation",
+    ))
 
 
 @pytest.mark.asyncio
 async def test_server_restart_changes_command_timeout_without_blocking_engine_review(bootstrap_settings):
     first = await build_container()
     before = _configure(first)
-    bootstrap_settings.set("NEUROENGINE.command_timeout_s", 15.0)
-    bootstrap_settings.save()
+    bootstrap_settings.save_server({"NEUROENGINE.command_timeout_s": 15.0},
+                                   expected_revision=bootstrap_settings.read_server()[1])
     original_files = _toml_files(config_root())
 
     plan = first.runtime_configuration.plan("engine", [], expected_revision=before.engine.revision,
@@ -192,8 +163,8 @@ async def test_server_restart_changes_command_timeout_without_blocking_engine_re
 async def test_plugin_directory_edits_do_not_block_engine_review(bootstrap_settings, monkeypatch, tmp_path):
     container = await build_container()
     before = _configure(container)
-    bootstrap_settings.set("PLUGINS.user_dir", str(tmp_path / "masked-by-environment"))
-    bootstrap_settings.save()
+    bootstrap_settings.save_server({"PLUGINS.user_dir": str(tmp_path / "masked-by-environment")},
+                                   expected_revision=bootstrap_settings.read_server()[1])
     original_files = _toml_files(config_root())
 
     plan = container.runtime_configuration.plan("engine", [], expected_revision=before.engine.revision,
@@ -211,7 +182,7 @@ async def test_plugin_directory_edits_do_not_block_engine_review(bootstrap_setti
 @pytest.mark.asyncio
 async def test_existing_activation_keeps_its_revision_and_pinned_inputs(bootstrap_settings):
     first = await build_container()
-    profiles = first.plugin_profile_service
+    profiles = first.configuration_service
     current = _configure(first)
     historical = current
     source = next(binding for binding in historical.bindings() if binding.kind == "acquisition")
@@ -219,15 +190,14 @@ async def test_existing_activation_keeps_its_revision_and_pinned_inputs(bootstra
     profiles.update(profile.profile_id, name="Saved source edit",
                     parameters={**profile.parameters, "sample_rate": 1024},
                     expected_revision=profile.revision)
-    bootstrap_settings.set("ACQUISITION.sample_rate", 128)
-    bootstrap_settings.set("ALGORITHM.decoder", "not-a-selected-plugin")
-    bootstrap_settings.save()
+    bootstrap_settings.save_server({"LOGGING.level": "DEBUG"},
+                                   expected_revision=bootstrap_settings.read_server()[1])
     original_files = _toml_files(profiles.repository.root)
-    original_settings = bootstrap_settings._config_path.read_bytes()
+    original_settings = (bootstrap_settings.root / "settings.toml").read_bytes()
 
     restarted = await build_container()
 
-    assert restarted.plugin_profile_service.repository.get_activation_set() == historical
+    assert restarted.configuration_service.repository.get_activation_set() == historical
     runtime = restarted.engine_service._module_snapshot_provider("acquisition")
     assert runtime["CONFIG.module_revisions"]["acquisition"] == historical.modules["acquisition"].revision
     assert runtime["ACQUISITION.sample_rate"] == 256
@@ -241,9 +211,7 @@ async def test_existing_activation_keeps_its_revision_and_pinned_inputs(bootstra
     assert decoder["selection"] == selected_decoder.selection.to_dict()
     assert decoder["parameters"] == {"window_duration": 4.25, "offset_time": 0.15}
     assert _toml_files(profiles.repository.root) == original_files
-    assert bootstrap_settings._config_path.read_bytes() == original_settings
-
-
+    assert (bootstrap_settings.root / "settings.toml").read_bytes() == original_settings
 
 
 @pytest.mark.asyncio
@@ -251,22 +219,24 @@ async def test_existing_activation_keeps_its_revision_and_pinned_inputs(bootstra
     ("ACQUISITION.sample_rate", "invalid"),
     ("ALGORITHM.decoder", "missing_decoder"),
 ])
-async def test_invalid_retired_settings_do_not_affect_management(bootstrap_settings, key, value):
-    bootstrap_settings.set(key, value)
-    bootstrap_settings.save()
+async def test_retired_settings_cannot_be_saved(bootstrap_settings, key, value):
+    original_files = _toml_files(bootstrap_settings.root)
+    with pytest.raises(ConfigKeyNotAllowedError):
+        bootstrap_settings.save_server({key: value}, expected_revision=bootstrap_settings.read_server()[1])
+    assert _toml_files(bootstrap_settings.root) == original_files
     container = await build_container()
 
-    assert all(value is None for value in container.plugin_profile_service.repository.get_activation_set().revisions().values())
-    assert container.plugin_profile_service.repository.list_profiles() == []
+    assert all(value is None for value in container.configuration_service.repository.get_activation_set().revisions().values())
+    assert container.configuration_service.repository.list_profiles() == []
     assert container.acquisition_service._device_metadata() == (None, None, None)
-    assert container.config_service.list_entries()[0]
+    assert container.configuration_service.read_server()[0][0]
     assert container.engine_service._snapshot_provider()["PLUGINS.bindings"] == []
 
 
 @pytest.mark.asyncio
 async def test_broken_activation_keeps_management_available_without_replacement(bootstrap_settings):
     first = await build_container()
-    repository = first.plugin_profile_service.repository
+    repository = first.configuration_service.repository
     path = repository.root / "activation" / "acquisition.toml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('format_version = "unterminated', encoding="utf-8")
@@ -274,7 +244,7 @@ async def test_broken_activation_keeps_management_available_without_replacement(
 
     container = await build_container()
 
-    assert container.config_service.list_entries()[0]
+    assert container.configuration_service.read_server()[0][0]
     assert container.acquisition_service._device_metadata() == (None, None, None)
     foundation = container.engine_service._snapshot_provider()
     assert foundation["PLUGINS.bindings"] == []
@@ -286,13 +256,12 @@ async def test_broken_activation_keeps_management_available_without_replacement(
 
 @pytest.mark.asyncio
 async def test_saved_edit_during_bootstrap_does_not_change_loaded_startup_baseline(
-    bootstrap_settings, monkeypatch,
+    bootstrap_settings,
 ):
-    loaded = bootstrap_settings.saved_snapshot()
-    bootstrap_settings.set("NEUROENGINE.command_timeout_s", 20.0)
-    bootstrap_settings.save()
+    loaded, revision = bootstrap_settings.read_server()
+    bootstrap_settings.save_server({"NEUROENGINE.command_timeout_s": 20.0}, expected_revision=revision)
     container = await build_container(host_settings=loaded)
-    service = container.plugin_profile_service
+    service = container.configuration_service
 
     assert container.command_results._timeout_s == 10.0
     candidate = service.propose_engine(ENGINE_SETTING_DEFAULTS)

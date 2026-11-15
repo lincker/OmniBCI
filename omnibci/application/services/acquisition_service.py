@@ -11,7 +11,7 @@ from threading import RLock
 from copy import deepcopy
 from uuid import uuid4
 from omnibci.application.acquisition_preview import PreviewSelection
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.runtime_admission import admitted
 from omnibci.application.processing_source import acquisition_binding_key
 from omnibci.application.source_expectations import compare_source_expectations

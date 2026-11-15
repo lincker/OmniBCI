@@ -33,7 +33,8 @@ class AcquisitionWorker(mp.Process):
         command_queue: CommandQueue,
         data_manager: Optional[DataSink] = None,
         event_bus=None,
-        settings_snapshot: dict | None = None,
+        *,
+        settings_snapshot: dict,
         startup_reporter: StartupReporter | None = None,
         preview_queue=None,
         log_queue=None,
@@ -53,12 +54,9 @@ class AcquisitionWorker(mp.Process):
         self.log_queue = log_queue
         self.processing_active = processing_active
         self.runtime_counters = runtime_counters
-        self._startup_stage = "settings"
 
     def run(self) -> None:
         try:
-            from omnibci.conf import settings
-            settings.use_snapshot(self._settings_snapshot())
             self._startup_stage = "signal_source"
             self._load_data_source()
             self._startup_stage = "acquisition"
@@ -72,7 +70,7 @@ class AcquisitionWorker(mp.Process):
                 self.startup_reporter.close()
 
     def _run(self) -> None:
-        snapshot = self._settings_snapshot()
+        snapshot = self.settings_snapshot
         self.runtime = AcquisitionRuntime(
             data_source=self.data_source,
             command_queue=self.command_queue,
@@ -96,14 +94,8 @@ class AcquisitionWorker(mp.Process):
             self._startup_stage = "run"
             self.runtime.run()
 
-    def _settings_snapshot(self) -> dict:
-        if self.settings_snapshot is None:
-            from omnibci.conf import settings
-            self.settings_snapshot = settings.snapshot()
-        return self.settings_snapshot
-
     def _load_data_source(self) -> None:
         from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
         self.data_source = load_configured_plugin(
-            self._settings_snapshot(), "acquisition.source", "acquisition", SignalSource,
+            self.settings_snapshot, "acquisition.source", "acquisition", SignalSource,
         )

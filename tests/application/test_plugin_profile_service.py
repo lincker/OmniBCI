@@ -1,28 +1,25 @@
 """Saving, selecting, and resolving configuration have distinct effects."""
-from omnibci.application.activation_settings import section_settings
+from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS
 from dataclasses import replace
 from uuid import uuid4
 
 import pytest
 
-from omnibci.application.plugin_profiles import (
-    ActivationSet, ModuleActivation, PluginProfileNotFoundError, PluginSelection,
-    ProfileBinding, ProfileRevisionConflict, EngineSettings,
-)
+from omnibci.application.configuration.models import ActivationSet, ModuleActivation, PluginSelection, ProfileBinding, EngineSettings
+from omnibci.application.configuration.errors import PluginProfileNotFoundError, ProfileRevisionConflict
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 from omnibci.application.plugin_schema import PluginSchemaError
-from omnibci.application.services.plugin_profile_service import PluginProfileService
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
-from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
+from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
 
 @pytest.fixture
 def service(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
-    return PluginProfileService(
-        TomlPluginProfileRepository(tmp_path / "config"), CatalogConfigurationAdapter(),
-        settings_source=lambda: {"NEUROENGINE.queue_size": 100, "debug": False},
+    return ConfigurationService(
+        TomlConfigurationRepository(tmp_path / "config"), CatalogConfigurationAdapter(),
     )
 
 
@@ -38,12 +35,26 @@ def create_source(service, name="Replay", **parameters):
 def select(service, profile, slot):
     module = slot.split(".", 1)[0]
     current = service.repository.get_module(module)
-    return service.repository.save_module(service.propose(module, [{"slot": slot, "profile_id": profile.profile_id}], settings=section_settings(service.settings_source(), module)),
+    return service.repository.save_module(service.propose(module, [{"slot": slot, "profile_id": profile.profile_id}], settings=service.default_module_settings(module)),
                                  expected_revision=current.revision if current else None)
 
 
 def runtime(service):
     return service.materialize(service.repository.get_activation_set())
+
+
+def test_profile_management_does_not_read_unrelated_server_settings(service):
+    path = service.repository.root / "settings.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('[LOGGING]\nlevel = "unsupported"\n')
+    before = path.read_bytes()
+    configuration = ConfigurationService(service.repository, service.catalog)
+
+    profile = create_source(configuration, file_reader_chunk_size=123)
+    selected = select(configuration, profile, "acquisition.source")
+
+    assert selected.bindings[0].parameters["file_reader_chunk_size"] == 123
+    assert path.read_bytes() == before
 
 
 def test_curry8_parallel_address_survives_profile_save_and_update(service):
@@ -102,9 +113,9 @@ def test_profile_reference_refresh_is_explicit(service):
     selected = select(service, profile, "acquisition.source")
     service.update(profile.profile_id, name="New", parameters={"file_reader_chunk_size": 200}, expected_revision=1)
     request = [{"slot": "acquisition.source", "profile_id": profile.profile_id}]
-    retained = service.propose("acquisition", request, refresh_slots=[], settings=section_settings(service.settings_source(), "acquisition"))
+    retained = service.propose("acquisition", request, refresh_slots=[], settings=service.default_module_settings("acquisition"))
     assert retained.bindings == selected.bindings
-    refreshed = service.propose("acquisition", request, refresh_slots=["acquisition.source"], settings=section_settings(service.settings_source(), "acquisition"))
+    refreshed = service.propose("acquisition", request, refresh_slots=["acquisition.source"], settings=service.default_module_settings("acquisition"))
     assert refreshed.bindings[0].profile_revision == 2
     assert refreshed.bindings[0].parameters["file_reader_chunk_size"] == 200
     assert service.repository.get_module("acquisition") == selected
@@ -114,20 +125,15 @@ def test_filter_instances_keep_order_and_unique_slots(service):
     plugin = definition(service, "filter", "BASELINE_CORRECTION")
     profile = service.create("filter", plugin.selection, "Baseline", {})
     selections = [{"slot": f"processing.filter.{uuid4()}", "profile_id": profile.profile_id} for _ in range(2)]
-    candidate = service.propose("processing", selections, settings=section_settings(service.settings_source(), "processing"))
+    candidate = service.propose("processing", selections, settings=service.default_module_settings("processing"))
     service.repository.save_module(candidate, expected_revision=None)
-    reordered = service.propose("processing", list(reversed(selections)), settings=section_settings(service.settings_source(), "processing"))
+    reordered = service.propose("processing", list(reversed(selections)), settings=service.default_module_settings("processing"))
     assert reordered.revision != candidate.revision
     assert [item.slot for item in reordered.bindings] == [item["slot"] for item in reversed(selections)]
 
 
-def test_each_section_copies_only_its_owned_host_settings(service):
-    service.settings_source = lambda: {
-        "NEUROENGINE.queue_size": 64, "ALGORITHM.baseline_duration": 2.0,
-        "STIMULATION.auto_spawn": False, "ACTUATION.auto_spawn": False,
-        "STIMULATION.server_port": 5000, "debug": True,
-        "LOGGING.level": "INFO", "ACQUISITION.sample_rate": 999, "unknown": 1,
-    }
+def test_each_section_keeps_its_explicit_owned_settings(service):
+    service.save_server({"LOGGING.level": "DEBUG"}, expected_revision=service.read_server()[1])
     expected = {
         "acquisition": {},
         "processing": {"ALGORITHM.baseline_duration": 2.0},
@@ -135,11 +141,11 @@ def test_each_section_copies_only_its_owned_host_settings(service):
         "actuation": {"ACTUATION.auto_spawn": False},
     }
     for module, settings in expected.items():
-        candidate = service.propose(module, [], settings=section_settings(service.settings_source(), module))
+        candidate = service.propose(module, [], settings=settings)
         assert candidate.settings == settings
         service.repository.save_module(candidate, expected_revision=None)
     assert service.repository.get_engine() is None
-    engine_settings = service.propose_engine(section_settings(service.settings_source(), "engine"))
+    engine_settings = service.propose_engine({"NEUROENGINE.queue_size": 64, "debug": True})
     assert engine_settings.settings == {"NEUROENGINE.queue_size": 64, "debug": True}
     service.repository.save_engine(engine_settings, expected_revision=None)
     values = runtime(service)
@@ -149,11 +155,12 @@ def test_each_section_copies_only_its_owned_host_settings(service):
 
 
 def test_module_acceptance_preserves_other_modules_and_never_initializes_engine(service):
-    processing = service.repository.save_module(service.propose("processing", [], settings=section_settings(service.settings_source(), "processing")), expected_revision=None)
+    processing = service.repository.save_module(service.propose("processing", [], settings=service.default_module_settings("processing")), expected_revision=None)
     source = select(service, create_source(service), "acquisition.source")
-    service.settings_source = lambda: {"NEUROENGINE.queue_size": 250, "ALGORITHM.baseline_duration": 9.0}
+    service.propose_engine({"NEUROENGINE.queue_size": 250})
+    service.propose("processing", [], settings={"ALGORITHM.baseline_duration": 9.0})
     candidate = service.propose("acquisition", [{"slot": source.bindings[0].slot,
-                                               "profile_id": source.bindings[0].profile_id}], settings=section_settings(service.settings_source(), "acquisition"))
+                                               "profile_id": source.bindings[0].profile_id}], settings=service.default_module_settings("acquisition"))
     service.repository.save_module(candidate, expected_revision=source.revision)
     assert candidate.settings == {}
     assert candidate.revision == source.revision
@@ -165,15 +172,16 @@ def test_module_acceptance_preserves_other_modules_and_never_initializes_engine(
     ("LOGGING.level", "DEBUG"), ("NEUROENGINE.command_timeout_s", 20.0), ("PLUGINS.user_dir", "/new/plugins"),
 ])
 def test_server_startup_edits_do_not_block_engine_candidates(service, key, value):
-    service.settings_source = lambda: {key: value}
+    service.save_server({key: value}, expected_revision=service.read_server()[1])
     assert service.propose_engine({"NEUROENGINE.queue_size": 32}).settings == {"NEUROENGINE.queue_size": 32}
-    assert service.propose("processing", [], settings=section_settings(service.settings_source(), "processing")).settings == {}
+    assert service.propose("processing", [], settings={}).settings == {}
 
 
 def test_materialized_runtime_uses_pinned_source_values_and_generation(service):
     profile = create_source(service, file_reader_chunk_size=123)
     source = select(service, profile, "acquisition.source")
-    service.settings_source = lambda: {"ACQUISITION.file_reader_chunk_size": 999}
+    service.update(profile.profile_id, name=profile.name, parameters={"file_reader_chunk_size": 999},
+                   expected_revision=profile.revision)
     values = service.materialize(service.repository.get_activation_set(), generation="run-1")
     assert values["ACQUISITION.file_reader_chunk_size"] == 123
     assert values["CONFIG.module_revisions"]["acquisition"] == source.revision
@@ -192,7 +200,7 @@ def test_idle_missing_source_package_does_not_block_foundation_or_outputs(servic
         replace(source.bindings[0], selection=PluginSelection("missing.source", "reader", "1.0.0")),
     ))
     service.repository.save_module(missing, expected_revision=source.revision)
-    service.repository.save_engine(service.propose_engine(section_settings(service.settings_source(), "engine")), expected_revision=None)
+    service.repository.save_engine(service.propose_engine(ENGINE_SETTING_DEFAULTS), expected_revision=None)
     plugin = definition(service, kind, alias)
     output = select(service, service.create(kind, plugin.selection, "Output", {}), slot)
     original_get = service.catalog.get
@@ -230,7 +238,7 @@ def external_source_profile(service, monkeypatch, parameters):
 @pytest.mark.parametrize("value", [True, 0, -1, 1.5])
 def test_declared_source_expectations_must_be_positive_integers(service, monkeypatch, key, value):
     profile = external_source_profile(service, monkeypatch, {key: value})
-    candidate = service.propose("acquisition", [{"slot": "acquisition.source", "profile_id": profile.profile_id}], settings=section_settings(service.settings_source(), "acquisition"))
+    candidate = service.propose("acquisition", [{"slot": "acquisition.source", "profile_id": profile.profile_id}], settings=service.default_module_settings("acquisition"))
     with pytest.raises(PluginSchemaError, match="positive integer"):
         service.validate_module(candidate, active_kinds={"acquisition"})
     assert service.materialize(ActivationSet({"acquisition": candidate}, None))[f"ACQUISITION.{key}"] == value
@@ -312,8 +320,9 @@ def test_profile_schema_unknown_parameters_are_still_rejected(service):
 
 
 def test_server_restart_does_not_add_server_values_to_runtime(service):
-    previous = service.repository.save_engine(service.propose_engine(section_settings(service.settings_source(), "engine")), expected_revision=None)
-    restarted = PluginProfileService(service.repository, service.catalog,
-        settings_source=lambda: {"NEUROENGINE.queue_size": 100, "debug": False, "NEUROENGINE.command_timeout_s": 20.0})
+    service.save_server({"NEUROENGINE.command_timeout_s": 20.0},
+                        expected_revision=service.read_server()[1])
+    previous = service.repository.save_engine(service.propose_engine(ENGINE_SETTING_DEFAULTS), expected_revision=None)
+    restarted = ConfigurationService(service.repository, service.catalog)
     assert restarted.propose_engine(previous.settings) == previous
     assert "NEUROENGINE.command_timeout_s" not in restarted.materialize(service.repository.get_activation_set())

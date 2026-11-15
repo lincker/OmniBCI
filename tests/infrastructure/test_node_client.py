@@ -7,7 +7,7 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from omnibci.application.node_configuration import NodeConfiguration
-from omnibci.application.plugin_profiles import PluginSelection, ProfileBinding
+from omnibci.application.configuration.models import PluginSelection, ProfileBinding
 from omnibci.infrastructure.plugins import node_client
 
 
@@ -154,8 +154,8 @@ def test_old_cli_flag_is_rejected():
 
 
 def test_supervisor_retries_before_application_and_refetches_only_after_clean_exit(monkeypatch):
-    import omnibci.conf as conf
     calls = []
+    snapshots = []
     values = iter([node_client.NodeConfigurationUnavailable("offline"), configuration(),
                    configuration(generation="run-2")])
 
@@ -172,6 +172,7 @@ def test_supervisor_retries_before_application_and_refetches_only_after_clean_ex
 
     def application(**kwargs):
         calls.append("construct")
+        snapshots.append(kwargs["settings_snapshot"])
 
         def run():
             calls.append("run-cleanup")
@@ -182,16 +183,14 @@ def test_supervisor_retries_before_application_and_refetches_only_after_clean_ex
     monkeypatch.setattr(node_client, "materialize_node_configuration", materialize)
     monkeypatch.setattr(node_client, "CatalogConfigurationAdapter", Mock())
     monkeypatch.setattr(node_client.time, "sleep", lambda _: calls.append("wait"))
-    monkeypatch.setattr(conf, "settings", Mock())
     node_client.run_configured_node("actuation", application, server_url="http://server")
     assert calls == ["fetch", "wait", "fetch", "validate", "construct", "run-cleanup", "wait",
                      "fetch", "validate", "construct", "run-cleanup"]
-    assert conf.settings.use_snapshot.call_args.args[0] == {"CONFIG.generation": "run-2"}
+    assert snapshots == [{"CONFIG.generation": "run-1"}, {"CONFIG.generation": "run-2"}]
 
 
 @pytest.mark.parametrize("stage", ["fetch", "validate", "construct", "run"])
 def test_supervisor_never_retries_invalid_configuration_hardware_or_cleanup(monkeypatch, stage):
-    import omnibci.conf as conf
     error = RuntimeError("invalid config or hardware cleanup")
     fetch = Mock(return_value=configuration())
     validate = Mock(return_value={})
@@ -207,7 +206,6 @@ def test_supervisor_never_retries_invalid_configuration_hardware_or_cleanup(monk
     monkeypatch.setattr(node_client, "CatalogConfigurationAdapter", Mock())
     sleeper = Mock()
     monkeypatch.setattr(node_client.time, "sleep", sleeper)
-    monkeypatch.setattr(conf, "settings", Mock())
     with pytest.raises(RuntimeError, match="invalid config or hardware cleanup"):
         node_client.run_configured_node("actuation", application, server_url="http://server")
     fetch.assert_called_once()

@@ -10,7 +10,7 @@ from tests.plugin_configuration_helpers import builtin_selection
 import pytest
 
 from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8 import trigger
-from omnibci.application.plugin_profiles import ProfileBinding
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.infrastructure.stimulation.stimulator import Stimulator
 

@@ -12,7 +12,7 @@ import pytest
 
 from tests.processing_helpers import make_processor
 from omnibci.application.events import CommandRequest, ProcessingInputStart
-from omnibci.application.plugin_profiles import ProfileBinding
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.domain.signal_info import SignalInfo
