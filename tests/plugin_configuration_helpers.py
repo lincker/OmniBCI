@@ -16,7 +16,7 @@ def accept_profiles(service, selections):
         profile = service.create(kind, definition.selection, plugin_type, parameters)
         by_module.setdefault(slot.split(".", 1)[0], []).append({"slot": slot, "profile_id": profile.profile_id})
     if service.repository.get_system() is None:
-        service.repository.save_system(service.propose_system(), expected_revision=None)
+        service.repository.save_system(service.propose_system(section_settings(service.settings_source(), "system")), expected_revision=None)
     for module in MODULES:
         if module in by_module:
             current = service.repository.get_module(module)

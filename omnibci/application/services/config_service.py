@@ -1,10 +1,11 @@
-"""Whitelist-governed host settings, saved separately from runtime activation."""
+"""Backend startup settings share storage with independently applied Engine settings."""
 
+import math
 import threading
-from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
+from omnibci.application.activation_settings import backend_startup_settings
 from omnibci.conf import OmniBCISettings
 
 
@@ -15,16 +16,34 @@ class ConfigPolicy:
     description: str
 
 
-# Plugin selections and parameters are edited through Plugin Profiles only.
+# Engine and module settings are written only by their runtime application flow.
 CONFIG_WHITELIST: Dict[str, ConfigPolicy] = {
-    "NEUROENGINE.queue_size": ConfigPolicy("int", "engine-restart", "Inter-process queue capacity"),
+    "LOGGING.level": ConfigPolicy("string", "backend-restart", "Backend logging level"),
+    "LOGGING.file_path": ConfigPolicy("string", "backend-restart", "Log path; relative paths use the user log directory"),
+    "NEUROENGINE.command_timeout_s": ConfigPolicy("float", "backend-restart", "Seconds to wait for a module command result"),
+    "PLUGINS.user_dir": ConfigPolicy("string", "backend-restart", "Plugin directory default; OMNIBCI_PLUGIN_DIR overrides it at backend startup"),
 }
+
+
+def _valid_timeout(value):
+    try:
+        return type(value) in (int, float) and math.isfinite(value) and value > 0
+    except OverflowError:
+        return False
 
 
 _CHECKS = {
-    "int": lambda v: isinstance(v, int) and not isinstance(v, bool) and v > 0,
+    "LOGGING.level": lambda value: isinstance(value, str) and value in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"},
+    "LOGGING.file_path": lambda value: isinstance(value, str) and bool(value.strip()),
+    "NEUROENGINE.command_timeout_s": _valid_timeout,
+    "PLUGINS.user_dir": lambda value: isinstance(value, str),
 }
-_EXPECTATIONS = {"int": "positive integer"}
+_EXPECTATIONS = {
+    "LOGGING.level": "DEBUG, INFO, WARNING, ERROR, or CRITICAL",
+    "LOGGING.file_path": "non-empty text",
+    "NEUROENGINE.command_timeout_s": "finite positive number",
+    "PLUGINS.user_dir": "text (empty selects the platform default)",
+}
 
 
 class ConfigKeyNotAllowedError(KeyError):
@@ -40,22 +59,25 @@ class ConfigValidationError(ValueError):
 
 
 class ConfigService:
-    """Save host settings without changing accepted or running configuration."""
+    """Save backend values while retaining the snapshot captured at startup."""
 
-    def __init__(self, settings: OmniBCISettings, *, change_guard: Callable | None = None) -> None:
+    def __init__(self, settings: OmniBCISettings, *, active_settings: dict | None = None) -> None:
         self._settings = settings
-        self._change_guard = change_guard or nullcontext
+        self._active = backend_startup_settings(settings.saved_snapshot() if active_settings is None else active_settings)
         self._write_lock = threading.RLock()
 
     def read(self) -> Tuple[List[dict], str]:
         with self._write_lock:
-            snapshot, revision = self._settings.read_saved()
+            saved, revision = self._settings.read_saved()
+        snapshot = backend_startup_settings(saved)
         return [{
             "key": key,
             "value": snapshot.get(key),
             "type": policy.type,
             "requires": policy.requires,
             "description": policy.description,
+            "active_value": self._active[key],
+            "restart_required": snapshot[key] != self._active[key],
         } for key, policy in CONFIG_WHITELIST.items()], revision
 
     def list_entries(self) -> List[dict]:
@@ -68,17 +90,19 @@ class ConfigService:
         if unknown:
             raise ConfigKeyNotAllowedError(unknown)
         bad = {
-            key: f"expected {_EXPECTATIONS[CONFIG_WHITELIST[key].type]}"
+            key: f"expected {_EXPECTATIONS[key]}"
             for key, value in updates.items()
-            if not _CHECKS[CONFIG_WHITELIST[key].type](value)
+            if not _CHECKS[key](value)
         }
         if bad:
             raise ConfigValidationError(bad)
-        return dict(updates)
+        return {key: float(value) if CONFIG_WHITELIST[key].type == "float" else value
+                for key, value in updates.items()}
 
     def save(self, updates: Dict[str, Any], *, expected_revision: str) -> Tuple[List[str], bool, str]:
         clean = self._validate(updates)
-        with self._write_lock, self._change_guard():
+        with self._write_lock:
             revision = self._settings.update(clean, expected_revision=expected_revision)
-        restart = any(CONFIG_WHITELIST[key].requires == "engine-restart" for key in clean)
+            entries, _ = self.read()
+        restart = any(entry["restart_required"] for entry in entries)
         return sorted(clean), restart, revision

@@ -2725,7 +2725,7 @@
         "tags": [
           "Config"
         ],
-        "summary": "Saved host settings",
+        "summary": "Backend startup settings",
         "operationId": "get_config_api_v1_config_get",
         "responses": {
           "200": {
@@ -2814,7 +2814,7 @@
         "tags": [
           "Config"
         ],
-        "summary": "Save host settings without applying them",
+        "summary": "Save settings for the next backend startup",
         "operationId": "patch_config_api_v1_config_patch",
         "requestBody": {
           "content": {
@@ -7666,21 +7666,30 @@
           },
           "value": {
             "title": "Value",
-            "description": "Saved value; runtime application is separate"
+            "description": "Saved value for the next backend startup"
           },
           "type": {
             "type": "string",
             "title": "Type",
-            "description": "int | float"
+            "description": "string | float"
           },
           "requires": {
             "type": "string",
             "title": "Requires",
-            "description": "engine-restart"
+            "description": "backend-restart"
           },
           "description": {
             "type": "string",
             "title": "Description"
+          },
+          "active_value": {
+            "title": "Active Value",
+            "description": "Value captured when this backend started"
+          },
+          "restart_required": {
+            "type": "boolean",
+            "title": "Restart Required",
+            "description": "Saved value differs from the startup snapshot"
           }
         },
         "type": "object",
@@ -7689,7 +7698,9 @@
           "value",
           "type",
           "requires",
-          "description"
+          "description",
+          "active_value",
+          "restart_required"
         ],
         "title": "ConfigEntry"
       },
@@ -8951,17 +8962,17 @@
             "title": "Revision",
             "description": "Revision after saving the host settings"
           },
-          "engine_restart_required": {
+          "backend_restart_required": {
             "type": "boolean",
-            "title": "Engine Restart Required",
-            "description": "Whether applying these saved changes requires an engine restart"
+            "title": "Backend Restart Required",
+            "description": "Whether any saved backend settings differ from the startup snapshot"
           }
         },
         "type": "object",
         "required": [
           "saved",
           "revision",
-          "engine_restart_required"
+          "backend_restart_required"
         ],
         "title": "PatchConfigResponse"
       },

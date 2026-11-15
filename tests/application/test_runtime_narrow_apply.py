@@ -93,7 +93,7 @@ def narrow(rebuild_harness):
                                         "Replacement decoder", {})
             bindings[0] = {"slot": "processing.decoder", "profile_id": decoder.profile_id}
         h.plan = h.runtime.plan(h.module, bindings, expected_revision=h.previous.modules[h.module].revision,
-                               refresh_slots=["processing.decoder"], settings=None if h.module == "system" else section_settings(h.runtime.profiles.settings_source(), h.module))
+                               refresh_slots=["processing.decoder"], settings=section_settings(h.runtime.profiles.settings_source(), h.module))
         assert not h.plan.errors
         assert h.plan.strategy == strategy
         return h
@@ -466,7 +466,7 @@ async def test_explicit_different_source_can_start_fresh_after_live_source(rebui
     selected = h.profiles.create("acquisition", builtin_selection("acquisition", "neuroscan_scan45_reader"), "Different source", {})
     bindings = [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in h.previous.modules[h.module].bindings]
     bindings[0] = {"slot": "acquisition.source", "profile_id": selected.profile_id}
-    h.plan = h.runtime.plan(h.module, bindings, expected_revision=h.previous.modules[h.module].revision, settings=None if h.module == "system" else section_settings(h.runtime.profiles.settings_source(), h.module))
+    h.plan = h.runtime.plan(h.module, bindings, expected_revision=h.previous.modules[h.module].revision, settings=section_settings(h.runtime.profiles.settings_source(), h.module))
     assert h.plan.strategy == "rebuild" and not h.plan.errors
     request = h.commands.request
     inspected = []
@@ -543,7 +543,7 @@ async def test_inactive_windows_trigger_does_not_block_decoder_apply(narrow, mon
     h = narrow("trial_boundary")
     bindings = with_unavailable_windows_trigger(h, monkeypatch)
     h.plan = h.runtime.plan(h.module, bindings, expected_revision=h.previous.modules[h.module].revision,
-                            refresh_slots=["processing.decoder"], settings=None if h.module == "system" else section_settings(h.runtime.profiles.settings_source(), h.module))
+                            refresh_slots=["processing.decoder"], settings=section_settings(h.runtime.profiles.settings_source(), h.module))
     assert not h.plan.errors
     operation = await apply(h)
     assert operation["status"] == "succeeded"
@@ -558,7 +558,7 @@ def test_other_module_platform_validation_does_not_block_processing(narrow, monk
     stimulation = h.runtime.executor.stimulation
     stimulation.process_alive = active_during_plan
     plan = h.runtime.plan(h.module, bindings, expected_revision=h.previous.modules[h.module].revision,
-                          refresh_slots=["processing.decoder"], settings=None if h.module == "system" else section_settings(h.runtime.profiles.settings_source(), h.module))
+                          refresh_slots=["processing.decoder"], settings=section_settings(h.runtime.profiles.settings_source(), h.module))
     assert not plan.errors
     stimulation.process_alive = True
     h.runtime.resolve_plan(plan.plan_id)

@@ -4,10 +4,10 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from omnibci.application.activation_settings import MODULES
+from omnibci.application.activation_settings import MODULES, SYSTEM_SETTING_DEFAULTS
 from omnibci.application.config_errors import ConfigProfileConflictError
 from omnibci.application.plugin_profiles import (
-    PluginProfileNotFoundError, PluginProfileStorageError, PluginProfileValidationError,
+    PluginProfileNotFoundError, PluginProfileValidationError,
     PluginSelection, ProfileRevisionConflict,
 )
 from omnibci.application.plugin_schema import PluginSchemaError
@@ -42,7 +42,7 @@ def _configuration_errors():
         raise ApiError(409, ErrorCode.CONFLICT, str(exc)) from exc
     except PluginProfileNotFoundError as exc:
         raise ApiError(404, ErrorCode.CONFIG_PROFILE_NOT_FOUND, f"Profile not found: {exc}") from exc
-    except PluginProfileStorageError as exc:
+    except OSError as exc:
         raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, str(exc)) from exc
 
 
@@ -106,7 +106,7 @@ def _module_response(module, activation, svc):
 
 
 def _system_response(system):
-    return system.to_dict() if system is not None else {"revision": None, "settings": {}}
+    return system.to_dict() if system is not None else {"revision": None, "settings": dict(SYSTEM_SETTING_DEFAULTS)}
 
 
 @router.get("/modules", response_model=ApiResponse[ModulesResponse])

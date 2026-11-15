@@ -327,6 +327,18 @@ class SystemSettings:
         settings = _object_data(settings, "settings")
         if settings.keys() - SECTION_SETTING_KEYS["system"]:
             raise PluginProfileValidationError("Settings must belong to the system section")
+        for key, value in settings.items():
+            if key == "debug":
+                valid = type(value) is bool
+            elif key == "NEUROENGINE.queue_size":
+                valid = type(value) is int and value > 0
+            else:
+                try:
+                    valid = type(value) in (int, float) and math.isfinite(value) and value > 0
+                except OverflowError:
+                    valid = False
+            if not valid:
+                raise PluginProfileValidationError(f"Invalid system setting: {key}")
         object.__setattr__(self, "_settings_json", _canonical(settings))
         content = _canonical({"system": settings})
         object.__setattr__(self, "revision", hashlib.sha256(content.encode("utf-8")).hexdigest())

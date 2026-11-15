@@ -16,6 +16,11 @@ The Windows path uses platformdirs' default local-data policy. The platformdirs
 result is authoritative; applications should use the path provider instead of
 constructing these examples.
 
+The Backend resolves this directory once at startup and retains it for catalog
+scanning, package installation, and managed child processes. Saving a different
+`PLUGINS.user_dir` takes effect after restarting the Backend; restarting only the
+Engine does not switch plugin directories.
+
 ```text
 plugins/
   packages/<publisher.id>/<version>/   # Immutable extracted archive

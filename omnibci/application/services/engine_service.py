@@ -388,12 +388,6 @@ class NeuroEngineService(EnginePort):
             with self._configuration_lock:
                 self._transitioning = False
 
-    @contextmanager
-    def configuration_change(self):
-        """Keep saved system setting writes atomic with engine admission."""
-        with self._admission.command(), self._configuration_lock:
-            yield
-
     def node_configuration_snapshot(self, selected_snapshot: Callable[[], dict], *, module=None) -> tuple[str, dict]:
         """Publish one settled snapshot; never expose an in-flight or historical graph."""
         with self._admission.command(module, recovery=module in ("stimulation", "actuation")), self._configuration_lock:

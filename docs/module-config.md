@@ -5,6 +5,40 @@ Signal Processing, Stimulation, and Actuation. Each owns its settings, pinned
 plugin bindings, content revision, file, lock, and application history.
 Named saved Profiles remain independent for each plugin.
 
+## Backend, Engine, and the `system` identifier
+
+**Backend** is the Python service: HTTP/WebSocket APIs, configuration and plugin
+management, logging, and runtime control. It can serve configuration requests
+while the Engine is stopped.
+
+**NeuroEngine** is the runtime foundation controlled by that service. It owns
+message transport, queues, worker lifecycle, and output gateways. After Engine
+startup, Acquisition, Signal Processing, Stimulation, and Actuation have their
+own start/stop paths. Starting Engine alone starts none of those modules;
+stopping it stops all four.
+
+**`system` in configuration APIs** is the existing identifier for Engine settings,
+not a fifth module or another runtime layer. `/config/system`, plan `module:
+"system"`, and `system_revision` refer to queue capacity, worker startup timeout,
+and debug mode. The user file names this group `[engine]` and the console calls it
+Engine. The separate `/system/info` and `/system/logs` endpoints provide Backend
+diagnostics; they do not define another configuration owner.
+
+```mermaid
+flowchart TB
+    UI[Web / Desktop console] --> API[Backend APIs and management services]
+    API --> E[NeuroEngine foundation]
+    E --> A[Acquisition]
+    E --> P[Signal Processing]
+    E --> S[Stimulation]
+    E --> O[Actuation]
+    A -. Signal stream when attached .-> P
+```
+
+Independent lifecycle does not remove data dependencies: Processing can start
+in standby, but needs an Acquisition descriptor and stream to process samples.
+Stimulation and Actuation do not require Acquisition or Processing to run.
+
 ## Ownership
 
 | Section | Owned host settings | Plugin bindings |
@@ -19,6 +53,12 @@ The `system` revision represents shared infrastructure settings, not an aggregat
 of module revisions. A derived `ActivationSet` combines only the files needed by an operation;
 it does not introduce another saved object or global revision.
 
+The four modules keep separate `activation/<module>.toml` files. Engine settings
+use `[engine]` in the user `settings.toml`, alongside Backend startup settings.
+Engine revisions hash only Engine values; Backend save revisions hash only Backend
+values. Writers share a file lock and preserve the other group's latest values,
+including during Engine rollback. Module storage and history remain independent.
+
 Setup edits Stimulation's `STIMULATION.server_ip`, `STIMULATION.server_port`,
 renderer and managed/external mode, and Actuation's corresponding address,
 mode, watchdog and maximum command age. These are module settings, separate
@@ -28,6 +68,47 @@ Each output owns its listener settings even though Engine hosts the listener.
 Changing them replaces only that output, preserving the foundation generation,
 other listeners, and A/P workers. A connected external node must disconnect
 before its settings change.
+
+## Shared user settings file
+
+The user configuration root is `OMNIBCI_CONFIG_DIR` when set, otherwise the
+platform user configuration directory. Its `settings.toml` holds both Engine
+and Backend startup settings:
+
+```toml
+[engine]
+"NEUROENGINE.queue_size" = 100
+"NEUROENGINE.startup_timeout_s" = 5.0
+debug = false
+
+[LOGGING]
+level = "INFO"
+file_path = "omnibci.log"
+
+[NEUROENGINE]
+command_timeout_s = 10.0
+
+[PLUGINS]
+user_dir = ""
+```
+
+Only supplied values need to be present. An absent `[engine]` means no Engine
+settings have been accepted; an empty table preserves an accepted empty
+configuration. Missing Engine fields use declared runtime defaults. The packaged
+`omnibci/conf/settings.toml` remains a read-only default template.
+
+Engine Review uses current editor values. Successful application stores
+`[engine]`; when running, it rebuilds Engine and restores the modules that were
+running. Backend Save writes its own fields for the next Backend startup. The
+page shows saved values separately from that process's startup values. Restarting
+Engine alone does not apply Backend edits.
+
+Both writers use `.host-settings.lock`, reread the latest document under the
+lock, check their own content revision, and atomically replace the file. Engine
+rollback restores or removes only `[engine]`, preserving concurrent Backend
+saves. Revisions are derived, not additional stored fields. The legacy
+`activation/system.toml` and `locks/system.lock` are no longer read or written;
+there is no automatic legacy migration layer.
 
 ## Apply flow
 
@@ -54,11 +135,15 @@ dirty editor. Successful changes record module history once per operation.
 System settings and module-history restoration retain explicit plan review and
 Apply. The backend rechecks their dependency revisions and generation before
 execution. These review plans are not a prerequisite for ordinary module actions.
+System review takes the editor's current settings directly; no prior Save is
+required. Backend startup edits use a separate Save action and require a backend
+restart. Pending Backend edits do not block Engine review or module actions.
 
 Unrelated module edits do not invalidate a narrow plan. Processing also depends
 on Acquisition; every module depends on system. A system rebuild depends on all
 sections because it replaces the shared runtime. A first module selection also
-initializes system through an explicit plan candidate when its file is absent.
+initializes system with declared defaults through an explicit plan candidate when
+the `[engine]` table is absent.
 Starting an empty engine accepts initial shared settings without selecting plugins.
 
 | Change while running | Boundary |
@@ -193,6 +278,8 @@ All routes use the normal `/api/v1` prefix and response envelope.
 | `GET /config/modules/{module}/history/{entry_id}` | Historical full module snapshot |
 | `POST /config/modules/{module}/revert-plan` | Plan restoration by history entry ID |
 | `GET /config/system` | Accepted shared settings |
+| `GET /config` | Backend saved values, startup values, restart flags, and Backend save revision |
+| `PATCH /config` | Save Backend startup values with `expected_revision`; does not apply Engine settings |
 | `GET /config/plugin-profiles/{id}/history` | Saved Profile revisions |
 | `POST /config/plugin-profiles/{id}/revert` | Copy a historical Profile into a new revision |
 

@@ -1,4 +1,4 @@
-"""Configuration writes and engine lifecycle transitions share an exclusion gate."""
+"""Backend saves and Engine application share storage without lifecycle coupling."""
 from omnibci.application.activation_settings import section_settings
 import asyncio
 import threading
@@ -7,100 +7,72 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from omnibci.application.commands.engine_commands import StartEngineCommand
-from omnibci.application.plugin_profiles import ProfileRevisionConflict
+from omnibci.application.plugin_profiles import SystemSettings
 from omnibci.application.services.config_service import ConfigService
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.conf import OmniBCISettings
+from omnibci.infrastructure.repositories.plugin_profile_repository import TomlPluginProfileRepository
 
 
 @pytest.fixture
 def application_config(tmp_path):
     path = tmp_path / "settings.toml"
-    path.write_text('[ACQUISITION]\nsignal_source = "file_reader"\nsample_rate = 1000\n'
-                    'channel_count = 10\ndata_file_path = "recordings/demo.cnt"\n'
-                    'file_reader_chunk_size = 100\ntrigger = ""\n'
-                    '[ALGORITHM]\ndecoder = "THUBCI_SSVEP_classic40FBCCA"\n'
-                    'epoch_detector = "DEFAULT_EPOCH_DETECTOR"\nfilters = []\nbaseline_duration = 1.0\n'
-                    '[NEUROENGINE]\nqueue_size = 32\n'
-                    '[STIMULATION]\nparadigm = "STIMULATION_THUBCI_SSVEP_classic40"\n'
-                    'auto_spawn = false\n[ACTUATION]\neffector = ""\nenabled = false\n',
-                    encoding="utf-8")
-    return ConfigService(OmniBCISettings(path))
+    path.write_text('[NEUROENGINE]\ncommand_timeout_s=10.0\n[engine]\n"NEUROENGINE.queue_size"=32\n')
+    return ConfigService(OmniBCISettings(user_file=path))
 
 
-def test_host_settings_can_be_saved_while_running_without_applying(application_config):
+def test_backend_save_does_not_apply_to_running_engine(application_config):
     builder = MagicMock()
     engine = NeuroEngineService(engine_factory=builder)
-    application_config._change_guard = engine.configuration_change
     engine._running = True
-    engine._applied_snapshot = application_config._settings.snapshot()
-
+    engine._applied_snapshot = {"NEUROENGINE.queue_size": 32}
     saved, restart, _ = application_config.save(
-        {"NEUROENGINE.queue_size": 64}, expected_revision=application_config.read()[1])
-
-    assert saved == ["NEUROENGINE.queue_size"]
-    assert restart is True
-    assert application_config._settings.get("NEUROENGINE.queue_size") == 64
-    assert engine.applied_snapshot["NEUROENGINE.queue_size"] == 32
+        {"NEUROENGINE.command_timeout_s": 20}, expected_revision=application_config.read()[1])
+    assert saved == ["NEUROENGINE.command_timeout_s"] and restart
+    assert engine.applied_snapshot == {"NEUROENGINE.queue_size": 32}
+    assert next(item for item in application_config.list_entries()
+                if item["key"] == "NEUROENGINE.command_timeout_s")["active_value"] == 10
     builder.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_runtime_apply_blocks_host_save_without_partial_write(application_config, tmp_path):
-    entered, release = asyncio.Event(), asyncio.Event()
+async def test_backend_save_does_not_wait_for_engine_transition(application_config, tmp_path):
     engine = NeuroEngineService(engine_factory=MagicMock())
-    application_config._change_guard = engine.configuration_change
-    path = tmp_path / "settings.toml"
-    before = path.read_bytes()
-
-    async def apply_configuration():
-        async with engine.runtime_transition():
-            entered.set()
-            await release.wait()
-
-    task = asyncio.create_task(apply_configuration())
-    try:
-        await asyncio.wait_for(entered.wait(), 3)
-        with pytest.raises(ProfileRevisionConflict):
-            application_config.save(
-                {"NEUROENGINE.queue_size": 64}, expected_revision=application_config.read()[1])
-        assert application_config._settings.get("NEUROENGINE.queue_size") == 32
-        assert path.read_bytes() == before
-    finally:
-        release.set()
-        await task
-    application_config.save(
-        {"NEUROENGINE.queue_size": 64}, expected_revision=application_config.read()[1])
-    assert OmniBCISettings(path).get("NEUROENGINE.queue_size") == 64
+    repository = TomlPluginProfileRepository(tmp_path)
+    before = repository.get_system()
+    async with engine.runtime_transition():
+        application_config.save({"LOGGING.level": "DEBUG"}, expected_revision=application_config.read()[1])
+    assert repository.get_system() == before
 
 
-@pytest.mark.asyncio
-async def test_host_save_excludes_runtime_apply_until_persisted(application_config, monkeypatch, tmp_path):
+def test_backend_save_preserves_engine_change_made_during_request(application_config, monkeypatch, tmp_path):
     entered, release = threading.Event(), threading.Event()
-    engine = NeuroEngineService(engine_factory=MagicMock())
-    application_config._change_guard = engine.configuration_change
+    repository = TomlPluginProfileRepository(tmp_path)
+    before = repository.get_system()
     update = application_config._settings.update
     revision = application_config.read()[1]
-
+    errors = []
     def persist(updates, *, expected_revision):
         entered.set()
         assert release.wait(3)
         return update(updates, expected_revision=expected_revision)
-
     monkeypatch.setattr(application_config._settings, "update", persist)
-    thread = threading.Thread(target=lambda: application_config.save(
-        {"NEUROENGINE.queue_size": 64}, expected_revision=revision))
+    def save():
+        try:
+            application_config.save({"LOGGING.level": "DEBUG"}, expected_revision=revision)
+        except BaseException as exc:
+            errors.append(exc)
+    thread = threading.Thread(target=save)
     thread.start()
     try:
-        assert await asyncio.to_thread(entered.wait, 3)
-        with pytest.raises(ProfileRevisionConflict):
-            async with engine.runtime_transition():
-                pytest.fail("Apply entered before the settings save completed")
+        assert entered.wait(3)
+        repository.save_system(SystemSettings({"NEUROENGINE.queue_size": 64}), expected_revision=before.revision)
     finally:
         release.set()
-        await asyncio.to_thread(thread.join, 3)
-    assert not thread.is_alive()
-    assert OmniBCISettings(tmp_path / "settings.toml").get("NEUROENGINE.queue_size") == 64
+        thread.join(3)
+    assert not thread.is_alive() and not errors
+    assert repository.get_system().settings == {"NEUROENGINE.queue_size": 64}
+    assert OmniBCISettings(user_file=tmp_path / "settings.toml").saved_snapshot()["LOGGING.level"] == "DEBUG"
 
 
 @pytest.mark.asyncio
@@ -128,7 +100,7 @@ async def test_bootstrap_shares_pinned_plugin_selection_between_status_and_engin
         ):
             selected = profiles.create(kind, builtin_selection(kind, alias), alias, {})
             bindings.append({"slot": slot, "profile_id": selected.profile_id})
-        profiles.repository.save_system(profiles.propose_system(), expected_revision=None)
+        profiles.repository.save_system(profiles.propose_system({"NEUROENGINE.queue_size": 32}), expected_revision=None)
         for module in ("acquisition", "processing", "stimulation"):
             profiles.repository.save_module(profiles.propose(module, [
                 binding for binding in bindings if binding["slot"].startswith(f"{module}.")

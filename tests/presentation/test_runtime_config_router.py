@@ -37,9 +37,11 @@ def test_status_and_review_plan_contract():
                                 "refresh_slots": None, "module": "processing", "settings": {}}
         assert client.post("/config/apply-plan", json={
             "module": "system", "bindings": [], "expected_revision": "selected", "refresh_slots": [],
+            "settings": {"NEUROENGINE.queue_size": 200},
         }).status_code == 200
         assert requests[-1] == {"bindings": [], "expected_revision": "selected",
-                                "refresh_slots": [], "module": "system", "settings": None}
+                                "refresh_slots": [], "module": "system",
+                                "settings": {"NEUROENGINE.queue_size": 200}}
         assert client.post("/config/apply-plan", json={
             "bindings": [], "expected_revision": "selected", "module": "acquisition",
         }).status_code == 200

@@ -137,6 +137,6 @@ async def test_changed_system_rejects_pending_module_plan(flow):
     plan = source_plan(flow)
     previous = flow.profiles.repository.get_system()
     flow.host["debug"] = True
-    flow.profiles.repository.save_system(flow.profiles.propose_system(), expected_revision=previous.revision)
+    flow.profiles.repository.save_system(flow.profiles.propose_system(section_settings(flow.profiles.settings_source(), "system")), expected_revision=previous.revision)
     with pytest.raises(ProfileRevisionConflict):
         flow.runtime.resolve_plan(plan.plan_id)

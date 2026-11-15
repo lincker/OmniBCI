@@ -1,6 +1,8 @@
 """Module settings are explicit current values, independently of host-file edits."""
 from unittest.mock import Mock
 
+from omnibci.application.activation_settings import section_settings
+
 import pytest
 
 from omnibci.application.plugin_profiles import ModuleActivation, PluginProfileValidationError, SystemSettings
@@ -79,7 +81,7 @@ def test_stimulation_listener_settings_belong_only_to_stimulation():
     assert service.default_module_settings("stimulation") == {
         **settings, "STIMULATION.renderer": "moderngl", "STIMULATION.auto_spawn": True,
     }
-    assert service.propose_system().settings == {}
+    assert service.propose_system(section_settings(service.settings_source(), "system")).settings == {}
     assert ModuleActivation("stimulation", settings, ()).settings == settings
     with pytest.raises(PluginProfileValidationError, match="system section"):
         SystemSettings(settings)
@@ -95,11 +97,11 @@ def test_stimulation_listener_default_port_is_8765():
 def test_stimulation_listener_change_does_not_change_system_or_other_module_revisions():
     settings = {"STIMULATION.server_port": 8765, "NEUROENGINE.queue_size": 100}
     service = PluginProfileService(Mock(), Mock(), settings_source=lambda: settings)
-    system = service.propose_system()
+    system = service.propose_system(section_settings(service.settings_source(), "system"))
     before = {module: ModuleActivation(module, service.default_module_settings(module), ())
               for module in ("acquisition", "processing", "stimulation", "actuation")}
     settings["STIMULATION.server_port"] = 9000
-    assert service.propose_system().revision == system.revision
+    assert service.propose_system(section_settings(service.settings_source(), "system")).revision == system.revision
     for module, previous in before.items():
         current = ModuleActivation(module, service.default_module_settings(module), ())
         assert (current.revision != previous.revision) == (module == "stimulation")

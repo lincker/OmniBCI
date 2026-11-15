@@ -453,14 +453,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Saved host settings */
+        /** Backend startup settings */
         get: operations["get_config_api_v1_config_get"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
-        /** Save host settings without applying them */
+        /** Save settings for the next backend startup */
         patch: operations["patch_config_api_v1_config_patch"];
         trace?: never;
     };
@@ -1662,21 +1662,31 @@ export interface components {
             key: string;
             /**
              * Value
-             * @description Saved value; runtime application is separate
+             * @description Saved value for the next backend startup
              */
             value: unknown;
             /**
              * Type
-             * @description int | float
+             * @description string | float
              */
             type: string;
             /**
              * Requires
-             * @description engine-restart
+             * @description backend-restart
              */
             requires: string;
             /** Description */
             description: string;
+            /**
+             * Active Value
+             * @description Value captured when this backend started
+             */
+            active_value: unknown;
+            /**
+             * Restart Required
+             * @description Saved value differs from the startup snapshot
+             */
+            restart_required: boolean;
         };
         /** ConfigResponse */
         ConfigResponse: {
@@ -2132,10 +2142,10 @@ export interface components {
              */
             revision: string;
             /**
-             * Engine Restart Required
-             * @description Whether applying these saved changes requires an engine restart
+             * Backend Restart Required
+             * @description Whether any saved backend settings differ from the startup snapshot
              */
-            engine_restart_required: boolean;
+            backend_restart_required: boolean;
         };
         /** PluginConfigurationResponse */
         PluginConfigurationResponse: {

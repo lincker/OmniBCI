@@ -529,10 +529,15 @@ def test_saved_logging_edit_during_startup_still_requires_backend_restart(
         assert app.state.backend_logging.file_path == loaded["path"]
         response = client.post("/api/v1/config/apply-plan", json={
             "module": "system", "bindings": [], "expected_revision": None,
+            "settings": {"NEUROENGINE.queue_size": 42},
         })
-        assert response.status_code == 422, response.text
-        assert "Backend restart required" in response.json()["message"]
-        assert "LOGGING.file_path" in response.json()["message"]
+        assert response.status_code == 200, response.text
+        assert not response.json()["data"]["errors"]
+        entries = client.get("/api/v1/config").json()["data"]["entries"]
+        entry = next(item for item in entries if item["key"] == "LOGGING.file_path")
+        assert entry["value"] == str(changed_log)
+        assert entry["active_value"] == str(initial_log)
+        assert entry["restart_required"]
 
     assert loaded["path"].is_file()
     assert not list(tmp_path.glob("changed*"))

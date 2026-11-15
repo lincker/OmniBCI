@@ -1,10 +1,9 @@
 """Save plugin profiles independently from explicitly accepted startup snapshots."""
 from contextlib import nullcontext
-from copy import deepcopy
 from dataclasses import replace
 from uuid import uuid4
 
-from omnibci.application.activation_settings import MODULES, MODULE_SETTING_DEFAULTS, backend_startup_settings, section_settings
+from omnibci.application.activation_settings import MODULES, MODULE_SETTING_DEFAULTS, section_settings
 from omnibci.application.plugin_profiles import (
     ActivationSet, ModuleActivation, SystemSettings, PluginProfile, PluginSelection, ProfileBinding,
     MODULE_KINDS, PluginProfileNotFoundError, plugin_kind_for_slot,
@@ -34,15 +33,11 @@ def _validate_source_parameters(binding: ProfileBinding) -> None:
 
 class PluginProfileService:
     def __init__(self, repository, catalog: PluginConfigurationCatalog, *,
-                 settings_source, change_guard=None, startup_settings_resolver=None,
-                 loaded_startup_settings=None):
+                 settings_source, change_guard=None):
         self.repository = repository
         self.catalog = catalog
         self.settings_source = settings_source
         self.change_guard = change_guard or nullcontext
-        self._startup_settings_resolver = startup_settings_resolver or backend_startup_settings
-        loaded = settings_source() if loaded_startup_settings is None else loaded_startup_settings
-        self._startup_settings = deepcopy(self._startup_settings_resolver(loaded))
 
     def _parameters(self, kind, selection, parameters, configuration_version=None):
         definition = self.catalog.get(kind, selection)
@@ -163,18 +158,12 @@ class PluginProfileService:
         return (ModuleActivation(module, {**candidate.settings, **normalized}, candidate.bindings)
                 if normalized else candidate)
 
-    def propose_system(self) -> SystemSettings:
-        settings = self.settings_source()
-        startup = self._startup_settings_resolver(settings)
-        changed = sorted(key for key in startup.keys() | self._startup_settings.keys()
-                         if key not in startup or key not in self._startup_settings
-                         or startup[key] != self._startup_settings[key])
-        if changed:
-            raise PluginSchemaError(
-                "Backend restart required for " + ", ".join(changed)
-                + "; an engine restart does not apply these settings"
-            )
-        return SystemSettings(section_settings(settings, "system"))
+    def propose_system(self, settings: dict) -> SystemSettings:
+        """Validate submitted Engine settings without consulting backend startup values."""
+        candidate = SystemSettings(settings)
+        timeout = candidate.settings.get("NEUROENGINE.startup_timeout_s")
+        return (SystemSettings({**candidate.settings, "NEUROENGINE.startup_timeout_s": float(timeout)})
+                if type(timeout) is int else candidate)
 
     def validate_module(self, candidate: ModuleActivation, *, active_kinds: set[str] | None = None) -> None:
         """Validate pinned plugin values; completeness belongs to module startup."""

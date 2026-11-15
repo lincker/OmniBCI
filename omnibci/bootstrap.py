@@ -1,12 +1,14 @@
 """Composition root for application services and infrastructure adapters."""
 
 import logging
+import os
+from contextlib import contextmanager
 from threading import RLock
 from dataclasses import dataclass
 from typing import Callable, Iterable, Tuple
 
 from omnibci.shared.events import EventType
-from omnibci.application.activation_settings import backend_startup_settings
+from omnibci.application.activation_settings import SYSTEM_SETTING_DEFAULTS
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.acquisition_service import AcquisitionAppService
 from omnibci.application.services.stimulation_service import StimulationAppService
@@ -51,11 +53,21 @@ def create_backend_logging(host_settings: dict) -> BackendLogging:
     return BackendLogging(host_settings)
 
 
-def _effective_backend_startup_settings(snapshot: dict) -> dict:
-    values = backend_startup_settings(snapshot)
-    directory = user_plugins_dir(host_settings=snapshot)
-    values["PLUGINS.user_dir"] = str(directory.resolve()) if directory is not None else None
-    return values
+@contextmanager
+def backend_plugin_environment(host_settings: dict):
+    """Keep catalogues and child processes on the backend's startup directory."""
+    previous = os.environ.get("OMNIBCI_PLUGIN_DIR")
+    directory = user_plugins_dir(host_settings=host_settings)
+    if directory is None:
+        raise RuntimeError("User plugin directory is unavailable")
+    os.environ["OMNIBCI_PLUGIN_DIR"] = str(directory.resolve())
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("OMNIBCI_PLUGIN_DIR", None)
+        else:
+            os.environ["OMNIBCI_PLUGIN_DIR"] = previous
 
 
 @dataclass
@@ -158,7 +170,7 @@ async def _build_container_services(host_settings, allow_process_termination):
         except (ValueError, KeyError, RuntimeError, OSError) as exc:
             raise RuntimeError(f"Plugin configuration is invalid: {exc}") from exc
         if system is None:
-            plugin_profiles.repository.save_system(plugin_profiles.propose_system(), expected_revision=None)
+            plugin_profiles.repository.save_system(plugin_profiles.propose_system(SYSTEM_SETTING_DEFAULTS), expected_revision=None)
         return accepted_runtime_settings(profiles=plugin_profiles, active_kinds=set())
 
     engine_service = NeuroEngineService(
@@ -173,14 +185,12 @@ async def _build_container_services(host_settings, allow_process_termination):
 
     config_service = ConfigService(
         settings,
-        change_guard=engine_service.configuration_change,
+        active_settings=host_settings,
     )
     plugin_profiles = PluginProfileService(
         TomlPluginProfileRepository(), CatalogConfigurationAdapter(),
         settings_source=settings.saved_snapshot,
         change_guard=lambda: package_references_lock,
-        startup_settings_resolver=_effective_backend_startup_settings,
-        loaded_startup_settings=host_settings,
     )
     await engine_service.startup()
     container = assemble(engine_service,

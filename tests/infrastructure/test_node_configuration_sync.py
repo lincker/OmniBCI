@@ -122,7 +122,7 @@ def test_restarted_engine_rejects_cached_node_configuration_and_accepts_fresh_fe
     saved = {kind: profiles.create(kind, definition.selection, kind, {},
              **({"processing_input": ProcessingInput()} if kind == "decoder" else {}))
              for kind, definition in backend_catalog.definitions.items()}
-    profiles.repository.save_system(profiles.propose_system(), expected_revision=None)
+    profiles.repository.save_system(profiles.propose_system({}), expected_revision=None)
     for module in ("acquisition", "processing", "stimulation", "actuation"):
         selected = [{"slot": _SLOTS[kind], "profile_id": profile.profile_id}
                     for kind, profile in saved.items() if _SLOTS[kind].startswith(module + ".")]

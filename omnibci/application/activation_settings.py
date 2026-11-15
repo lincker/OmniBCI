@@ -7,6 +7,12 @@ MODULES = ("acquisition", "processing", "stimulation", "actuation")
 SYSTEM_SECTION = "system"
 SECTIONS = (*MODULES, SYSTEM_SECTION)
 
+SYSTEM_SETTING_DEFAULTS = {
+    "NEUROENGINE.queue_size": 100,
+    "NEUROENGINE.startup_timeout_s": 5.0,
+    "debug": False,
+}
+
 MODULE_SETTING_DEFAULTS = {
     "acquisition": {},
     "processing": {"ALGORITHM.baseline_duration": 0.0},
@@ -23,10 +29,7 @@ MODULE_SETTING_DEFAULTS = {
 
 SECTION_SETTING_KEYS = {
     **{module: frozenset(settings) for module, settings in MODULE_SETTING_DEFAULTS.items()},
-    "system": frozenset({
-        "NEUROENGINE.startup_timeout_s", "debug",
-        "NEUROENGINE.queue_size",
-    }),
+    "system": frozenset(SYSTEM_SETTING_DEFAULTS),
 }
 
 RUNTIME_HOST_SETTING_KEYS = frozenset().union(*SECTION_SETTING_KEYS.values())

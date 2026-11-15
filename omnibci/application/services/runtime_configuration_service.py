@@ -8,7 +8,7 @@ from threading import RLock
 from time import monotonic
 from uuid import UUID, uuid4
 
-from omnibci.application.activation_settings import MODULES, SECTIONS
+from omnibci.application.activation_settings import MODULES, SECTIONS, SYSTEM_SETTING_DEFAULTS
 from omnibci.application.plugin_profiles import (
     ActivationSet, ModuleActivation, SystemSettings, ProfileRevisionConflict, MODULE_KINDS,
 )
@@ -141,9 +141,11 @@ class RuntimeConfigurationService:
         if module not in SECTIONS:
             raise PluginSchemaError("Unsupported configuration section")
         if module == "system":
-            if bindings or refresh_slots or settings is not None:
+            if bindings or refresh_slots:
                 raise PluginSchemaError("System settings cannot contain plugin bindings")
-            candidate = self.profiles.propose_system()
+            if settings is None:
+                raise PluginSchemaError("Current system settings are required")
+            candidate = self.profiles.propose_system(settings)
         else:
             if settings is None:
                 raise PluginSchemaError("Current module settings are required")
@@ -183,7 +185,7 @@ class RuntimeConfigurationService:
         candidates = {} if module == "system" else {module: candidate}
         system = candidate if module == "system" else None
         if system is None and current.system is None:
-            system = self.profiles.propose_system()
+            system = self.profiles.propose_system(SYSTEM_SETTING_DEFAULTS)
         combined = ActivationSet({**current.modules, **candidates}, system or current.system)
         targets = {name: value.revision for name, value in candidates.items()}
         if system is not None:

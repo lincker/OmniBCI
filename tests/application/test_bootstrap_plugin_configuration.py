@@ -4,7 +4,7 @@ from unittest.mock import Mock
 import pytest
 
 from omnibci import bootstrap
-from omnibci.application.plugin_schema import PluginSchemaError
+from omnibci.application.activation_settings import SYSTEM_SETTING_DEFAULTS
 from omnibci.bootstrap import _RuntimeSettings, build_container
 from omnibci.conf import OmniBCISettings
 from omnibci.infrastructure.config_paths import config_root
@@ -157,26 +157,31 @@ async def test_bootstrap_ignores_retired_plugin_settings(bootstrap_settings):
     assert all(value is None for value in container.plugin_profile_service.repository.get_activation_set().revisions().values())
     assert container.plugin_profile_service.repository.list_profiles() == []
     assert bootstrap_settings._config_path.read_bytes() == original_settings
+    snapshot = container.engine_service._snapshot_provider()
+    assert {key: snapshot[key] for key in SYSTEM_SETTING_DEFAULTS} == SYSTEM_SETTING_DEFAULTS
+    assert container.plugin_profile_service.repository.get_system().settings == SYSTEM_SETTING_DEFAULTS
 
 
 @pytest.mark.asyncio
-async def test_host_review_compares_loaded_backend_values_after_restart(bootstrap_settings):
+async def test_backend_restart_changes_command_timeout_without_blocking_system_review(bootstrap_settings):
     first = await build_container()
     before = _configure(first)
-    references = [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in before.bindings()]
     bootstrap_settings.set("NEUROENGINE.command_timeout_s", 15.0)
     bootstrap_settings.save()
     original_files = _toml_files(config_root())
 
-    with pytest.raises(PluginSchemaError, match="Backend restart required.*NEUROENGINE.command_timeout_s"):
-        first.runtime_configuration.plan("system", [], expected_revision=before.system.revision)
+    plan = first.runtime_configuration.plan("system", [], expected_revision=before.system.revision,
+                                            settings=before.system.settings)
+    assert plan.target_revisions["system"] == before.system.revision
+    assert not plan.errors
     assert first.command_results._timeout_s == 10.0
     assert _toml_files(config_root()) == original_files
 
     restarted = await build_container()
 
     assert restarted.command_results._timeout_s == 15.0
-    plan = restarted.runtime_configuration.plan("system", [], expected_revision=before.system.revision)
+    plan = restarted.runtime_configuration.plan("system", [], expected_revision=before.system.revision,
+                                                settings=before.system.settings)
     assert plan.target_revisions["system"] == before.system.revision
     assert plan.changed_settings == ()
     assert not plan.errors
@@ -184,21 +189,22 @@ async def test_host_review_compares_loaded_backend_values_after_restart(bootstra
 
 
 @pytest.mark.asyncio
-async def test_plugin_directory_restart_check_uses_effective_environment_path(bootstrap_settings, monkeypatch, tmp_path):
+async def test_plugin_directory_edits_do_not_block_system_review(bootstrap_settings, monkeypatch, tmp_path):
     container = await build_container()
     before = _configure(container)
-    references = [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in before.bindings()]
-    original_files = _toml_files(config_root())
     bootstrap_settings.set("PLUGINS.user_dir", str(tmp_path / "masked-by-environment"))
     bootstrap_settings.save()
+    original_files = _toml_files(config_root())
 
-    plan = container.runtime_configuration.plan("system", [], expected_revision=before.system.revision)
+    plan = container.runtime_configuration.plan("system", [], expected_revision=before.system.revision,
+                                                settings=before.system.settings)
 
     assert plan.target_revisions["system"] == before.system.revision
     assert not plan.errors
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "changed-effective-path"))
-    with pytest.raises(PluginSchemaError, match="Backend restart required.*PLUGINS.user_dir"):
-        container.runtime_configuration.plan("system", [], expected_revision=before.system.revision)
+    plan = container.runtime_configuration.plan("system", [], expected_revision=before.system.revision,
+                                                settings=before.system.settings)
+    assert not plan.errors
     assert _toml_files(config_root()) == original_files
 
 
@@ -289,21 +295,6 @@ async def test_saved_edit_during_bootstrap_does_not_change_loaded_startup_baseli
     service = container.plugin_profile_service
 
     assert container.command_results._timeout_s == 10.0
-    with pytest.raises(PluginSchemaError, match="Backend restart required.*NEUROENGINE.command_timeout_s"):
-        service.propose_system()
-
-
-def test_effective_plugin_directory_uses_supplied_startup_snapshot(
-    bootstrap_settings, monkeypatch, tmp_path,
-):
-    monkeypatch.delenv("OMNIBCI_PLUGIN_DIR")
-    loaded_directory = tmp_path / "loaded-plugins"
-    bootstrap_settings.set("PLUGINS.user_dir", str(loaded_directory))
-    bootstrap_settings.save()
-    loaded = bootstrap_settings.saved_snapshot()
-    bootstrap_settings.set("PLUGINS.user_dir", str(tmp_path / "new-plugins"))
-    bootstrap_settings.save()
-
-    resolved = bootstrap._effective_backend_startup_settings(loaded)
-
-    assert resolved["PLUGINS.user_dir"] == str(loaded_directory.resolve())
+    candidate = service.propose_system(SYSTEM_SETTING_DEFAULTS)
+    assert candidate.settings == SYSTEM_SETTING_DEFAULTS
+    assert "NEUROENGINE.command_timeout_s" not in candidate.settings

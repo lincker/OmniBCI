@@ -1,5 +1,4 @@
 """Processing attaches a validated plan without owning source reading."""
-from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import replace
 from threading import RLock
@@ -36,8 +35,7 @@ def signal_service(tmp_path):
                     {"slot": "processing.epoch_detector", "selection": {
                         "package_id": "test.detector", "contribution_id": "default", "version": "1"}}]}
     engine = SimpleNamespace(admission=RuntimeAdmission(), is_engine_ready=True, applied_snapshot=snapshot,
-                             is_module_running=lambda module: module in ("acquisition", "processing"),
-                             configuration_change=lambda idle: nullcontext())
+                             is_module_running=lambda module: module in ("acquisition", "processing"))
     profiles = SimpleNamespace(repository=SimpleNamespace(get_activation_set=lambda: ActivationSet({}, None)),
                                materialize=lambda activation: {},
                                catalog=SimpleNamespace(get=lambda *args: SimpleNamespace(channel_requirements=None)))

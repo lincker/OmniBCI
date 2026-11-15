@@ -35,6 +35,15 @@ Acquisition stream. It does not start or reconfigure another module.
 See [stage2-design.md](stage2-design.md) for the operating sequence and
 [channel-mapping.md](channel-mapping.md) for input mapping.
 
+Settings / General separates Engine current values from Backend startup values.
+Engine review posts explicit `settings` to `/config/apply-plan` with
+`module: "system"`; successful application saves `[engine]` in the user
+`settings.toml`. Backend Save uses `PATCH /config` with `expected_revision`.
+`GET /config` returns saved `value`, startup `active_value`, and `restart_required`
+for each Backend field; PATCH reports `backend_restart_required`. Restarting only
+the Engine does not apply pending Backend startup values. Sharing a file does not
+combine their revision checks or the four module configurations.
+
 ## REST
 
 The API prefix is `/api/v1`. Successful responses use

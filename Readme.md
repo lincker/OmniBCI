@@ -159,16 +159,17 @@ cd ..
 ### 3. Configure the Data Source
 
 After starting the backend and console below, use **Setup → Acquisition** to
-choose an installed source plugin and a named Plugin Profile. Scan45, Curry8,
+choose an installed source plugin and edit its current values. Scan45, Curry8,
 and File Reader can each have multiple saved profiles. For File Reader, set
-`data_file_path` in the Profile to an EEG file available on the acquisition
-machine. Save, review, and apply the selection before starting the engine.
+`data_file_path` to an EEG file available on the acquisition machine. Start the
+Engine, then Connect to apply current values. Saving a reusable Profile is optional.
 
-Shared host controls are edited in **Settings → General**. They are saved in
-the backend user's `settings.toml`, separately from Plugin Profiles and the
-accepted `activation.toml`. Saving never changes an active experiment; use
-Review and Apply to apply supported changes. Conflicting edits require a
-refresh before saving again.
+Shared controls are edited in **Settings → General** and use one backend user
+`settings.toml`. Engine current values go directly to Review and Apply; successful
+application stores them in `[engine]`. Backend startup settings are saved separately
+on the page and take effect after restarting the backend. The page distinguishes
+saved and active startup values. The four modules keep independent accepted files
+in `activation/`, alongside separate per-plugin Profiles and module history.
 
 The user directory defaults to `~/Library/Application Support/OmniBCI` on macOS,
 `~/.config/OmniBCI` on Linux (honoring `XDG_CONFIG_HOME`), and
@@ -280,4 +281,5 @@ Saving a Profile does not change a running node. To change its configuration,
 stop/disconnect that external node, prepare the new current values, then restart
 and reconnect the node. Shared system changes also require disconnecting external
 nodes and restarting the engine.
-See [configuration ownership](docs/configuration-ownership.md) for the boundaries.
+See [module configuration](docs/module-config.md) for the boundaries and the
+distinction between Backend, Engine, and the configuration identifier `system`.

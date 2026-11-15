@@ -59,6 +59,18 @@ def create(client, kind="acquisition", alias="file_reader", name="Example", para
     return response.json()["data"]
 
 
+def test_unavailable_shared_settings_returns_service_error(client, monkeypatch):
+    http, service, _ = client
+
+    def unavailable():
+        raise OSError("Settings storage unavailable")
+
+    monkeypatch.setattr(service.repository, "get_system", unavailable)
+    response = http.get(f"{PREFIX}/system")
+    assert response.status_code == 503
+    assert response.json()["code"] == "SERVICE_UNAVAILABLE"
+
+
 def apply_plan(http, plan):
     assert plan["errors"] == [], plan
     operation_id = str(uuid4())
@@ -393,7 +405,7 @@ def test_reviewed_candidate_is_applied_and_stale_plan_is_rejected(client):
     assert selected["revision"] == candidate.revision == plan["target_revisions"]["acquisition"]
     assert selected["bindings"][0]["parameters"]["sample_rate"] == 500
     assert "NEUROENGINE.queue_size" not in selected["settings"]
-    assert service.repository.get_system().settings["NEUROENGINE.queue_size"] == 32
+    assert service.repository.get_system().settings["NEUROENGINE.queue_size"] == 100
     assert http.post(f"{PREFIX}/apply-plan", json=body).status_code == 409
 
 
@@ -401,17 +413,16 @@ def test_reviewed_candidate_is_applied_and_stale_plan_is_rejected(client):
     ("NEUROENGINE.command_timeout_s", 20), ("PLUGINS.user_dir", "/different/plugin-directory"),
     ("LOGGING.level", "DEBUG"), ("LOGGING.file_path", "changed.log"),
 ])
-def test_startup_host_changes_return_422_without_writes(client, key, value):
+def test_pending_backend_changes_do_not_block_current_engine_review(client, key, value):
     http, service, state = client
     stored = {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")}
     state["settings"][key] = value
-    response = http.post(f"{PREFIX}/apply-plan", json={"module": "system", "bindings": []})
-    assert response.status_code == 422, response.text
-    assert response.json()["code"] == "VALIDATION_ERROR"
-    assert key in response.json()["message"]
-    assert "restart" in response.json()["message"].lower()
+    response = http.post(f"{PREFIX}/apply-plan", json={"module": "system", "bindings": [],
+        "settings": {"NEUROENGINE.queue_size": 42}})
+    assert response.status_code == 200, response.text
+    assert not response.json()["data"]["errors"]
     assert {path: path.read_bytes() for path in service.repository.root.rglob("*.toml")} == stored
-    assert not http.app.state.container.runtime_configuration._plans
+    assert http.app.state.container.runtime_configuration._plans
 
 
 def test_filter_instances_have_stable_slots_and_order(client):

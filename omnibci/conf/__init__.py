@@ -5,6 +5,7 @@
 """Host defaults, user overrides, and isolated in-memory worker snapshots."""
 
 import hashlib
+import json
 import re
 from copy import deepcopy
 from pathlib import Path
@@ -12,17 +13,23 @@ from threading import RLock
 
 import tomlkit
 
-from omnibci.application.activation_settings import BACKEND_STARTUP_DEFAULTS, RUNTIME_HOST_SETTING_KEYS
+from omnibci.application.activation_settings import (
+    BACKEND_STARTUP_DEFAULTS, RUNTIME_HOST_SETTING_KEYS, SECTION_SETTING_KEYS, backend_startup_settings,
+)
 from omnibci.application.config_errors import ConfigProfileConflictError, ConfigProfileValidationError
+from omnibci.application.plugin_profiles import PluginProfileValidationError, ProfileRevisionConflict, SystemSettings
 from omnibci.conf.paths import config_root
 from omnibci.conf.storage import atomic_write, file_lock
 
 
 class OmniBCISettings:
-    def __init__(self, toml_file: str | Path | None = None, *, defaults_file: str | Path | None = None):
-        if toml_file is not None and defaults_file is not None:
+    def __init__(self, toml_file: str | Path | None = None, *, defaults_file: str | Path | None = None,
+                 user_file: str | Path | None = None, lock_timeout_s: float = 5.0):
+        if toml_file is not None and (defaults_file is not None or user_file is not None):
             raise ValueError("Use either an explicit settings file or defaults with user overrides")
         self._explicit_path = Path(toml_file) if toml_file is not None else None
+        self._user_path = Path(user_file) if user_file is not None else None
+        self._lock_timeout_s = lock_timeout_s
         self._defaults_path = Path(defaults_file) if defaults_file is not None else Path(__file__).with_name("settings.toml")
         self._data: dict = {}
         self._pending: dict = {}
@@ -36,7 +43,7 @@ class OmniBCISettings:
 
     @property
     def _config_path(self) -> Path:
-        return self._explicit_path if self._explicit_path is not None else config_root() / "settings.toml"
+        return self._explicit_path or self._user_path or config_root() / "settings.toml"
 
     @staticmethod
     def _parse(content: bytes, path: Path):
@@ -75,6 +82,25 @@ class OmniBCISettings:
         digest.update(b"\0missing" if override is None else b"\0present\0" + override)
         return digest.hexdigest()
 
+    def _saved_revision(self, values, defaults, content):
+        if self._explicit_path is not None:
+            return self._hash(defaults, content)
+        try:
+            data = json.dumps(backend_startup_settings(values), sort_keys=True, separators=(",", ":"), allow_nan=False)
+        except (ValueError, TypeError) as exc:
+            raise ConfigProfileValidationError(f"Invalid backend settings: {exc}") from exc
+        return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _system(document):
+        if "engine" not in document:
+            return None
+        values = document["engine"]
+        try:
+            return SystemSettings(values.unwrap() if hasattr(values, "unwrap") else values)
+        except PluginProfileValidationError as exc:
+            raise ConfigProfileValidationError(f"Invalid Engine settings: {exc}") from exc
+
     def _read(self, path: Path):
         if self._explicit_path is None and path.resolve() == self._defaults_path.resolve():
             raise ConfigProfileValidationError("User host settings must not overwrite bundled defaults")
@@ -89,7 +115,7 @@ class OmniBCISettings:
         if content is None and self._explicit_path is not None:
             raise FileNotFoundError(f"Settings file does not exist: {path}")
         document = self._parse(content, path) if content is not None else tomlkit.document()
-        overrides = self._flatten(document)
+        overrides = self._flatten({key: value for key, value in document.items() if key != "engine"})
         if self._explicit_path is None:
             # Retired values may remain on disk but are excluded from activation.
             self._validate_host_keys({key: value for key, value in overrides.items()
@@ -97,7 +123,13 @@ class OmniBCISettings:
                                                      "ACQUISITION.manual_montage"}})
             if {"META", "PROFILES"} & document.keys():
                 raise ConfigProfileValidationError("Retired profile metadata is not a host setting")
-        return {**base, **overrides}, self._hash(defaults, content), document, defaults
+            if overrides.keys() & SECTION_SETTING_KEYS["system"]:
+                raise ConfigProfileValidationError("Engine settings must be stored in the engine table")
+        system = self._system(document)
+        if system is not None:
+            overrides.update(system.settings)
+        values = {**base, **overrides}
+        return values, self._saved_revision(values, defaults, content), document, defaults
 
     def _publish(self, values: dict, revision: str, path: Path) -> None:
         self._data = values
@@ -111,7 +143,7 @@ class OmniBCISettings:
             path = self._config_path
             # An absent directory has no cooperating writer or saved overrides yet.
             if path.parent.exists():
-                with file_lock(path.parent / ".host-settings.lock"):
+                with file_lock(path.parent / ".host-settings.lock", timeout_s=self._lock_timeout_s):
                     values, revision, _, _ = self._read(path)
             else:
                 values, revision, _, _ = self._read(path)
@@ -169,10 +201,10 @@ class OmniBCISettings:
         if not isinstance(expected_revision, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_revision):
             raise ConfigProfileValidationError("expected_revision must be a SHA-256 revision")
         if self._explicit_path is None:
-            self._validate_host_keys(updates)
+            self._validate_backend_updates(updates)
         with self._lock:
             path = self._config_path
-            with file_lock(path.parent / ".host-settings.lock"):
+            with file_lock(path.parent / ".host-settings.lock", timeout_s=self._lock_timeout_s):
                 values, revision, document, defaults = self._read(path)
                 if revision != expected_revision:
                     raise ConfigProfileConflictError("Host settings changed; refresh before saving again")
@@ -180,7 +212,7 @@ class OmniBCISettings:
                     self._set(document, key, value)
                 content = tomlkit.dumps(document)
                 values.update(deepcopy(updates))
-                new_revision = self._hash(defaults, content.encode("utf-8"))
+                new_revision = self._saved_revision(values, defaults, content.encode("utf-8"))
                 atomic_write(path, content)
                 self._publish(values, new_revision, path)
                 return new_revision
@@ -190,8 +222,47 @@ class OmniBCISettings:
         with self._lock:
             self._ensure_loaded()
             if self._explicit_path is None:
-                self._validate_host_keys({key: value})
+                self._validate_backend_updates({key: value})
             self._pending[key] = deepcopy(value)
+
+    @staticmethod
+    def _validate_backend_updates(updates):
+        unknown = set(updates) - BACKEND_STARTUP_DEFAULTS.keys()
+        if unknown:
+            raise ConfigProfileValidationError(
+                "Engine settings require application; only backend startup settings can be saved: "
+                + ", ".join(sorted(unknown)))
+
+    def get_system(self) -> SystemSettings | None:
+        with self._lock:
+            path = self._config_path
+            if not path.exists() and not path.is_symlink():
+                return None
+            with file_lock(path.parent / ".host-settings.lock", timeout_s=self._lock_timeout_s):
+                return self._system(self._read(path)[2])
+
+    def save_system(self, settings: SystemSettings, expected_revision: str | None) -> SystemSettings:
+        settings = SystemSettings.from_dict(settings.to_dict())
+        self._write_system(settings, expected_revision)
+        return settings
+
+    def remove_system(self, expected_revision: str) -> None:
+        self._write_system(None, expected_revision)
+
+    def _write_system(self, settings, expected_revision):
+        with self._lock:
+            path = self._config_path
+            with file_lock(path.parent / ".host-settings.lock", timeout_s=self._lock_timeout_s):
+                _, _, document, _ = self._read(path)
+                previous = self._system(document)
+                if ((settings is None and previous is None)
+                        or (previous.revision if previous is not None else None) != expected_revision):
+                    raise ProfileRevisionConflict("System settings changed; reload before saving")
+                if settings is None:
+                    del document["engine"]
+                else:
+                    document["engine"] = settings.settings
+                atomic_write(path, tomlkit.dumps(document))
 
     def save(self):
         """Save staged edits using the revision from the last load."""

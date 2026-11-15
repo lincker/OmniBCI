@@ -1,4 +1,4 @@
-"""Read and save host settings; plugin profiles and runtime application are separate."""
+"""Read and save backend startup settings without changing Engine or modules."""
 
 from fastapi import APIRouter, Depends, status
 
@@ -20,7 +20,7 @@ from omnibci.presentation.schemas.config import (
 router = APIRouter(prefix="/config", tags=["Config"])
 
 
-@router.get("", response_model=ApiResponse[ConfigResponse], summary="Saved host settings")
+@router.get("", response_model=ApiResponse[ConfigResponse], summary="Backend startup settings")
 def get_config(svc: ConfigService = Depends(get_config_service)):
     try:
         entries, revision = svc.read()
@@ -32,7 +32,7 @@ def get_config(svc: ConfigService = Depends(get_config_service)):
 
 
 @router.patch("", response_model=ApiResponse[PatchConfigResponse],
-              summary="Save host settings without applying them")
+              summary="Save settings for the next backend startup")
 def patch_config(body: PatchConfigRequest,
                  svc: ConfigService = Depends(get_config_service)):
     try:
@@ -48,4 +48,4 @@ def patch_config(body: PatchConfigRequest,
                        "Host settings storage is unavailable") from exc
     return ApiResponse(
         message="Configuration saved",
-        data=PatchConfigResponse(saved=saved, engine_restart_required=restart, revision=revision))
+        data=PatchConfigResponse(saved=saved, backend_restart_required=restart, revision=revision))

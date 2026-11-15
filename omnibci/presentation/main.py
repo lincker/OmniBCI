@@ -42,7 +42,9 @@ from omnibci.presentation.routers import system
 from omnibci.presentation.security import ApiAccessMiddleware, RequestGate
 from omnibci.application.services.shutdown_service import BackendShutdownService
 from omnibci.presentation.websockets.results import results_broadcaster, results_ws_endpoint
-from omnibci.bootstrap import build_container, create_backend_logging, load_host_settings, register_engine_listeners
+from omnibci.bootstrap import (
+    backend_plugin_environment, build_container, create_backend_logging, load_host_settings, register_engine_listeners,
+)
 from omnibci.presentation.errors import register_exception_handlers
 from omnibci.presentation.schemas.common import ErrorResponse
 from omnibci.shared.events import EventType
@@ -67,7 +69,7 @@ async def lifespan(app: FastAPI):
     """Keep logging available throughout startup and service shutdown."""
     app.state.shutdown_complete = False
     host_settings = load_host_settings()
-    with create_backend_logging(host_settings) as backend_logging:
+    with backend_plugin_environment(host_settings), create_backend_logging(host_settings) as backend_logging:
         app.state.backend_logging = backend_logging
         async with _services_lifespan(app, host_settings):
             yield

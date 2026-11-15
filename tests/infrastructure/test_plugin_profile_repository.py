@@ -192,7 +192,7 @@ def test_failed_module_replace_preserves_current_and_history(repository, monkeyp
     entry = repository.record_module_history(saved, str(uuid4()))
     def fail(*args):
         raise OSError("disk full")
-    monkeypatch.setattr("omnibci.infrastructure.repositories.plugin_profile_repository.os.replace", fail)
+    monkeypatch.setattr("omnibci.conf.storage.os.replace", fail)
     with pytest.raises(PluginProfileStorageError, match="disk full"):
         repository.save_module(ModuleActivation("processing", {"ALGORITHM.baseline_duration": 1.0}, ()),
                                expected_revision=saved.revision)

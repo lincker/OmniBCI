@@ -20,7 +20,7 @@ current values never requires saving a Profile first.
   apply Processing or Actuation edits. Stop reading keeps the source connected.
 - **Start processing** applies current Processing values and starts its worker,
   starting the engine when needed. It can wait for Acquisition data. Stop
-  processing leaves the source connected and resumes any prior reading.
+  processing detaches its input while Acquisition continues reading and previewing.
 - Launching Stimulation and starting Actuation apply only their respective current
   values. Each has its own stop action. Stop/disconnect commands use the running
   configuration without submitting edits.
@@ -79,19 +79,27 @@ The root is `OMNIBCI_CONFIG_DIR` when set, otherwise
 plugin-profiles/<uuid>/current.toml
 plugin-profiles/<uuid>/history/<integer-revision>.toml
 activation/<module>.toml
-activation/system.toml
 activation/history/<module>/<operation-uuid>.toml
+settings.toml
+.host-settings.lock
 locks/profiles.lock
 locks/<module>.lock
-locks/system.lock
 ```
 
 Four modules have independent files, locks, and compare-and-swap revisions:
-`acquisition`, `processing`, `stimulation`, and `actuation`. System settings have
-an independent revision but no history or restore. An absent file has a null
-accepted revision. The first module application explicitly includes initial
-system settings in its reviewed plan if they have not yet been accepted. Starting
-an empty engine can also accept the initial shared settings without selecting plugins.
+`acquisition`, `processing`, `stimulation`, and `actuation`. Shared Engine settings
+live in the user `settings.toml` under `[engine]`, with an independent content
+revision and no history or restore. An absent table has a null accepted revision;
+an empty table is an accepted empty configuration. The first module application
+includes declared initial Engine defaults in its plan if they have not yet been
+accepted. Starting an empty engine can also accept these defaults without selecting plugins.
+
+Backend startup settings share this file but retain separate revision checks.
+Both writers use `.host-settings.lock` and atomic replacement, changing only
+their own fields. A failed Engine application restores only `[engine]`, preserving
+Backend saves. Engine review submits current values directly; only Backend
+startup settings use the settings Save action. The old `activation/system.toml`
+and `locks/system.lock` are no longer read or written.
 
 Atomic replacement preserves the prior file on write failure. Profiles are
 format version 2 with exact package pins. Legacy flat profile files and the old

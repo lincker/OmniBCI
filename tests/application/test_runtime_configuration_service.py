@@ -61,7 +61,7 @@ def request(runtime, module="processing", *, selections=None, **options):
     service, defaults, _ = runtime
     current = service.profiles.repository.get_module(module) if module != "system" else service.profiles.repository.get_system()
     bindings = [item for item in (defaults if selections is None else selections) if item["slot"].startswith(f"{module}.")]
-    return service.plan(module, bindings, expected_revision=current.revision if current else None, **options, settings=None if module == "system" else section_settings(service.profiles.settings_source(), module))
+    return service.plan(module, bindings, expected_revision=current.revision if current else None, **options, settings=section_settings(service.profiles.settings_source(), module))
 
 
 def install(service, candidate):
@@ -193,12 +193,13 @@ def test_runtime_host_changes_use_the_owning_section(runtime, module, key, value
 @pytest.mark.parametrize("running", [False, True])
 @pytest.mark.parametrize("key,value", [("LOGGING.level", "DEBUG"), ("NEUROENGINE.command_timeout_s", 30.0),
                                       ("PLUGINS.user_dir", "/new/plugins")])
-def test_changed_backend_startup_settings_cannot_produce_system_plan(runtime, running, key, value):
+def test_changed_backend_startup_settings_do_not_block_system_plan(runtime, running, key, value):
     service, _, before = runtime
     service.engine.is_engine_ready = running
     service.profiles.settings_source = lambda: {**before.settings(), key: value}
-    with pytest.raises(PluginSchemaError, match="Backend restart required"):
-        request(runtime, "system")
+    plan = request(runtime, "system")
+    assert not plan.errors
+    assert key not in service.resolve_plan(plan.plan_id).system.settings
     assert service.profiles.repository.get_activation_set() == before
 
 
@@ -208,14 +209,6 @@ def test_saved_other_section_host_changes_are_excluded_from_module_plan(runtime)
                                                 "debug": True, "LOGGING.level": "DEBUG"}
     plan = request(runtime)
     assert plan.strategy == "no_change" and plan.changed_settings == ()
-
-
-def test_restarted_backend_uses_new_startup_baseline(runtime):
-    service, _, _ = runtime
-    host = {"LOGGING.level": "DEBUG", "debug": True}
-    service.profiles = PluginProfileService(service.profiles.repository, service.profiles.catalog,
-                                            settings_source=lambda: host, loaded_startup_settings=host)
-    assert request(runtime, "system").strategy == "rebuild"
 
 
 @pytest.mark.parametrize("module", ["stimulation", "actuation"])

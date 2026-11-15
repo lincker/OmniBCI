@@ -32,8 +32,8 @@ its own controls:
 - **Start processing** applies current Processing values and starts its worker,
   starting the engine if needed. It can wait for source data. When reading starts,
   active Processing validates its mapping against observed source metadata before
-  receiving chunks. **Stop processing** keeps Acquisition connected and resumes
-  its prior reading state. Source-only reading and preview remain available.
+  receiving chunks. **Stop processing** detaches its input while Acquisition
+  continues reading and previewing independently.
 - **Launch stimulation** starts its native process. External mode first prepares
   the current configuration, then enables Stimulation after its node connects.
   **Trigger trial** requires active, connected Stimulation and valid trial controls.

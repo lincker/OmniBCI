@@ -1,13 +1,9 @@
 """Atomic, compare-and-swap TOML storage for plugin profiles and activation."""
 from __future__ import annotations
 
-import errno
 import math
-import os
 import re
 import shutil
-import tempfile
-import time
 from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -16,7 +12,7 @@ from threading import RLock
 
 import tomlkit
 
-from omnibci.application.activation_settings import MODULES, SECTIONS
+from omnibci.application.activation_settings import MODULES
 from omnibci.application.plugin_profiles import (
     PLUGIN_KINDS, ActivationSet, ModuleActivation, ModuleActivationRevision,
     PluginProfile, PluginProfileNotFoundError, PluginProfileStorageError,
@@ -24,6 +20,8 @@ from omnibci.application.plugin_profiles import (
     SystemSettings, validate_profile_id,
 )
 from omnibci.infrastructure.config_paths import config_root
+from omnibci.conf import OmniBCISettings
+from omnibci.conf.storage import atomic_write, file_lock
 
 
 class TomlPluginProfileRepository:
@@ -33,7 +31,8 @@ class TomlPluginProfileRepository:
                 or not math.isfinite(lock_timeout_s) or lock_timeout_s <= 0):
             raise ValueError("lock_timeout_s must be positive and finite")
         self._lock_timeout_s = lock_timeout_s
-        self._thread_locks = {section: RLock() for section in ("profiles", *SECTIONS)}
+        self._thread_locks = {section: RLock() for section in ("profiles", *MODULES)}
+        self._settings = OmniBCISettings(user_file=self.root / "settings.toml", lock_timeout_s=lock_timeout_s)
 
     def _safe(self, path: Path) -> Path:
         if not path.resolve().is_relative_to(self.root):
@@ -55,48 +54,9 @@ class TomlPluginProfileRepository:
                 if not self.root.exists() and not write:
                     yield
                     return
-                directory = self._safe(self.root / "locks")
-                directory.mkdir(parents=True, exist_ok=True)
-                lock_path = self._safe(directory / f"{section}.lock")
-                with lock_path.open("a+b") as stream:
-                    if os.name == "nt":
-                        import msvcrt
-                        stream.seek(0, os.SEEK_END)
-                        if stream.tell() == 0:
-                            stream.write(b"\0")
-                            stream.flush()
-
-                        def acquire():
-                            stream.seek(0)
-                            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
-
-                        def release():
-                            stream.seek(0)
-                            msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
-                    else:
-                        import fcntl
-
-                        def acquire():
-                            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-                        def release():
-                            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
-
-                    deadline = time.monotonic() + self._lock_timeout_s
-                    while True:
-                        try:
-                            acquire()
-                            break
-                        except OSError as exc:
-                            if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
-                                raise
-                            if time.monotonic() >= deadline:
-                                raise PluginProfileStorageError("Timed out waiting for configuration lock") from exc
-                            time.sleep(0.01)
-                    try:
-                        yield
-                    finally:
-                        release()
+                lock_path = self._safe(self.root / "locks" / f"{section}.lock")
+                with file_lock(lock_path, timeout_s=self._lock_timeout_s):
+                    yield
             except PluginProfileStorageError:
                 raise
             except OSError as exc:
@@ -109,7 +69,7 @@ class TomlPluginProfileRepository:
         return self._safe(self.root / "plugin-profiles" / profile_id / "current.toml")
 
     def _section_path(self, section: str) -> Path:
-        if not isinstance(section, str) or section not in SECTIONS:
+        if not isinstance(section, str) or section not in MODULES:
             raise PluginProfileValidationError("Unsupported configuration section")
         return self._safe(self.root / "activation" / f"{section}.toml")
 
@@ -137,18 +97,7 @@ class TomlPluginProfileRepository:
         self._safe(path)
         content = tomlkit.dumps(data)
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = None
-        try:
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="", dir=path.parent,
-                                             prefix=f".{path.name}.", delete=False) as stream:
-                temporary = Path(stream.name)
-                stream.write(content)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, path)
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
+        atomic_write(path, content)
 
     def list_profiles(self, kind: str | None = None) -> list[PluginProfile]:
         if kind is not None and (not isinstance(kind, str) or kind not in PLUGIN_KINDS):
@@ -315,36 +264,21 @@ class TomlPluginProfileRepository:
         validate_profile_id(entry_id)
         return next((item for item in self.list_module_history(module) if item.entry_id == entry_id), None)
 
-    def _read_system(self) -> SystemSettings | None:
-        path = self._section_path("system")
-        return SystemSettings.from_dict(self._read(path)) if path.exists() else None
-
     def get_system(self) -> SystemSettings | None:
-        with self._access("system"):
-            return self._read_system()
+        return self._settings.get_system()
 
     def save_system(self, settings: SystemSettings, expected_revision: str | None = None) -> SystemSettings:
         self._expected_revision(expected_revision)
-        settings = SystemSettings.from_dict(settings.to_dict())
-        with self._access("system", write=True):
-            previous = self._read_system()
-            if (previous.revision if previous else None) != expected_revision:
-                raise ProfileRevisionConflict("System settings changed; reload before saving")
-            self._write(self._section_path("system"), settings.to_dict())
-            return settings
+        return self._settings.save_system(settings, expected_revision)
 
     def remove_system(self, *, expected_revision: str) -> None:
         self._expected_revision(expected_revision)
-        with self._access("system"):
-            previous = self._read_system()
-            if previous is None or previous.revision != expected_revision:
-                raise ProfileRevisionConflict("System settings changed; reload before restoring")
-            self._section_path("system").unlink()
+        self._settings.remove_system(expected_revision)
 
     def get_activation_set(self) -> ActivationSet:
         if not self.root.exists():
             return ActivationSet({}, None)
         with ExitStack() as stack:
-            for section in SECTIONS:
+            for section in MODULES:
                 stack.enter_context(self._access(section))
-            return ActivationSet({module: self._read_module(module) for module in MODULES}, self._read_system())
+            return ActivationSet({module: self._read_module(module) for module in MODULES}, self.get_system())

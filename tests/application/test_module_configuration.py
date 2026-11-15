@@ -139,7 +139,7 @@ def test_acquisition_still_validates_its_own_parameters(profiles):
 
 
 def test_unrelated_module_write_does_not_expire_reviewed_plan(profiles):
-    profiles.repository.save_system(profiles.propose_system(), expected_revision=None)
+    profiles.repository.save_system(profiles.propose_system(section_settings(profiles.settings_source(), "system")), expected_revision=None)
     runtime = stopped_runtime(profiles)
     plan = runtime.plan("acquisition", [source_request(profiles)], expected_revision=None, settings={})
     profiles.repository.save_module(profiles.propose("stimulation", [], settings=section_settings(profiles.settings_source(), "stimulation")), expected_revision=None)
@@ -149,7 +149,7 @@ def test_unrelated_module_write_does_not_expire_reviewed_plan(profiles):
 
 
 def test_existing_system_keeps_single_module_target_scoped(profiles):
-    profiles.repository.save_system(profiles.propose_system(), expected_revision=None)
+    profiles.repository.save_system(profiles.propose_system(section_settings(profiles.settings_source(), "system")), expected_revision=None)
     runtime = stopped_runtime(profiles)
     plan = runtime.plan("stimulation", [], expected_revision=None, settings={})
     assert set(plan.target_revisions) == {"stimulation"}
