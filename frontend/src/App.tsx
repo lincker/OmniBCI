@@ -15,7 +15,6 @@ import { ConfigDialog } from "./ConfigDialog";
 import { RunConsole } from "./RunConsole";
 import { TrialResults } from "./TrialResults";
 import { desktopBridge } from "./desktop";
-import type { ConnectionInfo } from "../../desktop/src/contracts";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
 import { useI18n } from "./i18n";
 import "./styles.css";
@@ -39,7 +38,10 @@ function initialView(): View {
   return "acquisition";
 }
 
-export default function App({ desktopConnection }: { desktopConnection?: ConnectionInfo } = {}) {
+export default function App({ connected = true, onEditorStateChange }: {
+  connected?: boolean;
+  onEditorStateChange?: (state: { dirty: boolean; busy: boolean }) => void;
+} = {}) {
   const { language, setLanguage, t } = useI18n();
   const [view, setView] = useState<View>(initialView);
   const [lastSetup, setLastSetup] = useState<SetupPage>("acquisition");
@@ -52,17 +54,26 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
   });
   const main = useRef<HTMLElement>(null);
   const previousView = useRef(view);
+  const wasConnected = useRef(connected);
   const focusEditor = () => {
     const heading = main.current?.querySelector<HTMLElement>(".settings-editor h1, .runtime-content h1");
     if (heading) { heading.setAttribute("tabindex", "-1"); heading.focus(); }
     else main.current?.focus();
   };
-  const feed = useResultsFeed();
+  const feed = useResultsFeed(connected || !!desktopBridge());
   const engine = usePoll(api.engineStatus);
   const runtime = useRuntimeConfiguration();
   const current = useCurrentConfiguration(runtime.status?.accepted, runtime.completedRestorations);
   const acquisition = useAcquisition(runtime, engine.refresh, current);
   const runtimeControls = useRuntimeControls(runtime, current, acquisition, engine.refresh);
+  useEffect(() => {
+    if (connected && !wasConnected.current) {
+      void engine.refresh();
+      void runtime.refresh();
+      for (const [module] of setupPages) void current.reload(module);
+    }
+    wasConnected.current = connected;
+  }, [connected, engine.refresh, runtime.refresh, current.reload]);
   const engineRunning = engine.data?.running ?? false;
   const isSetup = setupPages.some(([page]) => page === view);
   const isSettings = settingsPages.some(([page]) => page === view);
@@ -85,8 +96,10 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
   }, [dirty, current.dirty, busy, runtimeControls.busy, runtime.inProgress]);
 
   useEffect(() => {
-    desktopBridge()?.setEditorState({ dirty: dirty || current.dirty, busy: busy || runtimeControls.busy || runtime.inProgress });
-  }, [dirty, current.dirty, busy, runtimeControls.busy, runtime.inProgress]);
+    const state = { dirty: dirty || current.dirty, busy: busy || runtimeControls.busy || runtime.inProgress };
+    desktopBridge()?.setEditorState(state);
+    onEditorStateChange?.(state);
+  }, [dirty, current.dirty, busy, runtimeControls.busy, runtime.inProgress, onEditorStateChange]);
 
   const navigate = useCallback((next: View) => {
     if (next === view) return;
@@ -144,7 +157,7 @@ export default function App({ desktopConnection }: { desktopConnection?: Connect
       </nav>
       <main className="editor-workspace" ref={main} id="editor-content" tabIndex={-1}>
         <RuntimeConfigurationStatus runtime={runtime} />
-        <fieldset className="desktop-control-guard" disabled={!!desktopConnection && desktopConnection.status !== "ready"}>
+        <fieldset className="desktop-control-guard" disabled={!connected}>
         <div className="editor-viewport">
           {isSetup ? <PluginProfiles key={view} module={view as SetupPage} engineRunning={engineRunning} engineAvailable={engine.data !== null && engine.error === null} navigation={navigation}
             runtime={runtime} acquisition={acquisition} current={current}

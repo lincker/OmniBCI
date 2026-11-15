@@ -47,6 +47,27 @@ Server diagnostics use `/server/info` and `/server/logs`. Desktop connections
 require `desktop_api_version: 1`; Engine configuration and status use the
 `engine` section and `engine_revision` fields throughout.
 
+## Shared clients and authentication
+
+Web and desktop clients can connect to the same independently running Server.
+They share its Engine, module state and live results. Disconnecting a client does
+not stop that Server. A desktop-owned local Server is a separate convenience mode:
+its owning desktop still confirms and performs shutdown when it exits.
+
+With `OMNIBCI_API_TOKEN` configured, desktop and external-node clients send
+`Authorization: Bearer ...`. The Web console uses `GET /server/info` to check its
+connection; a 401 opens the token form. `POST /server/session` verifies the Bearer
+token and sets an HttpOnly, SameSite=Strict cookie for API and WebSocket requests.
+`DELETE /server/session` clears that browser cookie only. Browser credentials are
+invalid after a Server restart. Tokens are not passed in URLs or browser storage.
+
+The Web console uses a same-origin `/api` proxy. Vite preserves the browser's Host
+header for origin validation. Production proxies must likewise preserve the
+public origin and forward WebSocket upgrades. Cookie-authenticated writes and
+WebSocket handshakes require that origin; broad cross-origin access is not enabled.
+Local loopback Servers may run without authentication, and desktop can attach to
+them without a token. Non-loopback desktop connections require authentication.
+
 ## REST
 
 The API prefix is `/api/v1`. Successful responses use

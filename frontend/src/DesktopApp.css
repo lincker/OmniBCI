@@ -1,4 +1,6 @@
 .desktop-shell { display: flex; flex-direction: column; height: 100dvh; min-height: 360px; }
+.browser-workspace:not([hidden]) { display: flex; flex: 1; min-height: 0; }
+.browser-workspace > .workbench { flex: 1; height: auto; min-height: 0; }
 .desktop-shell > .workbench { flex: 1; height: auto; min-height: 0; }
 .desktop-connection-bar { flex: none; display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--sidebar-bg); }
 .desktop-server-address { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

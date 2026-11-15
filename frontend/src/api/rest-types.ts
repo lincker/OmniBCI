@@ -21,6 +21,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/server/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Browser Session */
+        post: operations["create_browser_session_api_v1_server_session_post"];
+        /** Delete Browser Session */
+        delete: operations["delete_browser_session_api_v1_server_session_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/server/logs": {
         parameters: {
             query?: never;
@@ -1271,6 +1289,21 @@ export interface components {
              */
             message: string;
             data?: components["schemas"]["NodeConfigurationPublicationResponse"] | null;
+        };
+        /** ApiResponse[NoneType] */
+        ApiResponse_NoneType_: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            /** Data */
+            data?: null;
         };
         /** ApiResponse[PackageInstallationResponse] */
         ApiResponse_PackageInstallationResponse_: {
@@ -2623,8 +2656,201 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_browser_session_api_v1_server_session_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_ServerInfoResponse_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token or browser session required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_browser_session_api_v1_server_session_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_NoneType_"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description API token or browser session required or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2706,8 +2932,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2789,8 +3024,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2872,8 +3116,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2961,8 +3214,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3055,8 +3317,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3140,8 +3411,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3232,8 +3512,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3319,8 +3608,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3411,8 +3709,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3507,8 +3814,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3599,8 +3915,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3691,8 +4016,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3774,8 +4108,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3866,8 +4209,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3962,8 +4314,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4058,8 +4419,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4153,8 +4523,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4250,8 +4629,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4342,8 +4730,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4429,8 +4826,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4512,8 +4918,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4608,8 +5023,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4700,8 +5124,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4786,8 +5219,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4869,8 +5311,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4956,8 +5407,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5039,8 +5499,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5126,8 +5595,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5211,8 +5689,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5296,8 +5783,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5383,8 +5879,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5468,8 +5973,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5557,8 +6071,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5644,8 +6167,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5727,8 +6259,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5812,8 +6353,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5897,8 +6447,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5983,8 +6542,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6066,8 +6634,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6151,8 +6728,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6240,8 +6826,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6325,8 +6920,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6408,8 +7012,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6495,8 +7108,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6582,8 +7204,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6667,8 +7298,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6756,8 +7396,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6839,8 +7488,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6927,8 +7585,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7017,8 +7684,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7103,8 +7779,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7190,8 +7875,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7277,8 +7971,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7360,8 +8063,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7447,8 +8159,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description API token required or invalid */
+            /** @description API token or browser session required or invalid */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Browser origin rejected */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

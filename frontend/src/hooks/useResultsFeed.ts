@@ -19,7 +19,7 @@ export const MAX_TRIALS = 200;
 const STALE_AFTER_MS = 45_000;
 const SNAPSHOT_INTERVAL_MS = 5_000;
 
-export function useResultsFeed(): ResultsFeed {
+export function useResultsFeed(enabled = true): ResultsFeed {
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [generation, setGeneration] = useState<string | null>(null);
   const [trials, setTrials] = useState<Trial[]>([]);
@@ -27,6 +27,7 @@ export function useResultsFeed(): ResultsFeed {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!enabled) { setConnection("closed"); return; }
     let alive = true;
     let ws: ResultsSocket | null = null;
     let socketOpen = false;
@@ -135,7 +136,7 @@ export function useResultsFeed(): ResultsFeed {
       clearInterval(snapshotTimer);
       ws?.close();
     };
-  }, []);
+  }, [enabled]);
 
   return { connection, generation, trials, acks, error };
 }

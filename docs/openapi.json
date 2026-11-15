@@ -35,7 +35,217 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/server/session": {
+      "post": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Create Browser Session",
+        "operationId": "create_browser_session_api_v1_server_session_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ServerInfoResponse_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Delete Browser Session",
+        "operationId": "delete_browser_session_api_v1_server_session_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_NoneType_"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -126,7 +336,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -217,7 +437,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -308,7 +538,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -424,7 +664,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -540,7 +790,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -647,7 +907,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -748,7 +1018,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -849,7 +1129,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -950,7 +1240,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -1061,7 +1361,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -1162,7 +1472,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -1263,7 +1583,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -1354,7 +1684,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -1455,7 +1795,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -1566,7 +1916,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -1677,7 +2037,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -1809,7 +2179,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -1944,7 +2324,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2045,7 +2435,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2146,7 +2546,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2237,7 +2647,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2350,7 +2770,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2451,7 +2881,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2567,7 +3007,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2658,7 +3108,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2757,7 +3217,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2848,7 +3318,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -2949,7 +3429,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3060,7 +3550,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3178,7 +3678,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3277,7 +3787,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3379,7 +3899,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3489,7 +4019,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3599,7 +4139,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3690,7 +4240,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3798,7 +4358,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -3906,7 +4476,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4023,7 +4603,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4114,7 +4704,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4216,7 +4816,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4328,7 +4938,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4434,7 +5054,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4525,7 +5155,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4626,7 +5266,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4727,7 +5377,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4829,7 +5489,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -4947,7 +5617,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -5038,7 +5718,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -5146,7 +5836,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -5267,7 +5967,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -5378,7 +6088,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -5479,7 +6199,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -5580,7 +6310,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -5671,7 +6411,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -5772,7 +6522,17 @@
             }
           },
           "401": {
-            "description": "API token required or invalid",
+            "description": "API token or browser session required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Browser origin rejected",
             "content": {
               "application/json": {
                 "schema": {
@@ -6757,6 +7517,26 @@
         },
         "type": "object",
         "title": "ApiResponse[NodeConfigurationPublicationResponse]"
+      },
+      "ApiResponse_NoneType_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "type": "null",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[NoneType]"
       },
       "ApiResponse_PackageInstallationResponse_": {
         "properties": {

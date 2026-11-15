@@ -1,14 +1,17 @@
 """Preview use cases preserve worker identity and separate diagnostic delivery."""
+import asyncio
 from copy import deepcopy
+from threading import Event
 from unittest.mock import MagicMock
 
 import pytest
 
 from omnibci.application.acquisition_preview import PreviewSelection, limits
-from omnibci.application.events import CommandResult
+from omnibci.application.commands.acquisition_commands import StopStreamCommand
+from omnibci.application.events import CommandResult, StreamDrainReceipt
 from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.services.acquisition_service import AcquisitionAppService
-from omnibci.application.services.command_result_service import CommandRejectedError
+from omnibci.application.services.command_result_service import CommandExecutionError, CommandRejectedError
 from omnibci.shared.events import EventType
 
 
@@ -161,3 +164,70 @@ def test_cache_cannot_return_a_chunk_from_another_capture(harness):
     cache.return_value["chunk"] = {"capture_id": "other", "generation": "generation"}
     with pytest.raises(ProfileRevisionConflict):
         service.get_preview_chunk(5, generation="generation", capture_id="capture")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detail", [False, True])
+@pytest.mark.parametrize("action", ["start", "stop"])
+async def test_inflight_preview_read_does_not_reject_source_controls(harness, engine_service, detail, action):
+    service, executor, cache, _, state = harness
+    service._admission = engine_service.admission
+    service._connected, service._connection_id = True, "connection"
+    service._descriptor = MagicMock(provenance="worker")
+    engine_service._acquisition = service
+    engine_service._running = engine_service._accepting_commands = True
+    engine_service._engine_thread = MagicMock()
+    engine_service._engine_thread.is_alive.return_value = True
+    engine_service._applied_snapshot = {
+        "CONFIG.generation": "generation", "CONFIG.module_revisions": {"acquisition": "a" * 64},
+    }
+    cache.return_value["chunk"] = {**state, "sequence_id": 5}
+    entered, released = Event(), Event()
+    events = []
+
+    def request(event, payload=None, **kwargs):
+        events.append(event)
+        if event is EventType.GetAcquisitionPreview:
+            entered.set()
+            assert released.wait(5)
+            data = deepcopy(state)
+        else:
+            data = StreamDrainReceipt(None, None, -1, 0, False).to_dict()
+        return CommandResult("command", event.name, True, data=data)
+
+    executor.request.side_effect = request
+    read = (lambda: service.get_preview_chunk(5, generation="generation", capture_id="capture")) if detail else (
+        lambda: service.get_preview(generation="generation"))
+    preview = asyncio.create_task(asyncio.to_thread(read))
+    control = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        control = asyncio.create_task(
+            engine_service.start_reading(expected_revision="a" * 64, generation="generation", connection_id="connection")
+            if action == "start" else asyncio.to_thread(service.handle_stop_stream, StopStreamCommand())
+        )
+        await asyncio.sleep(0)
+        assert not control.done(), "Source controls should wait for the bounded read, not reject it"
+        assert events == [EventType.GetAcquisitionPreview]
+    finally:
+        released.set()
+        await asyncio.wait_for(preview, 2)
+        if control is not None:
+            await asyncio.wait_for(control, 2)
+    assert events == [EventType.GetAcquisitionPreview,
+                      EventType.StartStream if action == "start" else EventType.StopAndDrain]
+
+
+@pytest.mark.parametrize("detail", [False, True])
+def test_preview_read_reports_worker_exit_without_returning_cached_data(harness, detail):
+    service, executor, cache, _, _ = harness
+    executor.request.side_effect = CommandExecutionError(CommandResult(
+        "command", "GetAcquisitionPreview", False,
+        message="Module stopped before confirming command execution", error_code="MODULE_STOPPED",
+    ))
+    with pytest.raises(CommandExecutionError, match="Module stopped"):
+        if detail:
+            service.get_preview_chunk(5, generation="generation", capture_id="capture")
+        else:
+            service.get_preview(generation="generation")
+    cache.assert_not_called()

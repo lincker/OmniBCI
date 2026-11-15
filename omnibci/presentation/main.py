@@ -27,11 +27,11 @@ Endpoints:
 import asyncio
 import logging
 import os
+import secrets
 from uuid import uuid4
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket
-from fastapi.middleware.cors import CORSMiddleware
 
 from omnibci.presentation.routers import engine, acquisition, stimulation, results, config
 from omnibci.presentation.routers import plugin_config, runtime_config, plugin_packages
@@ -54,7 +54,8 @@ logger = logging.getLogger(__name__)
 # appears in the OpenAPI spec and the generated frontend types.
 ERROR_RESPONSES = {
     400: {"model": ErrorResponse, "description": "Bad request"},
-    401: {"model": ErrorResponse, "description": "API token required or invalid"},
+    401: {"model": ErrorResponse, "description": "API token or browser session required or invalid"},
+    403: {"model": ErrorResponse, "description": "Browser origin rejected"},
     404: {"model": ErrorResponse, "description": "Not found"},
     409: {"model": ErrorResponse, "description": "Conflict"},
     422: {"model": ErrorResponse, "description": "Validation error"},
@@ -149,19 +150,14 @@ def create_app(*, api_token: str | None = None, desktop: bool = False) -> FastAP
     token = api_token if api_token is not None else os.environ.get("OMNIBCI_API_TOKEN")
     app.state.instance_id = str(uuid4())
     app.state.auth_enabled = bool(token)
+    app.state.session_token = secrets.token_urlsafe(32)
     app.state.allow_process_termination = not desktop
     app.state.request_gate = RequestGate()
     app.state.shutdown_errors = []
     app.state.shutdown_complete = False
     app.state.shutdown_progress = None
-    app.add_middleware(ApiAccessMiddleware, token=token, gate=app.state.request_gate)
-
     app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        ApiAccessMiddleware, token=token, session_token=app.state.session_token, gate=app.state.request_gate,
     )
 
     # Unified error envelope for every failure (ApiError / HTTPException /

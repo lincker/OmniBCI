@@ -95,12 +95,6 @@ async function disconnect(): Promise<boolean> {
     if (answer.response === 0) return false;
   }
   if (!server) {
-    if (connection.info.id && connection.info.kind === "remote") {
-      const answer = await dialog.showMessageBox(window, { type: "question", message: t("Disconnect from the remote server?"),
-        detail: t("The remote experiment and service will continue. Results remain in its memory and are lost if that service restarts."),
-        buttons: [t("Cancel"), t("Disconnect")], defaultId: 0, cancelId: 0 });
-      if (answer.response === 0) return false;
-    }
     clearSubscriptions(); connection.disconnect(); return true;
   }
   const owned = server;
@@ -136,11 +130,11 @@ async function disconnect(): Promise<boolean> {
 }
 
 async function connect(target: ConnectionTarget): Promise<void> {
-  if (!target || !["local", "remote"].includes(target.kind)) throw new Error(t("Choose a connection mode."));
+  if (!target || !["owned", "existing"].includes(target.kind)) throw new Error(t("Choose a connection mode."));
   if (!await disconnect()) return;
   editor = { dirty: false, busy: false };
-  if (target.kind === "remote") {
-    await connection.connect("remote", target.url, target.token);
+  if (target.kind === "existing") {
+    await connection.connect("existing", target.url, target.token);
   } else {
     let python: string;
     if (app.isPackaged) {
@@ -154,7 +148,7 @@ async function connect(target: ConnectionTarget): Promise<void> {
     }
     const owned = new LocalServer();
     server = owned;
-    connection.launchingLocal();
+    connection.launchingOwned();
     owned.on("exit", (error: Error) => {
       if (server === owned && connection.info.status !== "stopping") { clearSubscriptions(); connection.failed(error.message); }
     });
@@ -163,10 +157,10 @@ async function connect(target: ConnectionTarget): Promise<void> {
     });
     try {
       const ready = await owned.start(python, app.isPackaged ? app.getPath("userData") : path.resolve(__dirname, "../.."), app.isPackaged, writeLog);
-      await connection.connect("local", ready.url, owned.token, ready.instance_id);
+      await connection.connect("owned", ready.url, owned.token, ready.instance_id);
     } catch (error) { await owned.force(); server = undefined; connection.failed((error as Error).message); throw error; }
   }
-  const value = { kind: target.kind, url: target.kind === "remote" ? connection.info.url : undefined };
+  const value = { kind: target.kind, url: target.kind === "existing" ? connection.info.url : undefined };
   const temporary = preferencesPath + ".tmp";
   await writeFile(temporary, JSON.stringify(value), { mode: 0o600 });
   await rename(temporary, preferencesPath);
@@ -195,11 +189,11 @@ async function start(): Promise<void> {
   writeLog = text => log.write(text);
   try {
     const saved = JSON.parse(await readFile(preferencesPath, "utf8"));
-    if (saved.kind === "local") connection.info = { ...connection.info, kind: "local" };
-    else if (saved.kind === "remote" && typeof saved.url === "string") {
-      connection.info = { ...connection.info, kind: "remote", url: serverOrigin(saved.url) };
+    if (saved.kind === "owned") connection.info = { ...connection.info, kind: "owned" };
+    else if (saved.kind === "existing" && typeof saved.url === "string") {
+      connection.info = { ...connection.info, kind: "existing", url: serverOrigin(saved.url) };
     }
-  } catch { /* First launch or unreadable preferences: show local mode. */ }
+  } catch { /* First launch or unreadable preferences: offer an existing service. */ }
 
   if (!app.isPackaged && process.env.OMNIBCI_DESKTOP_DEV_URL) {
     const address = new URL(process.env.OMNIBCI_DESKTOP_DEV_URL);
@@ -248,7 +242,7 @@ async function start(): Promise<void> {
   subscribe("connection:connect", target => exclusive(async () => { await connect(target); return { ...connection.info }; }));
   subscribe("connection:disconnect", () => exclusive(async () => { await disconnect(); }));
   subscribe("recording:choose-file", async () => {
-    if (connection.info.kind !== "local" || connection.info.status !== "ready") throw new Error(t("Choose files on the server machine in remote mode."));
+    if (!connection.info.canChooseRecordingFile || connection.info.status !== "ready") throw new Error(t("Choose a path on the server machine."));
     const owner = connection.info.id;
     const result = await dialog.showOpenDialog(window, { title: t("Choose recording"), buttonLabel: t("Open"), properties: ["openFile"], filters: [{ name: t("CNT recording"), extensions: ["cnt"] }] });
     if (connection.info.id !== owner) throw new Error(t("Connection changed while choosing a file."));

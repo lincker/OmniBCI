@@ -27,6 +27,8 @@ def spec():
 EXPECTED_OPERATIONS = {
     ("/healthz", "get"),
     ("/api/v1/server/info", "get"),
+    ("/api/v1/server/session", "post"),
+    ("/api/v1/server/session", "delete"),
     ("/api/v1/server/logs", "get"),
     # engine
     ("/api/v1/engine/start", "post"),

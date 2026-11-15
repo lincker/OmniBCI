@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const temporary = await mkdtemp(path.join(tmpdir(), "omnibci-shutdown-tests-"));
 after(async () => { delete globalThis.__desktopDialogs; await rm(temporary, { recursive: true, force: true }); });
-const hooks = { responses: [], messages: [], };
+const hooks = { responses: [], messages: [], quits: 0 };
 globalThis.__desktopDialogs = hooks;
 hooks.fetch = async url => {
   if (url.endsWith("/server/info")) return Response.json({ success: true, data: {
@@ -24,7 +24,7 @@ await build({ entryPoints: [fileURLToPath(new URL("../src/main.ts", import.meta.
     builder.onResolve({ filter: /^electron$/ }, () => ({ path: "electron", namespace: "fixture" }));
     builder.onLoad({ filter: /.*/, namespace: "fixture" }, () => ({ contents: `
       const hooks = globalThis.__desktopDialogs;
-      export const app = { setName() {}, setPath() {}, requestSingleInstanceLock() { return false; }, quit() {} };
+      export const app = { setName() {}, setPath() {}, requestSingleInstanceLock() { return false; }, quit() { hooks.quits += 1; } };
       export const protocol = { registerSchemesAsPrivileged() {} };
       export const dialog = {
         async showMessageBox(_window, options) {
@@ -41,7 +41,8 @@ await build({ entryPoints: [fileURLToPath(new URL("../src/main.ts", import.meta.
     `, loader: "js" }));
     builder.onLoad({ filter: /[\\/]src[\\/]main\.ts$/ }, async args => ({
       contents: await readFile(args.path, "utf8") + `
-        export const fixture = { connection, disconnect,
+        export const fixture = { connection, disconnect, requestQuit,
+          setDirty(value) { editor.dirty = value; },
           setLanguage(value) { language = value; },
           reset(owned) { language = "en"; server = owned; window = {}; editor = { dirty: false, busy: false }; },
           getServer() { return server; },
@@ -53,7 +54,7 @@ await build({ entryPoints: [fileURLToPath(new URL("../src/main.ts", import.meta.
 const { fixture } = createRequire(import.meta.url)(path.join(temporary, "main.cjs"));
 let owned;
 beforeEach(async () => {
-  hooks.responses = []; hooks.messages = [];
+  hooks.responses = []; hooks.messages = []; hooks.quits = 0;
   owned = {
     calls: [], exited: false,
     async command(op) { this.calls.push(op); return { ok: true }; },
@@ -61,7 +62,7 @@ beforeEach(async () => {
     async force() { this.calls.push("force"); this.exited = true; },
   };
   fixture.reset(owned);
-  await fixture.connection.connect("local", "http://127.0.0.1:49201", "test-credential");
+  await fixture.connection.connect("owned", "http://127.0.0.1:49201", "test-credential");
 });
 
 test("keeping the window after an incomplete stop reports errors and permits another attempt", async () => {
@@ -122,4 +123,41 @@ test("successful shutdown needs no result export or extra API request", async ()
   assert.equal(await fixture.disconnect(), true);
   assert.equal(hooks.messages.length, 1);
   assert.deepEqual(owned.calls, ["prepare_shutdown", "shutdown"]);
+});
+
+
+test("disconnecting from an existing server sends no shutdown commands or confirmation", async () => {
+  fixture.reset(undefined);
+  await fixture.connection.connect("existing", "http://127.0.0.1:49201", "test-credential");
+  assert.equal(await fixture.disconnect(), true);
+  assert.deepEqual(hooks.messages, []);
+  assert.deepEqual(owned.calls, []);
+  assert.equal(owned.exited, false);
+  assert.equal(fixture.connection.info.status, "disconnected");
+});
+
+test("closing the desktop client leaves an existing server running", async () => {
+  fixture.reset(undefined);
+  await fixture.connection.connect("existing", "https://lab.example", "test-credential");
+  await fixture.requestQuit();
+  assert.equal(hooks.quits, 1);
+  assert.deepEqual(hooks.messages, []);
+  assert.deepEqual(owned.calls, []);
+  assert.equal(owned.exited, false);
+  assert.equal(fixture.connection.info.status, "disconnected");
+});
+
+test("existing service disconnect still protects unsaved edits", async () => {
+  fixture.reset(undefined);
+  await fixture.connection.connect("existing", "http://127.0.0.1:49201", "test-credential");
+  fixture.setDirty(true);
+  hooks.responses.push(0);
+  assert.equal(await fixture.disconnect(), false);
+  assert.equal(fixture.connection.info.status, "ready");
+  assert.deepEqual(owned.calls, []);
+  hooks.responses.push(1);
+  assert.equal(await fixture.disconnect(), true);
+  assert.equal(hooks.messages.length, 2);
+  assert.ok(hooks.messages.every(message => message.message === "Discard unsaved configuration changes?"));
+  assert.deepEqual(owned.calls, []);
 });

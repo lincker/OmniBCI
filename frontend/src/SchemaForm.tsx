@@ -182,7 +182,7 @@ function SchemaField({ schema, value, onChange, disabled, label }: FieldProps) {
       : schema.type === "string" ? <div className="file-path-field"><input id={id} type={schema["x-scope"] === "secret" ? "password" : "text"}
         value={typeof value === "string" ? value : ""} minLength={schema.minLength} maxLength={schema.maxLength} disabled={disabled}
         onChange={(event) => onChange(event.target.value)} />
-        {schema["x-widget"] === "file-path" && desktopBridge() && currentConnection()?.kind === "local" &&
+        {schema["x-widget"] === "file-path" && desktopBridge() && currentConnection()?.canChooseRecordingFile &&
           <button type="button" disabled={disabled} onClick={() => {
             const owner = currentConnection()?.id;
             setFileError("");

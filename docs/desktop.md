@@ -1,9 +1,9 @@
 # OmniBCI desktop
 
 The desktop application uses Electron with the existing web console and a bundled
-CPython server. Each installer supports both **Local** and **Remote** connections.
-Local mode starts the included server; remote mode connects to an existing server
-without starting a local server. The first release is for internal installation:
+CPython server. **Connect to existing service** attaches to a Server on this or
+another computer. **Start local service** starts the included Server, which is
+owned by that desktop process. The first release is for internal installation:
 there is no automatic updater, public release publishing, or store distribution.
 
 ## First launch and data
@@ -12,10 +12,12 @@ Choose a connection mode on the connection screen. Starting Engine initializes
 the foundation without requiring or starting Acquisition. For file acquisition,
 select your own recording in the current Acquisition settings before connecting.
 The installer contains no demonstration recording or repository test fixtures.
-In remote mode, data paths refer to the server machine; the desktop file picker
-cannot select files on that machine.
+Data paths always refer to the Server machine. The desktop file picker is
+available for an owned Server or a loopback connection. It selects a path, not
+an upload; a Server behind a tunnel or inside a container must still be able to
+read that path. Other connections use explicit Server-side paths.
 
-The desktop remembers the last connection mode and remote address, but does not
+The desktop remembers the last connection mode and existing-service address, but does not
 persist authentication tokens. Local server credentials are generated for each
 launch and remain in the Electron main process. Switching connections clears the
 previous connection's runtime state and result subscriptions.
@@ -23,13 +25,36 @@ previous connection's runtime state and result subscriptions.
 The Results page shows the latest 200 decoded trials held in server memory.
 Restarting the engine or server clears that view. Historical result export is
 not part of the minimal runtime. The desktop asks before stopping the local server.
-Disconnecting from a remote server leaves that service and its experiment running.
+Disconnecting from an existing Server, or closing its desktop client, leaves that
+service and its experiment running. Unsaved edits still require confirmation.
 No user configuration, plugins, logs, recordings, or exports are stored in the
 application's installation directory. Desktop preferences and logs live below
 Electron's per-user `userData` directory, in `desktop/connection.json` and
 `desktop/logs/`. Existing server platform-specific user paths remain in use.
 
-## Run a remote server
+## Share one Server between Web and desktop
+
+Start the Server independently of either client:
+
+```sh
+python -m omnibci.presentation.server --host 127.0.0.1 --port 8000
+npm --prefix frontend run dev
+```
+
+Run those commands in separate terminals. Open the Web console at the address
+printed by Vite. In the desktop, choose **Connect to existing service** and enter
+`http://127.0.0.1:8000`. A loopback Server without authentication needs no token.
+Closing either client leaves the shared Server running. To stop it, use its
+terminal or service manager. An explicit Engine or module Stop command still
+affects the shared runtime, whichever client sends it.
+
+Both clients see the same Server instance, module state and results. Configuration
+revision checks reject conflicting edits; unsubmitted drafts remain local to each
+client. Use one Server process for a runtime/configuration directory. Multiple
+Server processes or ASGI workers have separate Engines and cannot coordinate
+hardware merely by sharing configuration files.
+
+## Authenticate an existing Server
 
 On the server machine, install OmniBCI with its production/stimulation dependencies
 and start the normal server entrypoint with a strong private token:
@@ -41,14 +66,24 @@ OMNIBCI_API_TOKEN='replace-with-a-long-random-token' \
 
 In PowerShell set `$env:OMNIBCI_API_TOKEN` first, then run the same Python command.
 Enter the server's base address, such as `http://server-host:8000`, and its token
-in the desktop's Remote connection form. Set the same token environment variable
+in the desktop's existing-service connection form. Non-loopback desktop
+connections require authentication. The Web console prompts for the same token
+when authentication is enabled. It exchanges the token for an HttpOnly,
+SameSite=Strict browser session cookie; the token is not saved in browser storage
+or placed in URLs. Signing out clears the browser cookie without stopping the
+Server or disconnecting desktop clients. Restarting the Server expires browser
+sessions. Set the same token environment variable
 on separately launched stimulation/actuation nodes that need to authenticate to
 that API. Do not place credentials in the URL.
 
 HTTP is intended for trusted local networks. For access across untrusted networks,
 put the API behind an HTTPS reverse proxy with a normally trusted certificate and
 WebSocket forwarding. Enter its `https://` base address; certificate validation is
-not disabled by the desktop. The proxy must forward authentication headers.
+not disabled by the desktop. Serve the Web console and proxy `/api` (including
+WebSocket upgrades) through the same public origin. Preserve the public Host and
+Origin and configure trusted proxy handling for HTTPS. The API checks browser
+origins and does not expose a cross-origin browser API. Desktop clients continue
+to use Bearer authentication directly.
 
 `--desktop` is a separate, private JSONL control protocol over inherited
 stdin/stdout. It is used only for an owned local server and does not expose a
@@ -200,7 +235,7 @@ from a temporary working directory, both before and after packaging. It checks
 installed versions/import locations, loads plugin sources, validates schemas,
 reads all 321 resource frames, and starts a real spawned process that repeats
 plugin/resource checks with the same interpreter. The Electron smoke test drives
-the real window, preload, API/WebSocket connection and local/remote lifecycle.
+the real window, preload, API/WebSocket connection and owned/existing lifecycle.
 Its test fixtures are external inputs and never copied into the installer.
 
 Outputs are under `desktop/release`. Every package command passes `--publish never`.
@@ -261,8 +296,10 @@ spaces and non-ASCII characters:
    Restart Engine and confirm the live result view clears.
 3. Close or switch connections during work. Check cancellation, graceful stop,
    and cleanup of owned server/worker processes.
-4. Connect to a separate remote server with authentication. Check live results,
-   reconnect behavior and that disconnecting does not stop the remote experiment.
+4. Connect desktop and Web to the same independently running Server, with and
+   without authentication on loopback. Check live results, conflicting edits,
+   browser sign-out and that closing either client does not stop the shared
+   experiment. Check authenticated connections from another computer as well.
 5. Restart and reinstall. Confirm per-user configuration is retained and no
    resources were written into the installed application. Check logs and the
    runtime manifest when diagnosing a startup failure.

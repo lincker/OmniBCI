@@ -20,7 +20,7 @@ const { SchemaForm, schemaErrors } = await server.ssrLoadModule("/src/SchemaForm
 const { default: App } = await server.ssrLoadModule("/src/App.tsx");
 const { I18nProvider } = await server.ssrLoadModule("/src/i18n.tsx");
 const { recordingPathMissing } = await server.ssrLoadModule("/src/RunConsole.tsx");
-const ready = (id = "server-A", kind = "local") => ({ id, kind, status: "ready", url: "http://127.0.0.1:49152" });
+const ready = (id = "server-A", kind = "owned") => ({ id, kind, status: "ready", url: "http://127.0.0.1:49152", canChooseRecordingFile: true });
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 beforeEach(() => {
   globalThis.window = { omnibciDesktop: {}, localStorage: { getItem: () => "en" }, navigator: { language: "en" } };
@@ -59,7 +59,7 @@ test("switching server aborts the request and discards a delayed consumed respon
   };
   const request = requestJson("/api/v1/engine/status");
   await started.promise;
-  desktop.setDesktopConnection(ready("server-B", "remote"));
+  desktop.setDesktopConnection(ready("server-B", "existing"));
   assert.equal(signal.aborted, true);
   body.resolve({ success: true, data: { server: "A" } });
   await assert.rejects(request, { name: "AbortError" });
@@ -122,14 +122,14 @@ test("desktop results subscriptions suppress old connection events and close onc
   assert.equal(unsubscribed, 1);
 });
 
-test("file fields allow blank setup and offer native selection only on the local server", () => {
+test("file fields offer native selection according to the connected Server capability", () => {
   const schema = { type: "object", required: ["path"], properties: {
     path: { type: "string", default: "", "x-widget": "file-path", "x-scope": "machine" },
   } };
   assert.deepEqual(schemaErrors(schema, { path: "" }), []);
   const render = () => renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(SchemaForm, { schema, value: { path: "" }, onChange: () => {} })));
   assert.match(render(), /Browse…/);
-  desktop.setDesktopConnection(ready("remote", "remote"));
+  desktop.setDesktopConnection({ ...ready("remote", "existing"), canChooseRecordingFile: false });
   assert.doesNotMatch(render(), /Browse…/);
   assert.match(render(), /Path on the server computer/);
   delete window.omnibciDesktop;
@@ -139,7 +139,7 @@ test("file fields allow blank setup and offer native selection only on the local
 test("an offline desktop workspace keeps the current page visible with its controls disabled", () => {
   Object.assign(window, { location: { hash: "#run" }, localStorage: { getItem: () => "en" }, navigator: { language: "en" } });
   const render = (status) => renderToStaticMarkup(React.createElement(I18nProvider, null,
-    React.createElement(App, { desktopConnection: { ...ready(), status } })));
+    React.createElement(App, { connected: status === "ready" })));
   const offline = render("failed");
   assert.match(offline, /Run console/);
   assert.match(offline, /<fieldset class="desktop-control-guard" disabled=""/);

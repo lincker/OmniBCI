@@ -61,6 +61,10 @@ The current regression suite checks:
   separate from the running Engine and module state.
 - Server routes and version 1 desktop/node protocols, with removed routes,
   obsolete fields and unsupported protocol versions rejected.
+- Shared Web/desktop Server connections, Bearer and browser-cookie authentication,
+  same-origin validation, and client disconnection without stopping shared runtime.
+- Concurrent acquisition preview reads and runtime transitions, preserving capture
+  identity checks without reserving module operations for a read-only viewer.
 - Strict peer decoding and accepted-message liveness, uniform worker command
   pairs, current SDK signal descriptors and declared processing input contracts.
 - Engine foundation startup and independent module start/stop, processing input

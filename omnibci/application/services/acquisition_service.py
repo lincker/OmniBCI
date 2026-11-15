@@ -295,7 +295,6 @@ class AcquisitionAppService:
                                            {"generation": generation, "capture_id": capture_id})
             return {**result, **self._read_preview_cache(generation, capture_id)}
 
-    @admitted(scopes="acquisition", recovery=True)
     def get_preview(self, *, generation: str, capture_id: str | None = None) -> dict:
         if capture_id is not None:
             self._require_capture_id(capture_id)
@@ -307,7 +306,6 @@ class AcquisitionAppService:
             # These channels progress independently; preserve both counters.
             return {**result, **self._read_preview_cache(generation, result["capture_id"])}
 
-    @admitted(scopes="acquisition", recovery=True)
     def get_preview_chunk(self, sequence_id: int, *, generation: str, capture_id: str) -> dict:
         self._require_capture_id(capture_id)
         if type(sequence_id) is not int or sequence_id < 0:

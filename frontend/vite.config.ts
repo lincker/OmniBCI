@@ -13,10 +13,10 @@ export default defineConfig({
     proxy: {
       "/api": {
         target: server,
-        changeOrigin: true,
+        changeOrigin: false,
         ws: true, // /api/v1/ws/results
       },
-      "/healthz": { target: server, changeOrigin: true },
+      "/healthz": { target: server, changeOrigin: false },
     },
   },
 });

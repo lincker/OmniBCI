@@ -1,4 +1,4 @@
-"""Versioned Server handshake and read-only server diagnostics."""
+"""Versioned Server handshake, browser sessions, and read-only diagnostics."""
 from importlib.metadata import PackageNotFoundError, version
 from typing import Literal
 
@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from omnibci.presentation.errors import ApiError
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
+from omnibci.presentation.security import SESSION_COOKIE
 
 try:
     APP_VERSION = version("omnibci")
@@ -30,12 +31,33 @@ class ServerLogsResponse(BaseModel):
 
 
 @router.get("/info", response_model=ApiResponse[ServerInfoResponse])
-def server_info(request: Request):
+def server_info(request: Request, response: Response):
+    response.headers["Cache-Control"] = "no-store"
     return ApiResponse(data=ServerInfoResponse(
         app_version=APP_VERSION,
         instance_id=request.app.state.instance_id,
         auth_enabled=request.app.state.auth_enabled,
     ))
+
+
+@router.post("/session", response_model=ApiResponse[ServerInfoResponse])
+def create_browser_session(request: Request, response: Response):
+    if request.app.state.auth_enabled:
+        response.set_cookie(
+            SESSION_COOKIE, request.app.state.session_token, path="/api/v1",
+            httponly=True, secure=request.url.scheme == "https", samesite="strict",
+        )
+    return server_info(request, response)
+
+
+@router.delete("/session", response_model=ApiResponse[None])
+def delete_browser_session(request: Request, response: Response):
+    response.delete_cookie(
+        SESSION_COOKIE, path="/api/v1", httponly=True,
+        secure=request.url.scheme == "https", samesite="strict",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return ApiResponse()
 
 
 @router.get("/logs", response_model=ApiResponse[ServerLogsResponse])

@@ -235,6 +235,13 @@ cd frontend
 VITE_SERVER=http://192.168.1.10:8000 npm run dev
 ```
 
+The desktop can use this same Server: choose **Connect to existing service** and
+enter its base address. Closing either client does not stop an independently
+started Server. When `OMNIBCI_API_TOKEN` is set, enter that token in either client;
+the Web console uses a browser session cookie for subsequent API and WebSocket
+requests. A local loopback Server without authentication needs no token.
+See [desktop and shared Server setup](docs/desktop.md#share-one-server-between-web-and-desktop).
+
 ### Distributed Stimulation and Actuation
 
 Independent nodes use `OMNIBCI_PLUGIN_DIR` for a custom local plugin directory,

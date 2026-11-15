@@ -45,9 +45,11 @@ await build({ entryPoints: [path.join(root, "src/local-server.ts")], outfile: pa
 const { LocalServer } = createRequire(import.meta.url)(path.join(directory, "server.cjs"));
 const remote = new LocalServer();
 let application;
+let browserApplication;
+let webServer;
 let stage = "launch";
 const diagnostics = [];
-const processOverrides = ["OMNIBCI_CONFIG_DIR", "OMNIBCI_PLUGIN_DIR"];
+const processOverrides = ["OMNIBCI_CONFIG_DIR", "OMNIBCI_PLUGIN_DIR", "VITE_SERVER"];
 const originalEnvironment = Object.fromEntries(processOverrides.map(name => [name, process.env[name]]));
 const timedFetch = (url, options = {}) => fetch(url, { ...options, signal: AbortSignal.timeout(10_000) });
 async function bounded(operation, label, timeout = 45_000) {
@@ -105,14 +107,15 @@ try {
 
   // Native prompts are stubbed only by the test driver, never by the shipped app.
   await application.evaluate(({ dialog }) => {
-    dialog.showMessageBox = async (_window, options) => ({ response: ["Discard changes", "Stop and continue", "Disconnect"]
+    dialog.showMessageBox = async (_window, options) => ({ response: ["Discard changes", "Stop and continue"]
       .map(label => options.buttons?.indexOf(label) ?? -1).find(index => index >= 0) ?? 0, checkboxChecked: false });
   });
-  stage = "local connection";
+  stage = "owned service connection";
+  await page.getByRole("radio", { name: "Start local service", exact: true }).check();
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.getByRole("heading", { name: "Acquisition source" }).waitFor({ timeout: 60_000 });
   const local = await page.evaluate(() => window.omnibciDesktop.getConnection());
-  assert.equal(local.kind, "local");
+  assert.equal(local.kind, "owned");
   const api = async (route, method = "GET", body) => page.evaluate(async ({ route, method, body }) => {
     const connection = await window.omnibciDesktop.getConnection();
     const response = await fetch("app://omnibci/api/v1" + route, {
@@ -185,6 +188,8 @@ try {
   await page.getByRole("button", { name: "Start processing", exact: true }).click();
   await pollUntil("Independent Processing startup", async () => (await api("/engine/status")).body.data,
     current => current.processor_alive === true);
+  await pollUntil("Processing startup operation completed", async () => (await api("/config/runtime")).body.data,
+    current => current.operations.processing?.status === "succeeded");
   const workers = (await api("/engine/status")).body.data;
   assert.equal(workers.acquisition_alive, true);
   assert.equal(workers.processor_alive, true);
@@ -227,7 +232,7 @@ try {
     if (originalEnvironment[name] === undefined) delete process.env[name];
     else process.env[name] = originalEnvironment[name];
   }
-  await page.getByRole("radio", { name: "Remote server", exact: true }).check();
+  await page.getByRole("radio", { name: "Connect to existing service", exact: true }).check();
   await page.getByLabel("Server address", { exact: true }).fill(ready.url);
   await page.getByLabel("Access token", { exact: true }).fill("incorrect-token");
   await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -239,25 +244,115 @@ try {
   await page.getByRole("button", { name: "Setup", exact: true }).click();
   await page.getByRole("heading", { name: "Acquisition source" }).waitFor();
   assert.equal(await page.getByLabel("Recording path", { exact: true }).inputValue(), "");
-  assert.equal(await page.getByRole("button", { name: "Browse…", exact: true }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Browse…", exact: true }).count(), 1);
   const remoteConnection = await page.evaluate(() => window.omnibciDesktop.getConnection());
-  assert.equal(remoteConnection.kind, "remote");
+  assert.equal(remoteConnection.kind, "existing");
   assert.notEqual(remoteConnection.id, local.id);
   assert.equal((await api("/server/info")).body.data.instance_id, ready.instance_id);
   assert.equal((await api("/engine/status")).body.data.running, false);
   await page.waitForFunction(() => document.querySelector(".connection-open"), null, { timeout: 20_000 });
   await page.screenshot({ path: path.join(output, "remote-workspace.png") });
+
+  stage = "shared browser connection";
+  // Use the real Web transport/proxy in a separate Chromium client without a
+  // desktop preload. Its lifetime must not depend on the desktop under test.
+  process.env.VITE_SERVER = ready.url;
+  const frontend = path.resolve(root, "../frontend");
+  const { createServer } = createRequire(path.join(frontend, "package.json"))("vite");
+  webServer = await createServer({ root: frontend, configFile: path.join(frontend, "vite.config.ts"),
+    server: { host: "127.0.0.1", strictPort: false }, logLevel: "error" });
+  await webServer.listen();
+  const webUrl = `http://127.0.0.1:${webServer.httpServer.address().port}`;
+  const browserMain = path.join(directory, "browser.cjs");
+  await writeFile(browserMain, `const { app, BrowserWindow } = require("electron");
+app.setPath("userData", ${JSON.stringify(path.join(directory, "browser-data"))});
+app.whenReady().then(() => {
+  const window = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+  window.webContents.on("will-prevent-unload", event => event.preventDefault());
+  window.loadURL(${JSON.stringify(webUrl)});
+});
+app.on("window-all-closed", () => app.quit());
+`);
+  browserApplication = await _electron.launch({ args: [browserMain], env: localEnv, cwd: directory, timeout: 60_000 });
+  const browser = await browserApplication.firstWindow();
+  browser.setDefaultTimeout(30_000);
+  browser.on("pageerror", error => diagnostics.push(error.stack ?? error.message));
+  browser.on("dialog", dialog => { void dialog.accept().catch(() => {}); });
+  browser.on("requestfailed", request => diagnostics.push(`Web request failed: ${request.url()} ${request.failure()?.errorText}\n`));
+  browser.on("response", response => {
+    if (response.status() >= 400) diagnostics.push(`Web HTTP ${response.status()}: ${response.url()}\n`);
+  });
+  assert.equal(await browser.evaluate(() => typeof window.omnibciDesktop), "undefined");
+  const browserApi = (route) => browser.evaluate(async route => {
+    const response = await fetch("/api/v1" + route);
+    return { status: response.status, body: await response.json() };
+  }, route);
+  await browser.getByRole("combobox").selectOption("en");
+  await browser.getByRole("heading", { name: "Connect your workspace", exact: true }).waitFor();
+  await browser.getByLabel("Access token", { exact: true }).fill("incorrect-token");
+  await browser.getByRole("button", { name: "Connect", exact: true }).click();
+  await browser.getByRole("alert").waitFor();
+  assert.equal((await browserApi("/server/info")).status, 401);
+  await browser.getByLabel("Access token", { exact: true }).fill(remote.token);
+  await browser.getByRole("button", { name: "Connect", exact: true }).click();
+  await browser.getByRole("heading", { name: "Acquisition source", exact: true }).waitFor();
+  assert.equal((await browserApi("/server/info")).body.data.instance_id, ready.instance_id);
+  const cookie = (await browser.context().cookies()).find(value => value.name === "omnibci_session");
+  assert.equal(cookie?.httpOnly, true);
+  assert.equal(cookie?.sameSite, "Strict");
+  assert.notEqual(cookie?.value, remote.token);
+  await browser.waitForFunction(() => document.querySelector(".connection-open"));
+
+  stage = "browser session recovery preserves drafts";
+  await browser.getByLabel("Recording path", { exact: true }).fill("unsaved-recording.cnt");
+  await browser.context().clearCookies();
+  await browser.getByRole("heading", { name: "Connect your workspace", exact: true }).waitFor();
+  await browser.getByLabel("Access token", { exact: true }).fill(remote.token);
+  await browser.getByRole("button", { name: "Connect", exact: true }).click();
+  await browser.getByRole("heading", { name: "Acquisition source", exact: true }).waitFor();
+  assert.equal(await browser.getByLabel("Recording path", { exact: true }).inputValue(), "unsaved-recording.cnt");
+  await browser.getByLabel("Recording path", { exact: true }).fill("");
+  await browser.getByRole("button", { name: "Run", exact: true }).click();
+  await browser.getByRole("button", { name: "Start engine", exact: true }).click();
+  await pollUntil("Shared Engine startup", async () => (await api("/engine/status")).body.data,
+    current => current.running === true && current.acquisition_alive === false && current.processor_alive === false);
+
+  stage = "browser sign-out leaves shared runtime running";
+  await browser.getByLabel("Server connection", { exact: true }).getByRole("button", { name: "Disconnect", exact: true }).click();
+  await browser.getByRole("heading", { name: "Connect your workspace", exact: true }).waitFor();
+  assert.equal((await browserApi("/server/info")).status, 401);
+  assert.equal((await api("/engine/status")).body.data.running, true);
+  await page.waitForFunction(() => document.querySelector(".connection-open"));
+  await browser.getByLabel("Access token", { exact: true }).fill(remote.token);
+  await browser.getByRole("button", { name: "Connect", exact: true }).click();
+  await browser.waitForFunction(() => document.querySelector(".connection-open"));
+  await browser.screenshot({ path: path.join(output, "shared-web-workspace.png") });
+
+  stage = "desktop disconnect leaves browser running";
   await page.evaluate(() => window.omnibciDesktop.disconnect());
   await page.getByRole("heading", { name: "Connect your workspace" }).waitFor();
   assert.equal((await timedFetch(ready.url + "/api/v1/server/info", { headers: { Authorization: `Bearer ${remote.token}` } })).status, 200);
+  assert.equal((await browserApi("/engine/status")).body.data.running, true);
+  await page.evaluate(target => window.omnibciDesktop.connect(target), { kind: "existing", url: ready.url, token: remote.token });
+  await page.waitForFunction(() => document.querySelector(".connection-open"));
   stage = "app exit";
   await bounded(application.close(), "App exit");
   application = undefined;
+  assert.equal((await browserApi("/engine/status")).body.data.running, true);
+  await browser.waitForFunction(() => document.querySelector(".connection-open"));
+  await bounded(browserApplication.close(), "Browser exit");
+  browserApplication = undefined;
+  assert.equal((await timedFetch(ready.url + "/api/v1/engine/status", { headers: { Authorization: `Bearer ${remote.token}` } })).status, 200);
   assert.equal((await bounded(remote.command("shutdown"), "Remote server shutdown")).ok, true);
   await bounded(remote.waitForExit(), "Remote server exit");
   await writeFile(path.join(output, "result.json"), JSON.stringify({ ok: true, packaged, directory, prefs }, null, 2));
   console.log(`Desktop smoke passed (${packaged ? "packaged" : "development"}); artifacts: ${output}`);
 } catch (error) {
+  const browser = browserApplication?.windows()[0];
+  if (browser) {
+    await browser.screenshot({ path: path.join(output, "browser-failure.png"), timeout: 10_000 }).catch(() => {});
+    diagnostics.push(await browser.locator("body").innerText({ timeout: 5000 }).catch(() => ""));
+  }
   const page = application?.windows()[0];
   if (page) {
     await page.screenshot({ path: path.join(output, "failure.png"), timeout: 10_000 }).catch(() => {});
@@ -271,11 +366,13 @@ try {
     else process.env[name] = originalEnvironment[name];
   }
   const cleanup = [];
+  if (browserApplication) cleanup.push(bounded(browserApplication.close(), "Browser cleanup", 10_000));
+  if (webServer) cleanup.push(bounded(webServer.close(), "Web proxy cleanup", 10_000));
   cleanup.push(bounded(remote.force(), "Remote server cleanup", 10_000));
   if (application) cleanup.push((async () => {
     // On failure, cleanup must not leave a dirty editor confirmation blocking quit.
     await bounded(application.evaluate(({ dialog }) => {
-      dialog.showMessageBox = async (_window, options) => ({ response: ["Discard changes", "Stop and continue", "Disconnect", "Discard results", "Force exit"]
+      dialog.showMessageBox = async (_window, options) => ({ response: ["Discard changes", "Stop and continue", "Force exit"]
         .map(label => options.buttons?.indexOf(label) ?? -1).find(index => index >= 0) ?? 0, checkboxChecked: false });
     }), "Cleanup dialog setup", 5000).catch(() => {});
     await bounded(application.close(), "App cleanup").catch(error => {

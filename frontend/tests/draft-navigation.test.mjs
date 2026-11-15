@@ -47,6 +47,7 @@ function harness(Component, props = {}, attachRefs = () => {}) {
   };
   return {
     get tree() { return tree; },
+    updateProps(next) { Object.assign(props, next); pending = true; },
     async settle() {
       for (let round = 0; round < 40; round += 1) {
         if (pending) {
@@ -72,13 +73,13 @@ function elements(tree) {
 const component = (h, name) => elements(h.tree).find((item) => item.type.name === name);
 const navigation = (h, label) => elements(h.tree).find((item) => item.type === "button" && item.props["aria-label"] === label);
 
-async function withApp(action, { desktopMode = false, applying = false } = {}) {
+async function withApp(action, { desktopMode = false, applying = false, connected = true } = {}) {
   const original = Object.fromEntries(["window", "document", "location", "localStorage", "WebSocket", "fetch"].map((key) => [key, globalThis[key]]));
   const originalStatus = runtimeConfigApi.status;
   const originalActivation = pluginConfigApi.modules, originalModule = pluginConfigApi.module;
   pluginConfigApi.modules = async () => moduleConfiguration();
   pluginConfigApi.module = async (module) => (await pluginConfigApi.modules()).modules[module];
-  const listeners = new Map(), editorStates = [];
+  const listeners = new Map(), editorStates = [], resultSubscriptions = [];
   const location = { hash: "#acquisition", protocol: "http:", host: "localhost" };
   const localStorage = { getItem: () => null, setItem: () => {} };
   const state = { running: false, accepted: revisionMap(null), applied: null, generation: null, recovery: {},
@@ -92,14 +93,14 @@ async function withApp(action, { desktopMode = false, applying = false } = {}) {
   globalThis.fetch = () => new Promise(() => {});
   runtimeConfigApi.status = async () => structuredClone(state);
   if (desktopMode) {
-    desktop.setDesktopConnection({ id: "server", kind: "local", status: "ready" });
-    window.omnibciDesktop = { subscribeResults: () => () => {}, setEditorState: (value) => editorStates.push(value) };
+    desktop.setDesktopConnection({ id: "server", kind: "owned", status: "ready" });
+    window.omnibciDesktop = { subscribeResults: (id) => { resultSubscriptions.push(id); return () => {}; }, setEditorState: (value) => editorStates.push(value) };
   }
   const focusEvents = [];
   const heading = { setAttribute: (name, value) => { heading[name] = value; }, focus: () => focusEvents.push(location.hash) };
   const content = { querySelector: () => heading, focus: () => focusEvents.push("main") };
-  const h = harness(App, {}, (tree) => { elements(tree).find((item) => item.type === "main").ref.current = content; });
-  try { await h.settle(); await action({ h, listeners, editorStates, state, focusEvents, heading }); }
+  const h = harness(App, { connected }, (tree) => { elements(tree).find((item) => item.type === "main").ref.current = content; });
+  try { await h.settle(); await action({ h, listeners, editorStates, state, focusEvents, heading, resultSubscriptions }); }
   finally { h.dispose(); runtimeConfigApi.status = originalStatus; pluginConfigApi.modules = originalActivation; pluginConfigApi.module = originalModule; Object.assign(globalThis, original); }
 }
 
@@ -439,4 +440,34 @@ test("Engine Stop and its pending state survive navigation during a connection r
     assert.equal(controller().pending, false);
     assert.equal(controls().stop.pending, false);
   }); } finally { signalConfigApi.get = originalSignal; }
+});
+
+
+test("offline desktop controls retain the result subscription used to reconnect", async () => {
+  await withApp(async ({ h, resultSubscriptions }) => {
+    assert.deepEqual(resultSubscriptions, ["server"]);
+    assert.equal(elements(h.tree).find((node) => node.type === "fieldset").props.disabled, true);
+  }, { desktopMode: true, connected: false });
+});
+
+
+test("reconnect retries failed module reads without replacing edited current values", async () => {
+  await withApp(async ({ h }) => {
+    const current = () => component(h, "PluginProfiles").props.current;
+    current().set("acquisition.source", currentSource);
+    await h.settle();
+    const load = pluginConfigApi.module;
+    pluginConfigApi.module = async () => { throw new Error("Authentication required"); };
+    await current().reload("acquisition"); await h.settle();
+    assert.equal(current().modules.acquisition.ready, false);
+    h.updateProps({ connected: false }); await h.settle();
+    pluginConfigApi.module = load;
+    const engineStatus = api.engineStatus;
+    api.engineStatus = async () => ({ running: false });
+    try {
+      h.updateProps({ connected: true }); await h.settle();
+      assert.equal(current().modules.acquisition.ready, true);
+      assert.deepEqual(current().entries["acquisition.source"], currentSource);
+    } finally { api.engineStatus = engineStatus; }
+  }, { desktopMode: true });
 });

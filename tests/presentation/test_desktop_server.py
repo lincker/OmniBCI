@@ -11,7 +11,7 @@ import asyncio
 import io
 from contextlib import asynccontextmanager
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 import pytest
 
@@ -92,8 +92,10 @@ def desktop_server(tmp_path):
 
 
 def request(ready, path, *, method="GET"):
-    return urlopen(Request(ready["url"] + path, method=method,
-                          headers={"Authorization": "Bearer " + "t" * 48}), timeout=5)
+    # The private child is always on loopback, regardless of host proxy settings.
+    return build_opener(ProxyHandler({})).open(
+        Request(ready["url"] + path, method=method, headers={"Authorization": "Bearer " + "t" * 48}), timeout=5,
+    )
 
 
 @pytest.mark.integration

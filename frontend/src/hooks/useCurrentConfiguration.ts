@@ -127,6 +127,7 @@ export function useCurrentConfiguration(acceptedRevisions?: RevisionMap,
     }
   }, [reload, JSON.stringify(acceptedRevisions), JSON.stringify(restorations)]);
   useEffect(() => () => {
+    observed.current = {};
     for (const module of configurationModules) loadGeneration.current[module] = (loadGeneration.current[module] ?? 0) + 1;
   }, []);
   const get = useCallback((slot: string) => values.current[slot], []);
