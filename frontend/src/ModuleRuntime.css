@@ -1,12 +1,22 @@
+/* Module lifecycle panel: a left stripe shows at a glance whether the module is active. */
 .module-runtime {
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--card-radius);
+  background: var(--tint);
   padding: 12px 16px;
   margin: 12px 0 20px;
 }
+.module-runtime[data-active] { border-left-color: var(--ok); }
 
 .module-runtime p { margin: 0 0 8px; }
+.module-runtime-status strong { color: var(--heading); }
+.module-runtime[data-active] .module-runtime-status strong { color: var(--ok); }
 .module-runtime .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .module-runtime .action-reasons { margin-top: 8px; }
 .module-runtime > :last-child,
 .module-runtime .action-reasons > :last-child { margin-bottom: 0; }
+
+/* Setup pages show module state only; lifecycle actions live on Run. */
+.setup-runtime-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 12px 0 20px; padding: 10px 16px; border: 1px solid var(--border-soft); border-radius: var(--card-radius); background: var(--tint); }
+.setup-runtime-status .meta { flex: 1 1 240px; margin: 0; }

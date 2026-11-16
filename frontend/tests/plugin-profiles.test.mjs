@@ -83,7 +83,7 @@ function componentHarness(props) {
   const hooks = [];
   let cursor = 0;
   let needsRender = true;
-  let tree;
+  let tree; let controls;
   let pendingEffects = [];
   const dispatcher = {
     useContext: () => english,
@@ -121,6 +121,7 @@ function componentHarness(props) {
       const engine = { data: { running: props.engineRunning, processor_alive: false, actuation_alive: false, actuation_connected: false, ...props.engine },
         error: props.engineAvailable === false ? new Error("Engine unavailable") : null, refresh: async () => {} };
       const runtimeControls = useRuntimeControls(runtime, props.current, props.acquisition, engine);
+      controls = runtimeControls;
       tree = PluginProfiles({ ...props, runtime, runtimeControls });
     } finally { internals.current = previous; }
     const effects = pendingEffects; pendingEffects = [];
@@ -128,6 +129,7 @@ function componentHarness(props) {
   }
   return {
     get tree() { return tree; },
+    get controls() { return controls; },
     updateProps(next) { Object.assign(props, next); needsRender = true; },
     async settle() {
       for (let round = 0; round < 60; round += 1) {
@@ -1423,17 +1425,22 @@ for (const [module, start, slot] of [
   ["processing", "Start processing", "processing.decoder"],
   ["stimulation", "Launch stimulation", "stimulation.paradigm"],
   ["actuation", "Start actuation", "actuation.effector"],
-]) test(`${module} starts from Setup with current parameters and no Profile save or acquisition connection`, async () => {
+]) test(`${module} Setup shows status only and Run starts it with current parameters, no Profile save or acquisition connection`, async () => {
   await withProfiles(module, async (h, calls, data) => {
     const others = clone(data.activation.bindings.filter((item) => !item.slot.startsWith(`${module}.`)));
+    assert.ok(!elements(h.tree).some((node) => node.type === "button" && text(node) === start), "Setup must not offer lifecycle actions");
+    assert.match(text(h.tree), /Not running/);
+    await click(h, "Operate in Run");
+    assert.equal(data.openRunCalls, 1);
     if (module === "processing") {
-      assert.equal(button(h, start).props.disabled, true);
-      assert.match(text(h.tree), /requires an epoch detector/);
+      assert.equal(h.controls.module(module).start.reason !== null, true);
+      assert.match(h.controls.module(module).start.reason, /requires an epoch detector/);
       await click(h, "Epoch boundary detector");
       await click(h, "Decoder");
     }
     form(h).props.onChange({ gain: 19, calibration: [3, 4] }); await h.settle();
-    await click(h, start);
+    assert.equal(h.controls.module(module).start.reason, null);
+    await h.controls.module(module).start.run(); await h.settle();
     assert.equal(data.moduleRequests.length, 1);
     const request = data.moduleRequests[0];
     assert.equal(request.module, module);
@@ -1446,12 +1453,11 @@ for (const [module, start, slot] of [
   }, { engineRunning: true, configure: (data) => { data.source.connected = false; } });
 });
 
-test("invalid current parameters block module startup locally without requiring a Profile", async () => {
+test("invalid current parameters edited in Setup block module startup locally without requiring a Profile", async () => {
   await withProfiles("actuation", async (h, calls, data) => {
     form(h).props.onChange({ gain: 0, calibration: [3, 4] }); await h.settle();
-    const start = button(h, "Start actuation");
-    assert.equal(start.props.disabled, true);
-    await start.props.onClick(); await h.settle();
+    const start = h.controls.module("actuation").start;
+    assert.notEqual(start.reason, null);
     assert.deepEqual(data.moduleRequests, []);
     assert.deepEqual(calls, { create: [], connect: [] });
   }, { engineRunning: true });

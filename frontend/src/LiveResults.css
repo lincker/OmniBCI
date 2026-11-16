@@ -1,0 +1,23 @@
+.live-results { display: flex; flex-direction: column; gap: 14px; padding: 16px; border: 1px solid var(--border-soft); border-radius: var(--card-radius); background: var(--bg); box-shadow: var(--shadow); min-width: 0; }
+.live-results-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.live-results-heading h2 { margin: 0; font-size: 13px; color: var(--heading); }
+.live-connection { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.live-connection.live-open { color: var(--ok); }
+.live-connection.live-closed { color: var(--err); }
+.live-error { margin: 0; font-size: 12px; color: var(--err); }
+
+.live-latest { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 150px; padding: 16px; border-radius: var(--card-radius); background: var(--tint); text-align: center; }
+.live-latest > .workbench-icon { width: 28px; height: 28px; color: var(--muted); opacity: 0.6; }
+.live-latest > strong { color: var(--heading); font-size: 13px; }
+.live-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.live-latest > .live-target { font-size: 56px; line-height: 1.1; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; }
+.live-meta { font-size: 12px; color: var(--muted); }
+
+.live-recent h3 { margin: 0 0 6px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.live-recent ol { list-style: none; margin: 0; padding: 0; }
+.live-recent li { display: grid; grid-template-columns: 4rem 1fr auto 1rem; align-items: center; gap: 8px; padding: 5px 4px; border-bottom: 1px solid var(--border-soft); font-size: 12px; font-variant-numeric: tabular-nums; }
+.live-recent li:first-child { background: var(--accent-soft); border-radius: var(--control-radius); }
+.live-recent-number, .live-recent-confidence { color: var(--muted); }
+.live-recent-forced { font-size: 10px; color: var(--warn); font-weight: 600; }
+.live-open { align-self: flex-start; padding-inline: 0; }
+.live-open .count { margin-left: 2px; }

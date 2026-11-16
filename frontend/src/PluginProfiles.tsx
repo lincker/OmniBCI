@@ -361,9 +361,16 @@ export function PluginProfiles({ module, engineAvailable = true, navigation,
       <div className="settings-scroll">
       <header className="editor-heading"><div><p className="eyebrow">{t(`profiles.module.${module}`)} / {t(slot.label)}</p>
         <h1 ref={editorHeading} tabIndex={-1}>{slot.kind === "acquisition" ? t("profiles.acquisitionSource") : t(slot.label)}</h1><p>{t(slot.kind === "acquisition" ? "profiles.connectHint" : "profiles.chooseHint")}</p></div>
-        {onRun && <button className="text-button" onClick={onRun}>{t("profiles.openRun")}</button>}
+        {onRun && module === "acquisition" && <button className="text-button" onClick={onRun}>{t("profiles.openRun")}</button>}
       </header>
-      <ModuleRuntime module={module} controls={runtimeControls} disabled={busy} />
+      {module === "acquisition"
+        ? <ModuleRuntime module={module} controls={runtimeControls} disabled={busy} actions="connection" />
+        : <div className="setup-runtime-status" role="status">
+          <span className={`status-tag${runtimeControls.module(module).active ? " success" : ""}`}><span className="status-dot" />
+            {t(runtimeControls.module(module).active ? "profiles.runtimeActive" : "profiles.runtimeIdle")}</span>
+          <p className="meta">{t("profiles.runtimeHint")}</p>
+          {onRun && <button className="text-button" onClick={onRun}>{t("profiles.operateInRun")}</button>}
+        </div>}
       {module === "processing" && <nav className="processing-navigation" aria-label={t("profiles.processingNavigation")}>
         {([
           ["processing.decoder", "processing-channel-mapping", "processing.flowMapping"],

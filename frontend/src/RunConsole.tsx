@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { type EngineStatus } from "./api/client";
 import { usePoll } from "./hooks/usePoll";
 import { MAX_ACKS, type ResultsFeed } from "./hooks/useResultsFeed";
@@ -9,6 +9,7 @@ import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
 import { pluginConfigApi, selectionKey, configurationModules, type PluginDefinition } from "./api/plugin-config";
 import { MAX_TRIALS, parseTrialSequence, readTrialControls, type TrialControl } from "./plugin-controls";
 import { ModuleRuntime } from "./ModuleRuntime";
+import { LiveResults } from "./LiveResults";
 import type { AcquisitionController } from "./hooks/useAcquisition";
 import { currentBindings as collectCurrentBindings, type ConfigurationModule, type CurrentConfigurationController } from "./hooks/useCurrentConfiguration";
 import { recordingPathMissing, type RuntimeControls } from "./hooks/useRuntimeControls";
@@ -31,6 +32,15 @@ const startupModules = [
     ["actuation.effector", "profiles.slotEffector"],
   ] },
 ] as const;
+
+type Step = ConfigurationModule;
+const pipelineSteps = [
+  { id: "acquisition", label: "run.acquisition", slot: "acquisition.source", icon: "signal" },
+  { id: "processing", label: "run.signalProcessing", slot: "processing.decoder", icon: "workflow" },
+  { id: "stimulation", label: "run.stimulation", slot: "stimulation.paradigm", icon: "monitor" },
+  { id: "actuation", label: "run.actuation", slot: "actuation.effector", icon: "monitor", optional: true },
+] as const;
+type StepPhase = "done" | "working" | "failed" | "partial" | "waiting" | "unconfigured";
 
 function Dot({ on, label }: { on: boolean | undefined; label: string }) {
   const { t } = useI18n();
@@ -73,6 +83,8 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
   const [trialError, setTrialError] = useState<"count" | "sequence" | { name: string; label: string } | null>(null);
   const [configurationReload, setConfigurationReload] = useState(0);
   const [controlsLoading, setControlsLoading] = useState(false);
+  // null follows the next pipeline step automatically; a click pins the user's choice.
+  const [pinnedStep, setPinnedStep] = useState<Step | null>(null);
   const controlsBlocked = !!operationReason("stimulation");
   const running = engine.data?.running ?? false;
   const reading = acquisition.data?.streaming ?? false;
@@ -116,8 +128,11 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
     && (!stimulation.data?.active || externalStimulation || stimulation.data.paradigm === selectedParadigm.plugin_type);
   const engineReason = !engineAvailable ? t("run.reason.engineUnavailable") : null;
   const stimulationReason = !stimulationAvailable ? t("run.reason.stimulationUnavailable") : null;
-  const trialSetupReason = currentReason("stimulation") ?? (trialControlsReady ? null : t(loadError ? "run.reason.trialControlsUnavailable"
-    : !selectedParadigm || !externalStimulation && !selectedParadigm.available ? "run.reason.selectParadigm"
+  const paradigmUnavailable = !selectedParadigm || !externalStimulation && !selectedParadigm.available;
+  // Before stimulation is launched there is nothing to mismatch; the launch reason below is the actionable one.
+  const awaitingLaunch = !stimulation.data?.active && !loadError && !controlsLoading && !paradigmUnavailable;
+  const trialSetupReason = currentReason("stimulation") ?? (trialControlsReady || awaitingLaunch ? null : t(loadError ? "run.reason.trialControlsUnavailable"
+    : paradigmUnavailable ? "run.reason.selectParadigm"
     : running && !matches("stimulation", true) ? "run.reason.selectionNotApplied" : "run.reason.paradigmMismatch"));
   const recovery = runtime.status?.recovery ?? {};
   const startReason = operationReason("engine", true) ?? engineReason ?? (running ? t("run.reason.alreadyRunning") : null);
@@ -196,17 +211,66 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
     void trigger.run(total, params);
   };
 
+  const steps = pipelineSteps.map((step) => {
+    const state = runtimeControls.module(step.id);
+    const configured = !readyFor(step.id) || currentBindings(step.id).some((item) => item.slot === step.slot);
+    const done = step.id === "acquisition" ? state.reading : state.active;
+    const acquisitionActions = step.id === "acquisition" ? [state.read, state.stopRead] : [];
+    const working = !!state.progress || [state.start, state.stop, ...acquisitionActions].some((action) => action.pending);
+    const failed = [state.start, state.stop, ...acquisitionActions].some((action) => action.error);
+    const phase: StepPhase = failed ? "failed" : working ? "working" : !configured ? "unconfigured" : done ? "done"
+      : state.active || state.connected ? "partial" : "waiting";
+    const status = phase === "unconfigured" ? t("pipeline.notConfigured")
+      : step.id === "acquisition" && state.active ? state.readingLabel : state.status;
+    return { ...step, optional: "optional" in step, configured, done, phase, status };
+  });
+  const engineNext = engineAvailable && !running;
+  const nextStep = engineNext ? null : steps.find((step) => !step.optional && step.configured && !step.done)?.id ?? null;
+  const allDone = engineAvailable && running && !nextStep;
+  const selectedStep: Step = pinnedStep ?? nextStep ?? "acquisition";
+  const followingStep = (id: Step) => {
+    const index = steps.findIndex((step) => step.id === id);
+    return steps.slice(index + 1).find((step) => step.configured && !step.done) ?? null;
+  };
+  const moveStep = (from: number, delta: number) => {
+    const target = steps[(from + delta + steps.length) % steps.length].id;
+    setPinnedStep(target);
+    document.getElementById(`run-step-${target}`)?.focus();
+  };
+  const pluginInUse = (id: Step) => {
+    const step = pipelineSteps.find((item) => item.id === id)!;
+    const binding = readyFor(id) ? currentBindings(id).find((item) => item.slot === step.slot) : undefined;
+    return binding && "selection" in binding
+      ? <p className="step-plugin meta">{t("pipeline.inUse", { name: `${binding.selection.package_id}/${binding.selection.contribution_id}` })}</p>
+      : null;
+  };
+  const stepPanel = (id: Step, card: ReactNode) => {
+    const following = followingStep(id);
+    const step = steps.find((item) => item.id === id)!;
+    return <div role="tabpanel" id={`run-panel-${id}`} aria-labelledby={`run-step-${id}`} hidden={selectedStep !== id} className="run-step-panel">
+      {card}
+      {step.done && following && <button type="button" className="text-button step-next" onClick={() => setPinnedStep(following.id)}>
+        {t("pipeline.nextTo", { step: t(following.label) })} <Icon name="chevron" /></button>}
+    </div>;
+  };
+  const stepHelp = (...lines: ReactNode[]) => <details className="step-help">
+    <summary>{t("pipeline.details")}</summary>{lines.map((line, index) => <p className="meta" key={index}>{line}</p>)}
+  </details>;
+
   return <div className="runtime-content">
     <div className="breadcrumbs">{t("run.breadcrumb")} <Icon name="chevron" /> {t("run.console")}</div>
     <header className="editor-heading"><div><p className="eyebrow">{t("run.controlCenter")}</p><h1>{t("run.title")}</h1>
       <p>{t("run.description")}</p></div>
-      <span className={`status-tag ${engineAvailable && running ? "success" : ""}`}><span className="status-dot" />
-        {!engineAvailable ? t("run.engineUnavailable") : running ? t("run.engineRunning") : t("run.engineStopped")}</span></header>
-    <section className="card engine-card" aria-label={t("run.engineControls")}>
-      <div><h2>{t("run.engine")}</h2><div className="engine-status">
-        <Dot on={engineAvailable ? running : undefined} label={t("run.running")} />
+      <div className="run-heading-actions">
+        <span className={`status-tag ${engineAvailable && running ? "success" : ""}`}><span className="status-dot" />
+          {!engineAvailable ? t("run.engineUnavailable") : running ? t("run.engineRunning") : t("run.engineStopped")}</span>
+        <button className="text-button" onClick={onEditSetup}>{t(sourceNotConfigured ? "run.configureSource" : "run.editSetup")} <Icon name="chevron" /></button>
+      </div></header>
+    <section className={`card engine-card${engineAvailable && running ? " engine-running" : ""}${engineNext ? " engine-next" : ""}`} aria-label={t("run.engineControls")}>
+      <div><h2>{t("run.engine")}{engineNext && <span className="step-badge">{t("pipeline.next")}</span>}</h2><div className="engine-status">
+        <Dot on={engineAvailable ? running : undefined} label={engineAvailable && !running ? t("run.engineStopped") : t("run.running")} />
       </div><p className="meta">{t("run.engineHelp")}</p>{engine.error && <p className="error" role="alert">{engine.error.message}</p>}</div>
-      <div className="control-feedback"><div className="actions"><button className="primary" disabled={!!startReason}
+      <div className="control-feedback"><div className="actions"><button className={running ? undefined : "primary"} disabled={!!startReason}
         aria-describedby={startReason ? "engine-action-reasons" : undefined}
         onClick={() => { if (!startReason) return start.run(); }}><Icon name="play" />{start.pending ? t("run.starting") : t("run.startEngine")}</button>
         <button className="danger" disabled={!!stopReason}
@@ -215,31 +279,22 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
         {actionErrors([[t("run.startEngine"), start.error], [t("run.stopEngine"), stop.error]])}
       </div>
     </section>
-    <section className="setup-summary" aria-label={t("run.selectedSetup")}>
-      <div className="startup-heading"><h2 className="startup-title">{t("run.selectedSetup")}</h2>
-        <button className="text-button" onClick={onEditSetup}>{t(sourceNotConfigured ? "run.configureSource" : "run.editSetup")} <Icon name="chevron" /></button>
-      </div>
-      {sourceNotConfigured && <div className="startup-empty" role="status">
-        <strong>{t("run.noSourceConfigured")}</strong><p>{t("run.emptyConfigurationHelp")}</p>
-      </div>}
-      <div className="summary-items">
-        {startupModules.map((module) => <section className="startup-module" key={module.id}
-          aria-labelledby={`startup-${module.id}-title`}>
-          <h3 id={`startup-${module.id}-title`}>{t(module.label)}</h3>
-          {module.slots.map(([slot, label]) => {
-            const filters = slot === "processing.filters";
-            const selected = readyFor(module.id) ? currentBindings(module.id).filter((item) => filters ? item.slot.startsWith("processing.filter.") : item.slot === slot) : [];
-            return <div key={slot}><span>{t(label)}</span>
-              {!selected.length ? <strong>{emptySelection(module.id)}</strong>
-                : filters ? <ol className="startup-filters" aria-label={t(label)}>
-                  {selected.map((binding) => <li key={binding.slot}>{selectedPlugin(binding)}</li>)}
-                </ol> : selectedPlugin(selected[0])}
-            </div>;
-          })}
-        </section>)}
-      </div>
-      {configurationModules.some(readyFor) && <p className="meta">{t("run.selectedConfigurationHelp")}</p>}
-    </section>
+    <nav className="run-pipeline" role="tablist" aria-label={t("pipeline.label")}>
+      {steps.map((step, index) => <button type="button" role="tab" key={step.id} id={`run-step-${step.id}`}
+        className="run-step" data-phase={step.phase} data-next={step.id === nextStep || undefined}
+        aria-selected={selectedStep === step.id} aria-controls={`run-panel-${step.id}`} tabIndex={selectedStep === step.id ? 0 : -1}
+        onClick={() => setPinnedStep(step.id)}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); moveStep(index, 1); }
+          if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); moveStep(index, -1); }
+        }}>
+        <span className="run-step-index" aria-hidden="true">{step.phase === "done" ? <Icon name="check" /> : index + 1}</span>
+        <span className="run-step-text"><strong>{t(step.label)}</strong>
+          <small>{step.status}{step.optional && <> · {t("pipeline.optional")}</>}</small></span>
+        {step.id === nextStep && <span className="step-badge">{t("pipeline.next")}</span>}
+      </button>)}
+    </nav>
+    {allDone && <p className="inline-message success" role="status">{t("pipeline.allDone")}</p>}
     {missingRecording && <p className="inline-message" role="status">{t("run.missingRecording")}</p>}
     {loadError && <div className="inline-message error">
       <p role="alert">{typeof loadError === "string" ? loadError : t(loadError.key, loadError.params)}</p>
@@ -248,22 +303,26 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
     {startupModules.filter((module) => current.modules[module.id].error).map((module) => <div className="inline-message error" key={module.id}>
       <p role="alert">{t(module.label)}: {current.modules[module.id].error}</p>
       <button onClick={() => void current.reload(module.id)}>{t("run.retryConfiguration")}</button></div>)}
-    <div className="runtime-grid">
-      <section className="card"><h2><Icon name="signal" />{t("run.acquisition")}</h2>
+    <div className="run-layout">
+    <div className="run-steps">
+      {stepPanel("acquisition", <section className="card"><h2><Icon name="signal" />{t("run.acquisition")}</h2>
+        {pluginInUse("acquisition")}
+        {sourceNotConfigured && <div className="startup-empty" role="status">
+          <strong>{t("run.noSourceConfigured")}</strong><p>{t("run.emptyConfigurationHelp")}</p>
+        </div>}
         {acquisition.error && <p className="error" role="alert">{acquisition.error.message}</p>}
-        <p className="meta">{acquisitionAvailable ? <>{translatePluginName(acquisition.data?.source ?? "", acquisition.data?.source ?? t("run.noSource"), t)}<br />
+        <p className="meta">{acquisitionAvailable ? <>{translatePluginName(acquisition.data?.source ?? "", acquisition.data?.source ?? t("run.noSource"), t)} · {" "}
           {t("run.acquisitionDetails", { sampleRate: acquisition.data?.sample_rate ?? "—", channelCount: acquisition.data?.channel_count ?? "—" })}</> : t("run.unavailable")}</p>
         <ModuleRuntime module="acquisition" controls={runtimeControls} showEngineStart={false} />
-        <p className="meta">{t("run.connectHelp")}</p>
-        <p className="meta">{t("run.readHelp")}{playback && <> {t("run.playbackRestart")}</>}</p>
+        {stepHelp(t("run.connectHelp"), <>{t("run.readHelp")}{playback && <> {t("run.playbackRestart")}</>}</>)}
         <AcquisitionPreview generation={running ? runtime.status?.generation : null}
           revision={runtime.status?.applied?.acquisition} connectionId={acquisition.data?.connection_id ?? null}
           streaming={reading} disabled={!!operationReason("acquisition")} />
-      </section>
-      <section className="card" aria-label={t("run.activeDecoderInput")}>
+      </section>)}
+      {stepPanel("processing", <section className="card" aria-label={t("run.activeDecoderInput")}>
         <h2><Icon name="workflow" />{t("run.signalProcessing")}</h2>
+        {pluginInUse("processing")}
         <ModuleRuntime module="processing" controls={runtimeControls} showEngineStart={false} />
-        <p className="meta">{t("run.processingHelp")}</p>
         {currentDecoder && !currentDetector && onEditProcessing && <button className="text-button" onClick={onEditProcessing}>{t("run.configureProcessing")}</button>}
       <div className="summary-items"><div><span>{t("run.signalPreparation")}</span>
         <strong>{current.modules.processing.error ? t("run.unavailable") : decoderConfigured === null ? t("run.loading")
@@ -277,8 +336,10 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
           : t("run.noActiveMapping")}</strong></div></div>
       {decoderConfigured && signal.error && <p className="error" role="alert">{signal.error.message}</p>}
       {decoderConfigured && !missingDetector && !processingDetailsUnavailable && signal.data && !signal.data.readiness.ready && processingRunning && <p className="meta">{t("run.prepareSignalHelp")}</p>}
-    </section>
-      <section className="card"><h2><Icon name="monitor" />{t("run.stimulation")}</h2>
+      {stepHelp(t("run.processingHelp"))}
+    </section>)}
+      {stepPanel("stimulation", <section className="card"><h2><Icon name="monitor" />{t("run.stimulation")}</h2>
+        {pluginInUse("stimulation")}
         {externalStimulation && <p className="meta"><strong>{t("run.externalStimulation")}</strong><br />{t("run.externalStimulationHelp")}</p>}
         {stimulation.error && <p className="error" role="alert">{stimulation.error.message}</p>}
         {stimulation.data?.active && stimulation.data.engine_connected && matches("stimulation", true)
@@ -320,15 +381,40 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
           : trialError === "sequence" ? t("run.invalidSequence")
           : t("run.invalidControl", { label: translateControlLabel(trialError.name, trialError.label, t) })}</p>}
         {actionErrors([[t("run.triggerTrial"), trigger.error]])}
-      </section>
-      <section className="card"><h2><Icon name="monitor" />{t("run.actuation")}</h2>
+      </section>)}
+      {stepPanel("actuation", <section className="card"><h2><Icon name="monitor" />{t("run.actuation")}</h2>
+        {pluginInUse("actuation")}
         {engine.data?.actuation_alive && engine.data.actuation_connected && matches("actuation", true)
           && <p className="meta">{selectedName("actuation.effector")}</p>}
         <ModuleRuntime module="actuation" controls={runtimeControls} showEngineStart={false} />
-        <p className="meta">{t("run.actuationHelp")}</p>
-      </section>
+        {stepHelp(t("run.actuationHelp"))}
+      </section>)}
     </div>
-    {feed.error && <p className="error" role="alert">{feed.error}</p>}
+    <LiveResults feed={feed} onResults={onResults} />
+    </div>
+    <details className="run-more">
+      <summary>{t("run.selectedSetup")}</summary>
+      <section className="setup-summary" aria-label={t("run.selectedSetup")}>
+      <h2 className="startup-title visually-hidden">{t("run.selectedSetup")}</h2>
+      <div className="summary-items">
+        {startupModules.map((module) => <section className="startup-module" key={module.id}
+          aria-labelledby={`startup-${module.id}-title`}>
+          <h3 id={`startup-${module.id}-title`}>{t(module.label)}</h3>
+          {module.slots.map(([slot, label]) => {
+            const filters = slot === "processing.filters";
+            const selected = readyFor(module.id) ? currentBindings(module.id).filter((item) => filters ? item.slot.startsWith("processing.filter.") : item.slot === slot) : [];
+            return <div key={slot}><span>{t(label)}</span>
+              {!selected.length ? <strong>{emptySelection(module.id)}</strong>
+                : filters ? <ol className="startup-filters" aria-label={t(label)}>
+                  {selected.map((binding) => <li key={binding.slot}>{selectedPlugin(binding)}</li>)}
+                </ol> : selectedPlugin(selected[0])}
+            </div>;
+          })}
+        </section>)}
+      </div>
+      {configurationModules.some(readyFor) && <p className="meta">{t("run.selectedConfigurationHelp")}</p>}
+      </section>
+    </details>
     <EpochProcessing onResults={onResults} disabled={!!operationReason("processing")} />
     <details className="ack-panel"><summary>{t("run.acknowledgements")} <span className="count">{feed.acks.length}</span></summary>
       <p className="meta">{t("run.acknowledgementsScope", { limit: MAX_ACKS })}</p>

@@ -1,5 +1,4 @@
 .acquisition-preview { margin-top: 1rem; border-top: 1px solid var(--border-soft); padding-top: 1rem; }
-.runtime-grid > .card:has(> .acquisition-preview[open]) { grid-column: 1 / -1; }
 .acquisition-preview summary { cursor: pointer; font-weight: 600; }
 .preview-selection { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 1rem 0; padding: 0.75rem; border: 1px solid var(--border-soft); }
 .preview-selection label { display: grid; gap: 0.35rem; font-size: 0.75rem; flex: 1 1 8rem; }

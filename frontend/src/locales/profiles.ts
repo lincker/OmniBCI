@@ -122,7 +122,7 @@ export const en = {
   "profiles.pluginConfiguration": "PLUGIN CONFIGURATION",
   "profiles.pluginProfiles": "PROFILES FOR THIS PLUGIN",
   "profiles.explorerHint": "Load a saved profile to copy its values into the current configuration.",
-  "profiles.chooseHint": "Use the module controls to start with these parameters. Saving a profile is optional.",
+  "profiles.chooseHint": "Edit the current parameters here, then start the module on the Run page. Saving a profile is optional.",
   "profiles.filterAdded": "Filter instance added to the current chain.",
   "profiles.addFilter": "Add filter instance",
   "profiles.pluginAndProfile": "Current plugin",
@@ -226,6 +226,10 @@ export const en = {
   "schema.browse": "Browse…",
   "schema.serverPath": "Path on the server computer. Remote files are not uploaded.",
   "schema.machineSpecific": "Specific to the server computer",
+  "profiles.operateInRun": "Operate in Run",
+  "profiles.runtimeIdle": "Not running",
+  "profiles.runtimeActive": "Running",
+  "profiles.runtimeHint": "Start and stop modules on the Run page. Changes here are used the next time the module starts.",
 } as const;
 
 export const zh: Record<keyof typeof en, string> = {
@@ -352,7 +356,7 @@ export const zh: Record<keyof typeof en, string> = {
   "profiles.pluginConfiguration": "插件配置",
   "profiles.pluginProfiles": "此插件的配置",
   "profiles.explorerHint": "Load a saved profile to copy its values into the current configuration.",
-  "profiles.chooseHint": "Use the module controls to start with these parameters. Saving a profile is optional.",
+  "profiles.chooseHint": "在此编辑当前参数，然后在“运行”页启动模块。保存配置文件是可选的。",
   "profiles.filterAdded": "Filter instance added to the current chain.",
   "profiles.addFilter": "添加滤波器实例",
   "profiles.pluginAndProfile": "Current plugin",
@@ -456,4 +460,8 @@ export const zh: Record<keyof typeof en, string> = {
   "schema.browse": "浏览…",
   "schema.serverPath": "服务端计算机上的路径。远程文件不会上传。",
   "schema.machineSpecific": "仅适用于此服务端计算机",
+  "profiles.operateInRun": "在运行页操作",
+  "profiles.runtimeIdle": "未运行",
+  "profiles.runtimeActive": "运行中",
+  "profiles.runtimeHint": "模块的启动与停止在“运行”页完成；这里的修改会在下次启动模块时生效。",
 };

@@ -954,3 +954,56 @@ test("disagreeing Engine and runtime polls cannot report confirmed running param
     assert.doesNotMatch(text(state), /module is using the current parameters/);
   });
 });
+
+const tabs = (tree) => elements(tree).filter((item) => item.props.role === "tab");
+const tab = (tree, label) => {
+  const result = tabs(tree).find((item) => text(item).replace(/^\d+/, "").startsWith(label));
+  assert.ok(result, `Missing step ${label}`);
+  return result;
+};
+const panel = (tree, id) => elements(tree).find((item) => item.props.role === "tabpanel" && item.props.id === `run-panel-${id}`);
+
+test("the pipeline points at the engine first and keeps every step panel mounted", async () => {
+  await withScenario({ activation: async () => complete, acceptedRevision: complete.revision }, async ({ harness }) => {
+    await harness.settle();
+    assert.deepEqual(tabs(harness.tree).map((item) => item.props.id),
+      ["run-step-acquisition", "run-step-processing", "run-step-stimulation", "run-step-actuation"]);
+    assert.ok(!tabs(harness.tree).some((item) => item.props["data-next"]), "No module is next while the engine is stopped");
+    assert.match(text(region(harness.tree, "Engine controls")), /Next step/);
+    assert.equal(tab(harness.tree, "Acquisition").props["aria-selected"], true);
+    for (const id of ["acquisition", "processing", "stimulation", "actuation"]) {
+      assert.ok(panel(harness.tree, id), id);
+      assert.equal(panel(harness.tree, id).props.hidden, id !== "acquisition", id);
+    }
+    assert.match(text(tab(harness.tree, "Actuation")), /Optional/);
+  });
+});
+
+test("the next pipeline step follows module state until the user pins a step", async () => {
+  await withScenario({ activation: async () => complete, acceptedRevision: complete.revision, running: true, processingRunning: false,
+    sourceStatus: { connected: true, streaming: true } }, async ({ harness }) => {
+    await harness.settle();
+    assert.equal(tab(harness.tree, "Acquisition").props["data-phase"], "done");
+    assert.equal(tab(harness.tree, "Signal processing").props["data-next"], true);
+    assert.equal(panel(harness.tree, "processing").props.hidden, false);
+    assert.doesNotMatch(text(region(harness.tree, "Engine controls")), /Next step/);
+    tab(harness.tree, "Stimulation").props.onClick(); await harness.settle();
+    assert.equal(tab(harness.tree, "Stimulation").props["aria-selected"], true);
+    assert.equal(panel(harness.tree, "stimulation").props.hidden, false);
+    assert.equal(panel(harness.tree, "processing").props.hidden, true);
+    assert.equal(tab(harness.tree, "Signal processing").props["data-next"], true, "Pinning a step does not change what is next");
+  });
+});
+
+test("an unconfigured step is marked instead of being suggested as next", async () => {
+  await withScenario({ activation: async () => sourceOnly, acceptedRevision: sourceOnly.revision, running: true,
+    sourceStatus: { connected: true, streaming: true } }, async ({ harness }) => {
+    await harness.settle();
+    for (const label of ["Signal processing", "Stimulation", "Actuation"]) {
+      assert.equal(tab(harness.tree, label).props["data-phase"], "unconfigured", label);
+      assert.match(text(tab(harness.tree, label)), /Not configured/);
+    }
+    assert.ok(!tabs(harness.tree).some((item) => item.props["data-next"]));
+    assert.match(text(harness.tree), /Pipeline is running/);
+  });
+});
