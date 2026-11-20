@@ -309,9 +309,6 @@ class PluginCatalog:
                     f"version {selection.version!r}; refusing fallback: {failure.error}"
                 ) from failure.error
 
-        domains = {item.package.domain for item in descriptors if item.identifier == selection.package_id}
-        if len(domains) > 1:
-            raise PluginManifestError(f"Package {selection.package_id!r} changes domain across versions")
         package = [
             item for item in descriptors
             if item.identifier == selection.package_id and item.version == selection.version

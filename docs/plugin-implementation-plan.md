@@ -1,6 +1,6 @@
 # Plugin API v1 Implementation Plan
 
-Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared static validation and constructor/SDK changes are implemented and verified. Remaining S1f declarations/payloads and overall S2–S6 completion remain pending; target GPU/device and other-OS checks are not claimed.
+Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared static validation and constructor/SDK changes are implemented and verified. S1f static role declarations are also implemented. Runtime payload schemas/methods and overall S2–S6 completion remain pending; target GPU/device and other-OS checks are not claimed.
 
 The [S2 first-batch review](#s2-first-batch-review-2026-11-20) was inspected at `b3fb981`. S2a–S2d are complete and verified (S2d: `1526d06`); the remaining S2 work is pending.
 
@@ -183,6 +183,16 @@ The loader and all manifests now select only API `"1"`, independently of unchang
 The initial constructor group reproduced **35 failures** with five already-rejected negative cases. Three additional cases reproduced missing processing-input validation and oversized schema defaults. After the implementation and caller updates, the final boundary group passed **147 tests** and the final acquisition-caller group passed **70 tests**. The first full run passed 3999 tests and found 17 remaining old constructor calls in acquisition trigger/resume tests; those tests now pass with explicit resource paths and unchanged behavioral assertions. The existing SDK spawn case retains its integration marker. Final verification passed **4015 headless tests**, **36 integration tests** with one Windows Job Objects skip, and all **9 import contracts**. Both full suites used the same frozen source/test tree. The two existing WebSocket warnings remain; GUI, physical devices and Windows/Linux execution were not exercised. Evidence is in `/private/tmp/omnibci-s1f1-otn5o2f1`; overlapping focused counts must not be summed.
 
 This batch does not complete S1f. Package-domain execution restrictions, `signal_input_contract`, trial/result method names and runtime payload schemas remain pending. The next two small batches remove obsolete static dispatch and then replace payload contracts with their host/client consumers. Artifact caching and exact preparation handoff remain S3. Existing author guides are marked historical; their rewrite and the new developer guide remain S6.
+
+#### S1f second batch: static role declarations (2026-11-20)
+
+Package `domain` is retained as classification metadata; Contribution `kind` alone selects execution ownership. Catalog resolution, installation and the signed Market index accept cross-module Contributions and allow different versions to use different classifications. The installer's old domain scan is removed. Exact-version ambiguity, immutable-content checks, signed metadata matching, platform/dependency checks and publication locking remain in their existing owners.
+
+The shared manifest validator now owns the allowed root/package/Contribution fields, including rejecting host-location/source claims. Installation no longer duplicates package-field and host-version checks. Every Decoder explicitly declares `channel_requirements`; Filter and EpochDetector need no second signal-contract version. `signal_input_contract` and its descriptor field are removed, and the obsolete source-filename-to-module rewrite is removed from entrypoint parsing. Built-ins, the decoder example and spawned decoder fixtures use the same declarations; there is no old-field reader or fallback.
+
+The revised declaration group reproduced **23 failures** with 17 existing cases passing, then passed all **40 cases**. Final verification passed **542 focused tests** (four integration cases deselected), **208 service/router/worker tests**, four separately selected package/SDK integration cases, and all **9 import contracts**. The preceding constructor checkpoint supplies the full 4015-headless / 36-integration baseline; another full checkpoint follows the coordinated payload/client replacement. Evidence is in `/private/tmp/omnibci-s1f2a-t3tbqljl`. Earlier temporary-directory probes are pre-implementation evidence only; the repository red/green runs use the actual project configuration.
+
+This completes the obsolete static-dispatch cleanup, not S1f as a whole. The next batch adds required local trial/result/command schemas, updates Paradigm methods and validates actual host/client payloads. No new developer guide is written yet.
 
 ### S2 Fix Plugin Management, Configuration and Marketplace ownership
 

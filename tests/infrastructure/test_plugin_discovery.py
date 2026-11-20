@@ -28,7 +28,6 @@ def _write_effector_manifest(
     plugin_type: str,
     publisher: str = "acme",
     entrypoint: str | None = "driver:TestEffector",
-    claimed_source: str = "user",
 ) -> Path:
     package_dir = root / directory
     package_dir.mkdir(parents=True)
@@ -39,7 +38,7 @@ def _write_effector_manifest(
     (package_dir / "manifest.toml").write_text(tomlkit.dumps({
         "manifest_version": 2,
         "package": {"id": plugin_id, "publisher": publisher, "version": "1.0.0",
-                    "domain": "actuation", "api_version": "1", "source": claimed_source},
+                    "domain": "actuation", "api_version": "1"},
         "contributions": [contribution],
     }), encoding="utf-8")
     return package_dir
@@ -83,7 +82,6 @@ def test_discovery_does_not_execute_plugin_and_source_comes_from_root(
         directory,
         plugin_id="external",
         plugin_type="external",
-        claimed_source="builtin",
     )
     marker = tmp_path / "executed"
     (package_dir / "driver.py").write_text(

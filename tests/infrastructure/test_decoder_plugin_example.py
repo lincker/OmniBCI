@@ -45,7 +45,6 @@ def context(*names):
 
 
 def test_starter_installs_and_decodes_mapped_named_input(descriptor):
-    assert descriptor.signal_input_contract == 2
     assert descriptor.channel_requirements.required_names == ("Oz",)
     assert descriptor.channel_requirements.default_names == ("Oz",)
     prepared = context("O2", "Oz")

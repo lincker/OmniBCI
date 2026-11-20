@@ -32,11 +32,6 @@ class PluginEntrypoint:
         if not separator or not module or not attribute:
             raise ValueError("entrypoint must be in 'module:Attribute' form")
 
-        # Accept the earlier documented ``driver.py:Class`` spelling while
-        # storing the canonical dotted-module form internally.
-        if module.endswith(".py"):
-            module = module[:-3]
-
         if any(char in module for char in ("/", "\\")):
             raise ValueError("entrypoint module must be dotted, not a file path")
         if any(not part.isidentifier() for part in module.split(".")):
@@ -110,7 +105,6 @@ class PluginDescriptor:
 
     configuration_schema: Mapping[str, Any] | None = None
     configuration_version: int | None = None
-    signal_input_contract: int | None = None
     channel_requirements: DecoderChannelRequirements | None = None
 
     def supports_platform(self, platform_name: str) -> bool:

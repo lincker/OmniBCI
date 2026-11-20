@@ -44,8 +44,8 @@ select the Decoder profile, and apply the configuration. Use a suitable epoch
 detector. Targets `1` and `2` must also agree with your paradigm and effector if
 those modules are used. The example adds no paradigm, detector, or filter.
 
-The host must support Plugin API `1`; the remaining signal-contract declaration
-is removed in the next S1f batch. NumPy is
+The host must support Plugin API `1`. Decoder channel requirements are declared
+directly, without a separate signal-contract selector. NumPy is
 already a host dependency; package installation never runs pip or installs
 additional dependencies. The decoder uses no external assets or model files.
 

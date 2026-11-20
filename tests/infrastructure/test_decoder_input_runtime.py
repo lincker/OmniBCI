@@ -33,7 +33,7 @@ def configured(requirements, outputs=("O1",), *, signal_type="eeg"):
     binding = ProfileBinding("processing.decoder", "decoder", None, selection, {}, processing_input=inputs)
     snapshot = {"PLUGINS.bindings": [binding.to_dict()]}
     plan = compile_processing_plan(source, inputs)
-    descriptor = SimpleNamespace(signal_input_contract=2, channel_requirements=requirements,
+    descriptor = SimpleNamespace(channel_requirements=requirements,
                                  api_version="1", configuration_version=1)
     catalog = Mock()
     catalog.resolve_selection.return_value = descriptor

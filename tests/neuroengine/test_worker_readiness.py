@@ -231,7 +231,7 @@ domain = "processing"
         kind = "decoder"
         plugin_type = "readiness_decoder"
         entrypoint = "decoder:ReadinessDecoder"
-        signal_input_contract = 1
+        channel_requirements = {min_count = 1}
         [contributions.configuration]
         schema = "default.schema.json"
         schema_version = 1

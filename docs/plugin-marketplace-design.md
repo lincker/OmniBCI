@@ -1,6 +1,6 @@
 # Plugin and Marketplace Architecture Proposal
 
-Status: proposed design; no runtime changes are included.
+Status: target architecture with staged implementation. See the [implementation record](plugin-implementation-plan.md) for completed changes and remaining work.
 
 Updated: 2026-11-20. Current implementation baseline: `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e` on `refactor/module-interface`.
 

@@ -25,7 +25,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from omnibci.application.plugin_market import MarketContribution, MarketPackage, PreparedMarketInstall
 from omnibci.application.plugin_identity import PluginSelection
-from omnibci.infrastructure.plugins.manifest import VALID_CATEGORIES, DOMAIN_KINDS
+from omnibci.infrastructure.plugins.manifest import VALID_CATEGORIES, PACKAGE_DOMAINS
 
 _IDENTIFIER = r"[A-Za-z0-9][A-Za-z0-9_-]*"
 _INDEX_FIELDS = frozenset({
@@ -261,7 +261,7 @@ class StaticMarketRepository:
         download_url = urljoin(self.repo_url, download)
         self._validate_url(download_url)
         domain = item.get("domain")
-        if not isinstance(domain, str) or domain not in DOMAIN_KINDS:
+        if not isinstance(domain, str) or domain not in PACKAGE_DOMAINS:
             raise MarketRepositoryError("Missing or invalid package domain")
         contributions = item.get("contributions")
         if not isinstance(contributions, list) or not 0 < len(contributions) <= 128:
@@ -275,7 +275,7 @@ class StaticMarketRepository:
             kind = contribution["kind"]
             if not re.fullmatch(_IDENTIFIER, identifier) or identifier in identifiers:
                 raise MarketRepositoryError("Invalid or duplicate contribution ID")
-            if not isinstance(kind, str) or kind not in DOMAIN_KINDS[domain]:
+            if not isinstance(kind, str) or kind not in VALID_CATEGORIES:
                 raise MarketRepositoryError("Unknown contribution kind")
             identifiers.add(identifier)
             parsed.append(MarketContribution(kind, PluginSelection(package_id, identifier, version)))

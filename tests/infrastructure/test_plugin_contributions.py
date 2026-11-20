@@ -16,8 +16,8 @@ from omnibci.infrastructure.plugins.manifest import PluginManifestError
 
 
 def _contribution(identifier="reader", kind="acquisition", **fields):
-    if kind in {"decoder", "filter", "epoch_detector"}:
-        fields.setdefault("signal_input_contract", 1)
+    if kind == "decoder":
+        fields.setdefault("channel_requirements", {})
     return {
         "id": identifier, "kind": kind, "entrypoint": "driver:Driver", **fields,
     }
@@ -54,7 +54,7 @@ def test_cross_category_contributions_share_package_and_discovery_is_static(tmp_
     location = _write_package(tmp_path, contributions=[
         _contribution(display_name="Reader", params={"channels": 8}),
         _contribution("trigger", "trigger", plugin_type="device_trigger"),
-    ], package_fields={"source": "builtin"})
+    ])
     marker = tmp_path / "executed"
     (location / "driver.py").write_text(
         f"from pathlib import Path\nPath({str(marker)!r}).write_text('yes')\n",

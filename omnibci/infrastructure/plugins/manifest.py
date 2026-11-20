@@ -20,12 +20,16 @@ VALID_CATEGORIES = frozenset({
     "paradigm", "decoder", "acquisition", "effector", "trigger", "filter", "epoch_detector",
 })
 SUPPORTED_API_VERSIONS = frozenset({"1"})
-DOMAIN_KINDS = {
-    "acquisition": frozenset({"acquisition", "trigger"}),
-    "processing": frozenset({"decoder", "epoch_detector", "filter"}),
-    "stimulation": frozenset({"paradigm", "trigger"}),
-    "actuation": frozenset({"effector"}),
-}
+PACKAGE_DOMAINS = frozenset({"acquisition", "processing", "stimulation", "actuation"})
+_PACKAGE_FIELDS = frozenset({
+    "id", "publisher", "version", "api_version", "platforms", "host_version",
+    "requires", "display_name", "description", "license", "homepage", "repository",
+    "icon", "readme", "domain", "engines",
+})
+_CONTRIBUTION_FIELDS = frozenset({
+    "id", "kind", "entrypoint", "plugin_type", "display_name", "description",
+    "params", "controls", "platforms", "configuration", "channel_requirements",
+})
 
 
 class PluginResolutionError(RuntimeError):
@@ -131,6 +135,14 @@ def _v2_identifier(
     return value
 
 
+def _fields(table: Mapping, allowed: set[str] | frozenset[str], section: str, manifest_path: Path) -> None:
+    unknown = set(table) - allowed
+    if unknown:
+        raise PluginManifestError(
+            f"{manifest_path}: Unsupported {section} fields: {', '.join(sorted(unknown))}"
+        )
+
+
 def _parse_contributions(
     package_dir: Path, document: Mapping, *, source: str, precedence: int,
     host_version: str | None,
@@ -144,13 +156,15 @@ def _parse_contributions(
         raise PluginManifestError(
             f"{manifest_path}: v2 execution fields belong to contributions"
         )
+    _fields(document, {"manifest_version", "package", "contributions"}, "manifest", manifest_path)
+    _fields(package, _PACKAGE_FIELDS, "package", manifest_path)
     api_version = _required_string(package, "api_version", manifest_path)
     if api_version not in SUPPORTED_API_VERSIONS:
         raise PluginManifestError(
             f"{manifest_path}: unsupported api_version {api_version!r}"
         )
     domain = _required_string(package, "domain", manifest_path)
-    if domain not in DOMAIN_KINDS:
+    if domain not in PACKAGE_DOMAINS:
         raise PluginManifestError(f"{manifest_path}: unsupported package domain {domain!r}")
     try:
         check_host_compatibility(package, host_version)
@@ -186,9 +200,8 @@ def _parse_contributions(
     for contribution in contributions:
         if not isinstance(contribution, Mapping):
             raise PluginManifestError(f"{manifest_path}: contribution must be a TOML table")
+        _fields(contribution, _CONTRIBUTION_FIELDS, "contribution", manifest_path)
         identifier = _v2_identifier(contribution, "id", manifest_path, section="contributions")
-        if contribution.get("kind") not in DOMAIN_KINDS[domain]:
-            raise PluginManifestError(f"{manifest_path}: contribution kind {contribution.get('kind')!r} is not allowed in {domain!r} domain")
         if identifier in identifiers:
             raise PluginManifestError(
                 f"{manifest_path}: duplicate contribution id {identifier!r}"
@@ -210,26 +223,16 @@ def _parse_contributions(
         if any(not isinstance(value, Mapping) for value in controls.values()):
             raise PluginManifestError(f"{manifest_path}: contribution controls must be TOML tables")
         configuration_schema, configuration_version = _configuration(contribution, package_dir)
-        signal_contract = contribution.get("signal_input_contract")
-        processing_kind = category in {"decoder", "epoch_detector", "filter"}
-        if (
-            processing_kind and (type(signal_contract) is not int or signal_contract not in (1, 2))
-            or not processing_kind and signal_contract is not None
-            or signal_contract == 2 and category != "decoder"
-        ):
-            raise PluginManifestError(f"{manifest_path}: invalid signal_input_contract")
         requirements = None
-        if "channel_requirements" in contribution:
-            if category != "decoder" or signal_contract != 2:
-                raise PluginManifestError(
-                    f"{manifest_path}: channel_requirements requires a decoder with signal_input_contract = 2"
-                )
+        if category == "decoder":
+            if "channel_requirements" not in contribution:
+                raise PluginManifestError(f"{manifest_path}: decoder requires channel_requirements")
             try:
                 requirements = DecoderChannelRequirements.from_dict(contribution["channel_requirements"])
             except ValueError as exc:
                 raise PluginManifestError(f"{manifest_path}: invalid channel_requirements: {exc}") from exc
-        elif signal_contract == 2:
-            raise PluginManifestError(f"{manifest_path}: signal_input_contract = 2 requires channel_requirements")
+        elif "channel_requirements" in contribution:
+            raise PluginManifestError(f"{manifest_path}: channel_requirements is only valid for a decoder")
         descriptors.append(PluginDescriptor(
             package=metadata,
             contribution_id=identifier,
@@ -249,7 +252,6 @@ def _parse_contributions(
             platforms=_platforms(contribution, manifest_path),
             configuration_schema=configuration_schema,
             configuration_version=configuration_version,
-            signal_input_contract=signal_contract,
             channel_requirements=requirements,
         ))
     return tuple(descriptors)

@@ -4,7 +4,6 @@ import zipfile
 import pytest
 import tomlkit
 
-from omnibci.application.plugin_packages import PluginPackageError
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.installed_registry import InstalledPackageRegistry
 from omnibci.infrastructure.plugins.package_installer import PluginPackageInstaller
@@ -90,15 +89,11 @@ def test_inventory_and_configuration_use_the_installation_target(tmp_path, platf
 
 
 @pytest.mark.parametrize("conflict_scope", ["selected", "default"])
-def test_domain_conflicts_are_checked_in_the_selected_scope(tmp_path, monkeypatch, conflict_scope):
+def test_other_version_classification_does_not_block_the_selected_store(tmp_path, monkeypatch, conflict_scope):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "default"))
     _write_package(tmp_path / conflict_scope / "acquisition")
     store = ManagedPluginPackageStore(tmp_path / "selected")
-    if conflict_scope == "selected":
-        with pytest.raises(PluginPackageError, match="domain cannot change"):
-            store.install_archive(package_archive(tmp_path))
-    else:
-        assert store.install_archive(package_archive(tmp_path)).package.available
+    assert store.install_archive(package_archive(tmp_path)).package.available
 
 
 def test_root_providers_and_plugin_directory_cannot_define_two_scopes(tmp_path):

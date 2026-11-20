@@ -54,7 +54,7 @@ domain = "processing"
 id = "default"
 kind = "decoder"
 entrypoint = "plugin:ValueDecoder"
-signal_input_contract = 1
+channel_requirements = {min_count = 1}
 [contributions.configuration]
 schema = "schema.json"
 schema_version = 1

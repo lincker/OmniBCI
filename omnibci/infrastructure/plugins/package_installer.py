@@ -24,10 +24,7 @@ from importlib import metadata
 from pathlib import Path, PurePosixPath
 from typing import Mapping
 
-import tomlkit
-
 from omnibci.infrastructure.plugins.descriptors import PluginDescriptor
-from omnibci.infrastructure.plugins.package_requirements import check_host_compatibility
 from omnibci.infrastructure.plugins.plugin_catalog import (
     PluginCatalog,
 )
@@ -42,11 +39,6 @@ _HOST_LIBRARIES = (
     "numpy", "mne", "scikit-learn", "tomlkit", "platformdirs", "fastapi",
     "uvicorn", "pydantic", "websockets", "pyopengl", "glfw", "moderngl",
 )
-_PACKAGE_FIELDS = frozenset({
-    "id", "publisher", "version", "api_version", "platforms", "host_version",
-    "requires", "display_name", "description", "license", "homepage", "repository",
-    "icon", "readme", "domain", "engines",
-})
 _WINDOWS_DEVICES = frozenset({
     "con", "prn", "aux", "nul", "conin$", "conout$",
     *(f"com{number}" for number in range(1, 10)),
@@ -199,7 +191,6 @@ class PluginPackageInstaller:
                 }
                 self._write_receipt(location, receipt)
                 with self._package_lock(package.identifier):
-                    self._check_domain(package.identifier, package.domain, destination_parent)
                     destination_parent.mkdir(exist_ok=True)
                     already_installed = self._publish(location, destination, receipt)
                 published = tuple(replace(
@@ -359,13 +350,6 @@ class PluginPackageInstaller:
         return tuple(descriptors)
 
     def _check_requirements(self, package: dict) -> None:
-        unknown = package.keys() - _PACKAGE_FIELDS
-        if unknown:
-            raise PackageInstallError(f"Unsupported package fields: {', '.join(sorted(unknown))}")
-        try:
-            check_host_compatibility(package, self.host_version)
-        except ValueError as exc:
-            raise PackageInstallError(str(exc)) from exc
         requirements = package.get("requires", {})
         if not isinstance(requirements, dict):
             raise PackageInstallError("package.requires must map host library names to exact versions")
@@ -434,21 +418,6 @@ class PluginPackageInstaller:
                     yield
                 finally:
                     fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
-
-    def _check_domain(self, package_id: str, domain: str, parent: Path) -> None:
-        if parent.exists():
-            for version in parent.iterdir():
-                if version.is_symlink() or not version.is_dir():
-                    raise PackageInstallError("Installed package versions must be real directories")
-                try:
-                    package = tomlkit.loads((version / "manifest.toml").read_text(encoding="utf-8")).unwrap().get("package", {})
-                except (OSError, ValueError) as exc:
-                    raise PackageInstallError(f"Installed package version has conflicting content: {version}") from exc
-                if package.get("domain") != domain:
-                    raise PackageInstallError("Package domain cannot change across installed versions")
-        descriptors, _ = self.catalog._scan("acquisition", all_categories=True)
-        if any(item.identifier == package_id and item.package.domain != domain for item in descriptors):
-            raise PackageInstallError("Package domain cannot change across discovered versions")
 
     @staticmethod
     def _write_receipt(location: Path, receipt: dict) -> None:

@@ -11,7 +11,7 @@ id = "oz-polarity-demo"
 publisher = "example"
 # Package release version. Change this when distributing changed package contents.
 version = "0.1.0"
-# Constructor API: __init__(self, *, parameters, resource_root, input_signal).
+# Plugin API, including construction, role methods and required values.
 api_version = "1"
 # Optional OS restriction; omit to allow every supported OS.
 # platforms = ["darwin", "linux", "win32"]
@@ -28,8 +28,6 @@ api_version = "1"
 id = "oz-polarity"
 # Selects the SDK port implemented by the entrypoint class.
 kind = "decoder"
-# Prepared signal metadata plus declarative channel requirements. Older hosts reject 2.
-signal_input_contract = 2
 # Package-relative Python module and class; decoder.py defines OzPolarityDemo.
 entrypoint = "decoder:OzPolarityDemo"
 # Human-readable labels displayed in the plugin selector.
