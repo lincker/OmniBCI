@@ -14,6 +14,7 @@ from omnibci.domain.signal import SignalChunk
 
 from omnibci.domain.classification import Classification
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector
+from omnibci.application.command_contracts import prepare_signal_request, reset_input_request
 from omnibci.application.events import (
     CommandFailureKind, CommandRequest, CommandResult, EpochProcessed,
     ProcessingInputStart, SignalPreparationReceipt, StreamBarrier, StreamDrainReceipt, TrialOutcome,
@@ -436,10 +437,7 @@ class SignalProcessor:
         decoder = None
         try:
             self._require_healthy_binding()
-            payload = request.payload
-            if not isinstance(payload, dict) or set(payload) not in (
-                    {"plan", "receipt"}, {"plan", "receipt", "settings_snapshot"}):
-                raise ValueError("Invalid signal preparation request")
+            payload = prepare_signal_request(request.payload)
             snapshot = deepcopy(self._settings_snapshot or {})
             source_snapshot = payload.get("settings_snapshot")
             if source_snapshot is not None:
@@ -504,14 +502,17 @@ class SignalProcessor:
 
     def _reset_input(self, request):
         """Invalidate an input whose producer is gone; never claim it drained."""
-        expected = {"generation": self.generation, "engine_revision": self.engine_revision,
-                    **({"expected_acquisition_revision": self.acquisition_revision}
-                       if isinstance(request.payload, dict) and "expected_acquisition_revision" in request.payload
-                       else {"expected_revision": self.processing_revision})}
-        if (not isinstance(request.payload, dict)
-                or any(request.payload.get(key) != value for key, value in expected.items())
-                or "input_id" in request.payload
-                and request.payload["input_id"] != (self._signal_receipt.input_id if self._signal_receipt else None)):
+        try:
+            payload = reset_input_request(request.payload)
+            expected = {"generation": self.generation, "engine_revision": self.engine_revision,
+                        **({"expected_acquisition_revision": self.acquisition_revision}
+                           if "expected_acquisition_revision" in payload
+                           else {"expected_revision": self.processing_revision})}
+            if (any(payload[key] != value for key, value in expected.items())
+                    or "input_id" in payload
+                    and payload["input_id"] != (self._signal_receipt.input_id if self._signal_receipt else None)):
+                raise ValueError("Input reset belongs to another processing runtime")
+        except (TypeError, ValueError):
             result = CommandResult(request.command_id, EventType.ResetProcessingInput.name,
                                    ok=False, message="Input reset belongs to another processing runtime",
                                    error_code="PROCESSING_INPUT_REJECTED", failure_kind=CommandFailureKind.REJECTED)

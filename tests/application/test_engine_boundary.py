@@ -84,9 +84,12 @@ async def test_subscriptions_dispatch_and_peer_faults_use_only_declared_operatio
     try:
         await service.handle_start_engine(StartEngineCommand())
         assert graph.subscriptions == [(EventType.TrialCompleted, listener)]
-        command = Event(EventType.StopStream)
+        command = Event(EventType.StartStimTrial, {"n_trials": 1, "trial_params": [{"target_id": 1}]})
         service.dispatch(command)
-        assert graph.events == [command]
+        assert len(graph.events) == 1 and graph.events[0].type == command.type
+        assert graph.events[0].data == command.data
+        command.data["trial_params"][0]["target_id"] = 2
+        assert graph.events[0].data["trial_params"] == [{"target_id": 1}]
         assert service.is_peer_connected('stimulation')
         for channel in ('old', 'current'):
             service.on_peer_delivery_fault(Event(EventType.PeerDeliveryFault, {

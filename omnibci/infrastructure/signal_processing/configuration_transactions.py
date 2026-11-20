@@ -3,6 +3,7 @@
 import hashlib
 import json
 
+from omnibci.application.command_contracts import stage_configuration_request, cancel_configuration_request
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.shared.events import EventType
 from .pipeline_configuration import ConfiguredPipeline, build_pipeline_update
@@ -56,19 +57,13 @@ class ConfigurationTransactions:
                 if self._pending[0] == request.command_id:
                     return False, None
                 raise ValueError("Another processing configuration is waiting for a trial boundary")
-            payload = request.payload
-            if not isinstance(payload, dict) or set(payload) != {"settings_snapshot", "expected_revision", "engine_revision", "generation", "boundary"}:
-                raise ValueError("Invalid processing configuration request")
-            if (not isinstance(payload["generation"], str) or not payload["generation"]
-                    or payload["generation"] != generation):
+            payload = stage_configuration_request(request.payload)
+            if payload["generation"] != generation:
                 raise ValueError("Signal Processing configuration generation mismatch")
-            if (not isinstance(payload["expected_revision"], str)
-                    or payload["expected_revision"] != revision):
+            if payload["expected_revision"] != revision:
                 raise ValueError("Signal Processing configuration revision mismatch")
             if payload["engine_revision"] != engine_revision:
                 raise ValueError("Signal Processing Engine revision mismatch")
-            if payload["boundary"] not in {"trial", "module"}:
-                raise ValueError("Unknown processing update boundary")
             if payload["boundary"] == "module" and not drained:
                 raise ValueError("Drain processing before replacing its configuration")
             candidate = build_pipeline_update(
@@ -117,12 +112,11 @@ class ConfigurationTransactions:
 
     def cancel(self, request: CommandRequest, *, generation, revision, engine_revision) -> list[CommandResult]:
         """Return a target's terminal receipt before acknowledging cancellation."""
-        payload = request.payload
-        if (not isinstance(payload, dict) or set(payload) != {"command_id", "generation", "engine_revision"}
-                or not isinstance(payload.get("command_id"), str) or not payload["command_id"]
-                or not isinstance(payload.get("generation"), str) or not payload["generation"]
-                or payload.get("generation") != generation
-                or payload.get("engine_revision") != engine_revision):
+        try:
+            payload = cancel_configuration_request(request.payload)
+            if payload["generation"] != generation or payload["engine_revision"] != engine_revision:
+                raise ValueError("Processing cancellation belongs to another runtime")
+        except (TypeError, ValueError):
             return [CommandResult(
                 request.command_id, EventType.CancelProcessingConfiguration.name, False,
                 "Invalid processing configuration cancellation", "INVALID_CONFIGURATION_CANCELLATION",

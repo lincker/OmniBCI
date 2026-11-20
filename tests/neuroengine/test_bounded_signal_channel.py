@@ -153,7 +153,8 @@ async def test_full_queue_never_confirms_a_missing_boundary_on_retry(monkeypatch
                 "expected_revision": acquisition.acquisition_revision}
 
     for command_id in ("full-boundary", "retry-boundary"):
-        await acquisition.execute((command, CommandRequest(command_id, identity)))
+        payload = identity if command is AcquisitionCommand.detach_processing else None
+        await acquisition.execute((command, CommandRequest(command_id, payload)))
         result = next(event.data for event in events if event.type is EventType.CommandResult
                       and event.data.command_id == command_id)
         assert not result.ok

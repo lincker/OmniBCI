@@ -16,7 +16,7 @@ from uuid import uuid4
 from omnibci.application.runtime_admission import RuntimeAdmission
 from omnibci.application.configuration.definitions import merge_module_settings
 from omnibci.application.configuration.errors import ProfileRevisionConflict
-from omnibci.application.services.command_result_service import command_scopes
+from omnibci.application.command_contracts import command_contract, command_event
 from omnibci.application.services.actuation_service import ActuationAppService
 from omnibci.application.ports.output_process import OutputProcess
 from omnibci.application.commands.stimulation_commands import StopStimulationCommand
@@ -231,17 +231,9 @@ class NeuroEngineService(EnginePort):
         return self._engine.is_module_running(module)
 
     def is_command_ready(self, event_type) -> bool:
-        if event_type in {
-            EventType.ConnectDataProvider, EventType.DisconnectDataProvider,
-            EventType.GetSourceCheckpoint, EventType.RestoreSourceCheckpoint, EventType.GetSourceMetadata,
-            EventType.StartStream, EventType.StopStream, EventType.StopAndDrain,
-            EventType.StartAcquisitionPreview, EventType.StopAcquisitionPreview, EventType.GetAcquisitionPreview,
-            EventType.AttachProcessingInput, EventType.DetachProcessingInput,
-        }:
-            return self.is_module_running("acquisition")
-        if event_type in {EventType.StageProcessingConfiguration, EventType.CancelProcessingConfiguration,
-                          EventType.PrepareSignalProcessing, EventType.ResetProcessingInput}:
-            return self.is_module_running("processing")
+        owner = command_contract(event_type).owner
+        if owner in ("acquisition", "processing"):
+            return self.is_module_running(owner)
         return self.is_engine_ready
 
     def selected_module_snapshot(self, module):
@@ -542,7 +534,8 @@ class NeuroEngineService(EnginePort):
         This is the single seam other bounded-context services use instead of
         reaching into ``_engine.event_bus`` directly.
         """
-        with self._admission.command(command_scopes(event.type)):
+        event = command_event(event)
+        with self._admission.command(command_contract(event.type).scopes):
             self._require_engine()
             if not self.is_engine_ready:
                 raise RuntimeError("NeuroEngine is not running")

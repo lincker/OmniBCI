@@ -10,6 +10,7 @@ from enum import Enum
 from queue import Full
 from typing import Optional, Protocol
 
+from omnibci.application.command_contracts import command_contract
 from omnibci.application.events import (
     AcquisitionSnapshot,
     CommandFailureKind,
@@ -173,6 +174,14 @@ class AcquisitionRuntime:
         command, raw_request = item
         request = CommandRequest.from_value(raw_request)
         logger.debug('Acquisition command: %s', command)
+        if request is not None and command in _COMMAND_RESULT_NAMES:
+            try:
+                event_type = EventType[_COMMAND_RESULT_NAMES[command]]
+                request = CommandRequest(request.command_id, command_contract(event_type).parse_payload(request.payload))
+            except (TypeError, ValueError) as exc:
+                self._emit_command_result(request, command, ok=False, message=str(exc),
+                                          error_code="INVALID_COMMAND_PAYLOAD", failure_kind=CommandFailureKind.REJECTED)
+                return
         if command in (AcquisitionCommand.attach_processing, AcquisitionCommand.detach_processing):
             self._processing_input_command(command, request)
             return
@@ -210,7 +219,7 @@ class AcquisitionRuntime:
             if command is AcquisitionCommand.get_metadata:
                 data = await self._on_get_metadata(request)
             elif command is AcquisitionCommand.start_stream:
-                await self._on_start_stream(request.payload if request else None)
+                await self._on_start_stream()
             elif command in (AcquisitionCommand.start_preview, AcquisitionCommand.stop_preview,
                              AcquisitionCommand.get_preview):
                 data = self._preview_command(command, request)
@@ -394,7 +403,7 @@ class AcquisitionRuntime:
             self._cleanup_pending = False
             self._emit_state()
 
-    async def _on_start_stream(self, receipt=None) -> None:
+    async def _on_start_stream(self) -> None:
         self._require_healthy_stream()
         if not self._connected:
             self._emit_state()

@@ -1,6 +1,6 @@
 # Plugin API v1 Implementation Plan
 
-Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared validation, constructors/SDK, static declarations and runtime payloads/callers are implemented and verified. S2a–S2e ownership changes and S3a–S3d artifact loading/reference/store ownership are implemented and verified. S4a runtime operations/generation-only Results access and S4b preparation/input receipts are implemented and verified. Remaining S4 work and S5–S6 are pending; target GPU/device and other-OS checks are not claimed.
+Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared validation, constructors/SDK, static declarations and runtime payloads/callers are implemented and verified. S2a–S2e ownership changes and S3a–S3d artifact loading/reference/store ownership are implemented and verified. S4a runtime operations/generation-only Results access, S4b preparation/input receipts and S4c explicit command contracts are implemented and verified. Remaining S4 work and S5–S6 are pending; target GPU/device and other-OS checks are not claimed.
 
 The [S2 first-batch review](#s2-first-batch-review-2026-11-20) was inspected at `b3fb981`. S2a–S2e are complete and verified (S2e: `cf30c57`).
 
@@ -407,6 +407,16 @@ Four new failing cases reproduced graph access, the alternate factory call, unkn
 The HTTP/command JSON projection keeps its existing fields. No SDK export, compatibility path, new queue or sample-processing validation was added. This closes the duplicated preparation/input receipt portion of A02; remaining snapshot/configuration and command contracts continue in S4.
 
 **Validation:** nine new cases failed before implementation, including invalid attachments opening Acquisition's delivery gate and invalid preparation replacing Processing's pipeline. The final affected group passes **236 tests**, including real spawned input markers, FIFO/drain, source observation/reconnection, bounded queues, runtime apply/recovery and module isolation; **9 import contracts** pass. One existing assertion was migrated from dictionary equality to the receipt codec. Evidence: `/private/tmp/omnibci-s4b-i0nt7aw0`. The complete headless baseline passed at S4a; this batch ran the affected groups, and full integration remains a later S4/S6 gate.
+
+#### S4c execution: explicit command contracts (2026-11-21)
+
+A closed application-owned table declares all **23 commands**, with a runtime owner, admission scopes and payload/result parsers. Numeric event IDs remain transport identifiers. The owner and lock scopes are separate where required: input attach/detach execute in Acquisition under Processing admission; metadata/preview queries retain their existing empty mutation scope. Existing receipt and module validators supply the codecs.
+
+Engine dispatch validates and copies inputs before admission or queuing. The correlation broker accepts only declared correlated commands, validates successful receipts and copies their data before completing the waiter. Invalid success data becomes `INVALID_COMMAND_RESULT` with execution-failure semantics. Acquisition, Processing, Stimulation and Actuation validate their owned inputs before state changes. Correlation, late/duplicate/wrong-command handling, definitely-unsent versus uncertain delivery, and no automatic replay are preserved.
+
+Actuation command validation moved from infrastructure into `application/commands/actuation_commands.py`; the old import path is removed. This relocation preserves current device-command semantics. The separate trial-origin/intent work remains T02. No SDK exports, compatibility paths, extensible registries or sample-path queues were added.
+
+**Validation:** 15 command-contract cases and five host-admission cases failed before implementation. Focused command/engine/source/bounded-channel checks passed after updating obsolete fixture inputs. The initial full run exposed four further acquisition fixture failures; the initial integration run exposed three failures in two S4b input-marker callers. These fixtures now use no payload for no-argument commands and immutable preparation receipts while retaining their failure-ordering, continuity and device-decoding assertions. The final unchanged 455-file Python/project tree passes **4,277 headless tests**, **38 integration tests with one Windows-only skip**, and **9 import contracts**. The focused command/engine/source/bounded-channel group passes **155 tests**. Evidence: `/private/tmp/omnibci-s4c-6_tupgkx`. No physical device/GPU or other-OS execution is claimed. Configuration queries, node receipts, output causality and the remaining S4–S6 work continue separately.
 
 ### S5 Finish the three plugin entry workflows
 

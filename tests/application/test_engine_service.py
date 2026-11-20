@@ -94,7 +94,9 @@ class TestNeuroEngineServicePortState:
 
         engine_service.dispatch(event)
 
-        mock_engine.dispatch.assert_called_once_with(event)
+        mock_engine.dispatch.assert_called_once()
+        forwarded = mock_engine.dispatch.call_args.args[0]
+        assert forwarded.type == event.type and forwarded.data == event.data
 
     def test_dead_engine_thread_is_not_running_ready(self, engine_service):
         engine_service._running = True
@@ -125,7 +127,7 @@ class TestNeuroEngineServicePortState:
 
         mock_engine.dispatch.side_effect = dispatch
         try:
-            assert broker.request(EventType.StartStimTrial).ok
+            assert broker.request(EventType.StartStimTrial, {"n_trials": 1, "trial_params": [{}]}).ok
         finally:
             for timer in timers:
                 timer.join()
@@ -143,12 +145,13 @@ class TestNeuroEngineServicePortState:
         assert engine_service.is_engine_ready is True
         mock_engine.signal_processing_worker.is_alive.assert_not_called()
 
-    @pytest.mark.parametrize("worker,event_type", [
-        ("acquisition_worker", EventType.StartStream),
-        ("signal_processing_worker", EventType.PrepareSignalProcessing),
+    @pytest.mark.parametrize("worker,event_type,payload", [
+        ("acquisition_worker", EventType.StartStream, None),
+        ("signal_processing_worker", EventType.ResetProcessingInput,
+         {"generation": "run", "engine_revision": "engine", "expected_revision": "processing"}),
     ])
     def test_command_waiter_reports_only_its_failed_module(
-        self, engine_service, mock_engine, worker, event_type,
+        self, engine_service, mock_engine, worker, event_type, payload,
     ):
         engine_service._running = engine_service._accepting_commands = True
         engine_service._engine_thread = MagicMock()
@@ -159,7 +162,7 @@ class TestNeuroEngineServicePortState:
         )
         broker = CommandResultBroker(engine_service, timeout_s=1)
         with pytest.raises(CommandExecutionError) as raised:
-            broker.request(event_type)
+            broker.request(event_type, payload)
         assert raised.value.result.error_code == "MODULE_STOPPED"
         assert broker.pending_count == 0
         assert engine_service.is_engine_ready

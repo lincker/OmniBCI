@@ -234,6 +234,8 @@ Make failure outcomes explicit in application values: rejection, execution failu
 
 **Acceptance:** every dispatched command has an explicit scope and payload contract; invalid payloads fail before execution; no network loss triggers automatic replay; correlated late/duplicate/wrong-command results cannot complete another operation.
 
+**S4c implementation (2026-11-21):** a closed table of 23 commands declares its runtime owner, admission scopes and payload/result codecs. Engine dispatch copies validated input, the broker validates and copies successful results, and module hosts reject malformed payloads before changing state. Invalid successful receipts become execution failures. Existing event IDs, correlation, late/duplicate/wrong-command rejection and uncertain-delivery behavior remain. The Actuation command validator now belongs to the application command boundary; trial-origin preservation is still T02. Validation and fixture migrations are recorded in the [implementation plan](plugin-implementation-plan.md#s4c-execution-explicit-command-contracts-2026-11-21).
+
 ### A04 Configuration planning needs typed outcomes rather than more orchestration
 
 **P2 — boundary clarity.** [RuntimeConfigurationService](/Users/lincker/workspace/OmniBCI/omnibci/application/services/runtime_configuration_service.py:498) selects strategies using string values and schema `x-apply` metadata. [RuntimeApplyCoordinator](/Users/lincker/workspace/OmniBCI/omnibci/application/services/runtime_apply_service.py:107) coordinates persistence, module transitions, compensation and history. A successful runtime application can correctly report `history_saved=False` if the later history write fails.
@@ -394,7 +396,7 @@ Use one mutation authority per node/store; reject competing owners rather than a
 
 ### T01 Shared peer mechanics belong below the module orchestrators
 
-**P1 for payload contracts; P2 for placement.** [The IPC envelope](/Users/lincker/workspace/OmniBCI/omnibci/infrastructure/ipc/contracts.py:70) validates framing, protocol version and event ID, then leaves the payload generic. Role-specific checks exist, for example [actuation validation](/Users/lincker/workspace/OmniBCI/omnibci/infrastructure/actuation/contracts.py:64). This layered validation is appropriate; generic envelope acceptance must not be mistaken for complete command validation.
+**P1 for payload contracts; P2 for placement.** [The IPC envelope](/Users/lincker/workspace/OmniBCI/omnibci/infrastructure/ipc/contracts.py:70) validates framing, protocol version and event ID, then leaves the payload generic. Role-specific checks exist, for example [actuation validation](/Users/lincker/workspace/OmniBCI/omnibci/application/commands/actuation_commands.py:64). This layered validation is appropriate; generic envelope acceptance must not be mistaken for complete command validation.
 
 Both output applications import [PeerChannel](/Users/lincker/workspace/OmniBCI/omnibci/infrastructure/neuroengine/gateway/peer_channel.py:1) from inside the NeuroEngine gateway subtree even though connection management and bounded outbound delivery are shared transport mechanisms.
 

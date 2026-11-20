@@ -75,7 +75,7 @@ def test_terminal_fetch_failure_blocks_drain_checkpoint_and_manual_restart(failu
         while data.get_data(0) is not None:
             pass
         for command, payload in (
-            (AcquisitionCommand.stop_and_drain, {}),
+            (AcquisitionCommand.stop_and_drain, None),
             (AcquisitionCommand.get_checkpoint, {"generation": "generation", "expected_revision": "revision", "engine_revision": "engine"}),
             (AcquisitionCommand.start_stream, None),
         ):
@@ -96,7 +96,7 @@ def test_terminal_fetch_failure_blocks_drain_checkpoint_and_manual_restart(failu
         # Reconnecting the same graph cannot erase evidence of the lost chunk.
         await acquisition.execute((AcquisitionCommand.disconnect, None))
         await acquisition.execute((AcquisitionCommand.connect, None))
-        await acquisition.execute((AcquisitionCommand.stop_and_drain, CommandRequest("retry", {})))
+        await acquisition.execute((AcquisitionCommand.stop_and_drain, CommandRequest("retry")))
         assert not bus.events[-1].data.ok
         assert data.get_data(0) is None
 

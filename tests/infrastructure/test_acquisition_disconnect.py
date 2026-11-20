@@ -120,7 +120,8 @@ def test_command_transport_failure_publishes_disconnection_before_failure(comman
         acquisition = runtime(source)
         # Force the metadata command to use the source, including without a request.
         acquisition._observation = None
-        payload = CommandRequest("failed-command", {"refresh": True}) if correlated else None
+        data = {"refresh": True} if command is AcquisitionCommand.get_metadata else None
+        payload = CommandRequest("failed-command", data) if correlated else None
         item = (command, payload)
         if correlated:
             await acquisition.execute(item)

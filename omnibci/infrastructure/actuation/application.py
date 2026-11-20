@@ -30,6 +30,7 @@ from queue import Empty, Full, Queue
 from typing import Any
 
 from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
+from omnibci.application.command_contracts import command_contract
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.ipc.event_bus import EventBus
@@ -38,7 +39,7 @@ from omnibci.infrastructure.outbound import make_actuation_ack, make_actuation_f
 from omnibci.infrastructure.neuroengine.gateway.peer_channel import PeerChannel
 from omnibci.infrastructure.actuation.engine_channel import engine_peer_config
 from omnibci.infrastructure.actuation.actuator import Actuator
-from omnibci.infrastructure.actuation.contracts import (
+from omnibci.application.commands.actuation_commands import (
     InvalidActuationCommand,
     ValidatedActuationCommand,
     validate_actuation_command,
@@ -394,9 +395,22 @@ class Actuation:
             ),
         ))
 
+    def _control_request(self, event):
+        request = CommandRequest.from_value(event.data)
+        if request is not None:
+            try:
+                command_contract(event.type).parse_payload(request.payload)
+            except (TypeError, ValueError) as exc:
+                self.event_bus.put_event(Event(EventType.CommandResult, CommandResult(
+                    request.command_id, event.type.name, False, str(exc), "INVALID_COMMAND_PAYLOAD",
+                    CommandFailureKind.REJECTED,
+                )))
+                return None
+        return request
+
     def _request_settlement(self, event: Event) -> None:
         """Leave the EventBus free to forward heartbeats while a driver finishes."""
-        request = CommandRequest.from_value(event.data)
+        request = self._control_request(event)
         if request is None:
             return
         if self._stop_requested():
@@ -424,7 +438,7 @@ class Actuation:
 
     async def _settle_actuation(self, event: Event) -> None:
         """Cancel queued intents, join active execution, then verify device quiescence."""
-        request = CommandRequest.from_value(event.data)
+        request = self._control_request(event)
         if request is None:
             return
         self._paused = True
@@ -466,14 +480,14 @@ class Actuation:
         self.event_bus.put_event(Event(EventType.CommandResult, result))
 
     def _request_resume(self, event: Event) -> None:
-        if CommandRequest.from_value(event.data) is None:
+        if self._control_request(event) is None:
             return
         task = asyncio.create_task(self._resume_actuation(event))
         self._settlement_tasks.add(task)
         task.add_done_callback(self._settlement_tasks.discard)
 
     async def _resume_actuation(self, event: Event) -> None:
-        request = CommandRequest.from_value(event.data)
+        request = self._control_request(event)
         if request is None:
             return
         async with self._settlement_lock:

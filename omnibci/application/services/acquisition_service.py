@@ -29,7 +29,7 @@ from omnibci.application.queries.acquisition_queries import (
 )
 from omnibci.application.events import AcquisitionSnapshot, CommandFailureKind, CommandResult, StreamDrainReceipt
 from omnibci.application.services.command_result_service import CommandExecutor, CommandRejectedError
-from omnibci.application.source_metadata import descriptor_layout
+from omnibci.application.source_metadata import descriptor_layout, metadata_receipt
 
 logger = logging.getLogger(__name__)
 
@@ -218,23 +218,11 @@ class AcquisitionAppService:
         result = self._command_executor.request(
             EventType.GetSourceMetadata, {"refresh": refresh}, timeout_s=5.0,
         )
-        value = result.data
-        if (not isinstance(value, dict) or set(value) != {
-                "source_id", "connection_id", "metadata", "descriptor", "descriptor_error"}
-                or not isinstance(value["source_id"], str) or not value["source_id"]
-                or not isinstance(value["connection_id"], str) or not value["connection_id"]
-                or not isinstance(value["metadata"], str)
-                or value["descriptor_error"] is not None and not isinstance(value["descriptor_error"], str)):
-            raise RuntimeError("Source returned invalid acquisition metadata")
-        metadata = None
-        if value["descriptor"] is not None:
-            try:
-                metadata = descriptor_layout(value["descriptor"])
-            except (TypeError, ValueError) as exc:
-                raise RuntimeError("Source returned invalid acquisition descriptor") from exc
-            if (value["descriptor"]["source_id"] != value["source_id"]
-                    or value["descriptor"]["connection_id"] != value["connection_id"]):
-                raise RuntimeError("Acquisition descriptor belongs to a different source connection")
+        try:
+            value = metadata_receipt(result.data)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(str(exc)) from exc
+        metadata = descriptor_layout(value["descriptor"]) if value["descriptor"] is not None else None
         self._descriptor = metadata
         self._raw_metadata = deepcopy({key: value[key] for key in ("source_id", "connection_id", "metadata", "descriptor")})
         self._raw_metadata["comparison"] = (

@@ -175,7 +175,7 @@ async def test_unusable_processing_description_does_not_hide_or_reread_metadata_
     await worker.execute((AcquisitionCommand.get_metadata, CommandRequest("cached")))
     assert _result(bus).ok and _result(bus).data["metadata"] == TEXT
     source.observe.assert_awaited_once()
-    await worker.execute((AcquisitionCommand.start_stream, CommandRequest("start", {})))
+    await worker.execute((AcquisitionCommand.start_stream, CommandRequest("start")))
     assert _result(bus).ok
 
 
@@ -260,9 +260,9 @@ async def test_input_attachment_rejects_missing_or_stale_receipt_without_startin
                "connection_id": worker.connection_id, "source_fingerprint": source_fingerprint(worker._metadata_response()["descriptor"]),
                "plan_fingerprint": "a" * 64, "input_id": "input"}
     for payload in (None, {**receipt, "connection_id": "old"}, {**receipt, "acquisition_revision": "old"},
-                    {**receipt, "source_fingerprint": "old"}, {**receipt, "generation": "old"}):
+                    {**receipt, "source_fingerprint": "f" * 64}, {**receipt, "generation": "old"}):
         await worker.execute((AcquisitionCommand.attach_processing, CommandRequest("start", payload)))
-        assert _result(bus).error_code == "PROCESSING_INPUT_REJECTED"
+        assert _result(bus).error_code == ("INVALID_COMMAND_PAYLOAD" if payload is None else "PROCESSING_INPUT_REJECTED")
     source.start_stream.assert_not_awaited()
     worker._validate_signal_receipt(receipt)
 

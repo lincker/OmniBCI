@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from queue import Empty, Queue
 
 from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
-from omnibci.application.commands.stimulation_commands import StartStimTrialCommand
+from omnibci.application.command_contracts import command_contract, stimulation_trial_request
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
@@ -449,9 +449,7 @@ class Stimulation:
             return
         spec = request.payload if request is not None else command.data
         try:
-            if not isinstance(spec, dict):
-                raise ValueError("trial specification must be an object")
-            params = StartStimTrialCommand(**spec).trial_params
+            params = stimulation_trial_request(spec)["trial_params"]
         except (TypeError, ValueError) as exc:
             if request is not None:
                 self._emit_command_result(
@@ -481,9 +479,20 @@ class Stimulation:
         if command.type == EventType.TrialCompleted:
             self.result_command_queue.put(command)
 
+    def _control_request(self, event):
+        request = CommandRequest.from_value(event.data)
+        if request is not None:
+            try:
+                command_contract(event.type).parse_payload(request.payload)
+            except (TypeError, ValueError) as exc:
+                self._emit_command_result(request, event.type, ok=False,
+                                          message=str(exc), error_code="INVALID_COMMAND_PAYLOAD")
+                return None
+        return request
+
     async def _pause_stimulation(self, event: Event) -> None:
         """Acknowledge only after the real rendering task exits and triggers clear."""
-        request = CommandRequest.from_value(event.data)
+        request = self._control_request(event)
         if request is None:
             return
         self._paused = True
@@ -530,9 +539,9 @@ class Stimulation:
         self.event_bus.put_event(Event(EventType.CommandResult, result))
 
     async def _stop_stimulation_system(self, event=None):
-        request = CommandRequest.from_value(
-            event.data if isinstance(event, Event) else None
-        )
+        request = self._control_request(event) if isinstance(event, Event) else None
+        if isinstance(event, Event) and event.data is not None and request is None:
+            return
         self._paused = True
         self.should_stop = True
         if request is not None:

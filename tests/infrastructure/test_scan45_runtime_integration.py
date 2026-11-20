@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import numpy as np
 import pytest
 
-from omnibci.application.events import CommandRequest, ProcessingInputStart, TrialOutcome
+from omnibci.application.events import CommandRequest, ProcessingInputStart, SignalPreparationReceipt, TrialOutcome
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.application.services.results_service import ResultsService
 from omnibci.application.source_metadata import source_descriptor, source_fingerprint
@@ -108,7 +108,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         confirmation = await asyncio.wait_for(prepared, timeout=2)
         assert confirmation.ok, confirmation.message
         assert confirmation.data == receipt
-        processor._on_input_start(ProcessingInputStart("attach", receipt, -1))
+        processor._on_input_start(ProcessingInputStart("attach", SignalPreparationReceipt.from_value(receipt), -1))
         assert processor.detector.plugin_type == "DEFAULT_EPOCH_DETECTOR"
         assert processor._decoder.plugin_type == "THUBCI_SSVEP_classic40CCA"
 

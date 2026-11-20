@@ -4,7 +4,7 @@ from collections import UserDict
 
 import pytest
 
-from omnibci.infrastructure.actuation.contracts import (
+from omnibci.application.commands.actuation_commands import (
     InvalidActuationCommand,
     validate_actuation_command,
 )
