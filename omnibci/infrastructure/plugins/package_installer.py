@@ -26,7 +26,8 @@ from typing import Mapping
 
 import tomlkit
 
-from omnibci.infrastructure.plugins.descriptors import PluginDescriptor, PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
+from omnibci.infrastructure.plugins.descriptors import PluginDescriptor
 from omnibci.infrastructure.plugins.package_requirements import check_host_compatibility
 from omnibci.infrastructure.plugins.plugin_catalog import (
     PluginCatalog,

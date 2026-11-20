@@ -5,7 +5,8 @@ from typing import Callable, Iterable
 from omnibci.application.plugin_packages import (
     ManagedPluginPackageStore, PackageReference, PluginPackageConflictError, PluginPackageError,
 )
-from omnibci.application.configuration.models import PluginProfile, PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.configuration.models import PluginProfile
 from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.application.services.plugin_installation_service import PluginInstallationService

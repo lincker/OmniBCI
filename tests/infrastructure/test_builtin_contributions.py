@@ -8,7 +8,7 @@ from tests.plugin_configuration_helpers import builtin_selection
 import pytest
 import tomlkit
 
-from omnibci.application.configuration.models import PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
 from omnibci.domain.ports.acquisition import SignalSource, TriggerEmitter
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter
 from omnibci.domain.ports.effector import Effector

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+import tomlkit
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -499,6 +500,34 @@ def test_missing_profile_and_unknown_fields_are_rejected(client):
     assert http.get(f"{PREFIX}/plugin-profiles/not-a-uuid").status_code == 422
     response = http.post(f"{PREFIX}/apply-plan", json={"settings": {}, "module": "acquisition", "bindings": [], "unexpected": True})
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("package_id", " acme.test"), ("contribution_id", ""), ("version", "1.0.0."),
+])
+def test_invalid_identity_returns_validation_error_without_saving(client, field, value):
+    http, service = client
+    selection = builtin_selection("acquisition", "file_reader").to_dict()
+    response = http.post(f"{PREFIX}/plugin-profiles", json={
+        "kind": "acquisition", "selection": {**selection, field: value},
+        "name": "Invalid selection", "parameters": {},
+    })
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"
+    assert service.repository.list_profiles() == []
+
+
+def test_invalid_stored_identity_remains_an_http_validation_error(client):
+    http, service = client
+    profile = create(client)
+    path = service.repository.root / "plugin-profiles" / profile["profile_id"] / "current.toml"
+    document = tomlkit.parse(path.read_text())
+    document["selection"]["version"] = "1.0.0."
+    path.write_text(tomlkit.dumps(document))
+    for route in (f"{PREFIX}/plugin-profiles/{profile['profile_id']}", f"{PREFIX}/plugin-profiles"):
+        response = http.get(route)
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
 
 
 def test_openapi_publishes_typed_profile_and_module_contracts(client):

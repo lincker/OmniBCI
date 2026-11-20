@@ -8,7 +8,7 @@ import tomlkit
 
 from omnibci.domain.ports.effector import Effector
 from omnibci.sdk import PluginContext
-from omnibci.infrastructure.plugins.descriptors import PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
 from omnibci.infrastructure.plugins.loader import PluginLoader
 from omnibci.infrastructure.plugins.plugin_catalog import (
     AmbiguousPluginError,

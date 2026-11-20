@@ -27,11 +27,11 @@ from omnibci.domain.decoder_input import DecoderChannelRequirements
 from omnibci.infrastructure.plugins.installed_registry import enabled_package_directories
 from omnibci.infrastructure.plugins.package_requirements import check_host_compatibility, installed_host_version
 
+from omnibci.application.plugin_identity import PluginSelection
 from omnibci.infrastructure.plugins.descriptors import (
     PluginDescriptor,
     PluginEntrypoint,
     PluginPackageDescriptor,
-    PluginSelection,
 )
 
 log = logging.getLogger(__name__)

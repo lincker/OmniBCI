@@ -7,7 +7,8 @@ from threading import RLock
 from uuid import uuid4
 
 from omnibci.application.configuration.errors import ConfigProfileValidationError
-from omnibci.application.configuration.models import ActivationSet, PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.configuration.models import ActivationSet
 from omnibci.application.configuration.errors import PluginProfileNotFoundError, ProfileRevisionConflict
 from omnibci.application.processing_source import (
     acquisition_binding_key, binding_for, processing_binding_key, processing_input,

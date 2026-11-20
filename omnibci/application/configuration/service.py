@@ -10,8 +10,9 @@ from omnibci.application.configuration.definitions import (
 )
 from omnibci.application.configuration.errors import PluginProfileNotFoundError
 from omnibci.application.configuration.ports import ConfigurationRepository
+from omnibci.application.plugin_identity import PluginSelection
 from omnibci.application.configuration.models import (
-    ActivationSet, ModuleActivation, EngineSettings, PluginProfile, PluginSelection, ProfileBinding,
+    ActivationSet, ModuleActivation, EngineSettings, PluginProfile, ProfileBinding,
     MODULE_KINDS, plugin_kind_for_slot,
 )
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters

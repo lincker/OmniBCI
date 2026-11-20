@@ -21,8 +21,9 @@ import tomlkit
 from omnibci.application.configuration.definitions import (
     MODULES, SERVER_STARTUP_DEFAULTS, server_startup_settings, validate_server_settings,
 )
+from omnibci.application.plugin_identity import PLUGIN_KINDS
 from omnibci.application.configuration.models import (
-    PLUGIN_KINDS, ActivationSet, ModuleActivation, ModuleActivationRevision,
+    ActivationSet, ModuleActivation, ModuleActivationRevision,
     PluginProfile, ProfileRevision,
     EngineSettings, validate_profile_id,
 )

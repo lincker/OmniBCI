@@ -184,7 +184,8 @@ def test_explicit_settings_are_shared_by_source_and_runtime():
 
 
 def test_historical_decoder_projection_requires_preparation():
-    from omnibci.application.configuration.models import PluginSelection, ProfileBinding
+    from omnibci.application.plugin_identity import PluginSelection
+    from omnibci.application.configuration.models import ProfileBinding
     from omnibci.application.processing_source import materialize_processing_binding
 
     binding = ProfileBinding("processing.decoder", "decoder", None,

@@ -159,7 +159,8 @@ def test_unconfigured_snapshots_do_not_prepare():
 
 
 def test_binding_projection_does_not_create_processing_configuration():
-    from omnibci.application.configuration.models import PluginSelection, ProfileBinding
+    from omnibci.application.plugin_identity import PluginSelection
+    from omnibci.application.configuration.models import ProfileBinding
     binding = ProfileBinding("processing.decoder", "decoder", None,
                              PluginSelection("test.decoder", "default", "1"), {})
     result = materialize_processing_binding(binding)

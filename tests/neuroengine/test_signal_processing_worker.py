@@ -11,7 +11,8 @@ import pytest
 
 import omnibci.infrastructure.signal_processing.worker as worker_module
 from omnibci.application.events import CommandRequest, ProcessingInputStart
-from omnibci.application.configuration.models import PluginSelection, ProfileBinding
+from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.channel_mapping import ProcessingInput, compile_processing_plan
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter, Prediction
 from omnibci.domain.signal import SignalChunk

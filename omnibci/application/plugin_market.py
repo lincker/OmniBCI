@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Protocol
 
 from omnibci.application.plugin_packages import PackageInstallation, PluginPackageError
-from omnibci.application.configuration.models import PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
 
 
 class PluginMarketError(PluginPackageError):

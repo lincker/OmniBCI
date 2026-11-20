@@ -43,7 +43,7 @@ def _observation(plan):
 
 
 def _snapshot(plan):
-    from omnibci.application.configuration.models import PluginSelection
+    from omnibci.application.plugin_identity import PluginSelection
     return {
         "CONFIG.module_revisions": {"acquisition": plan.acquisition_revision, "processing": plan.acquisition_revision, "stimulation": plan.acquisition_revision, "actuation": plan.acquisition_revision}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "generation-one",
         "ACQUISITION.sample_rate": plan.source.sample_rate,

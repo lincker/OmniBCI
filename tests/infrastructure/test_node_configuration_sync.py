@@ -8,7 +8,7 @@ import pytest
 
 from omnibci.application.commands.engine_commands import StartEngineCommand, StopEngineCommand
 from omnibci.application.node_configuration import NodeConfiguration, materialize_node_configuration
-from omnibci.application.configuration.models import PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
 from omnibci.domain.channel_mapping import ProcessingInput
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration
 from omnibci.application.services.engine_service import NeuroEngineService

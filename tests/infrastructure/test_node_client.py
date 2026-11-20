@@ -7,7 +7,8 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from omnibci.application.node_configuration import NodeConfiguration
-from omnibci.application.configuration.models import PluginSelection, ProfileBinding
+from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.infrastructure.plugins import node_client
 
 

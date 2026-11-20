@@ -7,7 +7,7 @@ import pytest
 import tomlkit
 from fastapi.testclient import TestClient
 
-from omnibci.application.configuration.models import PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, user_plugins_dir
 from omnibci.presentation.main import create_app

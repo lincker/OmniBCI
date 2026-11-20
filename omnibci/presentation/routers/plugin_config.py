@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from omnibci.application.configuration.definitions import MODULES, ENGINE_SETTING_DEFAULTS
 from omnibci.application.configuration.errors import ConfigProfileConflictError
 from omnibci.application.configuration.errors import PluginProfileNotFoundError, PluginProfileValidationError, ProfileRevisionConflict
-from omnibci.application.configuration.models import PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
 from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.domain.channel_mapping import ProcessingInput
 from omnibci.application.configuration.service import ConfigurationService

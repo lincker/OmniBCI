@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from omnibci.application.configuration.models import PluginSelection
+from omnibci.application import plugin_identity
 from omnibci.domain.decoder_input import DecoderChannelRequirements
 
 
@@ -120,8 +120,8 @@ class PluginDescriptor:
         )
 
     @property
-    def selection(self) -> PluginSelection:
-        return PluginSelection(self.identifier, self.contribution_id, self.version)
+    def selection(self) -> plugin_identity.PluginSelection:
+        return plugin_identity.PluginSelection(self.identifier, self.contribution_id, self.version)
 
     @property
     def identifier(self) -> str:

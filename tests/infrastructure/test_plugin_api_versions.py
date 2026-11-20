@@ -6,7 +6,7 @@ import pytest
 from omnibci.infrastructure.plugins.loader import PluginLoader, PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginRoot
 from omnibci.sdk import Effector, PluginContext
-from omnibci.application.configuration.models import PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
 
 
 def descriptor(tmp_path, body="self.parameters = parameters; self.context = context"):

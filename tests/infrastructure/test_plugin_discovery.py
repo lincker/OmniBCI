@@ -10,7 +10,7 @@ from textwrap import dedent
 import pytest
 import tomlkit
 from omnibci.sdk import PluginContext
-from omnibci.application.configuration.models import PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
 
 from omnibci.domain.ports.effector import Effector
 from omnibci.infrastructure.plugins.descriptors import PluginEntrypoint

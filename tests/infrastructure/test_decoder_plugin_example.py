@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
-from omnibci.infrastructure.plugins.descriptors import PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
 from omnibci.infrastructure.plugins.loader import PluginLoadError, PluginLoader
 from omnibci.infrastructure.plugins.package_installer import PluginPackageInstaller
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginRoot

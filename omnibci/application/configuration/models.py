@@ -4,13 +4,13 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import re
 from datetime import datetime
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
 from uuid import UUID
 
+from omnibci.application import plugin_identity
 from omnibci.application.configuration.definitions import (
     MODULES, validate_engine_settings, validate_module_settings,
 )
@@ -18,9 +18,6 @@ from omnibci.application.configuration.errors import PluginProfileValidationErro
 from omnibci.domain.channel_mapping import ProcessingInput
 
 
-PLUGIN_KINDS = frozenset({
-    "acquisition", "decoder", "epoch_detector", "filter", "paradigm", "trigger", "effector",
-})
 MODULE_KINDS = {
     "acquisition": frozenset({"acquisition"}),
     "processing": frozenset({"decoder", "epoch_detector", "filter"}),
@@ -114,37 +111,11 @@ def _parse_profile_fields(data: dict) -> dict:
 
 
 @dataclass(frozen=True, slots=True)
-class PluginSelection:
-    """Exact package, contribution and installed version identity."""
-
-    package_id: str
-    contribution_id: str
-    version: str
-
-    def __post_init__(self) -> None:
-        for name in ("package_id", "contribution_id", "version"):
-            value = getattr(self, name)
-            if not isinstance(value, str) or not value or value != value.strip():
-                raise PluginProfileValidationError(f"{name} must be a non-empty, trimmed string")
-
-        if not re.fullmatch(r"[0-9][A-Za-z0-9._+-]{0,127}", self.version) or self.version.endswith("."):
-            raise PluginProfileValidationError("version must be an exact package version")
-
-    def to_dict(self) -> dict:
-        return {"package_id": self.package_id, "contribution_id": self.contribution_id, "version": self.version}
-
-    @classmethod
-    def from_dict(cls, data: dict) -> PluginSelection:
-        _fields(data, {"package_id", "contribution_id", "version"})
-        return cls(data["package_id"], data["contribution_id"], data["version"])
-
-
-@dataclass(frozen=True, slots=True)
 class PluginProfile:
     profile_id: str
     name: str
     kind: str
-    selection: PluginSelection
+    selection: plugin_identity.PluginSelection
     parameters: dict
     configuration_version: int = 1
     revision: int = 0
@@ -156,9 +127,9 @@ class PluginProfile:
         if (not isinstance(self.name, str) or not 1 <= len(self.name.strip()) <= 64
                 or any(ord(character) < 32 for character in self.name)):
             raise PluginProfileValidationError("name must be single-line text of 1 to 64 characters")
-        if not isinstance(self.kind, str) or self.kind not in PLUGIN_KINDS:
+        if not isinstance(self.kind, str) or self.kind not in plugin_identity.PLUGIN_KINDS:
             raise PluginProfileValidationError("Unsupported plugin kind")
-        if not isinstance(self.selection, PluginSelection):
+        if not isinstance(self.selection, plugin_identity.PluginSelection):
             raise PluginProfileValidationError("selection must be PluginSelection")
         if type(self.format_version) is not int or self.format_version != 2:
             raise PluginProfileValidationError("Unsupported profile format_version")
@@ -185,7 +156,7 @@ class PluginProfile:
                        "parameters", "configuration_version", "revision"},
                 {"processing_input"})
         return cls(**{**_parse_profile_fields(data),
-                      "selection": PluginSelection.from_dict(data["selection"])})
+                      "selection": plugin_identity.PluginSelection.from_dict(data["selection"])})
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,7 +166,7 @@ class ProfileBinding:
     slot: str
     kind: str
     profile_id: str | None
-    selection: PluginSelection
+    selection: plugin_identity.PluginSelection
     parameters: dict
     configuration_version: int = 1
     profile_revision: int = 0
@@ -206,7 +177,7 @@ class ProfileBinding:
             raise PluginProfileValidationError("slot and plugin kind must match")
         if self.profile_id is not None:
             validate_profile_id(self.profile_id)
-        if not isinstance(self.selection, PluginSelection):
+        if not isinstance(self.selection, plugin_identity.PluginSelection):
             raise PluginProfileValidationError("selection must be PluginSelection")
         _positive_integer(self.configuration_version, "configuration_version")
         _positive_integer(self.profile_revision, "profile_revision",
@@ -232,7 +203,7 @@ class ProfileBinding:
         _fields(data, {"slot", "kind", "selection", "parameters", "configuration_version",
                        "profile_revision"}, {"profile_id", "processing_input"})
         return cls(**{**_parse_profile_fields(data), "profile_id": data.get("profile_id"),
-                      "selection": PluginSelection.from_dict(data["selection"])})
+                      "selection": plugin_identity.PluginSelection.from_dict(data["selection"])})
 
 
 @dataclass(frozen=True, slots=True, init=False)
