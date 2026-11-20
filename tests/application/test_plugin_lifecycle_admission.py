@@ -27,10 +27,11 @@ def services(tmp_path, monkeypatch):
         with references:
             yield
 
+    store = ManagedPluginPackageStore()
     profiles = ConfigurationService(TomlConfigurationRepository(tmp_path / "config"),
                                     CatalogConfigurationAdapter(),
-                                    change_guard=profile_guard)
-    packages = PluginPackageService(ManagedPluginPackageStore(), profiles,
+                                    change_guard=profile_guard, profile_versions=store)
+    packages = PluginPackageService(store, configuration_references=profiles.package_references,
         runtime_references=lambda: tuple(reference for snapshot in engine.runtime_package_snapshots
                                         for reference in package_references_from_settings(snapshot)),
         admission_guard=lambda: references)
@@ -130,5 +131,45 @@ def test_new_version_profile_can_nest_profile_guard_inside_package_transition(se
     source = profiles.create("effector", selection, "Output", {})
     packages.install(package_archive(tmp_path, "2.0.0"))
     packages.set_enabled("acme.device", "2.0.0", True)
-    copied = packages.create_version_profile(source.profile_id, "2.0.0", expected_source_revision=1)
+    copied = profiles.create_version_profile(source.profile_id, "2.0.0", expected_source_revision=1)
     assert copied.profile_id != source.profile_id and copied.selection.version == "2.0.0"
+
+
+@pytest.mark.parametrize("stage", ["validation", "persistence"])
+@pytest.mark.parametrize("operation", ["disable", "remove"])
+def test_version_copy_holds_reference_guard_until_persistence(services, tmp_path, monkeypatch, stage, operation):
+    _, profiles, packages, selection = services
+    source = profiles.create("effector", selection, "Output", {})
+    packages.install(package_archive(tmp_path, "2.0.0"))
+    packages.set_enabled("acme.device", "2.0.0", True)
+    owner, method = ((packages.store, "configuration") if stage == "validation"
+                     else (profiles.repository, "save_profile"))
+    original = getattr(owner, method)
+    entered, release, attempted = Event(), Event(), Event()
+    def delayed(*args, **kwargs):
+        entered.set()
+        assert release.wait(3), "Test did not release version copy"
+        return original(*args, **kwargs)
+    monkeypatch.setattr(owner, method, delayed)
+    def mutate():
+        attempted.set()
+        if operation == "disable":
+            return packages.set_enabled("acme.device", "2.0.0", False)
+        return packages.remove("acme.device", "2.0.0")
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        copying = executor.submit(profiles.create_version_profile, source.profile_id, "2.0.0",
+                                  expected_source_revision=source.revision)
+        try:
+            assert entered.wait(2)
+            mutation = executor.submit(mutate)
+            assert attempted.wait(2)
+            with pytest.raises(TimeoutError):
+                mutation.result(timeout=.05)
+        finally:
+            release.set()
+        copied = copying.result(timeout=3)
+        with pytest.raises(PluginPackageConflictError, match="referenced"):
+            mutation.result(timeout=3)
+    assert copied.selection.version == "2.0.0"
+    assert profiles.repository.get_profile(copied.profile_id) == copied
+    assert packages.store.get_package("acme.device", "2.0.0").enabled

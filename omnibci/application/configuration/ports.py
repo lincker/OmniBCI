@@ -1,10 +1,18 @@
-"""Persistence boundary for independently versioned configuration documents."""
+"""Persistence and package metadata boundaries for configuration use cases."""
 from typing import Protocol
 
 from omnibci.application.configuration.models import (
     ActivationSet, EngineSettings, ModuleActivation, ModuleActivationRevision,
     PluginProfile, ProfileRevision,
 )
+from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_packages import PackageVersion
+from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration
+
+
+class ProfileVersionCatalog(Protocol):
+    def get_package(self, package_id: str, version: str) -> PackageVersion: ...
+    def configuration(self, kind: str, selection: PluginSelection) -> PluginConfiguration: ...
 
 
 class ConfigurationRepository(Protocol):

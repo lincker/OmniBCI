@@ -530,6 +530,57 @@ def test_invalid_stored_identity_remains_an_http_validation_error(client):
         assert response.json()["code"] == "VALIDATION_ERROR"
 
 
+def test_configuration_queries_need_no_repository_or_catalog_access(client):
+    http, service = client
+    profile = create(client, kind="effector", alias="logger")
+    activation = service.repository.save_module(service.propose(
+        "actuation", [{"slot": "actuation.effector", "profile_id": profile["profile_id"]}],
+        settings=service.default_module_settings("actuation"),
+    ))
+    history = service.repository.record_module_history(activation, str(uuid4()))
+    engine = service.repository.save_engine(service.propose_engine({"debug": False}))
+    queries = SimpleNamespace(
+        list_plugin_configurations=service.catalog.list,
+        list_profiles=service.repository.list_profiles, get_profile=service.repository.get_profile,
+        get_module=service.repository.get_module, get_engine=service.repository.get_engine,
+        module_history=service.repository.list_module_history,
+        module_history_entry=service.repository.get_module_history_entry,
+        default_module_settings=service.default_module_settings,
+    )
+    http.app.state.container.configuration_service = queries
+
+    catalog = http.get(f"{PREFIX}/plugin-catalog/effector")
+    assert catalog.status_code == 200 and catalog.json()["data"]
+    assert http.get(f"{PREFIX}/plugin-profiles?kind=effector").json()["data"][0]["profile_id"] == profile["profile_id"]
+    assert http.get(f"{PREFIX}/plugin-profiles/{profile['profile_id']}").json()["data"]["parameters"] == profile["parameters"]
+    assert http.get(f"{PREFIX}/modules/actuation").json()["data"]["revision"] == activation.revision
+    assert http.get(f"{PREFIX}/modules").json()["data"]["engine"]["revision"] == engine.revision
+    assert http.get(f"{PREFIX}/engine").json()["data"]["revision"] == engine.revision
+    assert http.get(f"{PREFIX}/modules/actuation/history").json()["data"][0]["entry_id"] == history.entry_id
+    assert http.get(f"{PREFIX}/modules/actuation/history/{history.entry_id}").json()["data"]["revision"] == activation.revision
+    assert http.get(f"{PREFIX}/modules/actuation/history/{uuid4()}").status_code == 404
+
+
+def test_module_overview_keeps_partial_query_errors(client):
+    http, service = client
+    def get_module(module):
+        if module == "processing":
+            raise ValueError("Processing configuration unreadable")
+        return None
+    def get_engine():
+        raise OSError("Engine settings unreadable")
+    http.app.state.container.configuration_service = SimpleNamespace(
+        get_module=get_module, get_engine=get_engine,
+        default_module_settings=service.default_module_settings,
+    )
+    response = http.get(f"{PREFIX}/modules")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["errors"] == {"processing": "Processing configuration unreadable", "engine": "Engine settings unreadable"}
+    assert data["engine"] is None
+    assert data["modules"]["actuation"]["bindings"] == []
+
+
 def test_openapi_publishes_typed_profile_and_module_contracts(client):
     http, _ = client
     openapi = http.get("/openapi.json").json()

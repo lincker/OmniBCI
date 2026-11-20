@@ -3,7 +3,9 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, Request
 
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.plugin_package_service import PluginPackageService
+from omnibci.presentation.dependencies import get_configuration_service
 from omnibci.presentation.errors import ApiError
 from omnibci.presentation.routers.plugin_config import _configuration_errors
 from omnibci.presentation.routers.plugin_packages import package_errors
@@ -40,7 +42,7 @@ def remove(package_id: str, version: str, svc: PluginPackageService = Depends(ge
 
 
 @router.post("/profile-version-proposals", response_model=ApiResponse[ProfileVersionProposalResponse])
-def propose_profile(body: ProfileVersionRequest, svc: PluginPackageService = Depends(get_plugin_package_service)):
+def propose_profile(body: ProfileVersionRequest, svc: ConfigurationService = Depends(get_configuration_service)):
     with package_errors(), _configuration_errors():
         proposal = svc.propose_profile(**body.model_dump())
         data = asdict(proposal)
@@ -51,7 +53,7 @@ def propose_profile(body: ProfileVersionRequest, svc: PluginPackageService = Dep
 
 @router.post("/version-profiles", status_code=201, response_model=ApiResponse[PluginProfileResponse])
 def create_version_profile(body: CreateVersionProfileRequest,
-                           svc: PluginPackageService = Depends(get_plugin_package_service)):
+                           svc: ConfigurationService = Depends(get_configuration_service)):
     with package_errors(), _configuration_errors():
         profile = svc.create_version_profile(**body.model_dump())
         return ApiResponse(message="New profile created; select and apply it explicitly", data=profile.to_dict())

@@ -160,6 +160,19 @@ class PluginProfile:
 
 
 @dataclass(frozen=True, slots=True)
+class ProfileVersionProposal:
+    source_profile_id: str
+    source_revision: int
+    name: str
+    kind: str
+    selection: plugin_identity.PluginSelection
+    parameters: dict
+    configuration_version: int
+    target_enabled: bool
+    processing_input: ProcessingInput | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ProfileBinding:
     """A slot pins parameter values independently of later profile edits."""
 

@@ -48,7 +48,8 @@ async def test_actual_container_shares_package_references_without_runtime_gate(t
     try:
         packages = container.plugin_package_service
         assert container.plugin_installation_service is packages
-        assert packages.profiles is container.configuration_service
+        assert not hasattr(packages, "profiles")
+        assert container.configuration_service.change_guard() is packages.admission_guard()
         assert packages.store.plugin_dir == tmp_path / "plugins"
         assert packages.admission_guard() is container.runtime_configuration.reference_guard()
         assert container.plugin_market_service is None
@@ -60,6 +61,16 @@ async def test_actual_container_shares_package_references_without_runtime_gate(t
         with container.engine_service.admission.command("processing"):
             enabled = packages.set_enabled(installed.package_id, installed.version, True)
         assert enabled.enabled
+        profiles = container.configuration_service
+        source = profiles.create("effector", installed.contributions[0].selection, "Output", {})
+        packages.install(package_archive(tmp_path, "2.0.0"))
+        proposal = profiles.propose_profile(source.profile_id, "2.0.0")
+        assert not proposal.target_enabled
+        packages.set_enabled(installed.package_id, "2.0.0", True)
+        copied = profiles.create_version_profile(source.profile_id, "2.0.0", expected_source_revision=source.revision)
+        assert copied.selection.version == "2.0.0" and copied.profile_id != source.profile_id
+        with pytest.raises(PluginPackageConflictError, match="referenced"):
+            packages.set_enabled(installed.package_id, "2.0.0", False)
     finally:
         await container.engine_service.shutdown()
 

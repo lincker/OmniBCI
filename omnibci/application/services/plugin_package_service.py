@@ -1,48 +1,26 @@
-"""Explicit package lifecycle and checked profile copies for upgrades or rollback."""
-from dataclasses import dataclass, replace
+"""Explicit package lifecycle protected by configuration and runtime references."""
+from dataclasses import replace
 from typing import Callable, Iterable
 
 from omnibci.application.plugin_packages import (
     ManagedPluginPackageStore, PackageReference, PluginPackageConflictError, PluginPackageError,
 )
-from omnibci.application.plugin_identity import PluginSelection
-from omnibci.application.configuration.models import PluginProfile
-from omnibci.application.configuration.errors import ProfileRevisionConflict
-from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.application.services.plugin_installation_service import PluginInstallationService
-from omnibci.application.configuration.service import ConfigurationService
-from omnibci.domain.channel_mapping import ProcessingInput
-
-
-@dataclass(frozen=True, slots=True)
-class ProfileVersionProposal:
-    source_profile_id: str
-    source_revision: int
-    name: str
-    kind: str
-    selection: PluginSelection
-    parameters: dict
-    configuration_version: int
-    target_enabled: bool
-    processing_input: ProcessingInput | None = None
 
 
 class PluginPackageService(PluginInstallationService):
-    def __init__(self, store: ManagedPluginPackageStore, profiles: ConfigurationService, *,
+    def __init__(self, store: ManagedPluginPackageStore, *,
+                 configuration_references: Callable[[], Iterable[PackageReference]],
                  runtime_references: Callable[[], Iterable[PackageReference]], admission_guard):
         super().__init__(store, admission_guard=admission_guard)
-        self.profiles = profiles
+        self.configuration_references = configuration_references
         self.runtime_references = runtime_references
 
     def references(self) -> tuple[PackageReference, ...]:
-        references = [PackageReference("profile", item.profile_id, item.selection)
-                      for item in self.profiles.repository.list_profiles()]
-        accepted = self.profiles.repository.get_activation_set()
-        references.extend(PackageReference("accepted", item.slot, item.selection)
-                          for item in accepted.bindings())
+        references = list(self.configuration_references())
         references.extend(self.runtime_references())
         if any(not isinstance(item, PackageReference) for item in references):
-            raise PluginPackageError("Runtime references must be explicit PackageReference values")
+            raise PluginPackageError("Package references must be explicit PackageReference values")
         return tuple(dict.fromkeys(references))
 
     @staticmethod
@@ -71,38 +49,3 @@ class PluginPackageService(PluginInstallationService):
         with self.admission_guard():
             self._require_unused(package_id, version)
             self.store.remove(package_id, version)
-
-    def propose_profile(self, source_profile_id: str, target_version: str, *,
-                        name: str | None = None, parameters: dict | None = None):
-        """Validate a copy against the target schema; preserve all old values by default."""
-        source = self.profiles.repository.get_profile(source_profile_id)
-        selection = replace(source.selection, version=target_version)
-        if selection == source.selection:
-            raise PluginPackageError("Choose a different exact package version")
-        package = self.store.get_package(selection.package_id, target_version)
-        if package.error or not package.available:
-            raise PluginPackageError(package.error or "Target package is unavailable")
-        definition = self.store.configuration(source.kind, selection)
-        if not definition.available or definition.schema is None:
-            raise PluginSchemaError("Target contribution requires an available configuration schema")
-        values = validate_parameters(definition.schema, source.parameters if parameters is None else parameters)
-        # Reuse profile validation for names and portable JSON values without saving anything.
-        draft = PluginProfile(source.profile_id, source.name if name is None else name, source.kind, selection,
-                              values, definition.configuration_version,
-                              processing_input=source.processing_input)
-        return ProfileVersionProposal(source.profile_id, source.revision, draft.name, draft.kind,
-                                      selection, draft.parameters, draft.configuration_version, package.enabled,
-                                      draft.processing_input)
-
-    def create_version_profile(self, source_profile_id: str, target_version: str, *,
-                               expected_source_revision: int, name: str | None = None,
-                               parameters: dict | None = None):
-        """Save a new profile after explicit review; accepted/running bindings stay pinned."""
-        with self.admission_guard():
-            proposal = self.propose_profile(source_profile_id, target_version, name=name, parameters=parameters)
-            if proposal.source_revision != expected_source_revision:
-                raise ProfileRevisionConflict("Source profile changed; preview the version change again")
-            if not proposal.target_enabled:
-                raise PluginPackageConflictError("Enable the target package before creating its profile")
-            return self.profiles.create(proposal.kind, proposal.selection, proposal.name, proposal.parameters,
-                                        processing_input=proposal.processing_input)

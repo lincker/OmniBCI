@@ -40,14 +40,14 @@ def _configuration_errors():
 @router.get("/plugin-catalog/{kind}", response_model=ApiResponse[list[PluginConfigurationResponse]])
 def plugin_catalog(kind: PluginKind, svc: ConfigurationService = Depends(get_configuration_service)):
     with _configuration_errors():
-        return ApiResponse(data=[asdict(item) for item in svc.catalog.list(kind)])
+        return ApiResponse(data=[asdict(item) for item in svc.list_plugin_configurations(kind)])
 
 
 @router.get("/plugin-profiles", response_model=ApiResponse[list[PluginProfileResponse]])
 def list_profiles(kind: PluginKind | None = None,
                   svc: ConfigurationService = Depends(get_configuration_service)):
     with _configuration_errors():
-        return ApiResponse(data=[item.to_dict() for item in svc.repository.list_profiles(kind)])
+        return ApiResponse(data=[item.to_dict() for item in svc.list_profiles(kind)])
 
 
 @router.post("/plugin-profiles", status_code=201, response_model=ApiResponse[PluginProfileResponse])
@@ -66,7 +66,7 @@ def create_profile(body: CreatePluginProfileRequest,
 @router.get("/plugin-profiles/{profile_id}", response_model=ApiResponse[PluginProfileResponse])
 def get_profile(profile_id: str, svc: ConfigurationService = Depends(get_configuration_service)):
     with _configuration_errors():
-        return ApiResponse(data=svc.repository.get_profile(profile_id).to_dict())
+        return ApiResponse(data=svc.get_profile(profile_id).to_dict())
 
 
 @router.put("/plugin-profiles/{profile_id}", response_model=ApiResponse[PluginProfileResponse])
@@ -105,11 +105,11 @@ def get_modules(svc: ConfigurationService = Depends(get_configuration_service)):
     modules, errors = {}, {}
     for module in MODULES:
         try:
-            modules[module] = _module_response(module, svc.repository.get_module(module), svc)
+            modules[module] = _module_response(module, svc.get_module(module), svc)
         except (ValueError, KeyError, RuntimeError, OSError) as exc:
             errors[module] = str(exc)
     try:
-        engine_settings = _engine_response(svc.repository.get_engine())
+        engine_settings = _engine_response(svc.get_engine())
     except (ValueError, KeyError, RuntimeError, OSError) as exc:
         engine_settings = None
         errors["engine"] = str(exc)
@@ -119,7 +119,7 @@ def get_modules(svc: ConfigurationService = Depends(get_configuration_service)):
 @router.get("/modules/{module}", response_model=ApiResponse[ModuleActivationResponse])
 def get_module(module: ConfigurationModule, svc: ConfigurationService = Depends(get_configuration_service)):
     with _configuration_errors():
-        return ApiResponse(data=_module_response(module, svc.repository.get_module(module), svc))
+        return ApiResponse(data=_module_response(module, svc.get_module(module), svc))
 
 
 @router.get("/modules/{module}/history", response_model=ApiResponse[list[ModuleHistoryResponse]])
@@ -129,14 +129,14 @@ def module_history(module: ConfigurationModule, svc: ConfigurationService = Depe
             "entry_id": entry.entry_id, "revision": entry.revision, "saved_at": entry.saved_at,
             "restored_from": entry.restored_from,
             "binding_summary": [f"{b.slot}: {b.selection.package_id}@{b.selection.version}/{b.selection.contribution_id}" for b in entry.activation.bindings],
-        } for entry in svc.repository.list_module_history(module)])
+        } for entry in svc.module_history(module)])
 
 
 @router.get("/modules/{module}/history/{entry_id}", response_model=ApiResponse[ModuleActivationResponse])
 def module_history_entry(module: ConfigurationModule, entry_id: str,
                          svc: ConfigurationService = Depends(get_configuration_service)):
     with _configuration_errors():
-        entry = svc.repository.get_module_history_entry(module, entry_id)
+        entry = svc.module_history_entry(module, entry_id)
         if entry is None:
             raise ApiError(404, ErrorCode.NOT_FOUND, "Module history entry not found")
         return ApiResponse(data=entry.activation.to_dict())
@@ -145,7 +145,7 @@ def module_history_entry(module: ConfigurationModule, entry_id: str,
 @router.get("/engine", response_model=ApiResponse[EngineSettingsResponse])
 def get_engine(svc: ConfigurationService = Depends(get_configuration_service)):
     with _configuration_errors():
-        return ApiResponse(data=_engine_response(svc.repository.get_engine()))
+        return ApiResponse(data=_engine_response(svc.get_engine()))
 
 
 @router.get("/plugin-profiles/{profile_id}/history", response_model=ApiResponse[list[ProfileHistoryResponse]])

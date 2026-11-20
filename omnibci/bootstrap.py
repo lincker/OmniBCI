@@ -151,10 +151,12 @@ async def build_container(*, host_settings: dict | None = None,
 
 async def _build_container_services(host_settings, allow_process_termination):
     package_references_lock = RLock()
+    package_store = ManagedPluginPackageStore()
     configuration = ConfigurationService(
         TomlConfigurationRepository(), CatalogConfigurationAdapter(),
         active_server_settings=host_settings,
         change_guard=lambda: package_references_lock,
+        profile_versions=package_store,
     )
     actuation_manager = ActuationProcessManager(
         allow_process_termination=allow_process_termination,
@@ -212,7 +214,7 @@ async def _build_container_services(host_settings, allow_process_termination):
                                           signal_detacher=container.signal_setup_service.detach),
     )
     packages = PluginPackageService(
-        ManagedPluginPackageStore(), configuration,
+        package_store, configuration_references=configuration.package_references,
         runtime_references=lambda: tuple(
             reference
             for snapshot in (*engine_service.runtime_package_snapshots,
