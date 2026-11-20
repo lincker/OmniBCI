@@ -29,6 +29,7 @@ from threading import RLock
 from typing import Any
 
 from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
+from omnibci.application.configuration.definitions import module_runtime_settings
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessState,
     StartupReporter,
@@ -180,7 +181,7 @@ class StimulationProcessManager:
             process = mp.Process(
                 target=_run_stimulation,
                 args=(stop_event, startup_sender),
-                kwargs={"settings_snapshot": deepcopy(snapshot)},
+                kwargs={"settings_snapshot": module_runtime_settings(snapshot, "stimulation")},
                 name="StimulationProcess",
                 daemon=self._allow_process_termination,
             )

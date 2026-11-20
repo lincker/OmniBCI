@@ -224,6 +224,8 @@ Keep persistence/IPC/API dictionaries and plugin-defined JSON behind their valid
 
 **S4d implementation (2026-11-21):** selected/module/profile/plugin-metadata queries now belong to Configuration. Setup, node, startup/status and planning consumers no longer traverse its repository/catalog. RuntimeApplyCoordinator explicitly receives the existing application repository for CAS, compensation and history. Review and resolved-candidate returns are copied; module factory snapshot scoping remains a separate S4 batch.
 
+**S4e implementation (2026-11-21):** worker/output factories and Processing preparation/update commands now receive module-scoped copies. Processing retains required source context but no Acquisition artifact; output hosts receive only their own module. Parent-only and unrelated module values are omitted. This completes A02's factory/command snapshot scope alongside S4b receipts and S4d query/isolation work. Artifact/environment readiness exchange remains K05/S4. See the [execution record](plugin-implementation-plan.md#s4e-execution-module-scoped-runtime-settings-2026-11-21).
+
 ### A03 Command ownership is inferred from transport numbers
 
 **P1 — confirmed hidden coupling.** [Event](/Users/lincker/workspace/OmniBCI/omnibci/shared/events.py:56) carries an optional event type and `Any` payload. [CommandRequest/CommandResult](/Users/lincker/workspace/OmniBCI/omnibci/application/events.py:110) add useful correlation, but do not declare each command's payload/result relationship. [command_scopes](/Users/lincker/workspace/OmniBCI/omnibci/application/services/command_result_service.py:36) infers module ownership from numeric event ranges with exceptions.

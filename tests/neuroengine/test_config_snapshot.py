@@ -20,7 +20,7 @@ def test_worker_configuration_is_detached_and_required(worker_type):
         Worker(command_queue=None)
 
 
-def test_builder_passes_one_resolved_configuration_to_both_workers():
+def test_builder_passes_shared_source_context_with_owned_module_revisions():
     from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 
     snapshot = {"ACQUISITION.sample_rate": 250, "ACQUISITION.DATA_PROVIDER_PORT": 4455}
@@ -34,7 +34,9 @@ def test_builder_passes_one_resolved_configuration_to_both_workers():
     for channel in channels:
         channel.receiver.close()
         channel.reporter.close()
-    assert acquisition.settings_snapshot == processing.settings_snapshot
+    assert set(acquisition.settings_snapshot["CONFIG.module_revisions"]) == {"acquisition"}
+    assert set(processing.settings_snapshot["CONFIG.module_revisions"]) == {"acquisition", "processing"}
+    assert processing.settings_snapshot["ACQUISITION.sample_rate"] == 250
     assert not hasattr(processing, "sample_rate")
     assert acquisition.settings_snapshot["ACQUISITION.sample_rate"] == 250
     assert processing.baseline_duration == 0.0

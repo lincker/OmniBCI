@@ -3,7 +3,7 @@ import multiprocessing as mp
 from copy import deepcopy
 from dataclasses import dataclass
 
-from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS, MODULE_SETTING_DEFAULTS
+from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS, MODULE_SETTING_DEFAULTS, module_runtime_settings
 from omnibci.infrastructure.acquisition.preview_channel import PreviewChannel
 from omnibci.infrastructure.acquisition.preview_cache import PreviewCache
 from omnibci.infrastructure.acquisition.logging import AcquisitionLogListener
@@ -97,6 +97,7 @@ class NeuroEngineBuilder:
         # Workers are constructed only when their module starts. Shared result
         # counters keep trial/epoch identities unique across processing restarts.
         def worker_factory(module, runtime_snapshot):
+            runtime_snapshot = module_runtime_settings(runtime_snapshot, module)
             receiver, sender = mp.Pipe(duplex=False)
             component = {"acquisition": "Acquisition", "processing": "Signal Processing"}[module]
             reporter = StartupReporter(

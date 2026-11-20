@@ -140,7 +140,9 @@ def test_ready_status_reports_paradigm_from_pinned_binding(
 
     paradigm = "STIMULATION_THUBCI_SSVEP_classic40"
     assert manager.current_paradigm == paradigm
-    assert mock_process_cls.call_args.kwargs["kwargs"]["settings_snapshot"] == snapshot
+    assert mock_process_cls.call_args.kwargs["kwargs"]["settings_snapshot"] == {
+        **snapshot, "PLUGINS.bindings": [snapshot["PLUGINS.bindings"][0]],
+    }
     status = api_client.get("/api/v1/stimulation/status").json()["data"]
     assert status["active"] is True and status["process_alive"] is True
     assert status["paradigm"] == paradigm

@@ -4,7 +4,7 @@ from dataclasses import dataclass, asdict
 
 from omnibci.application.commands.acquisition_commands import ConnectDataProviderCommand, StartStreamCommand
 from omnibci.application.commands.stimulation_commands import StartStimulationCommand, StopStimulationCommand
-from omnibci.application.configuration.definitions import merge_module_settings
+from omnibci.application.configuration.definitions import merge_module_settings, module_runtime_settings
 from omnibci.application.events import StreamDrainReceipt
 from omnibci.application.configuration.models import ActivationSet
 from omnibci.application.configuration.ports import ConfigurationRepository
@@ -214,7 +214,7 @@ class RuntimeApplyCoordinator:
                     "engine_revision": snapshot["CONFIG.engine_revision"]}
         try:
             data = await self._request(EventType.StageProcessingConfiguration, {
-                "settings_snapshot": snapshot, "expected_revision": expected_revision,
+                "settings_snapshot": module_runtime_settings(snapshot, "processing"), "expected_revision": expected_revision,
                 "boundary": boundary, **identity,
             })
         except CommandTimeoutError as exc:

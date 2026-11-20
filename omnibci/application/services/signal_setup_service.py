@@ -7,6 +7,7 @@ import logging
 from threading import RLock
 from uuid import uuid4
 
+from omnibci.application.configuration.definitions import module_runtime_settings
 from omnibci.application.configuration.errors import ConfigProfileValidationError
 from omnibci.application.plugin_identity import PluginSelection
 from omnibci.application.configuration.errors import PluginProfileNotFoundError, ProfileRevisionConflict
@@ -301,7 +302,7 @@ class SignalSetupService:
         )
         result = self.commands.request(EventType.PrepareSignalProcessing,
                                        {"plan": plan.to_dict(), "receipt": receipt.to_dict(),
-                                        "settings_snapshot": deepcopy(snapshot)})
+                                        "settings_snapshot": module_runtime_settings(snapshot, "processing")})
         if result.data != receipt.to_dict():
             raise RuntimeError("Signal Processing did not acknowledge the current signal plan")
         self._preparation_error = None

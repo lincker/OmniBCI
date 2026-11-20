@@ -7,11 +7,13 @@ import pickle
 import subprocess
 import sys
 from copy import deepcopy
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
+from omnibci.application.configuration.definitions import module_runtime_settings
 from omnibci.infrastructure.actuation import process_manager as actuation
 from omnibci.infrastructure.stimulation import process_manager as stimulation
 from omnibci.infrastructure.process_lifecycle import StartupReport, StartupReporter
@@ -32,7 +34,7 @@ def _snapshot(key, revision="revision-1"):
         "CONFIG.generation": "graph-1",
         "STIMULATION.auto_spawn": True,
         "ACTUATION.auto_spawn": True,
-        "PLUGINS.bindings": [{"parameters": {"level": 1}}],
+        "PLUGINS.bindings": [{"slot": "actuation.effector", "parameters": {"level": 1}}],
     }
     if key == "STIMULATION.paradigm":
         snapshot.pop(key)
@@ -106,11 +108,11 @@ def test_snapshot_transport_and_revision_restart(monkeypatch, module, manager_cl
         assert manager.current_paradigm == "STIMULATION_THUBCI_SSVEP_classic40"
     else:
         assert manager.current_effector == "selected-plugin"
-    assert pickle.loads(pickle.dumps(spawned["kwargs"])) == {"settings_snapshot": original}
+    assert pickle.loads(pickle.dumps(spawned["kwargs"])) == {"settings_snapshot": module_runtime_settings(original, component.lower())}
 
     saved["CONFIG.module_revisions"][component.lower()] = "revision-2"
     saved["PLUGINS.bindings"][0]["parameters"]["level"] = 2
-    assert spawned["kwargs"]["settings_snapshot"] == original
+    assert spawned["kwargs"]["settings_snapshot"] == module_runtime_settings(original, component.lower())
     if component == "Stimulation":
         saved["PLUGINS.bindings"][0]["parameters"].pop("level")
     manager.start(settings_snapshot=saved)
@@ -132,7 +134,7 @@ def test_processing_update_does_not_restart_or_relabel_output_child(monkeypatch,
     manager.start(settings_snapshot=changed)
     assert factory.call_count == 1
     assert manager._settings_snapshot == original
-    assert factory.call_args.kwargs["kwargs"]["settings_snapshot"] == original
+    assert factory.call_args.kwargs["kwargs"]["settings_snapshot"] == module_runtime_settings(original, component.lower())
     manager.stop()
 
 
@@ -220,15 +222,15 @@ def _report_plugin_directory(connection):
         connection.send(os.environ.get("OMNIBCI_PLUGIN_DIR"))
 
 
-def _ready_with_current_plugin_directory(*args, settings_snapshot):
+def _ready_with_current_plugin_directory(*args, settings_snapshot, component, expected_directory):
     stop_event, connection = args[-2:]
     reporter = StartupReporter(
-        connection, component=settings_snapshot["TEST.component"],
-        module_revisions={settings_snapshot["TEST.component"].lower(): settings_snapshot["CONFIG.module_revisions"][settings_snapshot["TEST.component"].lower()]},
+        connection, component=component,
+        module_revisions={component.lower(): settings_snapshot["CONFIG.module_revisions"][component.lower()]},
         engine_revision=settings_snapshot["CONFIG.engine_revision"],
         generation=settings_snapshot["CONFIG.generation"],
     )
-    if os.environ.get("OMNIBCI_PLUGIN_DIR") != settings_snapshot["TEST.plugin_dir"]:
+    if os.environ.get("OMNIBCI_PLUGIN_DIR") != expected_directory:
         reporter.failed("environment", RuntimeError("Child inherited an outdated plugin directory"))
         return
     reporter.ready()
@@ -259,8 +261,9 @@ def _check_current_plugin_directory(component, directory):
     current = directory + "/current"
     os.environ["OMNIBCI_PLUGIN_DIR"] = current
     module, manager_class, _, key = next(item for item in MANAGERS if item[2] == component)
-    setattr(module, f"_run_{component.lower()}", _ready_with_current_plugin_directory)
-    snapshot = {**_snapshot(key), "TEST.component": component, "TEST.plugin_dir": current}
+    setattr(module, f"_run_{component.lower()}", partial(
+        _ready_with_current_plugin_directory, component=component, expected_directory=current))
+    snapshot = _snapshot(key)
     manager = manager_class()
     try:
         manager.start(settings_snapshot=snapshot)

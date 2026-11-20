@@ -21,7 +21,7 @@ from omnibci.infrastructure.actuation.process_manager import (
 
 def _effector_snapshot(effector="logger"):
     return {"ACTUATION.effector": effector, "CONFIG.module_revisions": {"actuation": "revision"},
-            "CONFIG.engine_revision": "engine", "CONFIG.generation": "run"}
+            "CONFIG.engine_revision": "engine", "CONFIG.generation": "run", "PLUGINS.bindings": []}
 
 
 def _cooperative_child(stop_event, stopped_flag):
