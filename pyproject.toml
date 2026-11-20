@@ -147,3 +147,14 @@ name = "Configuration management must not depend on runtime services"
 type = "forbidden"
 source_modules = ["omnibci.application.configuration"]
 forbidden_modules = ["omnibci.application.services", "omnibci.application.runtime_admission"]
+
+[[tool.importlinter.contracts]]
+name = "Static plugin manifests must not depend on discovery or execution"
+type = "forbidden"
+source_modules = ["omnibci.infrastructure.plugins.manifest"]
+forbidden_modules = [
+    "omnibci.infrastructure.plugins.plugin_catalog",
+    "omnibci.infrastructure.plugins.loader",
+    "omnibci.infrastructure.plugins.runtime_configuration",
+    "omnibci.infrastructure.plugins.package_installer",
+]

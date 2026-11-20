@@ -15,8 +15,9 @@ from omnibci.domain.ports.effector import Effector
 from omnibci.domain.ports.paradigm import Paradigm
 from omnibci.infrastructure.plugins.loader import PluginLoadError, PluginLoader
 from omnibci.infrastructure.plugins.plugin_catalog import (
-    PluginCatalog, PluginManifestError, PluginRoot, vendor_plugins_dir,
+    PluginCatalog, PluginRoot, vendor_plugins_dir,
 )
+from omnibci.infrastructure.plugins.manifest import PluginManifestError
 
 
 CAPABILITIES = [

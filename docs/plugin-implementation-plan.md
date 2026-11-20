@@ -168,6 +168,12 @@ For the shared switch, update producers, consumers and tests in the same integra
 
 **Gate:** one coherent role/constructor contract across built-ins and external-style test packages, with existing functional scenarios preserved. S2–S6 are still required before declaring the overall refactor complete.
 
+#### S1f preparation: shared static manifest validation (2026-11-20)
+
+The existing parser and schema checks now live in [manifest.py](../omnibci/infrastructure/plugins/manifest.py). Catalog discovery keeps its root/selection rules and calls that parser; installation reads the manifest once, validates all Contributions together and performs its existing archive, dependency, entrypoint and publication checks. It no longer builds a temporary catalog and rescans the whole manifest for each Contribution. Errors retain package/version identity so a malformed sibling cannot enable fallback to another copy. Callers import moved definitions directly; no compatibility module or second descriptor model is added.
+
+This is a small prerequisite commit, not the API v1 switch. API `"2"`, existing constructors, domain restrictions and manifest declarations remain unchanged until the coordinated next batch. Three new cases initially failed (two for the missing standalone parser and one for repeated manifest reads). The first affected regression passed 264 cases and found one changed installation-error prefix; it was corrected. Final verification passed **403 focused tests**, with one integration case deselected, and **9 import contracts**, including a new rule preventing static validation from depending on catalog discovery, installation or execution. Full regression remains scheduled for the API switch. Evidence is in `/private/tmp/omnibci-s1f0-398r6et3`; an earlier misspelled test path ran no tests, and a separately named `architecture-final` artifact is pytest collection only, not the import-contract result. The actual import check is `architecture.log`.
+
 ### S2 Fix Plugin Management, Configuration and Marketplace ownership
 
 **Change boundary:** application use cases and static package operations; no new execution host.

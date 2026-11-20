@@ -11,12 +11,9 @@ from omnibci.sdk import PluginContext
 from omnibci.application.plugin_identity import PluginSelection
 from omnibci.infrastructure.plugins.loader import PluginLoader
 from omnibci.infrastructure.plugins.plugin_catalog import (
-    AmbiguousPluginError,
-    PluginCatalog,
-    PluginManifestError,
-    PluginNotFoundError,
-    PluginRoot,
+    AmbiguousPluginError, PluginCatalog, PluginNotFoundError, PluginRoot,
 )
+from omnibci.infrastructure.plugins.manifest import PluginManifestError
 
 
 def _contribution(identifier="reader", kind="acquisition", **fields):

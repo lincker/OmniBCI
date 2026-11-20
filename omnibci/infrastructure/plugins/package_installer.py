@@ -26,14 +26,14 @@ from typing import Mapping
 
 import tomlkit
 
-from omnibci.application.plugin_identity import PluginSelection
 from omnibci.infrastructure.plugins.descriptors import PluginDescriptor
 from omnibci.infrastructure.plugins.package_requirements import check_host_compatibility
 from omnibci.infrastructure.plugins.plugin_catalog import (
     PluginCatalog,
-    PluginResolutionError,
-    PluginRoot,
-    VALID_CATEGORIES,
+)
+
+from omnibci.infrastructure.plugins.manifest import (
+    PluginManifestError, parse_manifest, read_manifest,
 )
 
 _RECEIPT = ".omnibci-install.json"
@@ -345,30 +345,15 @@ class PluginPackageInstaller:
         return files
 
     def _validate_package(self, location: Path) -> tuple[PluginDescriptor, ...]:
-        document = tomlkit.loads((location / "manifest.toml").read_text(encoding="utf-8")).unwrap()
-        if type(document.get("manifest_version")) is not int or document["manifest_version"] != 2:
-            raise PackageInstallError("Installable packages require manifest_version = 2")
-        package = document.get("package")
-        contributions = document.get("contributions")
-        if not isinstance(package, dict) or not isinstance(contributions, list) or not contributions:
-            raise PackageInstallError("Package metadata and contributions are required")
-        self._check_requirements(package)
-        catalog = PluginCatalog({"acquisition": lambda: [PluginRoot(location, "user", 0)]}, host_version=self.host_version)
-        descriptors = []
-        for contribution in contributions:
-            if not isinstance(contribution, dict) or not isinstance(
-                contribution.get("kind"), str,
-            ) or contribution["kind"] not in VALID_CATEGORIES:
-                raise PackageInstallError("Invalid package contribution")
-            try:
-                descriptor = catalog.resolve_selection(contribution["kind"], PluginSelection(
-                    f"{package.get('publisher')}.{package.get('id')}",
-                    contribution.get("id"), package.get("version"),
-                ))
-            except (PluginResolutionError, ValueError) as exc:
-                raise PackageInstallError(f"Invalid package manifest: {exc}") from exc
+        try:
+            document = read_manifest(location)
+            descriptors = parse_manifest(document, location, source="user", precedence=0,
+                                         host_version=self.host_version)
+        except PluginManifestError as exc:
+            raise PackageInstallError(f"Cannot install invalid package manifest: {exc}") from exc
+        self._check_requirements(document["package"])
+        for descriptor in descriptors:
             self._check_entrypoint(descriptor)
-            descriptors.append(descriptor)
         if not any(item.supports_platform(self.platform_name) for item in descriptors):
             raise PackageInstallError(f"Package has no contributions compatible with {self.platform_name}")
         return tuple(descriptors)

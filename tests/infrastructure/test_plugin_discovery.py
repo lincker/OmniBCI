@@ -16,12 +16,9 @@ from omnibci.domain.ports.effector import Effector
 from omnibci.infrastructure.plugins.descriptors import PluginEntrypoint
 from omnibci.infrastructure.plugins.loader import PluginLoadError, PluginLoader
 from omnibci.infrastructure.plugins.plugin_catalog import (
-    AmbiguousPluginError,
-    MissingEntrypointError,
-    PluginRoot,
-    PluginManifestError,
-    PluginCatalog,
+    AmbiguousPluginError, MissingEntrypointError, PluginRoot, PluginCatalog,
 )
+from omnibci.infrastructure.plugins.manifest import PluginManifestError
 
 
 def _write_effector_manifest(

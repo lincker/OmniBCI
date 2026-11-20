@@ -5,7 +5,10 @@ from copy import deepcopy
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration
 from omnibci.application.plugin_identity import PluginSelection
 from omnibci.application.plugin_schema import PluginSchemaError
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginResolutionError
+from omnibci.infrastructure.plugins.plugin_catalog import (
+    PluginCatalog,
+)
+from omnibci.infrastructure.plugins.manifest import PluginResolutionError
 
 
 class CatalogConfigurationAdapter:

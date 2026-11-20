@@ -4,7 +4,10 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 import tomlkit
 
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginManifestError, PluginRoot
+from omnibci.infrastructure.plugins.plugin_catalog import (
+    PluginCatalog, PluginRoot,
+)
+from omnibci.infrastructure.plugins.manifest import PluginManifestError
 from omnibci.infrastructure.plugins.package_installer import PackageInstallError
 from tests.infrastructure.test_package_installer import _archive, _installer, _manifest
 from tests.infrastructure.test_plugin_contributions import _write_package, _selection, _contribution

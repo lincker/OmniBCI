@@ -25,7 +25,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from omnibci.application.plugin_market import MarketContribution, MarketPackage, PreparedMarketInstall
 from omnibci.application.plugin_identity import PluginSelection
-from omnibci.infrastructure.plugins.plugin_catalog import VALID_CATEGORIES, DOMAIN_KINDS
+from omnibci.infrastructure.plugins.manifest import VALID_CATEGORIES, DOMAIN_KINDS
 
 _IDENTIFIER = r"[A-Za-z0-9][A-Za-z0-9_-]*"
 _INDEX_FIELDS = frozenset({

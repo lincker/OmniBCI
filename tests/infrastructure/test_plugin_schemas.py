@@ -8,8 +8,9 @@ from omnibci.application.plugin_identity import PluginSelection
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.infrastructure.plugins.loader import PluginLoader, PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import (
-    PluginCatalog, PluginManifestError, PluginRoot, vendor_plugins_dir,
+    PluginCatalog, PluginRoot, vendor_plugins_dir,
 )
+from omnibci.infrastructure.plugins.manifest import PluginManifestError
 from omnibci.sdk import Effector, PluginContext
 
 

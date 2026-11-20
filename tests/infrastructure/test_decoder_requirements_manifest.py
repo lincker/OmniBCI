@@ -4,7 +4,10 @@ import tomlkit
 
 from omnibci.application.plugin_identity import PluginSelection
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginManifestError, PluginRoot
+from omnibci.infrastructure.plugins.plugin_catalog import (
+    PluginCatalog, PluginRoot,
+)
+from omnibci.infrastructure.plugins.manifest import PluginManifestError
 
 
 def package(tmp_path, *, kind="decoder", **fields):

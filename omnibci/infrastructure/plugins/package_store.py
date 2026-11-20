@@ -15,8 +15,9 @@ from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigur
 from omnibci.infrastructure.plugins.package_installer import PackageInstallError, PluginPackageInstaller, _portable_path
 from omnibci.infrastructure.plugins.package_paths import managed_package_path
 from omnibci.infrastructure.plugins.plugin_catalog import (
-    PluginCatalog, PluginResolutionError, PluginRoot, user_plugins_dir,
+    PluginCatalog, PluginRoot, user_plugins_dir,
 )
+from omnibci.infrastructure.plugins.manifest import PluginResolutionError
 
 
 class DirectoryPluginPackageStore:
