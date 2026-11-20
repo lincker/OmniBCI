@@ -9,7 +9,7 @@ import time
 import numpy as np
 import pytest
 
-from omnibci.application.events import CommandRequest, ProcessingInputStart
+from omnibci.application.events import SignalPreparationReceipt, CommandRequest, ProcessingInputStart
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.signal import SignalChunk
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
@@ -126,7 +126,7 @@ class ValueDecoder(Decoder):
         })))
         prepared = _event(events, EventType.CommandResult, lambda event: event.data.command_id == "prepare")
         assert prepared.ok, prepared.message
-        data.put(ProcessingInputStart("attach", receipt, 0))
+        data.put(ProcessingInputStart("attach", SignalPreparationReceipt.from_value(receipt), 0))
         attached = _event(events, EventType.CommandResult, lambda event: event.data.command_id == "attach")
         assert attached.ok, attached.message
         data.put(SignalChunk(1, 1, np.array([[1., 1., 1.], [7., 0., 0.]])))

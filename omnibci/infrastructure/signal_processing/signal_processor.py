@@ -2,6 +2,7 @@
 
 import asyncio
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime, timezone
 from enum import Enum
 import logging
@@ -15,7 +16,7 @@ from omnibci.domain.classification import Classification
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector
 from omnibci.application.events import (
     CommandFailureKind, CommandRequest, CommandResult, EpochProcessed,
-    ProcessingInputStart, StreamBarrier, StreamDrainReceipt, TrialOutcome,
+    ProcessingInputStart, SignalPreparationReceipt, StreamBarrier, StreamDrainReceipt, TrialOutcome,
 )
 from omnibci.application.processing_source import requires_signal_preparation, validate_plan_binding
 from omnibci.shared.events import Event, EventType
@@ -279,7 +280,7 @@ class SignalProcessor:
             self._input_attached = True
             self._drain_failure = None
             result = CommandResult(marker.command_id, EventType.AttachProcessingInput.name,
-                                   ok=True, data={**marker.receipt, "last_sequence": marker.last_sequence,
+                                   ok=True, data={**marker.receipt.to_dict(), "last_sequence": marker.last_sequence,
                                                   "attached": True})
         except Exception as exc:
             result = CommandResult(marker.command_id, EventType.AttachProcessingInput.name,
@@ -294,7 +295,7 @@ class SignalProcessor:
             if (barrier.generation != self.generation
                     or barrier.engine_revision != self.engine_revision):
                 raise ValueError("Drain barrier belongs to a different runtime generation or revision")
-            if barrier.input_id is not None and barrier.input_id != (self._signal_receipt or {}).get("input_id"):
+            if barrier.input_id is not None and barrier.input_id != (self._signal_receipt.input_id if self._signal_receipt else None):
                 raise ValueError("Drain barrier belongs to a previous processing input")
             if barrier.last_sequence != self._last_sequence:
                 raise ValueError("Drain barrier sequence differs from the last consumed signal chunk")
@@ -462,20 +463,12 @@ class SignalProcessor:
             acquisition_revision = snapshot.get("CONFIG.module_revisions", {}).get(
                 "acquisition", self.acquisition_revision)
             plan = ResolvedSignalPlan.from_dict(payload["plan"])
-            receipt = payload["receipt"]
-            if (not isinstance(receipt, dict)
-                    or set(receipt) != {"generation", "acquisition_revision", "processing_revision", "engine_revision", "connection_id",
-                                       "source_fingerprint", "plan_fingerprint", "input_id"}
-                    or not isinstance(receipt["input_id"], str) or not receipt["input_id"]
-                    or receipt["generation"] != self.generation
-                    or receipt["processing_revision"] != self.processing_revision
-                    or receipt["acquisition_revision"] != acquisition_revision
-                    or receipt["engine_revision"] != self.engine_revision
-                    or not isinstance(receipt["connection_id"], str)
-                    or not receipt["connection_id"]
-                    or not isinstance(receipt["source_fingerprint"], str)
-                    or len(receipt["source_fingerprint"]) != 64
-                    or receipt["plan_fingerprint"] != plan.fingerprint
+            receipt = SignalPreparationReceipt.from_value(payload["receipt"])
+            if (receipt.generation != self.generation
+                    or receipt.processing_revision != self.processing_revision
+                    or receipt.acquisition_revision != acquisition_revision
+                    or receipt.engine_revision != self.engine_revision
+                    or receipt.plan_fingerprint != plan.fingerprint
                     or plan.acquisition_revision != acquisition_revision):
                 raise ValueError("Signal preparation belongs to a different runtime or connection")
             validate_plan_binding(snapshot, plan)
@@ -490,12 +483,12 @@ class SignalProcessor:
                 self.pre_trigger_samples = round(self._baseline_duration * self._sample_rate)
                 self.pretrigger = PreTriggerBuffer(capacity=self.pre_trigger_samples)
                 self._signal_plan = plan
-                self._signal_receipt = deepcopy(receipt)
+                self._signal_receipt = receipt
                 self._input_attached = False
                 self._settings_snapshot = snapshot
                 self.acquisition_revision = acquisition_revision
             result = CommandResult(request.command_id, EventType.PrepareSignalProcessing.name,
-                                   ok=True, data=deepcopy(receipt))
+                                   ok=True, data=receipt.to_dict())
         except Exception as exc:
             if decoder is not None and decoder is not self._decoder:
                 try:
@@ -518,7 +511,7 @@ class SignalProcessor:
         if (not isinstance(request.payload, dict)
                 or any(request.payload.get(key) != value for key, value in expected.items())
                 or "input_id" in request.payload
-                and request.payload["input_id"] != (self._signal_receipt or {}).get("input_id")):
+                and request.payload["input_id"] != (self._signal_receipt.input_id if self._signal_receipt else None)):
             result = CommandResult(request.command_id, EventType.ResetProcessingInput.name,
                                    ok=False, message="Input reset belongs to another processing runtime",
                                    error_code="PROCESSING_INPUT_REJECTED", failure_kind=CommandFailureKind.REJECTED)
@@ -589,7 +582,7 @@ class SignalProcessor:
         self._settings_snapshot = snapshot
         self.processing_revision = snapshot["CONFIG.module_revisions"]["processing"]
         if self._signal_receipt is not None:
-            self._signal_receipt["processing_revision"] = self.processing_revision
+            self._signal_receipt = replace(self._signal_receipt, processing_revision=self.processing_revision)
 
     def _install_pending_configuration(self):
         pending = self._configuration_transactions.pending

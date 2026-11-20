@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock, MagicMock
 import numpy as np
 import pytest
 
-from omnibci.application.events import CommandRequest, ProcessingInputStart, StreamBarrier
+from omnibci.application.events import SignalPreparationReceipt, CommandRequest, ProcessingInputStart, StreamBarrier
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder, NeuroEngineConfig
 from omnibci.shared.events import EventType
-from tests.neuroengine.test_channel_mapping import _processor
+from tests.neuroengine.test_channel_mapping import _plan, _processor, _receipt
 from tests.neuroengine.test_independent_input_boundaries import input_pair
 
 
@@ -29,7 +29,7 @@ def bounded_data():
 
 def test_builder_bounds_signal_and_boundary_messages_in_one_fifo(bounded_data):
     data = bounded_data
-    start = ProcessingInputStart("attach", {"input_id": "input-one"}, -1)
+    start = ProcessingInputStart("attach", SignalPreparationReceipt.from_value({**_receipt(_plan()), "input_id": "input-one"}), -1)
     barrier = StreamBarrier("detach", "engine", "acquisition", 0)
     data.put_data(start)
     data.processing_active.set()

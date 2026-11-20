@@ -16,6 +16,7 @@ from omnibci.application.events import (
     CommandRequest,
     CommandResult,
     ProcessingInputStart,
+    SignalPreparationReceipt,
     StreamBarrier,
     StreamDrainReceipt,
 )
@@ -233,7 +234,7 @@ class AcquisitionRuntime:
                     self.data_manager.put_data(StreamBarrier(
                         request.command_id, self.generation, self.acquisition_revision,
                         self._last_processing_sequence, engine_revision=self.engine_revision,
-                        input_id=(self._processing_receipt or {}).get("input_id"),
+                        input_id=self._processing_receipt.input_id if self._processing_receipt else None,
                     ))
                 except Full:
                     self._fail_processing_input("Processing input queue is full; drain was not confirmed")
@@ -503,7 +504,7 @@ class AcquisitionRuntime:
             finally:
                 if self._processing_receipt is not None:
                     descriptor = self._metadata_response()["descriptor"] if self._observation is not None else None
-                    if descriptor is None or source_fingerprint(descriptor) != self._processing_receipt.get("source_fingerprint"):
+                    if descriptor is None or source_fingerprint(descriptor) != self._processing_receipt.source_fingerprint:
                         self._fail_processing_input("Source observation changed or failed; prepare processing again")
         return self._metadata_response()
 
@@ -520,18 +521,18 @@ class AcquisitionRuntime:
             "descriptor_error": observation.layout_error,
         }
 
-    def _validate_signal_receipt(self, receipt) -> None:
+    def _validate_signal_receipt(self, value) -> SignalPreparationReceipt:
+        receipt = SignalPreparationReceipt.from_value(value)
         expected = {
             "generation": self.generation, "acquisition_revision": self.acquisition_revision,
             "engine_revision": self.engine_revision, "connection_id": self.connection_id,
             "source_fingerprint": source_fingerprint(self._metadata_response()["descriptor"])
                 if self._observation and self._observation.signal_info else None,
         }
-        if (not isinstance(receipt, dict) or self._observation is None or self._observation.signal_info is None
-                or any(receipt.get(key) != value for key, value in expected.items())
-                or not isinstance(receipt.get("plan_fingerprint"), str)
-                or len(receipt["plan_fingerprint"]) != 64):
+        if (self._observation is None or self._observation.signal_info is None
+                or any(getattr(receipt, key) != value for key, value in expected.items())):
             raise AcquisitionCommandRejected("SIGNAL_NOT_PREPARED", "Prepare the signal mapping for this source connection before attaching processing")
+        return receipt
 
     def _processing_input_command(self, command, request):
         if request is None:
@@ -541,16 +542,14 @@ class AcquisitionRuntime:
                 raise ValueError("Processing input control is unavailable")
             payload = request.payload
             if command is AcquisitionCommand.attach_processing:
-                self._validate_signal_receipt(payload)
-                if not isinstance(payload.get("input_id"), str) or not payload["input_id"]:
-                    raise ValueError("Processing attachment requires a prepared input identity")
+                receipt = self._validate_signal_receipt(payload)
                 if self.processing_active.is_set():
                     raise ValueError("Detach the previous processing input before replacing it")
                 # This command and fetch() run on the same event loop. No await
                 # separates the FIFO marker, local identity and delivery gate.
-                self.data_manager.put_data(ProcessingInputStart(request.command_id, dict(payload), self._last_sequence))
+                self.data_manager.put_data(ProcessingInputStart(request.command_id, receipt, self._last_sequence))
                 self._last_processing_sequence = self._last_sequence
-                self._processing_receipt = dict(payload)
+                self._processing_receipt = receipt
                 self._processing_failed = False
                 self.processing_active.set()
             else:
@@ -567,7 +566,7 @@ class AcquisitionRuntime:
                         request.command_id, self.generation, self.acquisition_revision,
                         self._last_processing_sequence, engine_revision=self.engine_revision,
                         command=EventType.DetachProcessingInput.name,
-                        input_id=(self._processing_receipt or {}).get("input_id"),
+                        input_id=self._processing_receipt.input_id if self._processing_receipt else None,
                     ))
                 else:
                     data = StreamDrainReceipt(self.generation, self.acquisition_revision,
@@ -576,7 +575,7 @@ class AcquisitionRuntime:
                     self._emit_command_result(request, command, ok=True, data=data)
                 self._processing_receipt = None
         except Full:
-            self._fail_processing_input("Processing input queue is full", receipt=request.payload
+            self._fail_processing_input("Processing input queue is full", receipt=receipt
                                         if command is AcquisitionCommand.attach_processing else None)
             self._emit_command_result(request, command, ok=False,
                                       message="Processing input queue is full; its boundary was not confirmed",
@@ -700,7 +699,7 @@ class AcquisitionRuntime:
                     None, self.generation, self.acquisition_revision, self._last_processing_sequence,
                     engine_revision=self.engine_revision,
                     command=EventType.DetachProcessingInput.name if detach else EventType.StopAndDrain.name,
-                    input_id=(self._processing_receipt or {}).get("input_id"),
+                    input_id=self._processing_receipt.input_id if self._processing_receipt else None,
                 ))
             except Full:
                 self._fail_processing_input("Processing input queue is full; stream boundary was not confirmed")
@@ -716,7 +715,7 @@ class AcquisitionRuntime:
             self.event_bus.put_event(Event(EventType.ProcessingInputFault, {
                 "generation": self.generation, "engine_revision": self.engine_revision,
                 "acquisition_revision": self.acquisition_revision,
-                "input_id": (receipt or {}).get("input_id"), "reason": reason,
+                "input_id": receipt.input_id if receipt else None, "reason": reason,
             }))
 
     def _emit_state(self) -> None:

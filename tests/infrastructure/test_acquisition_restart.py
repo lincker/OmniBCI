@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 import numpy as np
 import pytest
 
-from omnibci.application.events import ProcessingInputStart
+from omnibci.application.events import SignalPreparationReceipt, ProcessingInputStart
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.plugins.acquisition.file.reader import FileReader
@@ -42,7 +42,9 @@ async def test_eof_boundary_separates_reads_without_waiting_for_processing(recon
                                      processing_active=gate)
     decoder = _Decoder(samples=10)
     processor = _processor(decoder=decoder, bus=bus, data=data)
-    processor._signal_receipt = acquisition._processing_receipt = {"input_id": "input-one"}
+    processor._signal_receipt = acquisition._processing_receipt = SignalPreparationReceipt(
+        "generation-1", "revision-1", "revision-1", "engine", "connection", "a" * 64, "b" * 64, "input-one",
+    )
     try:
         await acquisition._on_connect()
         await acquisition._on_start_stream()

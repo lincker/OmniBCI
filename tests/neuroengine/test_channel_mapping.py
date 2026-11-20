@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from tests.processing_helpers import make_processor
-from omnibci.application.events import CommandRequest, ProcessingInputStart, StreamBarrier
+from omnibci.application.events import SignalPreparationReceipt, CommandRequest, ProcessingInputStart, StreamBarrier
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.channel_mapping import (
     ChannelBinding, ProcessingInput, compile_processing_plan,
@@ -118,7 +118,7 @@ def _prepare(monkeypatch, processor, plan):
     monkeypatch.setattr(signal_configuration, "load_signal_pipeline", load)
     processor._execute((SignalProcessorCommand.prepare_signal, _request(plan)))
     assert processor.event_bus.put_event.call_args.args[0].data.ok
-    processor._on_input_start(ProcessingInputStart("attach", _receipt(plan), -1))
+    processor._on_input_start(ProcessingInputStart("attach", SignalPreparationReceipt.from_value(_receipt(plan)), -1))
     return decoder, detector, signal_filter, load
 
 
@@ -212,7 +212,7 @@ def test_new_connection_cannot_replace_an_active_epoch(monkeypatch):
     receipt = {**_receipt(plan), "connection_id": "connection-two"}
     processor._prepare_signal(_request(plan, receipt))
     assert not processor.event_bus.put_event.call_args.args[0].data.ok
-    assert processor._signal_receipt == _receipt(plan)
+    assert processor._signal_receipt.to_dict() == _receipt(plan)
     assert load.call_count == 1
 
 
@@ -375,7 +375,7 @@ async def test_bound_channels_enter_epoch_before_ordered_filters_and_decoder(mon
         return_value=(decoder, detector, [BaselineFilter(), ScaleFilter()])))
     processor._execute((SignalProcessorCommand.prepare_signal, _request(plan)))
     assert processor.event_bus.put_event.call_args.args[0].data.ok
-    processor._on_input_start(ProcessingInputStart("attach", _receipt(plan), -1))
+    processor._on_input_start(ProcessingInputStart("attach", SignalPreparationReceipt.from_value(_receipt(plan)), -1))
     chunks = [
         SignalChunk(10, 0, np.array([[10, 11], [30, 31], [2, 2], [0, 0]])),
         SignalChunk(20, 1, np.array([[12, 13], [32, 33], [2, 2], [0, 1]])),

@@ -1,6 +1,6 @@
 # Plugin API v1 Implementation Plan
 
-Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared validation, constructors/SDK, static declarations and runtime payloads/callers are implemented and verified. S2a–S2e ownership changes and S3a–S3d artifact loading/reference/store ownership are implemented and verified. S4a runtime operations and generation-only Results access are implemented and verified. Remaining S4 work and S5–S6 are pending; target GPU/device and other-OS checks are not claimed.
+Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared validation, constructors/SDK, static declarations and runtime payloads/callers are implemented and verified. S2a–S2e ownership changes and S3a–S3d artifact loading/reference/store ownership are implemented and verified. S4a runtime operations/generation-only Results access and S4b preparation/input receipts are implemented and verified. Remaining S4 work and S5–S6 are pending; target GPU/device and other-OS checks are not claimed.
 
 The [S2 first-batch review](#s2-first-batch-review-2026-11-20) was inspected at `b3fb981`. S2a–S2e are complete and verified (S2e: `cf30c57`).
 
@@ -399,6 +399,14 @@ The first **13 ownership/lifecycle cases failed** before implementation. Further
 Every engine factory receives one copied dictionary, including an empty foundation with explicit empty bindings and a fresh generation. There is no zero-argument factory path. Existing output process managers structurally satisfy small application-owned lifecycle protocols, so application annotations no longer import their infrastructure classes. ResultsService receives only a generation callable; retention, duplicate handling, pagination and event filtering remain unchanged. This completes A01 and the generation-dependency portion of A05, not the separate B1 retention decision.
 
 Four new failing cases reproduced graph access, the alternate factory call, unknown-cleanup acceptance and whole-engine Results coupling. The updated engine/application/HTTP/lifecycle group passes **245 tests**, and the remaining Actuation/node caller group passes **24 tests**. An initial full run found three stale test doubles; those were updated to the same required operations and explicit shutdown confirmation. The final unchanged production tree passes **4,248 headless tests**, **38 integration tests** (one Windows-only skip), and **9 import contracts**. Evidence is retained in `/private/tmp/omnibci-s4a-9y4ckc_m`; 473 source/test/project files were checked against the final hash manifest. Command definitions, Configuration consumers, ownership receipts, apply outcomes, node readiness and remaining S4–S6 work are still pending.
+
+#### S4b execution: shared signal preparation identity (2026-11-20)
+
+[SignalPreparationReceipt](../omnibci/application/events.py) owns the existing eight identity fields. One strict codec rejects missing/extra fields, empty or invalid identity values and malformed SHA-256 fingerprints. SignalSetup, Acquisition and Processing now retain the immutable value; the FIFO input-start marker carries it directly. Configuration-only processing updates replace the receipt value rather than mutating shared state. Each owner still checks the current generation, revisions, connection and plan against its own runtime.
+
+The HTTP/command JSON projection keeps its existing fields. No SDK export, compatibility path, new queue or sample-processing validation was added. This closes the duplicated preparation/input receipt portion of A02; remaining snapshot/configuration and command contracts continue in S4.
+
+**Validation:** nine new cases failed before implementation, including invalid attachments opening Acquisition's delivery gate and invalid preparation replacing Processing's pipeline. The final affected group passes **236 tests**, including real spawned input markers, FIFO/drain, source observation/reconnection, bounded queues, runtime apply/recovery and module isolation; **9 import contracts** pass. One existing assertion was migrated from dictionary equality to the receipt codec. Evidence: `/private/tmp/omnibci-s4b-i0nt7aw0`. The complete headless baseline passed at S4a; this batch ran the affected groups, and full integration remains a later S4/S6 gate.
 
 ### S5 Finish the three plugin entry workflows
 

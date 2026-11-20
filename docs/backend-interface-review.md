@@ -220,6 +220,8 @@ Keep persistence/IPC/API dictionaries and plugin-defined JSON behind their valid
 
 **Acceptance:** receipts round-trip through one codec; missing/extra/invalid identity fields fail consistently; one module cannot mutate another module's configuration; generation/revision/input identity checks remain mandatory.
 
+**S4b implementation (2026-11-20):** preparation/input identity now uses one immutable application-owned `SignalPreparationReceipt` and one strict codec in SignalSetup, Acquisition and Processing. FIFO markers retain that value; invalid identity cannot open the input gate. Public JSON fields remain unchanged. Snapshot scoping and the remaining Configuration boundaries are still part of S4.
+
 ### A03 Command ownership is inferred from transport numbers
 
 **P1 — confirmed hidden coupling.** [Event](/Users/lincker/workspace/OmniBCI/omnibci/shared/events.py:56) carries an optional event type and `Any` payload. [CommandRequest/CommandResult](/Users/lincker/workspace/OmniBCI/omnibci/application/events.py:110) add useful correlation, but do not declare each command's payload/result relationship. [command_scopes](/Users/lincker/workspace/OmniBCI/omnibci/application/services/command_result_service.py:36) infers module ownership from numeric event ranges with exceptions.

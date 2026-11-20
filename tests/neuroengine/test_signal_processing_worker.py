@@ -13,7 +13,7 @@ from tests.processing_helpers import prepared_signal
 import pytest
 
 import omnibci.infrastructure.signal_processing.worker as worker_module
-from omnibci.application.events import CommandRequest, ProcessingInputStart
+from omnibci.application.events import SignalPreparationReceipt, CommandRequest, ProcessingInputStart
 from omnibci.application.plugin_identity import PluginSelection
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.channel_mapping import ProcessingInput, compile_processing_plan
@@ -176,7 +176,7 @@ class TestProcessorWiring:
             if event.type is EventType.CommandResult:
                 assert event.data.ok, event.data.message
                 if event.data.command_id == "prepare":
-                    data_manager.put_data(ProcessingInputStart("attach", receipt, 0))
+                    data_manager.put_data(ProcessingInputStart("attach", SignalPreparationReceipt.from_value(receipt), 0))
                 elif event.data.command_id == "attach":
                     data_manager.put_data(SignalChunk(1, 1, np.array([[1., 2., 3.], [7., 0., 9.]])))
 
@@ -201,7 +201,7 @@ class TestProcessorWiring:
         assert "test-revision" in message
         reporter.failed.assert_called_once_with("run", raised.value)
         reporter.close.assert_called_once_with()
-        assert worker.signal_processor._signal_receipt == receipt
+        assert worker.signal_processor._signal_receipt.to_dict() == receipt
         assert worker.signal_processor.completed_trials == 0
         assert all(item.args[0].type is not EventType.TrialCompleted
                    for item in worker.event_bus.put_event.call_args_list)

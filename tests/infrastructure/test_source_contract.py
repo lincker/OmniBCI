@@ -9,7 +9,7 @@ import pytest
 from omnibci.domain.ports import acquisition as port
 from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime, AcquisitionCommandRejected
-from omnibci.application.events import CommandRequest
+from omnibci.application.events import SignalPreparationReceipt, CommandRequest
 from omnibci.application.source_metadata import source_fingerprint
 
 
@@ -177,7 +177,10 @@ async def test_observation_refresh_invalidates_only_an_obsolete_processing_attac
     before = await owner._on_get_metadata()
     owner.processing_active = Event()
     owner.processing_active.set()
-    owner._processing_receipt = {"source_fingerprint": source_fingerprint(before["descriptor"])}
+    owner._processing_receipt = SignalPreparationReceipt(
+        "generation", "acquisition", "processing", "engine", owner.connection_id,
+        source_fingerprint(before["descriptor"]), "a" * 64, "input",
+    )
     async def failed_observation():
         raise ValueError("observation failed")
     if change == "failed":

@@ -1,5 +1,6 @@
 """Resolve decoder input against the selected or running Acquisition binding."""
 from copy import deepcopy
+from dataclasses import replace
 from hashlib import sha256
 import json
 import logging
@@ -17,7 +18,7 @@ from omnibci.application.processing_source import (
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 from omnibci.application.runtime_admission import admitted
 from omnibci.application.services.command_result_service import CommandTimeoutError
-from omnibci.application.events import StreamDrainReceipt
+from omnibci.application.events import SignalPreparationReceipt, StreamDrainReceipt
 from omnibci.application.source_expectations import validate_source_expectations
 from omnibci.application.source_metadata import descriptor_layout, source_fingerprint
 from omnibci.domain.channel_mapping import ProcessingInput, compile_processing_plan
@@ -60,7 +61,7 @@ class SignalSetupService:
         """Project the current input failure without blocking the event consumer."""
         fault = event.data
         if (not isinstance(fault, dict) or not any(
-                receipt is not None and all(fault.get(key) == receipt.get(key) for key in (
+                receipt is not None and all(fault.get(key) == getattr(receipt, key) for key in (
                     "generation", "engine_revision", "acquisition_revision", "input_id"))
                 for receipt in (self._receipt, self._pending_receipt))):
             return
@@ -101,26 +102,26 @@ class SignalSetupService:
                 validate_source_binding(selected, metadata)
             except ValueError:
                 metadata = None
-        receipt = deepcopy(self._receipt)
+        receipt = self._receipt
         # A processing-only update preserves the prepared source contract.
         if (not source_error and active and receipt and self._plan
-                and receipt["generation"] == active.get("CONFIG.generation")
-                and receipt["engine_revision"] == active.get("CONFIG.engine_revision")
-                and receipt["acquisition_revision"] == active.get("CONFIG.module_revisions", {}).get("acquisition")
+                and receipt.generation == active.get("CONFIG.generation")
+                and receipt.engine_revision == active.get("CONFIG.engine_revision")
+                and receipt.acquisition_revision == active.get("CONFIG.module_revisions", {}).get("acquisition")
                 and self._bound_key == processing_binding_key(active)):
-            receipt["processing_revision"] = active.get("CONFIG.module_revisions", {}).get("processing")
+            receipt = replace(receipt, processing_revision=active["CONFIG.module_revisions"]["processing"])
         ready = bool(self.engine.is_module_running("processing")
                      and self.engine.is_module_running("acquisition")
                      and (self._admission is None or not self._admission.requires_recovery("processing"))
                      and not source_error and active and metadata and receipt
                      and self._bound_key == processing_binding_key(selected)
                      and self._bound_key == processing_binding_key(active)
-                     and receipt["generation"] == active.get("CONFIG.generation")
-                     and receipt["engine_revision"] == active.get("CONFIG.engine_revision")
-                     and receipt["acquisition_revision"] == active.get("CONFIG.module_revisions", {}).get("acquisition")
-                     and receipt["processing_revision"] == active.get("CONFIG.module_revisions", {}).get("processing")
-                     and receipt["source_fingerprint"] == source_fingerprint(metadata)
-                     and receipt["connection_id"] == metadata.get("connection_id"))
+                     and receipt.generation == active.get("CONFIG.generation")
+                     and receipt.engine_revision == active.get("CONFIG.engine_revision")
+                     and receipt.acquisition_revision == active.get("CONFIG.module_revisions", {}).get("acquisition")
+                     and receipt.processing_revision == active.get("CONFIG.module_revisions", {}).get("processing")
+                     and receipt.source_fingerprint == source_fingerprint(metadata)
+                     and receipt.connection_id == metadata.get("connection_id"))
         source_id = selected.get("ACQUISITION.signal_source")
         profile = self._profile(source_binding)
         source_context = None
@@ -145,7 +146,7 @@ class SignalSetupService:
                 "acquisition_descriptor": metadata, "source_error": source_error,
                 "accepted_input": accepted_input,
                 "active_input": active_input,
-                "readiness": {"ready": ready, "receipt": receipt if ready else None}}
+                "readiness": {"ready": ready, "receipt": receipt.to_dict() if ready else None}}
 
     def _profile(self, binding):
         if binding and binding.get("profile_id"):
@@ -270,18 +271,18 @@ class SignalSetupService:
         metadata = self.acquisition.get_descriptor(refresh=not status.streaming)
         source_key = processing_binding_key(snapshot)
         if (self._bound_key == source_key and self._receipt
-                and self._receipt["generation"] == snapshot.get("CONFIG.generation")
+                and self._receipt.generation == snapshot.get("CONFIG.generation")
                 and self._source_fingerprint != source_fingerprint(metadata)):
             raise ConfigProfileValidationError(
                 "Source metadata changed since preparation; inspect and explicitly update the acquisition or decoder input")
         if (self._receipt and self._preparation_error is None and self._bound_key == source_key
-                and self._receipt["generation"] == snapshot.get("CONFIG.generation")
-                and self._receipt["engine_revision"] == snapshot.get("CONFIG.engine_revision")
-                and self._receipt["connection_id"] == metadata["connection_id"]
-                and self._receipt["acquisition_revision"] == snapshot["CONFIG.module_revisions"]["acquisition"]):
-            self._receipt["processing_revision"] = snapshot["CONFIG.module_revisions"]["processing"]
+                and self._receipt.generation == snapshot.get("CONFIG.generation")
+                and self._receipt.engine_revision == snapshot.get("CONFIG.engine_revision")
+                and self._receipt.connection_id == metadata["connection_id"]
+                and self._receipt.acquisition_revision == snapshot["CONFIG.module_revisions"]["acquisition"]):
+            self._receipt = replace(self._receipt, processing_revision=snapshot["CONFIG.module_revisions"]["processing"])
             self._preparation_error = None
-            return deepcopy(self._receipt)
+            return self._receipt.to_dict()
         if self._receipt is not None:
             self.detach()
         try:
@@ -292,31 +293,32 @@ class SignalSetupService:
             self._validate_decoder_channels(decoder["selection"] if decoder else None, plan)
         except (ValueError, TypeError) as exc:
             raise ConfigProfileValidationError(str(exc)) from exc
-        receipt = {"generation": snapshot.get("CONFIG.generation"),
-                   "acquisition_revision": snapshot["CONFIG.module_revisions"]["acquisition"],
-                   "processing_revision": snapshot["CONFIG.module_revisions"]["processing"],
-                   "engine_revision": snapshot["CONFIG.engine_revision"],
-                   "connection_id": metadata["connection_id"],
-                   "source_fingerprint": source_fingerprint(metadata),
-                   "plan_fingerprint": plan.fingerprint,
-                   "input_id": uuid4().hex}
+        receipt = SignalPreparationReceipt(
+            generation=snapshot["CONFIG.generation"],
+            acquisition_revision=snapshot["CONFIG.module_revisions"]["acquisition"],
+            processing_revision=snapshot["CONFIG.module_revisions"]["processing"],
+            engine_revision=snapshot["CONFIG.engine_revision"],
+            connection_id=metadata["connection_id"],
+            source_fingerprint=source_fingerprint(metadata),
+            plan_fingerprint=plan.fingerprint, input_id=uuid4().hex,
+        )
         result = self.commands.request(EventType.PrepareSignalProcessing,
-                                       {"plan": plan.to_dict(), "receipt": receipt,
+                                       {"plan": plan.to_dict(), "receipt": receipt.to_dict(),
                                         "settings_snapshot": deepcopy(snapshot)})
-        if result.data != receipt:
+        if result.data != receipt.to_dict():
             raise RuntimeError("Signal Processing did not acknowledge the current signal plan")
         self._preparation_error = None
         self._pending_receipt = receipt
         try:
-            attached = self.commands.request(EventType.AttachProcessingInput, receipt).data
+            attached = self.commands.request(EventType.AttachProcessingInput, receipt.to_dict()).data
             if (not isinstance(attached, dict) or attached.get("attached") is not True
-                    or any(attached.get(key) != value for key, value in receipt.items())):
+                    or any(attached.get(key) != value for key, value in receipt.to_dict().items())):
                 raise RuntimeError("Signal Processing did not acknowledge the input boundary")
             if self._preparation_error is not None:
                 raise RuntimeError(self._preparation_error)
             self._receipt, self._plan = receipt, plan
             self._bound_key, self._source_fingerprint = source_key, source_fingerprint(metadata)
-            return deepcopy(receipt)
+            return receipt.to_dict()
         except Exception:
             try:
                 self._detach_input()

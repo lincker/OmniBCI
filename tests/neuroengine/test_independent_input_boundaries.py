@@ -9,7 +9,7 @@ import numpy as np
 
 import pytest
 
-from omnibci.application.events import CommandRequest, ProcessingInputStart, StreamBarrier, StreamDrainReceipt
+from omnibci.application.events import SignalPreparationReceipt, CommandRequest, ProcessingInputStart, StreamBarrier, StreamDrainReceipt
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand, AcquisitionRuntime
 from omnibci.infrastructure.ipc.data_manager import DataManager
@@ -102,7 +102,7 @@ async def test_source_owner_rejects_stale_preparation_before_any_input_delivery(
     assert not data.has_consumer
     data.put_data(SignalChunk(0, 1, np.zeros((4, 3))))
     assert data.get_data(0) is None
-    assert processor._signal_receipt == receipt
+    assert processor._signal_receipt.to_dict() == receipt
 
 
 @pytest.mark.asyncio
@@ -131,7 +131,7 @@ async def test_attach_and_detach_use_fifo_without_stopping_source_or_replaying_g
     assert not processor._input_attached
     assert data.empty()
     receipt = {**receipt, "input_id": "input-two"}
-    processor._signal_receipt = receipt
+    processor._signal_receipt = SignalPreparationReceipt.from_value(receipt)
     await acquisition.execute((AcquisitionCommand.attach_processing, CommandRequest("reattach", receipt)))
     await processor.next_chunk()
     assert processor._last_sequence == 6
@@ -144,7 +144,7 @@ async def test_attach_and_detach_use_fifo_without_stopping_source_or_replaying_g
 @pytest.mark.asyncio
 async def test_unprepared_or_stale_input_does_not_reach_processing(monkeypatch):
     acquisition, processor, data, receipt, events = input_pair(monkeypatch)
-    data.buffer.put(ProcessingInputStart("stale", {**receipt, "input_id": "old-input"}, 10))
+    data.buffer.put(ProcessingInputStart("stale", SignalPreparationReceipt.from_value({**receipt, "input_id": "old-input"}), 10))
     await processor.next_chunk()
     assert not events.pop().data.ok
     data.buffer.put(SignalChunk(0, 11, np.zeros((4, 3))))
@@ -204,13 +204,13 @@ def test_source_reset_rejects_old_identity_and_preserves_processing_runtime(monk
         "expected_acquisition_revision": "old-source",
     }))
     assert not events.pop().data.ok
-    assert processor._signal_receipt == receipt
+    assert processor._signal_receipt.to_dict() == receipt
     processor._reset_input(CommandRequest("old-input-fault", {
         "generation": "generation-one", "engine_revision": "engine",
         "expected_acquisition_revision": receipt["acquisition_revision"], "input_id": "old-input",
     }))
     assert not events.pop().data.ok
-    assert processor._signal_receipt == receipt
+    assert processor._signal_receipt.to_dict() == receipt
     processor._reset_input(CommandRequest("source-exited", {
         "generation": "generation-one", "engine_revision": "engine",
         "expected_acquisition_revision": receipt["acquisition_revision"],
@@ -235,7 +235,7 @@ async def test_full_processing_queue_does_not_stop_acquisition_or_preview():
     acquisition = AcquisitionRuntime(source, Queue(), data, SimpleNamespace(put_event=events.append),
                                      source_id="source", generation="run", engine_revision="engine",
                                      acquisition_revision="acquisition", processing_active=gate)
-    acquisition._processing_receipt = {"input_id": "input-one"}
+    acquisition._processing_receipt = SignalPreparationReceipt.from_value({**_receipt(_plan()), "input_id": "input-one"})
     acquisition.preview = SimpleNamespace(active=True, offer=MagicMock(), finish=MagicMock())
     await acquisition.fetch()
     assert source.read_chunk.await_count == 4

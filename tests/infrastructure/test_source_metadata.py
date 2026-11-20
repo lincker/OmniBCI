@@ -307,7 +307,7 @@ async def test_input_attachment_uses_new_connection_after_reconnection():
     await worker.execute((AcquisitionCommand.attach_processing, CommandRequest("prepared-input", receipt)))
     marker = worker.data_manager.put_data.call_args.args[0]
     assert isinstance(marker, ProcessingInputStart)
-    assert marker.receipt == receipt
+    assert marker.receipt.to_dict() == receipt
     assert worker.processing_active.is_set()
     source.start_stream.assert_not_awaited()
 
