@@ -20,12 +20,15 @@ import unicodedata
 import zipfile
 from dataclasses import dataclass, replace
 from contextlib import contextmanager
-from importlib import metadata
 from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping
 
 from omnibci.application.plugin_packages import MarketVerification, PluginPackageError
 from omnibci.infrastructure.plugins.descriptors import PluginDescriptor
+from omnibci.infrastructure.plugins.artifact_inventory import artifact_inventory, is_bytecode_path
+from omnibci.infrastructure.plugins.package_requirements import (
+    check_dependencies, installed_host_libraries, installed_host_version, normalize_dependency,
+)
 from omnibci.infrastructure.plugins.plugin_catalog import (
     PluginCatalog,
 )
@@ -36,10 +39,6 @@ from omnibci.infrastructure.plugins.manifest import (
 
 _RECEIPT = ".omnibci-install.json"
 _CHUNK_SIZE = 1024 * 1024
-_HOST_LIBRARIES = (
-    "numpy", "mne", "scikit-learn", "tomlkit", "platformdirs", "fastapi",
-    "uvicorn", "pydantic", "websockets", "pyopengl", "glfw", "moderngl",
-)
 _WINDOWS_DEVICES = frozenset({
     "con", "prn", "aux", "nul", "conin$", "conout$",
     *(f"com{number}" for number in range(1, 10)),
@@ -79,17 +78,6 @@ class InstalledPackage:
     contributions: tuple[PluginDescriptor, ...]
 
 
-def _distribution_version(name: str) -> str | None:
-    try:
-        return metadata.version(name)
-    except metadata.PackageNotFoundError:
-        return None
-
-
-def _normalized_dependency(name: str) -> str:
-    return re.sub(r"[-_.]+", "-", name).lower()
-
-
 def _portable_path(name: str, *, directory: bool = False) -> tuple[str, ...]:
     """Use one portable archive spelling, including on case-insensitive disks."""
     raw = name[:-1] if directory and name.endswith("/") else name
@@ -127,14 +115,11 @@ class PluginPackageInstaller:
         limits: InstallationLimits | None = None,
     ) -> None:
         self.root = Path(root).resolve()
-        self.host_version = host_version or _distribution_version("omnibci")
+        self.host_version = host_version or installed_host_version()
         if host_dependencies is None:
-            host_dependencies = {
-                name: version for name in _HOST_LIBRARIES
-                if (version := _distribution_version(name)) is not None
-            }
+            host_dependencies = installed_host_libraries()
         self.host_dependencies = {
-            _normalized_dependency(name): version
+            normalize_dependency(name): version
             for name, version in host_dependencies.items()
         }
         self.platform_name = platform_name or sys.platform
@@ -287,6 +272,8 @@ class PluginPackageInstaller:
             parts = _portable_path(member.filename, directory=directory)
             if len(parts) == 1 and _path_key(parts) == _path_key((_RECEIPT,)):
                 raise PackageInstallError("Archive contains reserved installation metadata")
+            if is_bytecode_path(Path(*parts)):
+                raise PackageInstallError("Archive must not contain Python bytecode or cache directories")
             mode = stat.S_IFMT(member.external_attr >> 16)
             if mode not in (0, stat.S_IFDIR if directory else stat.S_IFREG):
                 raise PackageInstallError(f"Archive member is not a regular file: {member.filename}")
@@ -362,17 +349,10 @@ class PluginPackageInstaller:
         return tuple(descriptors)
 
     def _check_requirements(self, package: dict) -> None:
-        requirements = package.get("requires", {})
-        if not isinstance(requirements, dict):
-            raise PackageInstallError("package.requires must map host library names to exact versions")
-        seen = set()
-        for name, version in requirements.items():
-            normalized = _normalized_dependency(name)
-            if normalized in seen or not isinstance(version, str) or not version:
-                raise PackageInstallError(f"Invalid host dependency requirement: {name}")
-            seen.add(normalized)
-            if self.host_dependencies.get(normalized) != version:
-                raise PackageInstallError(f"Unavailable or incompatible host dependency: {name}=={version}")
+        try:
+            check_dependencies(package.get("requires", {}), self.host_dependencies)
+        except ValueError as exc:
+            raise PackageInstallError(str(exc)) from exc
 
     @staticmethod
     def _check_entrypoint(descriptor: PluginDescriptor) -> None:
@@ -512,13 +492,8 @@ class PluginPackageInstaller:
             actual = self.read_receipt(destination, expected["package_id"], expected["version"])
             if any(actual[key] != expected[key] for key in ("package_id", "version", "sha256", "files")):
                 raise ValueError("different archive or file inventory")
-            for name, digest in expected["files"].items():
-                path = destination.joinpath(*PurePosixPath(name).parts)
-                if any(item.is_symlink() for item in (path, *path.parents) if item != destination.parent):
-                    raise ValueError("installed file is a symlink")
-                with path.open("rb") as reader:
-                    if hashlib.file_digest(reader, "sha256").hexdigest() != digest:
-                        raise ValueError("installed file content changed")
+            if artifact_inventory(destination) != expected["files"]:
+                raise ValueError("installed file inventory or content changed")
             return actual
         except (OSError, ValueError, TypeError, PackageInstallError) as exc:
             raise PackageInstallError(

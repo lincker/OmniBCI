@@ -4,7 +4,6 @@
 # @Date     : 2026-01-28 05:58
 import hashlib
 import sys
-import stat
 from threading import RLock
 from importlib import import_module
 from importlib.abc import MetaPathFinder
@@ -16,6 +15,7 @@ from typing import Type, TypeVar
 
 from omnibci.application.plugin_schema import validate_parameters
 from omnibci.infrastructure.plugins.descriptors import PluginDescriptor
+from omnibci.infrastructure.plugins.artifact_inventory import artifact_inventory, content_digest
 from omnibci.domain.signal_info import SignalInfo
 
 T = TypeVar("T")
@@ -68,22 +68,10 @@ class PluginLoader:
         digest = hashlib.sha256("\0".join((
             descriptor.identifier, descriptor.version, sys.platform, str(location),
         )).encode("utf-8"))
-        for child in sorted(location.rglob("*")):
-            if child.is_symlink():
-                raise PluginLoadError(f"{descriptor.manifest_path}: plugin tree contains symlink {child}")
-            relative = child.relative_to(location)
-            if ("__pycache__" in relative.parts or child.suffix == ".pyc"
-                    or relative.as_posix() == ".omnibci-install.json"):
-                continue
-            digest.update(relative.as_posix().encode("utf-8") + b"\0")
-            mode = child.stat().st_mode
-            if stat.S_ISDIR(mode):
-                digest.update(b"directory\0")
-            elif stat.S_ISREG(mode):
-                with child.open("rb") as reader:
-                    digest.update(hashlib.file_digest(reader, "sha256").digest())
-            else:
-                raise PluginLoadError("Plugin artifacts require regular files and directories")
+        try:
+            digest.update(content_digest(artifact_inventory(location)).encode())
+        except (ValueError, OSError) as exc:
+            raise PluginLoadError(str(exc)) from exc
         return f"_omnibci_plugin_{digest.hexdigest()}"
 
     @staticmethod

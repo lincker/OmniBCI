@@ -3,6 +3,39 @@ from importlib import metadata
 import re
 
 
+_HOST_LIBRARIES = (
+    "numpy", "mne", "scikit-learn", "tomlkit", "platformdirs", "fastapi",
+    "uvicorn", "pydantic", "websockets", "pyopengl", "glfw", "moderngl",
+)
+
+
+def normalize_dependency(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def installed_host_libraries() -> dict[str, str]:
+    versions = {}
+    for name in _HOST_LIBRARIES:
+        try:
+            versions[normalize_dependency(name)] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            pass
+    return versions
+
+
+def check_dependencies(requirements, available: dict[str, str]) -> None:
+    if not isinstance(requirements, dict):
+        raise ValueError("package.requires must map host library names to exact versions")
+    seen = set()
+    for name, version in requirements.items():
+        normalized = normalize_dependency(name)
+        if normalized in seen or not isinstance(version, str) or not version:
+            raise ValueError(f"Invalid host dependency requirement: {name}")
+        seen.add(normalized)
+        if available.get(normalized) != version:
+            raise ValueError(f"Unavailable or incompatible host dependency: {name}=={version}")
+
+
 def installed_host_version() -> str | None:
     try:
         return metadata.version("omnibci")
