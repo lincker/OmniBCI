@@ -94,49 +94,57 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
         allow_process_termination=app.state.allow_process_termination,
     )
 
-    app.state.container = container
-    app.state.engine_service = container.engine_service
-    app.state.acquisition_service = container.acquisition_service
-    app.state.stimulation_service = container.stimulation_service
-    app.state.stimulation_process_manager = container.stimulation_process_manager
-    app.state.plugin_installation_service = container.plugin_installation_service
-    app.state.plugin_package_service = container.plugin_package_service
-    app.state.plugin_market_service = container.plugin_market_service
     app.state.shutdown_service = ServerShutdownService(
         engine=container.engine_service,
         configuration=container.runtime_configuration,
     )
-
-    results_broadcaster.set_loop(asyncio.get_running_loop())
-    # Heartbeat: reaps dead WS connections during idle periods and lets the
-    # browser detect a silently dead feed (it cannot see protocol-level pings).
-    results_broadcaster.start_heartbeat()
-
-    # Record EventBus listeners now; the graph is built at engine start.
-    # Presentation
-    # subscriptions are injected here so bootstrap stays free of any presentation
-    # import.
-    broadcaster_subscriptions = [
-        (EventType.TrialCompleted, results_broadcaster.on_trial_completed),
-        # Relay stimulation acks (from the stim process via the socket) to clients.
-        (EventType.StimulationAck, results_broadcaster.on_stimulation_ack),
-    ]
-    registered = register_engine_listeners(container, broadcaster_subscriptions)
-
-    logger.info("OmniBCI API server started (engine listeners registered: %d)", registered)
     try:
+        app.state.container = container
+        app.state.engine_service = container.engine_service
+        app.state.acquisition_service = container.acquisition_service
+        app.state.stimulation_service = container.stimulation_service
+        app.state.stimulation_process_manager = container.stimulation_process_manager
+        app.state.plugin_installation_service = container.plugin_installation_service
+        app.state.plugin_package_service = container.plugin_package_service
+        app.state.plugin_market_service = container.plugin_market_service
+
+        results_broadcaster.set_loop(asyncio.get_running_loop())
+        # Heartbeat: reaps dead WS connections during idle periods and lets the
+        # browser detect a silently dead feed (it cannot see protocol-level pings).
+        results_broadcaster.start_heartbeat()
+
+        # Record EventBus listeners now; the graph is built at engine start.
+        # Presentation
+        # subscriptions are injected here so bootstrap stays free of any presentation
+        # import.
+        broadcaster_subscriptions = [
+            (EventType.TrialCompleted, results_broadcaster.on_trial_completed),
+            # Relay stimulation acks (from the stim process via the socket) to clients.
+            (EventType.StimulationAck, results_broadcaster.on_stimulation_ack),
+        ]
+        registered = register_engine_listeners(container, broadcaster_subscriptions)
+
+        logger.info("OmniBCI API server started (engine listeners registered: %d)", registered)
         yield
     finally:
-        results_broadcaster.stop_heartbeat()
-        progress = app.state.shutdown_progress
-        if progress is not None:
-            progress("waiting_for_requests")
-        await app.state.request_gate.prepare()
-        errors = await app.state.shutdown_service.prepare(progress=progress)
-        app.state.shutdown_errors = errors
-        if errors:
-            raise RuntimeError("; ".join(errors))
-        logger.info("OmniBCI API server stopped")
+        try:
+            results_broadcaster.stop_heartbeat()
+            progress = app.state.shutdown_progress
+            if progress is not None:
+                progress("waiting_for_requests")
+            await app.state.request_gate.prepare()
+            errors = await app.state.shutdown_service.prepare(progress=progress)
+            app.state.shutdown_errors = errors
+            if errors:
+                raise RuntimeError("; ".join(errors))
+            logger.info("OmniBCI API server stopped")
+        except BaseException:
+            if container.package_owner is not None:
+                container.package_owner.abandon()
+            raise
+        else:
+            if container.package_owner is not None:
+                container.package_owner.close()
 
 
 def create_app(*, api_token: str | None = None, desktop: bool = False) -> FastAPI:

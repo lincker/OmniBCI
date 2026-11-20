@@ -20,6 +20,12 @@ def isolated_module_config_directory(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def isolated_plugin_directory(monkeypatch, tmp_path):
+    """Each server test owns its store and configuration reference scope."""
+    monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
+
+
+@pytest.fixture(autouse=True)
 def isolated_server_log_directory(monkeypatch, tmp_path):
     """Keep API lifespan logs out of the real platform user log directory."""
     from omnibci.infrastructure import server_logging

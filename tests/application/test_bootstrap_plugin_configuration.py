@@ -148,6 +148,8 @@ async def test_server_restart_changes_command_timeout_without_blocking_engine_re
     assert first.command_results._timeout_s == 10.0
     assert _toml_files(config_root()) == original_files
 
+    await first.engine_service.shutdown()
+    first.package_owner.close()
     restarted = await build_container()
 
     assert restarted.command_results._timeout_s == 15.0
@@ -195,6 +197,8 @@ async def test_existing_activation_keeps_its_revision_and_pinned_inputs(bootstra
     original_files = _toml_files(profiles.repository.root)
     original_settings = (bootstrap_settings.root / "settings.toml").read_bytes()
 
+    await first.engine_service.shutdown()
+    first.package_owner.close()
     restarted = await build_container()
 
     assert restarted.configuration_service.repository.get_activation_set() == historical
@@ -242,6 +246,8 @@ async def test_broken_activation_keeps_management_available_without_replacement(
     path.write_text('format_version = "unterminated', encoding="utf-8")
     original_files = _toml_files(repository.root)
 
+    await first.engine_service.shutdown()
+    first.package_owner.close()
     container = await build_container()
 
     assert container.configuration_service.read_server()[0][0]

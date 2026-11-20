@@ -3,7 +3,6 @@
 import logging
 import os
 from contextlib import contextmanager
-from threading import RLock
 from dataclasses import dataclass
 from typing import Callable, Iterable, Tuple
 
@@ -30,6 +29,7 @@ from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigur
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 from omnibci.infrastructure.plugins.plugin_catalog import user_plugins_dir
 from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugins.store_ownership import PluginStoreOwner
 from omnibci.infrastructure.plugins.market_adapter import configured_market_service
 from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
 from omnibci.infrastructure.actuation.process_manager import ActuationProcessManager
@@ -87,6 +87,7 @@ class AppContainer:
     plugin_package_service: "PluginPackageService | None" = None
     plugin_market_service: "PluginMarketService | None" = None
     signal_setup_service: object | None = None
+    package_owner: PluginStoreOwner | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -146,12 +147,20 @@ async def build_container(*, host_settings: dict | None = None,
                           allow_process_termination: bool = True) -> AppContainer:
     """Wire services; resolve configuration and build workers on engine start."""
     host_settings = load_host_settings() if host_settings is None else dict(host_settings)
-    return await _build_container_services(host_settings, allow_process_termination)
+    store = ManagedPluginPackageStore()
+    repository = TomlConfigurationRepository()
+    owner = PluginStoreOwner(store.plugin_dir, configuration_root=repository.root)
+    try:
+        container = await _build_container_services(host_settings, allow_process_termination, store, repository, owner)
+    except BaseException:
+        # Composition has not started an engine or executed plugin code.
+        owner.close()
+        raise
+    container.package_owner = owner
+    return container
 
 
-async def _build_container_services(host_settings, allow_process_termination):
-    package_references_lock = RLock()
-    package_store = ManagedPluginPackageStore()
+async def _build_container_services(host_settings, allow_process_termination, package_store, repository, package_references_lock):
     from omnibci.infrastructure.plugins.preparation import PluginArtifactPreparer
     artifact_preparer = PluginArtifactPreparer(package_store)
 
@@ -159,7 +168,7 @@ async def _build_container_services(host_settings, allow_process_termination):
         with package_references_lock:
             return artifact_preparer.prepare_snapshot(snapshot, modules)
     configuration = ConfigurationService(
-        TomlConfigurationRepository(),
+        repository,
         CatalogConfigurationAdapter(package_store.catalog, platform_name=package_store.installer.platform_name),
         active_server_settings=host_settings,
         change_guard=lambda: package_references_lock,
@@ -229,7 +238,7 @@ async def _build_container_services(host_settings, allow_process_termination):
                              *container.runtime_configuration.pending_package_snapshots)
             for reference in package_references_from_settings(snapshot)
         ),
-        admission_guard=lambda: package_references_lock,
+        admission_guard=package_references_lock.mutation,
     )
     container.plugin_installation_service = packages
     container.plugin_package_service = packages

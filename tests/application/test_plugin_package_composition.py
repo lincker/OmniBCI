@@ -49,9 +49,9 @@ async def test_actual_container_shares_package_references_without_runtime_gate(t
         packages = container.plugin_package_service
         assert container.plugin_installation_service is packages
         assert not hasattr(packages, "profiles")
-        assert container.configuration_service.change_guard() is packages.admission_guard()
+        assert container.configuration_service.change_guard() is container.package_owner
         assert packages.store.plugin_dir == tmp_path / "plugins"
-        assert packages.admission_guard() is container.runtime_configuration.reference_guard()
+        assert container.runtime_configuration.reference_guard() is container.package_owner
         assert container.plugin_market_service is None
         assert container.engine_service.is_initialized and not container.engine_service.is_engine_ready
         assert container.engine_service._engine is None
@@ -73,6 +73,7 @@ async def test_actual_container_shares_package_references_without_runtime_gate(t
             packages.set_enabled(installed.package_id, "2.0.0", False)
     finally:
         await container.engine_service.shutdown()
+        container.package_owner.close()
 
 
 @pytest.mark.asyncio
@@ -101,6 +102,7 @@ async def test_queued_current_configuration_pins_its_package_before_execution(tm
         assert profiles.repository.get_module("actuation") is not None
     finally:
         await container.engine_service.shutdown()
+        container.package_owner.close()
 
 
 @pytest.mark.asyncio
@@ -111,7 +113,7 @@ async def test_operator_configured_market_uses_same_installer_and_admission(monk
         market = container.plugin_market_service
         packages = container.plugin_package_service
         assert market.installation is packages
-        assert market.installation.admission_guard() is packages.admission_guard()
+        assert market.installation.admission_guard == packages.admission_guard
         assert not hasattr(market.repository, "store")
         assert not hasattr(market.repository.repository, "installer")
         assert market.repository.repository.expected_repository_id == "example.plugins"
@@ -119,6 +121,33 @@ async def test_operator_configured_market_uses_same_installer_and_admission(monk
         assert not (tmp_path / "cache").exists()
     finally:
         await container.engine_service.shutdown()
+        container.package_owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('role', ['stimulation', 'actuation'])
+@pytest.mark.parametrize('action', ['install', 'enable', 'remove'])
+async def test_node_resources_block_package_mutation_without_blocking_configuration(tmp_path, role, action):
+    from omnibci.infrastructure.plugins.store_ownership import PluginStoreOwner
+    container = await build_container()
+    packages = container.plugin_package_service
+    installed = packages.install(package_archive(tmp_path)).package
+    node = PluginStoreOwner(packages.store.plugin_dir, role=role)
+    try:
+        configuration = container.configuration_service
+        configuration.save_server({'LOGGING.level': 'DEBUG'}, expected_revision=configuration.read_server()[1])
+        with pytest.raises(PluginPackageConflictError, match='node owner'):
+            if action == 'install':
+                packages.install(package_archive(tmp_path, '2.0.0'))
+            elif action == 'enable':
+                packages.set_enabled(installed.package_id, installed.version, True)
+            else:
+                packages.remove(installed.package_id, installed.version)
+        assert packages.list() == [installed]
+    finally:
+        node.close()
+        await container.engine_service.shutdown()
+        container.package_owner.close()
 
 
 def test_real_lifespan_routes_install_enable_save_references_and_remove(tmp_path):
