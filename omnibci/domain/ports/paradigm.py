@@ -40,18 +40,3 @@ class Paradigm(ABC):
 
     @abstractmethod
     def trial_result_present(self, result) -> None: pass
-
-    @abstractmethod
-    def render_frame(self, elapsed_seconds: float) -> None:
-        """Draw on the renderer owner thread; the host submits the frame.
-
-        Elapsed seconds use a monotonic clock since this rendering session began.
-        """
-
-    @abstractmethod
-    def is_presenting(self) -> bool:
-        """Report trial or feedback activity on the renderer owner thread.
-
-        Return a bool: False admits another trial. Query failures propagate;
-        neither a missing method nor an invalid result means the paradigm is idle.
-        """

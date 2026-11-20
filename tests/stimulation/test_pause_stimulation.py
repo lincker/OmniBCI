@@ -10,7 +10,6 @@ from omnibci.shared.events import Event, EventType
 
 def app():
     instance = Stimulation.__new__(Stimulation)
-    instance.should_stop = False
     instance.stim_command_queue = Queue()
     instance.result_command_queue = Queue()
     instance.event_bus = Mock()

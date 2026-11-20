@@ -1,8 +1,8 @@
 # Stimulation Interface and Rendering Design
 
-Status: target backend design. S1d's first batch is implemented and verified: required frame/readiness methods and strict trial admission. Lifecycle, capability and graphics-resource changes remain pending. See the [execution record](plugin-implementation-plan.md).
+Status: deferred to a dedicated follow-up branch. No S1d implementation changes remain on `refactor/module-interface`. The first batch is preserved in Git history at `e2299db`; the second batch was analyzed but not implemented. See the [handoff](#8-follow-up-branch-handoff).
 
-Updated: 2026-11-20. Historical findings below describe inspection baseline `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e` on `refactor/module-interface`; the execution record identifies implemented changes.
+Updated: 2026-11-20. Historical findings describe inspection baseline `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e`. The current branch retains S1a–S1c from `e81f825`; the APIs and lifecycle below are future Stimulation work.
 
 Stimulation needs complete plugin contracts and one owner for renderer, paradigm and trigger resources. Keep the existing rendering adapters and stimulus state machine; complete their boundaries and failure handling without adding a rendering framework or compatibility layer.
 
@@ -194,4 +194,39 @@ The implementation must satisfy the following scenarios:
 
 Use the existing [render-loop tests](../tests/stimulation/test_render_loop.py), [application lifecycle tests](../tests/stimulation/test_application_lifecycle.py), [pause tests](../tests/stimulation/test_pause_stimulation.py), [feedback tests](../tests/stimulation/test_feedback_display.py) and [frame-pack tests](../tests/stimulation/test_frame_pack.py) as the regression foundation. Add focused failure cases where those contracts are not covered, and update SDK/loader examples with the coordinated API change. Do not remove scenario coverage to accommodate a smaller interface.
 
-Headless fakes can verify ordering, ownership and error handling. Display/GPU/driver timing claims require checks on the relevant execution target. This document records the design and planned acceptance work; it does not report implementation or hardware validation.
+Headless fakes can verify ordering, ownership and error handling. Display/GPU/driver timing claims require checks on the relevant execution target. These are planned acceptance criteria; the withdrawn first-batch implementation is recorded below and does not establish hardware validation.
+
+## 8. Follow-up branch handoff
+
+The user deferred all Stimulation/Paradigm implementation on 2026-11-20 to keep `refactor/module-interface` focused. Keep this design as a proposal; do not implement the remaining batches or restore the withdrawn first batch on this branch. No follow-up branch has been created by this scope decision.
+
+### 8.1 Withdrawn first batch
+
+Commit `e2299db` is the reference implementation, based on `e81f825`. Its production changes are limited to `domain/ports/paradigm.py`, `infrastructure/stimulation/stimulator.py` and `infrastructure/stimulation/application.py`. It requires frame/readiness methods, rejects missing or non-boolean readiness, handles a closed renderer before querying its last busy state, and reports pending-trial failures before exiting after a readiness error. Healthy trial ordering and feedback while busy are preserved.
+
+Its tests are `tests/domain/test_paradigm_contract.py`, `tests/stimulation/test_stimulation.py`, `tests/stimulation/test_pause_stimulation.py` and `tests/infrastructure/test_stimulation_ack.py`. The historical run first reproduced 28 failures, then passed 270 focused tests, 3718 headless tests, 36 integration tests and eight import contracts, with one Windows-only integration skip. These results describe the withdrawn implementation, not the current branch. Original logs and JUnit reports remain in `/private/tmp/omnibci-s1d-batch1-7qvx6tp2`.
+
+On the follow-up branch, inspect its actual base and recover the applicable code/tests from that commit. Reconcile documentation status separately; do not blindly restore the old branch scope or assume that historical test results validate the new base.
+
+### 8.2 Proposed second batch: capabilities and lifecycle
+
+This batch has not been implemented or approved for implementation on the current branch. Present its concrete scope again before changing code on the follow-up branch.
+
+| Change boundary | Concrete adjustment and reason |
+| --- | --- |
+| Domain and SDK capabilities | Extract `RenderSurface` from `domain/ports/renderer.py`; declare `TriggerOutput` alongside the trigger port in `domain/ports/acquisition.py`. Publish those narrow contracts instead of full Renderer. Pass the existing objects directly; add no proxy or generic context. Keep canonical signatures in [Plugin API v1](plugin-api-v1.md#55-drawing-and-trigger-capabilities). |
+| Paradigm and built-in consumers | Require `setup(*, renderer, trigger)` and argument-free teardown. Remove `bind_trigger` and Classic40's superseded constructor trigger argument. Update Classic40 and FeedbackDisplay to use RenderSurface. The shared parameters/context constructor replacement remains S1f. |
+| Trigger implementations | Add setup/teardown to Curry8Trigger, Scan45Trigger and the explicit no-trigger implementation. Move device acquisition out of constructors, make send return None, and report driver/platform failures instead of logging fake success or returning None from initialization. Follow actual driver release capabilities; do not invent a DLL close operation. Preserve event ranges, repeated markers and the 20 ms clear wait. |
+| Execution path | Keep Stimulator.start_async and RenderLoop.run_async; remove the alternate background-thread path and migrate its test coverage. Make the stop-request operation explicit. The application keeps its existing render task; do not add another task owner or execution framework. |
+| Cleanup ownership | Stimulator records components before partial acquisition and owns the single cleanup path. The loop only polls, draws and submits frames. The application requests termination and awaits settlement, without independently clearing the trigger or tearing down plugins. Follow the exact preparation/cleanup order in section 5. Preserve original and cleanup failures, and reject replacement while a callback or cleanup remains unresolved. |
+| Minimal renderer lifecycle support | PyOpenGLRenderer and ModernGLRenderer must tolerate partial initialization during shutdown; one failed release must not skip safe window/context cleanup. UIWindow must raise on initialization failure rather than leave a half-initialized object. These are prerequisites for truthful unified cleanup, not a texture-handle redesign. |
+| Pause/stop and caller outcomes | Remove independent clear_trigger calls from the application. Send a successful terminal stop receipt only after cleanup and before closing IPC. Review StimulationAppService identity retention on failed stop and StimulationProcessManager's handling of nonzero/forced exits; a dead process alone does not establish successful cleanup. Reuse existing receipts and failure/quarantine state. |
+
+Preserve the first-batch admission behavior when it is restored. First add failing cases for partial setup, every cleanup failure, same-thread execution, stop/cancel races, blocked callbacks, no-trigger mode and receipt ordering. Verify real callers and both local/external node paths. Do not change trigger frame placement or claim measured physical onset as part of this interface work.
+
+### 8.3 Remaining scope and dependencies
+
+- Keep Color/Rect validation, opaque handle ownership, stale/foreign handle rejection and feedback texture replacement for the graphics batch. Preserve both adapters and the frame-pack format.
+- Keep trial/result method and payload migration coordinated with their actual consumers; do not add old/new method aliases or payload dispatch. The shared constructor, PluginContext, manifest/API-version and payload-schema switch remains S1f.
+- Do not rewrite Classic40's stimulus state machine, remove unrelated locks or add a general lifecycle manager merely to perform the interface changes.
+- The complete API v1 transition still requires this deferred work. Branch separation does not authorize a compatibility layer or allow S1f's seven-kind completion gate to be marked complete early.

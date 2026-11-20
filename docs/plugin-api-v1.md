@@ -1,6 +1,6 @@
 # Plugin API v1 Domain Contracts
 
-Status: target API v1 contract. S1a/S1b, the S1c processing methods and S1d's first batch (required frame/readiness methods and strict admission) are implemented and verified. The remaining S1d work, S1e–S1f and the coordinated constructor/SDK switch remain pending. See the [execution record](plugin-implementation-plan.md).
+Status: target API v1 contract. S1a/S1b and the S1c processing methods are implemented. Stimulation/Paradigm work (S1d), including its withdrawn first batch, is deferred to a dedicated branch; its signatures below remain proposals. S1e–S1f and the coordinated constructor/SDK switch remain pending. See the [execution record](plugin-implementation-plan.md) and [Stimulation handoff](stimulation-interface-design.md#8-follow-up-branch-handoff).
 
 Updated: 2026-11-20. Implementation baseline: `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e` on `refactor/module-interface`.
 

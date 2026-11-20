@@ -13,31 +13,21 @@ from __future__ import annotations
 
 import asyncio
 from queue import Queue
-from unittest.mock import AsyncMock, Mock
-
-import pytest
 
 from omnibci.infrastructure.stimulation.application import Stimulation
-from omnibci.infrastructure.stimulation.stimulator import Stimulator
 from omnibci.application.events import CommandRequest, CommandResult
 from omnibci.shared.events import Event, EventType
 
 
 class _FakeStimulator:
-    is_presenting = False
-
     def __init__(self, fail: bool = False):
         self.fail = fail
         self.presented = []
-        self.results = []
 
     def present_trial(self, event_id):
         if self.fail:
             raise RuntimeError("renderer busy")
         self.presented.append(event_id)
-
-    def present_result(self, result):
-        self.results.append(result)
 
 
 class _FakeEventBus:
@@ -59,12 +49,10 @@ class _FakeTask:
 
 def _make(stimulator, render_done: bool = False) -> Stimulation:
     s = Stimulation.__new__(Stimulation)
-    s.should_stop = False
     s.stim_command_queue = Queue()
     s.result_command_queue = Queue()
     s.stimulator = stimulator
     s.event_bus = _FakeEventBus()
-    s.peer_channel = Mock(send=AsyncMock(return_value=True))
     s._render_task = _FakeTask(done=render_done)  # window open by default
     return s
 
@@ -223,202 +211,3 @@ def test_correlated_result_rejects_invalid_trial_spec_without_queueing():
     assert result.type == EventType.CommandResult
     assert result.data.ok is False
     assert result.data.error_code == "INVALID_STIMULATION_TRIAL"
-
-
-@pytest.mark.parametrize("render_missing", [False, True])
-@pytest.mark.parametrize("readiness", [True, RuntimeError("must not query closed paradigm")])
-def test_closed_renderer_rejects_trial_without_querying_readiness(render_missing, readiness):
-    async def scenario():
-        stimulator = Stimulator(settings_snapshot={})
-        stimulator.paradigm = Mock()
-        if isinstance(readiness, Exception):
-            stimulator.paradigm.is_presenting.side_effect = readiness
-        else:
-            stimulator.paradigm.is_presenting.return_value = readiness
-        s = _make(stimulator, render_done=True)
-        if render_missing:
-            s._render_task = None
-        s._put_stim_command_queue(Event(EventType.StartStimTrial, CommandRequest(
-            "closed", {"n_trials": 1, "trial_params": [4]},
-        )))
-        s.result_command_queue.put(Event(EventType.TrialCompleted, {"target_id": 3}))
-
-        await s.execute_command()
-
-        stimulator.paradigm.is_presenting.assert_not_called()
-        stimulator.paradigm.trial_stimulus_present.assert_not_called()
-        stimulator.paradigm.trial_result_present.assert_not_called()
-        assert s.stim_command_queue.empty()
-        result = next(event.data for event in s.event_bus.published
-                      if event.type == EventType.CommandResult)
-        assert not result.ok
-        assert result.error_code == "STIMULATION_WINDOW_CLOSED"
-
-    asyncio.run(scenario())
-
-
-def test_busy_paradigm_still_receives_result_feedback():
-    async def scenario():
-        stimulator = _FakeStimulator()
-        stimulator.is_presenting = True
-        s = _make(stimulator)
-        s.stim_command_queue.put(Event(EventType.StartStimTrial, 4))
-        s.result_command_queue.put(Event(EventType.TrialCompleted, {"target_id": 3}))
-
-        await s.execute_command()
-
-        assert stimulator.presented == []
-        assert stimulator.results == [3]
-        assert s.stim_command_queue.qsize() == 1
-        assert s.event_bus.published == []
-
-    asyncio.run(scenario())
-
-
-@pytest.mark.parametrize("readiness", [RuntimeError("readiness failed"), None, 0, 1, "busy"])
-def test_readiness_failure_rejects_pending_trials_and_stops_admission(readiness):
-    async def scenario():
-        stimulator = Stimulator(settings_snapshot={})
-        stimulator.paradigm = Mock()
-        if isinstance(readiness, Exception):
-            stimulator.paradigm.is_presenting.side_effect = readiness
-        else:
-            stimulator.paradigm.is_presenting.return_value = readiness
-        s = _make(stimulator)
-        for command_id, sequence in [("batch", [1, 2, 3]), ("next", [4])]:
-            s._put_stim_command_queue(Event(EventType.StartStimTrial, CommandRequest(
-                command_id, {"n_trials": len(sequence), "trial_params": sequence},
-            )))
-        s.result_command_queue.put(Event(EventType.TrialCompleted, {"target_id": 3}))
-
-        with pytest.raises(RuntimeError if isinstance(readiness, Exception) else TypeError) as raised:
-            await s.execute_command()
-
-        if isinstance(readiness, Exception):
-            assert raised.value is readiness
-        assert s.should_stop
-        assert s.stim_command_queue.empty()
-        stimulator.paradigm.trial_stimulus_present.assert_not_called()
-        stimulator.paradigm.trial_result_present.assert_not_called()
-        sent = [call.args[0] for call in s.peer_channel.send.await_args_list]
-        results = [event.data for event in sent if event.type == EventType.CommandResult]
-        assert [result.command_id for result in results] == ["batch", "next"]
-        assert all(not result.ok and result.error_code == "STIMULATION_READINESS_FAILED"
-                   for result in results)
-        acks = [event.data for event in sent if event.type == EventType.StimulationAck]
-        assert [ack["target_index"] for ack in acks] == [1, 2, 3, 4]
-        assert all(ack["status"] == "error" for ack in acks)
-        assert s.event_bus.published == []
-
-        # A transiently recovered query cannot restart a faulted instance.
-        stimulator.paradigm.is_presenting.side_effect = None
-        stimulator.paradigm.is_presenting.return_value = False
-        s._put_stim_command_queue(Event(EventType.StartStimTrial, CommandRequest(
-            "late", {"n_trials": 1, "trial_params": [5]},
-        )))
-        await s.execute_command()
-        assert s.stim_command_queue.empty()
-        stimulator.paradigm.is_presenting.assert_called_once_with()
-        stimulator.paradigm.trial_stimulus_present.assert_not_called()
-        stimulator.paradigm.trial_result_present.assert_not_called()
-        result = s.event_bus.published[-1].data
-        assert not result.ok
-        assert result.error_code == "STIMULATION_STOPPING"
-
-    asyncio.run(scenario())
-
-
-def test_missing_host_readiness_is_not_treated_as_idle():
-    async def scenario():
-        s = _make(object())
-        s.stim_command_queue.put(Event(EventType.StartStimTrial, 2))
-
-        with pytest.raises(AttributeError, match="is_presenting"):
-            await s.execute_command()
-
-        assert s.should_stop
-        ack = s.peer_channel.send.await_args.args[0].data
-        assert ack["status"] == "error"
-
-    asyncio.run(scenario())
-
-
-@pytest.mark.parametrize("delivery", [False, OSError("engine connection lost")])
-def test_failed_fault_receipt_does_not_hide_readiness_error(delivery):
-    async def scenario():
-        error = RuntimeError("readiness failed")
-        stimulator = Stimulator(settings_snapshot={})
-        stimulator.paradigm = Mock()
-        stimulator.paradigm.is_presenting.side_effect = error
-        s = _make(stimulator)
-        if isinstance(delivery, Exception):
-            s.peer_channel.send.side_effect = delivery
-        else:
-            s.peer_channel.send.return_value = delivery
-        for command_id in ("first", "second"):
-            s._put_stim_command_queue(Event(EventType.StartStimTrial, CommandRequest(
-                command_id, {"n_trials": 1},
-            )))
-
-        with pytest.raises(RuntimeError) as raised:
-            await s.execute_command()
-
-        assert raised.value is error
-        assert any("deliver" in note for note in error.__notes__)
-        assert s.should_stop
-        assert s.stim_command_queue.empty()
-        assert s.peer_channel.send.await_count == 4
-
-    asyncio.run(scenario())
-
-
-def test_readiness_fault_flushes_receipts_before_existing_shutdown():
-    async def scenario():
-        lifecycle = []
-        released = asyncio.Event()
-        stimulator = Stimulator(settings_snapshot={})
-        error = RuntimeError("readiness failed")
-        stimulator.paradigm = Mock()
-        stimulator.paradigm.is_presenting.side_effect = error
-
-        async def render():
-            await released.wait()
-
-        def stop_render():
-            lifecycle.append("renderer-stop")
-            released.set()
-
-        stimulator.start_async = render
-        stimulator.stop = stop_render
-        s = _make(stimulator)
-        s.start = AsyncMock()
-        s.stop = AsyncMock(side_effect=lambda: lifecycle.append("ipc-stop"))
-        s._put_stim_command_queue(Event(EventType.StartStimTrial, CommandRequest(
-            "pending", {"n_trials": 1, "trial_params": [2]},
-        )))
-
-        async def send(event):
-            assert s.should_stop
-            assert not released.is_set()
-            await asyncio.sleep(0)
-            s._put_stim_command_queue(Event(EventType.StartStimTrial, CommandRequest(
-                "arrived-during-fault", {"n_trials": 1},
-            )))
-            s._put_sys_command_queue(Event(EventType.TrialCompleted, {"target_id": 3}))
-            assert s.stim_command_queue.empty()
-            assert s.result_command_queue.empty()
-            lifecycle.append(event.type.name)
-            return True
-
-        s.peer_channel.send.side_effect = send
-        with pytest.raises(RuntimeError) as raised:
-            await asyncio.wait_for(s.serve(), timeout=0.5)
-
-        assert raised.value is error
-        assert lifecycle == ["CommandResult", "StimulationAck", "renderer-stop", "ipc-stop"]
-        assert s._render_task.done()
-        stimulator.paradigm.is_presenting.assert_called_once_with()
-        stimulator.paradigm.trial_stimulus_present.assert_not_called()
-        stimulator.paradigm.trial_result_present.assert_not_called()
-
-    asyncio.run(scenario())
