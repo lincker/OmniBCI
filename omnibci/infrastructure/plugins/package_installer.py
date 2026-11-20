@@ -146,6 +146,7 @@ class PluginPackageInstaller:
         }
         self.platform_name = platform_name or sys.platform
         self.limits = limits or InstallationLimits()
+        self.catalog = PluginCatalog(plugin_dir=self.root.parent, host_version=self.host_version)
 
     def install(
         self, archive: Path, *, expected_sha256: str | None = None,
@@ -460,8 +461,7 @@ class PluginPackageInstaller:
                     raise PackageInstallError(f"Installed package version has conflicting content: {version}") from exc
                 if package.get("domain") != domain:
                     raise PackageInstallError("Package domain cannot change across installed versions")
-        catalog = PluginCatalog(host_version=self.host_version)
-        descriptors, _ = catalog._scan("acquisition", all_categories=True)
+        descriptors, _ = self.catalog._scan("acquisition", all_categories=True)
         if any(item.identifier == package_id and item.package.domain != domain for item in descriptors):
             raise PackageInstallError("Package domain cannot change across discovered versions")
 

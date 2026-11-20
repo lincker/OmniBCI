@@ -9,27 +9,28 @@ from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginR
 
 
 class CatalogConfigurationAdapter:
-    def __init__(self, catalog: PluginCatalog | None = None):
+    def __init__(self, catalog: PluginCatalog | None = None, *, platform_name: str | None = None):
         self.catalog = catalog or PluginCatalog()
+        self.platform_name = platform_name if platform_name is not None else sys.platform
 
     @staticmethod
-    def _adapt(descriptor) -> PluginConfiguration:
+    def _adapt(descriptor, platform_name: str) -> PluginConfiguration:
         return PluginConfiguration(
             selection=descriptor.selection, kind=descriptor.category, domain=descriptor.package.domain,
             plugin_type=descriptor.plugin_type, label=descriptor.display_name,
             description=descriptor.description,
             schema=deepcopy(descriptor.configuration_schema),
             configuration_version=descriptor.configuration_version,
-            available=descriptor.supports_platform(sys.platform),
+            available=descriptor.supports_platform(platform_name),
             controls=deepcopy(dict(descriptor.controls)),
             channel_requirements=descriptor.channel_requirements,
         )
 
     def list(self, kind: str) -> list[PluginConfiguration]:
-        return [self._adapt(descriptor) for descriptor in self.catalog.list_contributions(kind)]
+        return [self._adapt(descriptor, self.platform_name) for descriptor in self.catalog.list_contributions(kind)]
 
     def get(self, kind: str, selection: PluginSelection) -> PluginConfiguration:
         try:
-            return self._adapt(self.catalog.resolve_selection(kind, selection))
+            return self._adapt(self.catalog.resolve_selection(kind, selection), self.platform_name)
         except PluginResolutionError as exc:
             raise PluginSchemaError(str(exc)) from exc

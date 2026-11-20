@@ -153,7 +153,8 @@ async def _build_container_services(host_settings, allow_process_termination):
     package_references_lock = RLock()
     package_store = ManagedPluginPackageStore()
     configuration = ConfigurationService(
-        TomlConfigurationRepository(), CatalogConfigurationAdapter(),
+        TomlConfigurationRepository(),
+        CatalogConfigurationAdapter(package_store.catalog, platform_name=package_store.installer.platform_name),
         active_server_settings=host_settings,
         change_guard=lambda: package_references_lock,
         profile_versions=package_store,

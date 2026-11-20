@@ -16,6 +16,7 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Callable, Iterable, Literal, Optional
 
@@ -97,10 +98,10 @@ def user_plugins_dir(*, host_settings: dict | None = None) -> Optional[Path]:
         return None
 
 
-def _plugin_roots(subpath: str) -> list[PluginRoot]:
+def _plugin_roots(subpath: str, plugin_dir: Path | None = None) -> list[PluginRoot]:
     """Return trusted root descriptors in deterministic priority order."""
     roots: list[PluginRoot] = []
-    user = user_plugins_dir()
+    user = plugin_dir if plugin_dir is not None else user_plugins_dir()
     if user is not None:
         up = user / subpath
         if up.is_dir():
@@ -112,32 +113,32 @@ def _plugin_roots(subpath: str) -> list[PluginRoot]:
     return roots
 
 
-def paradigm_plugin_roots() -> list[PluginRoot]:
-    return _plugin_roots("paradigms")
+def paradigm_plugin_roots(plugin_dir: Path | None = None) -> list[PluginRoot]:
+    return _plugin_roots("paradigms", plugin_dir)
 
 
-def decoder_plugin_roots() -> list[PluginRoot]:
-    return _plugin_roots("algorithms/decoders")
+def decoder_plugin_roots(plugin_dir: Path | None = None) -> list[PluginRoot]:
+    return _plugin_roots("algorithms/decoders", plugin_dir)
 
 
-def acquisition_plugin_roots() -> list[PluginRoot]:
-    return _plugin_roots("acquisition")
+def acquisition_plugin_roots(plugin_dir: Path | None = None) -> list[PluginRoot]:
+    return _plugin_roots("acquisition", plugin_dir)
 
 
-def effector_plugin_roots() -> list[PluginRoot]:
-    return _plugin_roots("effectors")
+def effector_plugin_roots(plugin_dir: Path | None = None) -> list[PluginRoot]:
+    return _plugin_roots("effectors", plugin_dir)
 
 
-def trigger_plugin_roots() -> list[PluginRoot]:
-    return _plugin_roots("triggers")
+def trigger_plugin_roots(plugin_dir: Path | None = None) -> list[PluginRoot]:
+    return _plugin_roots("triggers", plugin_dir)
 
 
-def filter_plugin_roots() -> list[PluginRoot]:
-    return _plugin_roots("algorithms/filters")
+def filter_plugin_roots(plugin_dir: Path | None = None) -> list[PluginRoot]:
+    return _plugin_roots("algorithms/filters", plugin_dir)
 
 
-def epoch_detector_plugin_roots() -> list[PluginRoot]:
-    return _plugin_roots("algorithms/epoch")
+def epoch_detector_plugin_roots(plugin_dir: Path | None = None) -> list[PluginRoot]:
+    return _plugin_roots("algorithms/epoch", plugin_dir)
 
 
 MANIFEST_NAME = "manifest.toml"
@@ -539,12 +540,18 @@ class PluginCatalog:
     def __init__(
         self,
         root_providers: dict[str, RootProvider] | None = None,
-        *, host_version: str | None = None,
+        *, host_version: str | None = None, plugin_dir: Path | None = None,
     ) -> None:
+        if root_providers is not None and plugin_dir is not None:
+            raise ValueError("Choose explicit root providers or a plugin directory, not both")
         self.host_version = host_version if host_version is not None else installed_host_version()
         self._root_providers = (
             root_providers if root_providers is not None else _ROOT_PROVIDERS
         )
+        if plugin_dir is not None:
+            directory = Path(plugin_dir).resolve()
+            self._root_providers = {kind: partial(provider, plugin_dir=directory)
+                                    for kind, provider in _ROOT_PROVIDERS.items()}
 
     def _scan(
         self,

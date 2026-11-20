@@ -29,6 +29,7 @@ class DirectoryPluginPackageStore:
         self.installer = installer or PluginPackageInstaller(self.packages_dir)
         if self.installer.root != self.packages_dir:
             raise ValueError("Installer must use the managed packages directory")
+        self.catalog = self.installer.catalog
         self.max_archive_bytes = self.installer.limits.max_archive_bytes
 
     def _path(self, package_id: str, version: str) -> Path:
@@ -66,7 +67,7 @@ class DirectoryPluginPackageStore:
             receipt = self._receipt(location, package_id, version)
             descriptors = self._descriptors(package_id, version)
             first = descriptors[0]
-            definitions = [CatalogConfigurationAdapter._adapt(item) for item in descriptors]
+            definitions = [CatalogConfigurationAdapter._adapt(item, self.installer.platform_name) for item in descriptors]
             return PackageVersion(
                 package_id, version, first.display_name, first.description, receipt["sha256"],
                 tuple(PackageContribution(item.selection, item.kind, item.label, item.available) for item in definitions),
@@ -126,4 +127,4 @@ class DirectoryPluginPackageStore:
     def configuration(self, kind: str, selection: PluginSelection):
         location = self._path(selection.package_id, selection.version)
         catalog = PluginCatalog({kind: lambda: [PluginRoot(location, "user", 0)]}, host_version=self.installer.host_version)
-        return CatalogConfigurationAdapter(catalog).get(kind, selection)
+        return CatalogConfigurationAdapter(catalog, platform_name=self.installer.platform_name).get(kind, selection)
