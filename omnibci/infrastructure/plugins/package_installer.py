@@ -128,11 +128,14 @@ class PluginPackageInstaller:
 
     def install(
         self, archive: Path, *, revalidate: Callable[[], MarketVerification] | None = None,
+        development: bool = False,
         expected_sha256: str | None = None,
         expected_package_id: str | None = None, expected_version: str | None = None,
         expected_contributions: Mapping[str, str] | None = None, expected_domain: str | None = None,
     ) -> InstalledPackage:
         """Validate, extract, and atomically publish; leave activation unchanged."""
+        if type(development) is not bool or development and revalidate is not None:
+            raise PackageInstallError("Development snapshots cannot carry repository admission")
         if expected_sha256 is not None and not re.fullmatch(
             r"[0-9a-fA-F]{64}", expected_sha256,
         ):
@@ -179,7 +182,8 @@ class PluginPackageInstaller:
                 receipt = {
                     "receipt_version": 1, "package_id": package.identifier,
                     "version": package.version, "sha256": digest, "files": files,
-                    "origin": "market" if revalidate is not None else "local", "market_verification": None,
+                    "origin": "development" if development else "market" if revalidate is not None else "local",
+                    "market_verification": None,
                 }
                 with self._package_lock(package.identifier):
                     if revalidate is not None:
@@ -444,9 +448,11 @@ class PluginPackageInstaller:
             _portable_path(name)
         if "manifest.toml" not in files:
             raise PackageInstallError("Installation receipt does not include the manifest")
-        if receipt["origin"] not in ("local", "market"):
+        if receipt["origin"] not in ("local", "market", "development"):
             raise PackageInstallError("Installation receipt origin is invalid")
         verification = receipt["market_verification"]
+        if receipt["origin"] == "development" and verification is not None:
+            raise PackageInstallError("Development snapshots cannot carry repository admission")
         if verification is not None:
             MarketVerification.from_dict(verification)
         elif receipt["origin"] == "market":
@@ -462,6 +468,8 @@ class PluginPackageInstaller:
                 if not destination.exists():
                     raise
         actual = self._verify_existing(destination, receipt)
+        if "development" in (actual["origin"], receipt["origin"]) and actual["origin"] != receipt["origin"]:
+            raise PackageInstallError("Development snapshots and installed releases require separate stores")
         incoming = receipt["market_verification"]
         retained = actual["market_verification"]
         # Identical proof retries retain their first acceptance timestamp.

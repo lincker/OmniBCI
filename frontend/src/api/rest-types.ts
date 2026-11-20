@@ -2035,7 +2035,7 @@ export interface components {
             /** Sha256 */
             sha256: string | null;
             /** Origin */
-            origin: ("local" | "market") | null;
+            origin: ("local" | "market" | "development") | null;
             /**
              * Verified Repository
              * @description Repository accepted at installation; not a current online trust check

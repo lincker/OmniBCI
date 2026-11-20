@@ -25,7 +25,7 @@ class PackageVersionResponse(BaseModel):
     label: str
     description: str | None
     sha256: str | None
-    origin: Literal["local", "market"] | None
+    origin: Literal["local", "market", "development"] | None
     verified_repository: str | None = Field(description="Repository accepted at installation; not a current online trust check")
     contributions: list[PackageContributionResponse]
     enabled: bool

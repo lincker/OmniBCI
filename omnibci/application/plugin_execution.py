@@ -68,7 +68,7 @@ class PluginExecutionReceipt:
                 raise ValueError("Execution artifact has missing or unknown fields")
             for name in ("binding_sha256", "content_sha256"):
                 _sha256(artifact[name], name)
-            if artifact["origin"] not in {"builtin", "local", "market"}:
+            if artifact["origin"] not in {"builtin", "local", "market", "development"}:
                 raise ValueError("Unknown execution artifact origin")
             if artifact["origin"] == "market":
                 _text(artifact["verified_repository"], "verified_repository")

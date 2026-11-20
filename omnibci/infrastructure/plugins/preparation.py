@@ -95,7 +95,7 @@ def _check_record(record):
             continue
         if not isinstance(value, str) or not Path(value).is_absolute() or str(Path(value).resolve()) != value:
             raise ValueError(f'Prepared artifact {name} must be a real absolute path')
-    if (record['origin'] not in {'builtin', 'local', 'market'}
+    if (record['origin'] not in {'builtin', 'local', 'market', 'development'}
             or (record['origin'] == 'builtin') != (record['plugin_dir'] is None)):
         raise ValueError('Invalid prepared artifact origin')
     if record['verified_repository'] is not None and (

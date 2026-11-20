@@ -99,9 +99,6 @@ def _plugin_roots(subpath: str, plugin_dir: Path | None = None) -> list[PluginRo
     roots: list[PluginRoot] = []
     user = plugin_dir if plugin_dir is not None else user_plugins_dir()
     if user is not None:
-        up = user / subpath
-        if up.is_dir():
-            roots.append(PluginRoot(up.resolve(), "user", 0))
         roots.extend(PluginRoot(path, "user", 0) for path in enabled_package_directories(user))
     vp = vendor_plugins_dir() / subpath
     if vp.is_dir():

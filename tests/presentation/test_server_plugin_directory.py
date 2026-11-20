@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 from omnibci.application.plugin_identity import PluginSelection
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, user_plugins_dir
+from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugins.project_tools import package_project
 from omnibci.presentation.main import create_app
 
 
@@ -28,7 +30,13 @@ def _plugin(directory):
                            "payload_schemas": {"command": "command.schema.json"}}],
     }), encoding="utf-8")
     (package / "command.schema.json").write_text('{"type":"object","properties":{},"additionalProperties":false}')
-    return package
+    (package / "driver.py").write_text("raise AssertionError('Directory discovery must remain static')\n")
+    archive = directory / "package.zip"
+    package_project(package, archive)
+    store = ManagedPluginPackageStore(directory)
+    store.install_archive(archive)
+    store.set_enabled(SELECTION.package_id, SELECTION.version, True)
+    return store._path(SELECTION.package_id, SELECTION.version)
 
 
 def _worker_directory(connection):

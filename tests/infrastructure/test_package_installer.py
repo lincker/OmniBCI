@@ -71,6 +71,23 @@ def test_archive_cannot_vendor_the_host_namespace(tmp_path, path):
         _installer(tmp_path).install(_archive(tmp_path, entries=[(path, "# duplicate SDK")]))
 
 
+@pytest.mark.parametrize("first_development", [True, False])
+def test_development_and_release_admission_cannot_share_one_identity(tmp_path, first_development):
+    archive = _archive(tmp_path)
+    installer = _installer(tmp_path)
+    installed = installer.install(archive, development=first_development)
+    before = (installed.location / ".omnibci-install.json").read_bytes()
+    with pytest.raises(PackageInstallError, match="separate stores"):
+        installer.install(archive, development=not first_development)
+    assert (installed.location / ".omnibci-install.json").read_bytes() == before
+
+
+def test_development_admission_never_accepts_repository_proof(tmp_path):
+    with pytest.raises(PackageInstallError, match="repository admission"):
+        _installer(tmp_path).install(_archive(tmp_path), development=True,
+                                    revalidate=lambda: pytest.fail("Must not verify a development snapshot"))
+
+
 def test_valid_archive_is_static_catalog_readable_and_not_activated(tmp_path):
     archive = _archive(tmp_path, entries=[("resources/", ""), ("resources/data.txt", "example")])
     installer = _installer(tmp_path)
