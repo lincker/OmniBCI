@@ -270,6 +270,8 @@ class PluginPackageInstaller:
                 raise PackageInstallError("Archive member contains a null byte")
             directory = member.is_dir()
             parts = _portable_path(member.filename, directory=directory)
+            if _path_key(parts)[0] in {"omnibci", "omnibci.py"}:
+                raise PackageInstallError("Archive must not vendor the omnibci host namespace")
             if len(parts) == 1 and _path_key(parts) == _path_key((_RECEIPT,)):
                 raise PackageInstallError("Archive contains reserved installation metadata")
             if is_bytecode_path(Path(*parts)):

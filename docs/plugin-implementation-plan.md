@@ -502,6 +502,14 @@ Common configuration error translation belongs to `presentation.errors`. Only de
 
 **Gate:** market users, recipients of packages/source and local authors can all reach the same API/host lifecycle. Static tools execute no plugin hooks, and no ordinary runtime silently loads mutable workspace code.
 
+#### S5a execution: static source validation and packaging (2026-11-21)
+
+The `omnibci-plugin` entry point now supplies `validate` and `package`; `develop` remains the next batch. Both static operations build the same deterministic ZIP and validate it through `PluginPackageInstaller` in temporary storage. They never import plugin Python, invoke build hooks, install dependencies or mutate the normal inventory. The output lists exact identity, contributions, archive digest and selected files. Publication replaces the requested output only after successful validation.
+
+File order, timestamps and modes are fixed. VCS directories, recognized virtual environments, caches, bytecode and development workspace state are omitted; ordinary resources, including nested resource ZIPs, remain. **Simplification:** output archives must be outside the selected source root. This prevents recursive inclusion of prior tool outputs without guessing which resource archives to delete. A repository containing several projects requires selecting the directory with the plugin manifest explicitly. Portable path, schema, requirements and bounded extraction checks remain owned by the shared installer. That installer now also rejects vendored `omnibci` namespaces, so all sources retain one canonical SDK.
+
+**Validation:** all 13 initial tooling cases failed or errored before the entry point existed; four additional namespace cases reproduced acceptance of a bundled host copy. Final verification passes **318 affected tests** and **11 import contracts** on the unchanged 473-file tree. Coverage includes deterministic bytes, no code execution, unchanged ordinary inventory, invalid-output preservation, source limits, offline installation and the existing real local signed-repository path. Evidence: `/private/tmp/omnibci-s5a-zhxajkc4`. Development snapshots and unmanaged discovery removal remain S5b; final release/client/documentation verification remains S6.
+
 ### S6 Integrate clients, verify the release and finish documentation
 
 **Change boundary:** complete the coordinated implementation and make its actual behavior reviewable.

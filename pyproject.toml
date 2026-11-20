@@ -35,6 +35,9 @@ dependencies = [
     "websockets>=12.0",
 ]
 
+[project.scripts]
+omnibci-plugin = "omnibci.plugin_cli:main"
+
 [project.optional-dependencies]
 # 刺激渲染：只有运行刺激进程的机器需要（多机部署时服务器可不装）
 stim = [

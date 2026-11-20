@@ -65,6 +65,12 @@ def _assert_no_package(root):
     assert not list(root.glob("__install-*"))
 
 
+@pytest.mark.parametrize("path", ["omnibci.py", "omnibci/sdk.py", "OmniBCI/sdk.py"])
+def test_archive_cannot_vendor_the_host_namespace(tmp_path, path):
+    with pytest.raises(PackageInstallError, match="host namespace"):
+        _installer(tmp_path).install(_archive(tmp_path, entries=[(path, "# duplicate SDK")]))
+
+
 def test_valid_archive_is_static_catalog_readable_and_not_activated(tmp_path):
     archive = _archive(tmp_path, entries=[("resources/", ""), ("resources/data.txt", "example")])
     installer = _installer(tmp_path)

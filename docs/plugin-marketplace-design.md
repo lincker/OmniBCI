@@ -542,6 +542,8 @@ Web clients upload archive bytes; a client-side path is never a backend filesyst
 
 Importing a ZIP works offline and uses the fixed host dependency policy. Missing libraries produce an eligibility error; local imports do not gain automatic `pip` installation. Publishing the resulting artifact to a market later is optional.
 
+**S5a implementation (2026-11-21):** static `omnibci-plugin validate` and `package` share the installer and deterministic source selection. Output archives must be outside the selected source root; this excludes previous tool outputs without dropping intentional resource ZIPs. VCS, virtual environments, caches and development workspace state are omitted. Both operations return inspectable file inventory and digest, execute no plugin code and leave ordinary installation state unchanged. Development launch is completed separately in S5b.
+
 ### 9.4 Development from a source directory
 
 Provide one explicit development launch accepting a project directory and development configuration. This is SDK tooling using the existing application composition and module hosts; it does not add a second runtime engine or a new plugin base class.
